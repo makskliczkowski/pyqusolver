@@ -68,9 +68,13 @@ class SYK2(QuadraticHamiltonian):
                 typek           = RMT.GOE,
                 backend         = 'np' if use_numpy else self._backend,
                 dtype           = self._dtype)
-        
+    
     def add_term(self, *args, **kwargs):
         raise NotImplementedError("Add term not implemented for SYK2 model.")
+    
+    @staticmethod
+    def repr(ns: int, cpx: bool = True) -> str:
+        return f"SYK2(ns={ns},cpx={cpx})"
     
     def __repr__(self):
         return f"SYK2(ns={self._ns},cpx={self._iscpx})"
