@@ -2006,7 +2006,7 @@ class MCSampler(Sampler):
         '''
         return self._sweep_steps
 
-    def get_sampler_jax(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
+    def _get_sampler_jax(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
         """
         Returns a JIT-compiled static sampling function with baked-in configuration.
 
@@ -2112,7 +2112,7 @@ class MCSampler(Sampler):
             return final_state_tuple, samples_tuple, probs
         return wrapped_sampler
     
-    def get_sampler_np(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
+    def _get_sampler_np(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
         """
         Returns a NumPy-based sampling function with baked-in configuration.
 
@@ -2177,6 +2177,39 @@ class MCSampler(Sampler):
         
         return wrapper
 
+    def get_sampler(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
+        """
+        Get the appropriate sampler function based on the backend (JAX or NumPy).
+
+        This method returns a callable sampling function that is configured
+        according to the current instance settings. It automatically selects
+        between a JAX-based or NumPy-based implementation depending on the
+        backend in use.
+
+        Parameters:
+            num_samples (Optional[int]):
+                Number of samples per chain to bake into the static function.
+                If None, uses `self._numsamples`.
+            num_chains (Optional[int]):
+                Number of chains to bake into the static function.
+                If None, uses `self._numchains`.
+        Returns:
+            Callable: A sampling function with a signature depending on the backend:
+                - For JAX: `wrapped_sampler(states_init, rng_k_init, params,
+                                            num_proposed_init=None, num_accepted_init=None)`
+                - For NumPy: `wrapped_sampler(states_init, params)`
+            The return type matches either `_static_sample_jax` or `_generate_samples_np`.
+        Raises:
+            RuntimeError: If the backend is neither 'jax' nor 'numpy'.
+        """
+        
+        if self._isjax:
+            return self._get_sampler_jax(num_samples, num_chains)
+        elif not self._isjax:
+            return self._get_sampler_np(num_samples, num_chains)
+        else:
+            raise RuntimeError("Sampler backend must be either 'jax' or 'numpy'.")
+    
 #######################################################################
 
 @unique
@@ -2232,3 +2265,5 @@ def get_sampler(typek: Union[str, SamplerType, Sampler], *args, **kwargs) -> Sam
     raise ValueError(SamplerErrors.NOT_IMPLEMENTED_ERROR)
 
 #######################################################################
+#! EOF
+

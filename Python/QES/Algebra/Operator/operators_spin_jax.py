@@ -126,7 +126,7 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
+        r"""
         Apply the inverse of the Pauli-X (σₓ) operator on a JAX array state.
         This is equivalent to applying the σₓ operator again.
         Corresponds to the adjoint operation.
@@ -270,7 +270,7 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
+        r"""
         Apply the inverse of the Pauli-Y (σᵧ) operator on a JAX array state.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
@@ -393,7 +393,7 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
+        r"""
         Apply the inverse of the Pauli-Z (σ_z) operator on a JAX array state.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
@@ -794,7 +794,7 @@ if JAX_AVAILABLE:
                         k           : float,
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
+        r"""
         Apply the inverse
         of the Fourier-transformed spin operator (σₖ) on a JAX array state.
         Corresponds to the adjoint operation.
