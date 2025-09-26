@@ -35,7 +35,7 @@ try:
 
     #################################################################################################
     if JAX_AVAILABLE:
-        from general_python.algebra.utils import pad_array_jax
+        from general_python.algebra.utils import pad_array
     
     #################################################################################################
     from Algebra.Operator.operator import ( Operator, LocalSpace, LocalSpaceTypes, StateTypes,      
@@ -1480,8 +1480,8 @@ if JAX_AVAILABLE:
         # jax.debug.print("max_padding: {}", max_padding)
         
         # Calculate pad_width using JAX, keep it as JAX array
-        unique_cols_padded = pad_array_jax(unique_cols, max_padding, -1)
-        summed_vals_padded = pad_array_jax(summed_vals, max_padding, 0.0)
+        unique_cols_padded          = pad_array(unique_cols, max_padding, -1)
+        summed_vals_padded          = pad_array(summed_vals, max_padding, 0.0)
 
         return unique_cols_padded, summed_vals_padded, unique_cols.shape[0]
 
