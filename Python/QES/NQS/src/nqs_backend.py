@@ -3,6 +3,7 @@ Backend interface for Neural Quantum States (NQS) implementations.
 '''
 import os
 import warnings
+import numpy as np
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Union
 from enum import Enum
@@ -148,14 +149,14 @@ class NumpyBackend(BackendInterface):
 
     # ---
 
-    def compile_functions(self, net, batch_size: int) -> tuple(Callable, Callable, Callable):
+    def compile_functions(self, net, batch_size: int):
         # net.get_apply(use_jax=False) should return (apply_fn, params)
         ansatz_func, _params    = net.get_apply(use_jax=False)
         eval_func               = net_utils.numpy.eval_batched_np
         apply_func              = net_utils.numpy.apply_callable_batched_np
         return ansatz_func, eval_func, apply_func
 
-    def prepare_gradients(self, net):
+    def prepare_gradients(self, net: Networks.GeneralNet):
         flat_grad_func, dict_grad_type = net_utils.decide_grads(
             iscpx           =   net.is_complex, 
             isjax           =   False,
@@ -173,6 +174,12 @@ class NumpyBackend(BackendInterface):
             is_complex_per_leaf =   None,
             total_size          =   getattr(net, "nparams", None),
         )
+
+    @staticmethod
+    def stable_ratio(exp_top, exp_bot):
+        # exp_top/log_psi_top and exp_bot/log_psi_bot are log-amplitudes if you store logs;
+        # compute ratio r = Ψ_top / Ψ_bot in log-space for stability.
+        return np.exp(exp_top - exp_bot)
 
 # --------------------------------------------------------------
 #! JAX backend
@@ -212,7 +219,7 @@ class JAXBackend(BackendInterface):
         if batch_size and batch_size > 1:
             apply_func = jax.jit(net_utils.jaxpy.apply_callable_batched_jax, static_argnums=(0,4,6))
         else:
-            apply_func = jax.jit(net_utils.jaxpy.apply_callable_jax, static_argnums=(0,4))
+            apply_func = jax.jit(net_utils.jaxpy.apply_callable_jax, static_argnums=(0,4,6))
             
         # get the eval function
         eval_func = jax.jit(net_utils.jaxpy.eval_batched_jax, static_argnums=(0,1))
@@ -256,6 +263,14 @@ class JAXBackend(BackendInterface):
             out["analytical_pytree_fun"] = analytical_pytree_fun
         return out
 
+    # ----------------------------------------------------------
+    
+    @staticmethod
+    def stable_ratio(log_top, log_bot):
+        '''Compute stable ratio of two exponentials in log-space.'''
+        # log_top and log_bot are log-amplitudes if you store logs;
+        # compute ratio r = Ψ_top / Ψ_bot in log-space for stability.
+        return jnp.exp(log_top - log_bot)
 
 # --------------------------------------------------------------
 #! Summary of JAX functions
@@ -309,7 +324,7 @@ def nqs_get_backend(backend_type: Union[NQSBackendType, str]) -> BackendInterfac
 #     '''
 
 #     if JAX_AVAILABLE and self._isjax and issubclass(type(self._net), net_flax.FlaxInterface):
-#         params   = self._net.init(self._rngJAX_RND_DEFAULT_KEY, jnp.ones(self._shape, dtype=jnp.int32))
+#         params   = self._net.init(self._rng_k, jnp.ones(self._shape, dtype=jnp.int32))
 #         return flax.training.train_state.TrainState.create(
 #             apply_fn = self._ansatz_func,
 #             params   = params,

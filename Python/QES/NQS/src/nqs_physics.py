@@ -6,7 +6,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 
 #! Import the backend interface
-from nqs_backend import *
+from .nqs_backend import *
 
 # --------------------------------------------------------------
 #! Interface for physical problems
@@ -14,6 +14,8 @@ from nqs_backend import *
 
 class PhysicsInterface(ABC):
     """Abstract physical problem layer: wavefunctions, density matrices, tomography, etc."""
+
+    problems = [] # supported problems
 
     def __init__(self, backend: BackendInterface):
         self.backend    = backend
@@ -38,7 +40,9 @@ class WavefunctionPhysics(PhysicsInterface):
     Wavefunction physics interface for NQS.
     Supports Hamiltonian operators and local energy computations.
     '''
-    
+
+    problems = ['ground', 'excited']
+
     def setup(self, hamiltonian: Hamiltonian, net: Callable):
         '''
         Setup the wavefunction physics with a Hamiltonian and neural network.
@@ -51,17 +55,30 @@ class WavefunctionPhysics(PhysicsInterface):
         '''
         
         if hamiltonian is None:
-            raise ValueError("Wavefunction mode requires a Hamiltonian.")
-        if not isinstance(self._hamiltonian, Hamiltonian):
-            if not callable(self._hamiltonian):
-                raise ValueError(self._ERROR_HAMILTONIAN_TYPE)
-            # check if it accepts a state vector only
-            elif len(inspect.signature(self._hamiltonian).parameters) != 1:
-                raise ValueError(self._ERROR_HAMILTONIAN_ARGS)
-            else:
-                self.local_energy_fn = hamiltonian
-        else:    
+            raise ValueError("Wavefunction mode requires a Hamiltonian or callable.")
+
+        # Case 1: proper Hamiltonian object (instance or subclass)
+        if isinstance(hamiltonian, Hamiltonian):
             self.local_energy_fn = self.backend.local_energy(hamiltonian)
+
+        # Case 2: user-supplied callable
+        elif callable(hamiltonian):
+            sig = inspect.signature(hamiltonian)
+            nparams = len(sig.parameters)
+            if nparams != 1:
+                raise ValueError(
+                    f"Custom local energy function must accept exactly one argument "
+                    f"(the state vector), got {nparams}."
+                )
+            self.local_energy_fn = hamiltonian
+
+        # Case 3: unsupported
+        else:
+            raise ValueError(f"Invalid Hamiltonian type: {type(hamiltonian)}, {hamiltonian} "
+                "Must be a Hamiltonian instance or a callable(state).")
+
+        # Store reference to the network (may be useful for later extensions)
+        self.net = net
 
     def loss(self, params, states):
         return self.local_energy_fn(states, params)

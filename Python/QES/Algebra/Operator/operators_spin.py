@@ -17,23 +17,27 @@ Future Work:
 - Add tests for each functionality implemented.
 """
 
-import math
+import os 
 import numpy as np
 import numba
-from typing import List, Union, Optional, Callable
+from typing import List, Union, Optional
 
 ################################################################################
-from Algebra.Operator.operator import (
-    Operator, OperatorTypeActing, SymmetryGenerators, 
-    create_operator, ensure_operator_output_shape_numba
-)
+
+try:
+    # main imports
+    from QES.Algebra.Operator.operator import (Operator, OperatorTypeActing, SymmetryGenerators, 
+                                        create_operator, ensure_operator_output_shape_numba)
+except ImportError as e:
+    raise ImportError("Failed to import required modules. Ensure that the QES package is correctly installed.") from e
+
 ################################################################################
+import QES.general_python.common.binary as _binary
 from QES.general_python.common.tests import GeneralAlgebraicTest
 from QES.general_python.lattices.lattice import Lattice
 from QES.general_python.algebra.utils import DEFAULT_BACKEND, get_backend, maybe_jit
 from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
 from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
-import general_python.common.binary as _binary
 from QES.general_python.common.binary import (
     flip, flip_all, check, base2int, int2base, int2binstr
 )

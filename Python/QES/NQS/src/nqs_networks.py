@@ -1,7 +1,7 @@
 '''
 Handles the network implementations and utilities for Neural Quantum States (NQS).
 '''
-from nqs_backend import *
+from .nqs_backend import *
 
 #########################################
 #! Gradients and network utilities
@@ -37,7 +37,9 @@ def nqs_choose_network(net_spec         : Any,
         return net_spec
 
     # Case 2: Flax module or FlaxInterface
-    if (JAX_AVAILABLE and "flax" in globals() and (isinstance(net_spec, nn.Module) or isinstance(net_spec, Networks.FlaxInterface))):
+    if (JAX_AVAILABLE and "flax" in globals()       and 
+                (isinstance(net_spec, nn.Module)    or 
+                isinstance(net_spec, Networks.FlaxInterface))):
         if backend.name != "jax":
             raise ValueError(f"Flax module {net_spec} requires JAX backend, got {backend.name}")
         
@@ -56,6 +58,9 @@ def nqs_choose_network(net_spec         : Any,
         return net
 
     # Case 4: unsupported
+    # if is callable
+    if callable(net_spec):
+        return net_spec
     raise TypeError(f"Unsupported network specification type: {type(net_spec)}")
 
 # ----------------------------------------------

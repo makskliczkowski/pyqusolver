@@ -101,7 +101,7 @@ class Solver(ABC):
             self._dir.mkdir(parents=True, exist_ok=True)
         
         # check the backend
-        self._backend, self._backend_sp, (self._rng, self._rngJAX_RND_DEFAULT_KEY), self._backend_str = self.obtain_backend(backend, seed)
+        self._backend, self._backend_sp, (self._rng, self._rng_k), self._backend_str = self.obtain_backend(backend, seed)
         self._isjax         = JAX_AVAILABLE and self._backend != np
         # set the precision
         if not self._isjax:
@@ -200,14 +200,14 @@ class Solver(ABC):
         return self._rng
     
     @property
-    def rngJAX_RND_DEFAULT_KEY(self):
+    def rng_k(self):
         '''Return the random number generator key.'''
-        return self._rngJAX_RND_DEFAULT_KEY
+        return self._rng_k
     
     @property
     def random(self):
         '''Return random number'''
-        return uniform(shape=(1,), backend=self._backend, rng=self._rng, rng_k=self._rngJAX_RND_DEFAULT_KEY)[0]
+        return uniform(shape=(1,), backend=self._backend, rng=self._rng, rng_k=self._rng_k)[0]
     
     # ----------------------------------
     
@@ -218,8 +218,8 @@ class Solver(ABC):
         - backend       : backend for the calculations (default is 'default')
         - seed          : seed for the random number generator
         '''
-        self._backend, self._backend_sp, (self._rng, self._rngJAX_RND_DEFAULT_KEY) = self.obtain_backend(backend, seed)
-        return self._backend, self._backend_sp, (self._rng, self._rngJAX_RND_DEFAULT_KEY)
+        self._backend, self._backend_sp, (self._rng, self._rng_k) = self.obtain_backend(backend, seed)
+        return self._backend, self._backend_sp, (self._rng, self._rng_k)
     
     @staticmethod
     def obtain_backend(backend: str, seed: Optional[int]):

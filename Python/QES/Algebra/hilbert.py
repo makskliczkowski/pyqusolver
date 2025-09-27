@@ -31,24 +31,24 @@ try:
     from QES.general_python.common.binary import bin_search
     
     # already imported from QES.general_python
-    from Algebra.Hilbert.hilbert_jit_states import get_backend, JAX_AVAILABLE, ACTIVE_INT_TYPE, maybe_jit
+    from QES.Algebra.Hilbert.hilbert_jit_states import get_backend, JAX_AVAILABLE, ACTIVE_INT_TYPE, maybe_jit
 
     #################################################################################################
     if JAX_AVAILABLE:
         from QES.general_python.algebra.utils import pad_array
     
     #################################################################################################
-    from Algebra.Operator.operator import ( Operator, LocalSpace, LocalSpaceTypes, StateTypes,      
+    from QES.Algebra.Operator.operator import ( Operator, LocalSpace, LocalSpaceTypes, StateTypes,      
                                             SymmetryGenerators, GlobalSymmetries, 
                                             operator_identity)
-    from Algebra.globals import GlobalSymmetry
-    from Algebra.symmetries import choose, translation
+    from QES.Algebra.globals import GlobalSymmetry
+    from QES.Algebra.symmetries import choose, translation
     
     #################################################################################################
     #! WRAPPER FOR JIT AND NUMBA
     #################################################################################################
 
-    from Algebra.Hilbert.hilbert_jit_methods import (
+    from QES.Algebra.Hilbert.hilbert_jit_methods import (
         get_mapping, find_repr_int, find_representative_int, get_matrix_element,
         jitted_find_repr_int, jitted_get_mapping, jitted_get_matrix_element
     )   

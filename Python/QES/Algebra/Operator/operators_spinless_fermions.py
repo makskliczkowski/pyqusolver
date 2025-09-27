@@ -139,7 +139,7 @@ def _popcount_mask(x, mask_bits):
     v     = x & mask_bits
     count = 0
 
-    # Kernighan trick: clear the least‑significant set bit each iteration
+    # Kernighan trick: clear the least-significant set bit each iteration
     while v:
         v &= v - 1
         count += 1
@@ -187,7 +187,7 @@ def c_dag_int_np(state      : int,
                 ns          : int,
                 sites       : List[int],
                 prefactor   : float = 1.0):
-    """
+    r"""
     Applies the creation operator (c\dag) for spinless fermions on a given site of an integer-represented Fock state.
     Parameters
     ----------
@@ -305,7 +305,7 @@ def c_int_np(state       : int,
 def c_dag_np(state      : np.ndarray,
              sites      : np.ndarray,
              prefactor  : float = 1.0):
-    """
+    r"""
     Applies the fermionic creation operator (c\dag) at a given site to a spinless fermion state.
 
     Parameters
@@ -347,7 +347,7 @@ def c_dag_np(state      : np.ndarray,
 def c_np(state       : np.ndarray,
          sites       : np.ndarray,
          prefactor   : float = 1.0):
-    """
+    r"""
     Applies the annihilation operator (c) to a spinless fermion state at a given site.
 
     Parameters
@@ -397,7 +397,7 @@ def c_k_int_np(state      : int,
                sites      : List[int],
                k          : float,
                prefactor  : float = 1.0):
-    """
+    r"""
     Applies the momentum-space annihilation operator c_k to a given spinless fermion state.
 
     This function constructs the action of the annihilation operator in momentum space
@@ -483,7 +483,7 @@ def c_k_dag_int_np(state      : int,
                    sites      : List[int],
                    k          : float,
                    prefactor  : float = 1.0):
-    """
+    r"""
     Applies the momentum-space fermionic creation operator c\dag_k to a given basis state.
 
     This function constructs the action of the creation operator in momentum space
@@ -541,7 +541,7 @@ def c_k_dag_np(state       : np.ndarray,
                k           : float,
                prefactor   : float = 1.0):
     """
-    Apply momentum‑space creation operator c_k\dag to a NumPy occupation array.
+    Apply momentum-space creation operator c_k\dag to a NumPy occupation array.
     """
     ns               = state.shape[0]
     # empty sites count ⇒ upper bound
@@ -733,7 +733,7 @@ def ck( k           : float,
         sites       : Optional[List[int]]   = None,
         prefactor   : float                 = 1.0) -> Operator:
     r"""
-    Factory for the momentum‑space annihilation operator
+    Factory for the momentum-space annihilation operator
         c_k = \frac{1}{\sqrt{|S|}} \sum_{i\in S} e^{-ik i}\,c_i .
     """
     return create_operator(
@@ -756,7 +756,7 @@ def ckdag(  k         : float,
             sites     : Optional[List[int]]   = None,
             prefactor : float                 = 1.0) -> Operator:
     r"""
-    Factory for the momentum‑space creation operator
+    Factory for the momentum-space creation operator
         c_k^{\dagger} = \frac{1}{\sqrt{|S|}} \sum_{i\in S} e^{+ik i}\,c_i^{\dagger}.
     """
     return create_operator(

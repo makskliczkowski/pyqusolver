@@ -290,7 +290,7 @@ class MonteCarloSolver(Solver):
                             shape       =   self._shape,
                             upd_fun     =   upd_fun,
                             rng         =   self._rng,
-                            rng_k       =   self._rngJAX_RND_DEFAULT_KEY,
+                            rng_k       =   self._rng_k,
                             hilbert     =   self._hilbert,
                             numsamples  =   self._mcparams.mcsam,           #!TODO: this can be modified later
                             numchains   =   self._mcparams.mcchain,         #!TODO: this can be modified later

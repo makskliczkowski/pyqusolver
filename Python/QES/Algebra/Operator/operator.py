@@ -15,7 +15,7 @@ Enumerations:
     
 This module is under constant development and is intended to be expanded for more complex operators and functionalities.
 
-Date    : April 2023
+Date    : April 2025
 Author  : Maksymilian Kliczkowski, WUST, Poland
 """
 
