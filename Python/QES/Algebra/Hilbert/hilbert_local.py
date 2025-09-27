@@ -14,8 +14,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Tuple, Dict
 
-
-
 ####################################################################################################
 
 # kernels always return (states_array, coeffs_array)

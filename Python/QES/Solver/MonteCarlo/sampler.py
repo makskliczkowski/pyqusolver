@@ -957,7 +957,7 @@ class MCSampler(Sampler):
                 backend     : str                           = 'default',
                 logprob_fact: float                         = 0.5,
                 statetype   : Union[np.dtype, jnp.dtype]    = None,
-                makediffer  : bool                          = False,
+                makediffer  : bool                          = True,
                 **kwargs):
         r"""
         Initialize the MCSampler.

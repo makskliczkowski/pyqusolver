@@ -22,17 +22,17 @@ from abc import ABC
 import time
 
 ###################################################################################################
-from Algebra.hilbert import HilbertSpace, set_operator_elem, Logger, Lattice
-from Algebra.Operator.operator import Operator, OperatorTypeActing, create_add_operator
-from Algebra.Operator.operator_matrix import operator_create_np
-from Algebra.Hamil.hamil_types import *
-from Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wrap
+from QES.Algebra.hilbert import HilbertSpace, set_operator_elem, Logger, Lattice
+from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_add_operator
+from QES.Algebra.Operator.operator_matrix import operator_create_np
+from QES.Algebra.Hamil.hamil_types import *
+from QES.Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wrap
 ###################################################################################################
-import Algebra.Hamil.hamil_jit_methods as hjm
+import QES.Algebra.Hamil.hamil_jit_methods as hjm
 ###################################################################################################
 from QES.general_python.algebra.ran_wrapper import random_vector
 from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, ACTIVE_INT_TYPE, Array
-import general_python.algebra.linalg as linalg
+import QES.general_python.algebra.linalg as linalg
 
 if JAX_AVAILABLE:
     import jax
@@ -40,8 +40,8 @@ if JAX_AVAILABLE:
     import jax.lax as lax
     import jax.numpy as jnp
     from jax.experimental.sparse import BCOO, CSR
-    from Algebra.Hamil.hamil_energy import local_energy_jax_wrap
-    from Algebra.hilbert import process_matrix_elem_jax, process_matrix_batch_jax
+    from QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
+    from QES.Algebra.hilbert import process_matrix_elem_jax, process_matrix_batch_jax
 else:
     jax                     = None
     jnp                     = None

@@ -32,9 +32,10 @@ from typing import Optional, Callable, Union, Sequence, Any, Set
 from typing import Union, Tuple, List               # type hints for the functions and methods
 from functools import partial                       # partial function application for operator composition
 ####################################################################################################
-from Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, StateTypes, LocalOpKernels
-from QES.general_python.algebra.utils import get_backend as get_backend, JAX_AVAILABLE, Array
+from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, StateTypes, LocalOpKernels
+from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
 from QES.general_python.lattices import Lattice
+
 # from Algebra.hilbert import HilbertSpace
 ####################################################################################################
 

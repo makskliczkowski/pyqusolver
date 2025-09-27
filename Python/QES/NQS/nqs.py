@@ -27,6 +27,7 @@ try:
     
     #! Randomness
     from QES.general_python.common.directories import Directories
+    from QES.general_python.common.flog import Logger
     
     #! Monte Carlo
     from QES.Solver.MonteCarlo.montecarlo import MonteCarloSolver, Sampler
@@ -1000,7 +1001,7 @@ class NQS(MonteCarloSolver):
                                                                     # num_chains=1, num_samples=1)
         
         #! Get the shapes of the parameters
-        _, _, (shapes, sizes, iscpx) = NQS._single_step_jax(
+        result = NQS._single_step_groundstate(
                 params,
                 configs,
                 configs_ansatze,
@@ -1010,7 +1011,7 @@ class NQS(MonteCarloSolver):
         #! Set the number of chains and samples
         self._sampler.set_numchains(numchains)
         self._sampler.set_numsamples(numsamples)
-        return shapes, sizes, iscpx
+        return result.params_shapes, result.params_sizes, result.params_cpx
     
     def wrap_single_step_jax(self, batch_size: Optional[int] = None):
         """
@@ -1040,26 +1041,28 @@ class NQS(MonteCarloSolver):
         batch_size                  = batch_size if batch_size is not None else self._batch_size
         
         #! reinitialize the functions - it may happen that they recompile but that doesn't matter
-        self._init_functions(batch_size=batch_size)
-        apply_fn                    = self._ansatz_func
-        local_energy_fun            = self._local_en_func
-        flat_grad_fun               = self._flat_grad_func
-        apply_fun                   = self._apply_func
+        ansatz_fn                   = self._ansatz_func
+        local_energy_fn             = self._local_en_func
+        flat_grad_fn                = self._flat_grad_func
+        apply_fn                    = self._apply_func
+        compute_grad_f              = net_utils.jaxpy.compute_gradients_batched if not self._analytic else self._grad_func
         
         #! Sample the configurations
         # self._init_param_metadata()
-        shapes, sizes, iscpx        = self._sample_for_shapes(apply_fn, local_energy_fun, flat_grad_fun, apply_fun, batch_size=self._batch_size, t=0)
+        shapes, sizes, iscpx        = self._sample_for_shapes(ansatz_fn, apply_fn, local_energy_fn, flat_grad_fn, compute_grad_f, batch_size=self._batch_size, t=0)
         # shapes, sizes, iscpx = self._params_shapes, self._params_sizes, self._params_iscpx
         tree_def, flat_size, slices = self._params_tree_def, self._params_total_size, net_utils.jaxpy.prepare_slice_info(shapes, sizes, iscpx)
 
         #! Create the function to be used
-        single_step_jax = partial(NQS._single_step_jax, apply_fn = apply_fn, local_energy_fun = local_energy_fun,
-                                flat_grad_fun = flat_grad_fun, apply_fun = apply_fun, batch_size = batch_size)
-        
+        single_step_jax = partial(NQS._single_step_groundstate, ansatz_fn = ansatz_fn, local_energy_fn = local_energy_fn,
+                                flat_grad_fn = flat_grad_fn, apply_fn = apply_fn, batch_size = batch_size, compute_grad_f = compute_grad_f)
+
+        #! prepares the wrapped function
         @partial(jax.jit, static_argnames=('t',))
         def wrapped(y, t, configs, configs_ansatze, probabilities, int_step = 0):
             params = net_utils.jaxpy.transform_flat_params_jit(y, tree_def, slices, flat_size)
-            return single_step_jax(params, configs, configs_ansatze, probabilities, t=t, int_step=int_step)
+            result = single_step_jax(params, configs, configs_ansatze, probabilities, t=t, int_step=int_step)
+            return (result.loss, result.loss_mean, result.loss_std), result.grad_flat, (shapes, sizes, iscpx)
         return wrapped
 
     @staticmethod
@@ -1067,14 +1070,16 @@ class NQS(MonteCarloSolver):
                                 configs         : Array, 
                                 configs_ansatze : Any, 
                                 probabilities   : Any, 
-                                # functions
-                                ansatz_fn       : Callable,
-                                apply_fn        : Callable,
-                                local_energy_fun: Callable,
-                                flat_grad_fun   : Callable,
-                                compute_grad_f  : Callable  = net_utils.jaxpy.compute_gradients_batched,
-                                # other
-                                batch_size      : int       = 1) -> NQSSingleStepResult:
+                                # functions (Static input for JIT)
+                                ansatz_fn       : Callable  = None,         # ansatz function to evaluate the log wave-function
+                                apply_fn        : Callable  = None,         # apply function to evaluate the local energy
+                                local_energy_fn : Callable  = None,         # local energy function
+                                flat_grad_fn    : Callable  = None,         # function to compute the flattened gradient for one sample
+                                compute_grad_f  : Callable  = net_utils.jaxpy.compute_gradients_batched, # function to compute the gradients in batch - jax or numpy
+                                # Static for evaluation
+                                batch_size      : int       = None,         # batch size for evaluation
+                                t               : float     = None,         # time for the jax
+                                int_step        : int       = 0) -> NQSSingleStepResult:
         '''
         Perform a single training step to obtain the energies and gradients of the NQS.
         This method computes the local energies, gradients, and other relevant metrics for a single step of
@@ -1110,11 +1115,11 @@ class NQS(MonteCarloSolver):
         '''
 
         #! a) perform the single step - calculate energies
-        (v, means, stds) = apply_fn(func            = local_energy_fun, # local_energy_fun,
+        (v, means, stds) = apply_fn(func            = local_energy_fn,  # local_energy_fun,
                                     states          = configs,          # estimate on those configs
                                     sample_probas   = probabilities,    # associated probabilities
                                     logprobas_in    = configs_ansatze,  # associated ansatze - log(psi(s))
-                                    logproba_fun    = apply_fn,         # log(psi(s)) function
+                                    logproba_fun    = ansatz_fn,        # log(psi(s)) function
                                     parameters      = params,           # network parameters
                                     batch_size      = batch_size) # batch size
         
@@ -1124,11 +1129,11 @@ class NQS(MonteCarloSolver):
         flat_grads, shapes, sizes, iscpx = compute_grad_f(net_apply     = ansatz_fn,
                                             params                      = params,
                                             states                      = configs,
-                                            single_sample_flat_grad_fun = flat_grad_fun,
+                                            single_sample_flat_grad_fun = flat_grad_fn,
                                             batch_size                  = batch_size)
 
         return NQSSingleStepResult(loss = v, loss_mean=means, loss_std=stds,
-                            gradients = flat_grads, param_shapes = (shapes, sizes, iscpx))
+                    grad_flat = flat_grads, params_shapes=shapes, params_sizes=sizes, params_cpx=iscpx)
 
     def step(self, problem: str = 'ground', 
             configs: Array = None, 
@@ -1700,7 +1705,7 @@ class NQS(MonteCarloSolver):
         n_chains       : int,
         n_samples      : int,
         batch_size     : int,
-        logger,
+        logger         : Logger,
         get_energy     : bool = False,
         plot           : bool = False,
         plot_kwargs    : dict = {},

@@ -246,10 +246,10 @@ class TDVP:
         
         if self.sr_solve_lin is None:
             self.sr_solve_lin = solvers.PseudoInverseSolver(backend=self.backend, sigma=self.sr_pinv_cutoff)
-        
-        if isinstance(self.sr_solve_lin, str) or isinstance(self.sr_solve_lin, solvers.SolverType):
+
+        if isinstance(self.sr_solve_lin, str) or isinstance(self.sr_solve_lin, solvers.SolverType) or isinstance(self.sr_solve_lin, int):
             self.sr_solve_lin = solvers.choose_solver(solver_id=self.sr_solve_lin, sigma=self.sr_pinv_cutoff)
-        
+
         if self.sr_solve_lin is not None:
             if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
                 self.form_matrix    = False
@@ -553,7 +553,7 @@ class TDVP:
                         mat_s           : Optional[Array] = None,
                         mat_s_p         : Optional[Array] = None,
                         mat_a           : Optional[Array] = None,
-                    ):
+                    ) -> solvers.SolverResult:
         """
         Solves a linear system using a specified solver form and configuration.
         Depending on the value of `self.sr_solve_lin_t`, this method dispatches to the appropriate
@@ -676,7 +676,13 @@ class TDVP:
             solution = solve
         
         if self.use_minsr and solution is not None:
-            solution = self.backend.matmul(vd_c_h, solution)
+            new_solution = solvers.SolverResult(
+                x               = self.backend.matmul(vd_c_h, solution.x),
+                iterations      = solution.iterations,
+                residual_norm   = solution.residual_norm,
+                converged       = solution.converged,
+            )
+            solution = new_solution
         
         #! save the solution
         self._solution = solution
@@ -725,7 +731,7 @@ class TDVP:
         
         #! obtain the solution
         try:
-            solution: solvers.SolverResult  = self.solve(loss, log_deriv, **kwargs)
+            solution: solvers.SolverResult = self.solve(loss, log_deriv, **kwargs)
                         
             self.meta = TDVPStepInfo(
                 mean_energy     = self._e_local_mean,

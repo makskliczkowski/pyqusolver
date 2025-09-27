@@ -27,8 +27,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     # general thingies
     from QES.general_python.common.flog import get_global_logger, Logger
-    from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
     from QES.general_python.common.binary import bin_search
+    from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
     
     # already imported from QES.general_python
     from QES.Algebra.Hilbert.hilbert_jit_states import get_backend, JAX_AVAILABLE, ACTIVE_INT_TYPE, maybe_jit

@@ -9,13 +9,12 @@ from typing import Any, Callable, Union
 from enum import Enum
 
 #! -------------------------------------------------------------
-JAX_AVAILABLE = os.environ.get('JAX_AVAILABLE', '1') == '1'
+JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
 #! -------------------------------------------------------------
 
 # --------------------------------------------------------------
 #! Import net_utils from QES.general_python
 # --------------------------------------------------------------
-
 try:
     import QES.general_python.ml.net_impl.utils.net_utils as net_utils
 except ImportError as e:
