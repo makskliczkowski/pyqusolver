@@ -15,9 +15,9 @@ from abc import ABC, abstractmethod
 from Algebra.Operator.operator import Operator, GlobalSymmetries
 
 # from general Python modules
-from general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
-from general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount
-from general_python.algebra.utils import get_backend
+from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
+from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount
+from QES.general_python.algebra.utils import get_backend
 
 class GlobalSymmetry(ABC):
     """

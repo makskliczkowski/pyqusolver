@@ -13,8 +13,8 @@ from typing import Tuple, Optional
 from Algebra.Operator.operator import Operator, SymmetryGenerators
 
 # from general Python modules
-from general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
-from general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount, BACKEND_REPR, BACKEND_DEF_SPIN
+from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
+from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount, BACKEND_REPR, BACKEND_DEF_SPIN
 
 ####################################################################################################
 
@@ -422,7 +422,7 @@ def choose(sym_specifier : Tuple[SymmetryGenerators, int],
 
 ####################################################################################################
 
-from general_python.common.tests import GeneralAlgebraicTest
+from QES.general_python.common.tests import GeneralAlgebraicTest
 
 class SymmetryTests(GeneralAlgebraicTest):
     """
@@ -469,7 +469,7 @@ class SymmetryTests(GeneralAlgebraicTest):
         """
         Test the translation_x operator on an INTEGER state.
         """
-        from general_python.common.binary import int2binstr
+        from QES.general_python.common.binary import int2binstr
         
         self._log("Testing translation_x on INTEGER state", self.test_count, "blue")
         op_func             = translation_x(lat, self.backend)
@@ -626,7 +626,7 @@ class SymmetryTests(GeneralAlgebraicTest):
         """
         Runs all symmetry function tests.
         """
-        from general_python.common.binary import int2binstr
+        from QES.general_python.common.binary import int2binstr
         self.test_count = 1
         separator       = "=" * 50
         self._log(separator, 0)

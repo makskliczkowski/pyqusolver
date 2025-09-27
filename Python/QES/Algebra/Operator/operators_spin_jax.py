@@ -20,10 +20,10 @@ from Algebra.Operator.operator import Operator, OperatorTypeActing, SymmetryGene
 ################################################################################
 
 ################################################################################
-from general_python.common.tests import GeneralAlgebraicTest
-from general_python.lattices.lattice import Lattice
-from general_python.algebra.utils import DEFAULT_BACKEND, get_backend
-from general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
+from QES.general_python.common.tests import GeneralAlgebraicTest
+from QES.general_python.lattices.lattice import Lattice
+from QES.general_python.algebra.utils import DEFAULT_BACKEND, get_backend
+from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
 
 # binary operations
 import general_python.common.binary as _binary

@@ -4,90 +4,43 @@
 #   version : 0.1
 
 '''
+Neural Quantum State (NQS) Solver.
 '''
 
-import os
-import numpy as np
-import inspect
-import h5py
 import json
-
+import h5py
+import warnings
 # typing and other imports
 from typing import Union, Tuple, Union, Callable, Optional, Any, Sequence, List, Dict
 from functools import partial
 from pathlib import Path
 
-# from general_python imports
-from general_python.algebra.utils import JAX_AVAILABLE, Array
-from general_python.algebra.ran_wrapper import choice, randint, uniform
-from general_python.common.directories import Directories
-from general_python.common.timer import timeit
-import general_python.ml.networks as Networks
-import general_python.common.binary as Binary
+# import physical problems
+from src.nqs_physics import *
+from src.nqs_networks import *
 
-# from hilbert
-import Algebra.hilbert as Hilbert
-
-# JAX imports
-if JAX_AVAILABLE:
-    import jax
-    from jax import jit as jax_jit
-    from jax import numpy as jnp
+# from QES.general_python imports
+try:
+    #! Algebra
+    from QES.Algebra.Operator.operator import Operator, OperatorFunction
     
-    # jax tree
-    try:
-        import jax.tree as jax_tree
-        from jax.tree import tree_flatten
-        from orbax.checkpoint import CheckpointManager, PyTreeCheckpointHandler
-    except ImportError:
-        import jax.tree_util as jax_tree
-        from jax.tree_util import tree_map
-        from jax.tree_util import tree_flatten
-        CheckpointManager = None
-        PyTreeCheckpointHandler = None
-        
-    # use flax
-    import flax
-    import flax.linen as nn
-    import flax.training.train_state
-else:
-    jax             = None
-    jax_jit         = None
-    jnp             = None
-    random          = None
-    flax            = None
-    nn              = None
-    flax_jit        = None
-    flax_train      = None
-    flax_core       = None
-    flax_linen      = None
-    tree_map        = None
-    jax_tree        = None
-    tree_flatten    = None
-    tree_unflatten  = None
-    ravel_pytree    = None
-    orbax_utils     = None
+    #! Randomness
+    from QES.general_python.common.directories import Directories
+    
+    #! Monte Carlo
+    from QES.Solver.MonteCarlo.montecarlo import MonteCarloSolver, Sampler
+    
+    #! Hilbert space
+    from QES.Algebra import Hilbert
+    
+    #! Utilities
+
+except ImportError as e:
+    warnings.warn("Some QES.general_python modules could not be imported. Ensure QES.general_python is installed correctly.", ImportWarning)
+    raise e
 
 #########################################
-
-from Solver.MonteCarlo.montecarlo import MonteCarloSolver, McsTrain, McsReturn, Sampler
-from Algebra.Operator.operator import Operator, OperatorFunction
-
-# Hamiltonian imports
-from Algebra.hamil import Hamiltonian
-
-#########################################
-
-# for the gradients and stuff
-import general_python.ml.net_impl.utils.net_utils as net_utils
-import general_python.ml.net_impl.net_general as net_general
-if JAX_AVAILABLE:
-    import general_python.ml.net_impl.interface_net_flax as net_flax
-
-# schedulers and preconditioners and solvers
-import general_python.ml.schedulers as scheduler_mod
-import general_python.algebra.solvers as solvers_mod
-
+#! NQS main class
 #########################################
 
 class NQS(MonteCarloSolver):
@@ -107,25 +60,26 @@ class NQS(MonteCarloSolver):
                 # information on the NQS
                 net         : Union[Callable, str, net_general.GeneralNet],
                 sampler     : Union[Callable, str, Sampler],
-                hamiltonian : Hamiltonian,
+                model       : Hamiltonian,
                 # information on the Monte Carlo solver
-                batch_size  : Optional[int]                     = 1,
+                batch_size  : Optional[int]                             = 1,
                 # information on the NQS
-                lower_states: Optional[list]                    = None,
-                lower_betas : Optional[list]                    = None,
-                nparticles  : Optional[int]                     = None,
-                # information on the Monte Carlo solver
-                seed        : Optional[int]                     = None,
-                beta        : float                             = 1,
-                mu          : float                             = 2.0,
-                replica     : int                               = 1,
+                lower_states: Optional[list]                            = None,
+                lower_betas : Optional[list]                            = None,
+                nparticles  : Optional[int]                             = None,
+                # information on the Monte Carlo solver     
+                seed        : Optional[int]                             = None,
+                beta        : float                                     = 1,
+                mu          : float                                     = 2.0,
+                replica     : int                                       = 1,
                 # information on the NQS - Hilbert space
-                shape       : Union[list, tuple]                = (1,),
-                hilbert     : Optional[Hilbert.HilbertSpace]    = None,
-                modes       : int                               = 2,
+                shape       : Union[list, tuple]                        = (1,),
+                hilbert     : Optional[Hilbert.HilbertSpace]            = None,
+                modes       : int                                       = 2,
                 # information on the Monte Carlo solver
-                directory   : Optional[str]                     = MonteCarloSolver.defdir,
-                backend     : str                               = 'default',
+                directory   : Optional[str]                             = MonteCarloSolver.defdir,
+                backend     : str                                       = 'default',
+                problem     : Optional[Union[str, PhysicsInterface]]    = 'wavefunction',
                 **kwargs):
         '''
         Initialize the NQS solver.
@@ -165,8 +119,6 @@ class NQS(MonteCarloSolver):
                 Backend to be used ('default', 'jax', etc.).
             nthreads:
                 Number of threads to use (default: 1).
-        
-        
         '''
         super().__init__(sampler    =   sampler,
                         seed        =   seed,
@@ -179,11 +131,13 @@ class NQS(MonteCarloSolver):
                         directory   =   directory,
                         backend     =   backend)
         
-        # pre-set the Hamiltonian
-        if hamiltonian is None:
-            raise ValueError(self._ERROR_NO_HAMILTONIAN)
-        self._hamiltonian       = hamiltonian
+        # --------------------------------------------------
+        self._batch_size        = batch_size        
+        self._initialized       = False
         
+        self._modifier          = None #! State modifier (for later), for quench dynamics, etc.
+        self._modifier_func     = None
+
         #######################################
         #! collect the Hilbert space information
         #######################################
@@ -194,67 +148,58 @@ class NQS(MonteCarloSolver):
         self._nparticles2       = self._nparticles**2
         self._nvisible2         = self._nvisible**2
         
-        #######################################
-        #! state modifier (for later)
-        #######################################
+        # --------------------------------------------------
+        #! Backend
+        # --------------------------------------------------
+        self.nqsbackend         = nqs_get_backend(self._backend_str)
         
-        self._modifier          = None
-        self._modifier_func     = None
+        # --------------------------------------------------
+        #! Physical problem to solve
+        # --------------------------------------------------
+        self.nqsproblem         = nqs_choose_physics(problem, self.nqsbackend)
         
-        #######################################
-        #! handle the network
-        #######################################
+        # --------------------------------------------------
+        #! Network 
+        # --------------------------------------------------
         
-        self._batch_size        = batch_size
-        self._initialized       = False
-        self._dtype             = None
-        self._analytic          = False         # analytic gradients
-        self._holomorphic       = True          # holomorphic network
-        self._net : Networks.GeneralNet = self._choose_network(net, input_shape=self._shape, backend=self._backend_str, **kwargs)
+        self._net               = nqs_choose_network(net, input_shape=self._shape, backend=self.nqsbackend, **kwargs)
         if not self._net.initialized:
             self.init_network()
         
-        self._isjax             = getattr(self._net, 'is_jax', True)    # Assumes net object knows its backend type
-        self._iscpx             = self._net.is_complex
-        self._holomorphic       = self._net.is_holomorphic
-        # self._holomorphic       = False #! Enforce False
-        self._analytic          = self._net.has_analytic_grad
-        self._dtype             = self._net.dtype
+        self._isjax                 = getattr(self._net, 'is_jax', (self.nqsbackend.name == "jax"))
+        self._iscpx                 = self._net.is_complex
+        self._holomorphic           = self._net.is_holomorphic
+        self._analytic              = self._net.has_analytic_grad
+        self._dtype                 = self._net.dtype
         
-        #######################################
-        #! handle gradients
-        #######################################
+        # --------------------------------------------------
+        #! Handle gradients
+        # --------------------------------------------------
+        self._grad_info             = self.nqsbackend.prepare_gradients(self._net)    
+        self._flat_grad_func        = self._grad_info["flat_grad_func"]
+        self._dict_grad_type        = self._grad_info["dict_grad_type"]
+        self._params_slice_metadata = self._grad_info["slice_metadata"]
+        self._params_leaf_info      = self._grad_info["leaf_info"]
+        self._params_tree_def       = self._grad_info["tree_def"]
+        self._params_shapes         = self._grad_info["shapes"]
+        self._params_sizes          = self._grad_info["sizes"]
+        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]
+        self._params_total_size     = self._grad_info["total_size"]
         
-        self._params_slice_metadata     = None  # metadata for the parameter slices, e.g., (slice, name)
-        self._params_leaf_info          = None  # leaf information for the parameters - useful for the gradients
-        self._params_tree_def           = None  # tree definition for the parameters, meaning the structure of the parameters
-        self._params_total_size         = None  # total size of the parameters
-        #! ------------------------------------
-        self._flat_grad_func            = None  # function to calculate the gradients (returns a flat vector)
-        self._dict_grad_type            = None  # dictionary with the type of gradients (real/imaginary)
-        self._init_gradients()
-        self._init_param_metadata()
-        
-        #######################################
-        #! handle the functions for the ansatz - we will store them not to recompile them
-        #######################################
-        
-        self._params                    = None  # parameters of the network 
-        self._local_en_func             = None  # function to calculate the local energy (Callable[state])
-        self._ansatz_func               = None  # function to calculate the ansatz for a given state (using net, Callable[state, params])
-        self._ansatz_mod_func           = None  # function to calculate the ansatz for a given state (using net, Callable[state, params])
-        self._eval_func                 = None  # function to batch evaluate the ansatz (Callable[states, ansatz, params])
-        self._apply_func                = None  # function to apply callable with the ansatz (Callable[states, ansatz, params])
-        # set the gradient function if needed
-        self._grad_func                 = None
-        
-        #######################################
-        #! handle the optimizer
-        #######################################
-        
-        self._init_functions(batch_size=self._batch_size)
-        self._initialized               = True
-        
+        # --------------------------------------------------
+        #! Compile functions
+        # --------------------------------------------------
+        self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
+
+        # --------------------------------------------------
+        #! Model and physics setup
+        # --------------------------------------------------
+
+        self._model = model
+        self.nqsproblem.setup(self._model, self._net)
+        # For wavefunction problem we keep the same attribute name you used:
+        self._local_en_func = getattr(self.nqsproblem, "local_energy_fn", None)
+
         #######################################
         #! set the lower states
         #######################################
@@ -268,17 +213,14 @@ class NQS(MonteCarloSolver):
         #! directory to save the results
         #######################################
         self._init_directory()
-        
-        
         self._dir.mkdir()
         self._dir_detailed.mkdir()
         
         #! Orbax checkpoint manager
-        self._use_orbax = kwargs.get('use_orbax', True)
+        self._use_orbax         = kwargs.get('use_orbax', True)
         self._orbax_max_to_keep = kwargs.get('orbax_max_to_keep', 3)
 
-        if  (self._isjax and self._use_orbax and \
-                hasattr(self._net, 'net_module') and isinstance(self._net.net_module, nn.Module)):
+        if (self._isjax and self._use_orbax and hasattr(self._net, 'net_module') and isinstance(self._net.net_module, nn.Module)):
 
             #! set the checkpoint manager
             ckpt_base = Path(self._dir_detailed / 'checkpoints')
@@ -291,64 +233,6 @@ class NQS(MonteCarloSolver):
                 max_to_keep     = self._orbax_max_to_keep)
         else:
             self._ckpt_manager = None
-        
-    #####################################
-    #! NETWORK
-    #####################################
-    
-    def _choose_network(self, net_spec: Any, input_shape: tuple, backend: str, **kwargs) -> Networks.GeneralNet:
-        """
-        Selects, instantiates, and initializes the network object.
-        Ensures the returned network is initialized and conforms to GeneralNet.
-        
-        Parameters
-        ----------
-        net_spec : Any
-            The network specification, which can be a string, callable, or a GeneralNet instance.
-        input_shape : tuple
-            The shape of the input data for the network.
-        backend : str
-            The backend to be used for the network ('jax' or 'numpy').
-        **kwargs : dict
-            Additional keyword arguments for network instantiation.
-        Returns
-        -------
-        Networks.GeneralNet
-            An initialized instance of the specified network.
-            
-        Raises
-        ------
-        TypeError
-            If the provided network specification is of an unsupported type.
-        """
-        # Force backend to jax if needed
-        if issubclass(type(net_spec), nn.Module) or isinstance(net_spec, Networks.FlaxInterface):
-            backend = 'jax'
-            if not JAX_AVAILABLE:
-                raise ImportError("Flax requires JAX.")
-            
-        #! Check if the network is already a GeneralNet instance
-        if isinstance(net_spec, Networks.GeneralNet):
-            # If already a GeneralNet instance, ensure it's initialized
-            network_instance = net_spec
-            if not network_instance.initialized:
-                network_instance.init()
-            # TODO: Verify backend compatibility?
-            return network_instance
-        elif issubclass(type(net_spec), nn.Module) or callable(net_spec):
-            # Assume it's a Flax module class or similar callable needing wrapping
-            if backend != 'jax':
-                raise ValueError(f"Flax module {net_spec} requires 'jax' backend.")
-            # FlaxInterface handles its own initialization inside its __init__
-            return Networks.FlaxInterface(net_module=net_spec, input_shape=input_shape, backend=backend, **kwargs)
-        elif isinstance(net_spec, str):
-            # Use your existing Networks.choose_network factory
-            network_instance = Networks.choose_network(network_type=net_spec, input_shape=input_shape, backend=backend, **kwargs)
-            if not network_instance.initialized:
-                network_instance.init() # Ensure factory initializes if needed
-            return network_instance
-        else:
-            raise TypeError(f"Unsupported network specification type: {type(net_spec)}")
     
     #####################################
     #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
@@ -412,144 +296,6 @@ class NQS(MonteCarloSolver):
     
     # ---
     
-    def _init_param_metadata(self):
-        """
-        Initializes the parameter metadata for the neural quantum state (NQS).
-        This includes the parameter slices, names, and tree structure.
-        It uses the `jax.tree_util` module to flatten the parameters and
-        create a mapping of slices to names.
-        """
-        
-        if self._params_tree_def is None and self._isjax:
-        
-            current_params              = self._net.get_params()
-            
-            # get the parameter tree definition
-            _, self._params_tree_def    = tree_flatten(current_params)
-                        
-            # get the leaf information for the parameters
-            self._params_leaf_info      = net_utils.jaxpy.prepare_leaf_info(current_params)
-        
-            # get the parameter slices and names
-            self._params_slice_metadata = net_utils.jaxpy.prepare_unflatten_metadata_from_leaf_info(self._params_leaf_info)
-            
-            # get the sizes
-            self._params_sizes          = [slice_info.size for slice_info in self._params_slice_metadata]
-            
-            # get the shapes
-            self._params_shapes         = [slice_info.shape for slice_info in self._params_slice_metadata]
-            
-            # get the info about the type
-            self._params_iscpx          = [slice_info.is_complex for slice_info in self._params_slice_metadata]
-            
-            # get the total size of the parameters
-            self._params_total_size     = self._params_slice_metadata[-1].start + self._params_slice_metadata[-1].size if self._params_slice_metadata else 0
-    
-    # ---
-    
-    def _init_gradients(self):
-        """
-        Initializes the gradient computation method for the neural quantum state (NQS).
-        It sets up the gradient of the logarithmic wave function. It checks whether the network is:
-        - complex
-        - holomorphic
-        - has an analytic gradient solution
-        This method determines the appropriate gradient computation function and gradient type
-        based on the properties of the system, such as whether the system is complex-valued,
-        uses JAX for computation, employs analytic gradients, or is holomorphic.
-        Attributes:
-            self._flat_grad_func : A function for computing gradients in a flattened format.
-            self._dict_grad_type: A dictionary specifying the type of gradients to be used.
-        Dependencies:
-            - net_utils.decide_grads: A utility function that selects the gradient computation
-                method based on the provided flags.
-        Flags:
-            - self._iscpx: Boolean indicating if the system is complex-valued.
-            - self._isjax: Boolean indicating if JAX is used for computation.
-            - self._analytic: Boolean indicating if analytic gradients are used.
-            - self._holomorphic: Boolean indicating if the system is holomorphic.
-        """
-
-        self._flat_grad_func, self._dict_grad_type = net_utils.decide_grads(iscpx=self._iscpx,
-                            isjax=self._isjax, isanalytic=self._analytic, isholomorphic=self._holomorphic)
-        
-        if self._analytic:
-            
-            # Get analytical function handle from the network object
-            self.log(f"Analytical gradient function check...", log='info', lvl = 2, color = 'blue')
-            
-            analytical_pytree_fun, _ = self._net.get_gradient(use_jax=True)
-            if analytical_pytree_fun is None:
-                raise ValueError("Analytical gradient selected but network did not provide grad_func.")
-            # self._flat_grad_func = net_utils.jaxpy.get_analytical_gradient_function(analytical_pytree_fun, self._params_tree_def)
-            self.log(f"Analytical gradient function provided.", log='info', lvl = 2, color = 'blue')
-    
-    # ---
-
-    def _init_functions(self, batch_size: Optional[int] = None):
-        '''
-        Initialize the functions for the gradient and network evaluation.
-        1. Check if the backend is JAX or NumPy.
-        2. If so, set the evaluation and gradient functions to the appropriate JAX or NumPy functions.
-        '''
-        
-        #! set the batch size
-        self._batch_size = batch_size if batch_size is not None else self._batch_size
-        
-        #! set the evaluation function, look for the ansatz function and it's modifier
-        if not self.modified:
-            self._ansatz_func, self._params = self._net.get_apply(use_jax=self._isjax)
-        else:
-            self._ansatz_func, self._params = self.ansatz_modified, self._net.get_params()
-        #! gradient is unchanged with modifier
-        self._grad_func, self._params = self._net.get_gradient(use_jax=self._isjax)
-        
-        if self._isjax:
-            # ansatz evaluation function already JITted
-            self._eval_func             = jax.jit(net_utils.jaxpy.eval_batched_jax, static_argnums=(0, 1))
-            if self._batch_size > 1:
-                self._apply_func        = jax.jit(net_utils.jaxpy.apply_callable_batched_jax, static_argnums=(0, 4, 6))
-            else:
-                self._apply_func        = jax.jit(net_utils.jaxpy.apply_callable_jax, static_argnums=(0, 4))
-        else:
-            # ansatz evaluation function already compiled
-            self._eval_func             = net_utils.numpy.eval_batched_np
-            self._apply_func            = net_utils.numpy.apply_callable_batched_np
-        
-        # set the local energy function
-        self._init_hamiltonian(self._hamiltonian)
-
-    # ---
-    
-    def _init_hamiltonian(self, hamiltonian):
-        '''
-        Initialize the Hamiltonian.
-        Parameters:
-            hamiltonian: The Hamiltonian to be used.
-        '''
-        if hamiltonian is None:
-            raise ValueError(self._ERROR_NO_HAMILTONIAN)
-        self._hamiltonian = hamiltonian
-        
-        # Hamiltonian can be either a class containing the Hamiltonian
-        # or a function that returns the local energy given a state vector s
-        # set this callable function
-        if not isinstance(self._hamiltonian, Hamiltonian):
-            if not callable(self._hamiltonian):
-                raise ValueError(self._ERROR_HAMILTONIAN_TYPE)
-            # check if it accepts a state vector only
-            elif len(inspect.signature(self._hamiltonian).parameters) != 1:
-                raise ValueError(self._ERROR_HAMILTONIAN_ARGS)
-            else:
-                self._local_en_func = self._hamiltonian
-        else:
-            if self._isjax:
-                self._local_en_func = self._hamiltonian.get_loc_energy_jax_fun()
-            else:
-                self._local_en_func = self._hamiltonian.get_loc_energy_np_fun()
-
-    # ---
-    
     def init_network(self):
         '''
         Initialize the network truly. This means that the weights are initialized correctly 
@@ -597,36 +343,11 @@ class NQS(MonteCarloSolver):
             self._nparams           = self._net.nparams
             self._initialized       = True
     
-    # ---
-    
-    def init_state(self):
-        '''
-        Initialize the state of the network. This is done by creating a new
-        TrainState object with the network's parameters and the provided shape.
-        Returns:
-            flax.training.train_state.TrainState
-                The initialized TrainState object.
-        Note:
-            This method is only applicable if the backend is JAX and the network
-            is a Flax network. If the backend is not JAX, this method will return None.
-            
-        '''
-
-        if JAX_AVAILABLE and self._isjax and issubclass(type(self._net), net_flax.FlaxInterface):
-            params   = self._net.init(self._rngJAX_RND_DEFAULT_KEY, jnp.ones(self._shape, dtype=jnp.int32))
-            return flax.training.train_state.TrainState.create(
-                apply_fn = self._ansatz_func,
-                params   = params,
-                tx       = None
-            )
-        else:
-            return None
-    
     #####################################
     #! EVALUATION OF THE ANSATZ BATCHED (\psi(s))
     #####################################
     
-    def eval_jax(self, states, batch_size = None, params = None):
+    def _eval_jax(self, states, batch_size = None, params = None):
         """
         Evaluates the neural network (log ansatz) for the given quantum states using JAX.
         This method applies the network function to the provided quantum states, using
@@ -652,7 +373,7 @@ class NQS(MonteCarloSolver):
         # evaluate the network (log ansatz) using JAX
         return net_utils.jaxpy.eval_batched_jax(batch_size, self._ansatz_func, params, states)
     
-    def eval_np(self, states, batch_size = None, params = None):
+    def _eval_np(self, states, batch_size = None, params = None):
         """
         Evaluates the neural network (log ansatz) for the given quantum states using NumPy.
         This method applies the network function to the provided quantum states, using
@@ -677,7 +398,7 @@ class NQS(MonteCarloSolver):
         # evaluate the network (log ansatz) using NumPy
         return net_utils.numpy.eval_batched_np(batch_size, self._ansatz_func, params, states)
     
-    def evaluate_ansatz(self, states, batch_size = None, params = None):
+    def ansatz(self, states, batch_size = None, params = None):
         '''
         Evaluate the network using the provided state. This
         will return the log ansatz of the state coefficient.
@@ -697,8 +418,8 @@ class NQS(MonteCarloSolver):
             batch_size = self._batch_size
         
         if self._isjax:
-            return self.eval_jax(states, batch_size=batch_size, params=params)
-        return self.eval_np(states, batch_size=batch_size, params=params)
+            return self._eval_jax(states, batch_size=batch_size, params=params)
+        return self._eval_np(states, batch_size=batch_size, params=params)
     
     def __call__(self, states, **kwargs):
         '''
@@ -714,8 +435,18 @@ class NQS(MonteCarloSolver):
         Returns:
             The evaluated network output.
         '''
-        return self._eval_func(func=self._ansatz_func,
-                        data=states, batch_size=self._batch_size, params=self.get_params())
+        return self._eval_func(func=self._ansatz_func, data=states, batch_size=self._batch_size, params=self.get_params())
+    
+    @property
+    def eval_func(self):
+        '''
+        Returns the evaluation function for the network.
+        This function is used to evaluate the network on a batch of states.
+        
+        Returns:
+            Callable: The evaluation function.
+        '''
+        return self._eval_func
     
     #####################################
     #! EVALUATE FUNCTION VALUES - LOCAL ENERGY AND OTHER FUNCTIONS (OPERATORS)
@@ -723,13 +454,13 @@ class NQS(MonteCarloSolver):
     
     @staticmethod
     @partial(jax_jit, static_argnames=['func', 'logproba_fun', 'batch_size'])
-    def apply_fun_jax(func        : Callable,
-                    states        : jnp.ndarray,
-                    probabilities : jnp.ndarray,
-                    logproba_in   : jnp.ndarray,
-                    logproba_fun  : Callable,
-                    parameters    : Union[dict, list, jnp.ndarray],
-                    batch_size    : Optional[int] = None):
+    def _apply_fun_jax(func   : Callable,                           # function to be evaluated (e.g., local energy f: s -> E_loc(s))
+                states        : Array,                              # input states (shape: (N, ...))
+                probabilities : Array,                              # probabilities associated with the states (shape: (N,))
+                logproba_in   : Array,                              # logarithm of the probabilities for the input states (\log p(s))
+                logproba_fun  : Callable,                           # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
+                parameters    : Union[dict, list, jnp.ndarray],     # parameters to be passed to the function - for the Networks ansatze
+                batch_size    : Optional[int] = None):              # batch size for evaluation
         """
         Evaluates a given function on a set of states and probabilities, with optional batching.
         Args:
@@ -765,13 +496,13 @@ class NQS(MonteCarloSolver):
                             batch_size      = batch_size)
     
     @staticmethod
-    def apply_fun_np(func          : Callable,
-                        states        : np.ndarray,
-                        probabilities : np.ndarray,
-                        logproba_in   : np.ndarray,
-                        logproba_fun  : Callable,
-                        parameters    : Union[dict, list, np.ndarray],
-                        batch_size    : Optional[int] = None):
+    def _apply_fun_np(func    : Callable,
+                states        : np.ndarray,
+                probabilities : np.ndarray,
+                logproba_in   : np.ndarray,
+                logproba_fun  : Callable,
+                parameters    : Union[dict, list, np.ndarray],
+                batch_size    : Optional[int] = None):
         """
         Evaluates a given function on a set of states and probabilities, with optional batching.
         
@@ -796,10 +527,11 @@ class NQS(MonteCarloSolver):
         """
         
         if batch_size is None:
-            funct_in = net_utils.numpy.apply_callable_np
+            funct_in = net_utils.numpy.apply_callable_np # (func, states, probabilities, logproba_in, logproba_fun, parameters)
             return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters)
+        
         # otherwise, we shall use the batched version
-        funct_in = net_utils.numpy.apply_callable_batched_np
+        funct_in = net_utils.numpy.apply_callable_batched_np # (func, states, sample_probas, logprobas_in, logproba_fun, parameters, batch_size)
         return funct_in(func            = func,
                         states          = states,
                         sample_probas   = probabilities,
@@ -809,14 +541,14 @@ class NQS(MonteCarloSolver):
                         batch_size      = batch_size)
 
     @staticmethod
-    def _apply_fun(func          : Callable,
-                    states          : np.ndarray,
-                    probabilities   : np.ndarray,
-                    logproba_in     : np.ndarray,
-                    logproba_fun    : Callable,
-                    parameters      : Union[dict, list, np.ndarray],
-                    batch_size      : Optional[int] = None,
-                    is_jax          : bool          = True):
+    def _apply_fun(func     : Callable,
+            states          : np.ndarray,
+            probabilities   : np.ndarray,
+            logproba_in     : np.ndarray,
+            logproba_fun    : Callable,
+            parameters      : Union[dict, list, np.ndarray],
+            batch_size      : Optional[int] = None,
+            is_jax          : bool = True):
         """
         Evaluates a given function on a set of states and probabilities, with optional batching.
         
@@ -845,6 +577,7 @@ class NQS(MonteCarloSolver):
         if batch_size is None:
             funct_in = net_utils.jaxpy.apply_callable_jax if is_jax else net_utils.numpy.apply_callable_np
             return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters)
+        
         # otherwise, we shall use the batched version
         funct_in = net_utils.jaxpy.apply_callable_batched_jax if is_jax else net_utils.numpy.apply_callable_batched_np
         return funct_in(func            = func,
@@ -856,14 +589,14 @@ class NQS(MonteCarloSolver):
                         batch_size      = batch_size)
     
     @staticmethod
-    def _apply_fun_s(func        : list[Callable],
-                        sampler     : Sampler,
-                        num_samples : int,
-                        num_chains  : int,
-                        logproba_fun: Callable,
-                        parameters  : dict,
-                        batch_size  : Optional[int] = None,
-                        is_jax      : bool = True):
+    def _apply_fun_s(func   : list[Callable],
+                sampler     : Sampler,
+                num_samples : int,
+                num_chains  : int,
+                logproba_fun: Callable,
+                parameters  : dict,
+                batch_size  : Optional[int] = None,
+                is_jax      : bool = True):
         """
         Evaluates a given function using samples generated by a sampler.
 
@@ -995,11 +728,22 @@ class NQS(MonteCarloSolver):
 
         return self.apply(funct)
     
+    @property
+    def apply_func(self):
+        '''
+        Returns the apply function for the network.
+        This function is used to apply a function to a batch of states.
+        
+        Returns:
+            Callable: The apply function.
+        '''
+        return self._apply_fun_jax if self._isjax else self._apply_fun_np
+    
     #####################################
     #! SAMPLE
     #####################################
     
-    def sample(self, num_samples = None, num_chains = None, reset: bool = True):
+    def sample(self, num_samples = None, num_chains = None, reset: bool = True, *, params = None, **kwargs):
         '''
         Sample the NQS using the provided sampler. This will return
         the sampled states and the corresponding probabilities.
@@ -1011,27 +755,49 @@ class NQS(MonteCarloSolver):
             reset (bool):
                 Whether to reset the sampler before sampling. This 
                 corresponds to reinitializing the state before sampling the new ones.
+            params (dict):
+                The parameters (weights) to use for the network evaluation.
+                If None, uses the current parameters stored in network._params.
+            kwargs:
+                Additional arguments for the sampler.
         Returns:
             The sampled states and the corresponding probabilities.
             (last configs, last ansatze), (all configs, all ansatze), (all probabilities)
         '''
-        if reset:
+        if reset and hasattr(self._sampler, 'reset'):
             self._sampler.reset()
-        return self._sampler.sample(parameters=self._net.get_params(),
-                            num_samples=num_samples, num_chains=num_chains)
+        
+        if params is None:
+            params = self._net.get_params()
+            
+        return self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs)
     
+    @property
+    def sampler(self):
+        '''
+        Returns the sampler used for sampling the NQS.
+        '''
+        return self._sampler
+    
+    @property
+    def sampler_func(self, num_samples: int = None, num_chains: int = None):
+        '''
+        Returns the sampler function used for sampling the NQS.
+        '''
+        return self._sampler.get_sampler(num_samples=num_samples, num_chains=num_chains)
+
     #####################################
-    #! GRADIENTS
+    #! GRADIENTS AND LOG DERIVATIVES - FOR OPTIMIZATION
     #####################################
     
     @staticmethod
     @partial(jax.jit, static_argnums=(0, 3, 4))
-    def grad_jax(
-            net_apply                   : Callable,
-            params                      : Any,
-            states                      : jnp.ndarray,
-            single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],
-            batch_size                  : int = 1) -> jnp.ndarray:
+    def log_derivative_jax(
+            net_apply                   : Callable,                                     # The network's apply function f(p, x)
+            params                      : Any,                                          # Network parameters p
+            states                      : jnp.ndarray,                                  # Input states s_i, shape (num_samples, ...)
+            single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],  # JAX-traceable function computing the flattened gradient for one sample.
+            batch_size                  : int = 1) -> Array:                            # Batch size   
         '''
         Compute the batch of flattened gradients using JAX (JIT compiled).
 
@@ -1066,7 +832,7 @@ class NQS(MonteCarloSolver):
         return gradients_batch, shapes, sizes, is_cpx
     
     @staticmethod
-    def grad_np(net, params, batch_size, states, flat_grad):
+    def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
         '''
         !TODO: Add the precomputed gradient vector - memory efficient
         '''
@@ -1078,7 +844,7 @@ class NQS(MonteCarloSolver):
             g[i] = flat_grad(net, params, b)
         return g
     
-    def gradient(self, states, batch_size = None, params = None):
+    def log_derivative(self, states, batch_size = None, params = None, *args, **kwargs) -> Array:
         '''
         Compute the gradients of the ansatz logarithmic wave-function using JAX or NumPy.
         
@@ -1100,13 +866,24 @@ class NQS(MonteCarloSolver):
         
         if self._isjax:
             if not self._analytic:
-                return self.grad_jax(self._ansatz_func, params, states, self._flat_grad_func, batch_size)
-            return self.grad_jax(self._grad_func, params, states, self._flat_grad_func, batch_size)
+                return self.log_derivative_jax(self._ansatz_func, params, states, self._flat_grad_func, batch_size)
+            return self.log_derivative_jax(self._grad_func, params, states, self._flat_grad_func, batch_size)
         
         if not self._analytic:
-            return self.grad_np(self._ansatz_func, params, batch_size, states, self._flat_grad_func)
-        return self.grad_np(self._grad_func, params, batch_size, states, self._flat_grad_func)
-    
+            return self.log_derivative_np(self._ansatz_func, params, batch_size, states, self._flat_grad_func)
+        return self.log_derivative_np(self._grad_func, params, batch_size, states, self._flat_grad_func)
+
+    @property
+    def log_derivative_func(self):
+        '''
+        Returns the gradient function for the network.
+        This function is used to compute the gradients of the network.
+        
+        Returns:
+            Callable: The gradient function.
+        '''
+        return self.log_derivative_jax if self._isjax else self.log_derivative_np
+
     #####################################
     #! UPDATE PARAMETERS
     #####################################
@@ -1920,7 +1697,7 @@ class NQS(MonteCarloSolver):
                 - 'names': list of names for observables
                 - 'inset_axes': list of axes for insets
         """
-        from general_python.common.plot import Plotter
+        from QES.general_python.common.plot import Plotter
         
         timings = {}
         params  = self.get_params()

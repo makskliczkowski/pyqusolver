@@ -12,8 +12,8 @@ import Algebra.hilbert as hilbert_module
 import Algebra.hamil as hamil_module
 
 #! Random matrix wrapper and linear algebra utilities
-from general_python.algebra.ran_wrapper import set_global_seed
-from general_python.algebra.utils import Array
+from QES.general_python.algebra.ran_wrapper import set_global_seed
+from QES.general_python.algebra.utils import Array
 
 class PowerLawRandomBanded(hamil_module.Hamiltonian):
     r"""

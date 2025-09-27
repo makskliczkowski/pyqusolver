@@ -30,8 +30,8 @@ from Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wr
 ###################################################################################################
 import Algebra.Hamil.hamil_jit_methods as hjm
 ###################################################################################################
-from general_python.algebra.ran_wrapper import random_vector
-from general_python.algebra.utils import JAX_AVAILABLE, get_backend, ACTIVE_INT_TYPE, Array
+from QES.general_python.algebra.ran_wrapper import random_vector
+from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, ACTIVE_INT_TYPE, Array
 import general_python.algebra.linalg as linalg
 
 if JAX_AVAILABLE:

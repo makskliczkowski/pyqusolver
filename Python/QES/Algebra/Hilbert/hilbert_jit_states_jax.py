@@ -2,7 +2,7 @@ import numpy as np
 from typing import Union, Optional, Callable
 from functools import partial
 
-from general_python.algebra.utils import JAX_AVAILABLE
+from QES.general_python.algebra.utils import JAX_AVAILABLE
 
 if JAX_AVAILABLE:
     import jax.numpy as jnp

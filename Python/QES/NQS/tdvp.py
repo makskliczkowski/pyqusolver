@@ -9,8 +9,8 @@ import numba
 
 from contextlib import contextmanager
 from typing import Callable, Optional, Union, NamedTuple
-from general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
-from general_python.common.timer import timeit
+from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
+from QES.general_python.common.timer import timeit
 
 import general_python.algebra.solvers.stochastic_rcnfg as sr
 import general_python.algebra.solvers as solvers

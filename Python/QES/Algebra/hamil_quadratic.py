@@ -68,8 +68,8 @@ else:
     calculate_bcs_amp_jax       = None
     calculate_permament_jax     = None
 
-from general_python.common.binary import int2base, base2int, extract as Extractor
-from general_python.common import indices_from_mask, complement_indices
+from QES.general_python.common.binary import int2base, base2int, extract as Extractor
+from QES.general_python.common import indices_from_mask, complement_indices
 
 ##############################################################################
 

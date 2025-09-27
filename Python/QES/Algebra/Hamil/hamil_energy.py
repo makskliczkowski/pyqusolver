@@ -10,7 +10,7 @@ import numpy as np
 import numba.typed
 from numba.typed import List as NList
 from numba import types, int32, int64, float32, float64, complex64, complex128, typeof
-from general_python.algebra.utils import JAX_AVAILABLE
+from QES.general_python.algebra.utils import JAX_AVAILABLE
 from typing import Callable, Tuple, Optional, Any, List
 from Algebra.Hamil.hamil_energy_helper import unpack_operator_terms, flatten_operator_terms
 

@@ -11,7 +11,7 @@ from typing import Optional, Union, Tuple, List
 
 # import the quadratic base
 from Algebra.hamil_quadratic import QuadraticHamiltonian
-from general_python.lattices import Lattice
+from QES.general_python.lattices import Lattice
 
 try:
     from scipy.sparse import coo_matrix

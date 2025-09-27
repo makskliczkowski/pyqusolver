@@ -18,5 +18,19 @@
         "titleBar.inactiveBackground": "#21573299",
         "titleBar.inactiveForeground": "#e7e7e799"
     },
-    "peacock.color": "#215732"
+    "peacock.color": "#215732",
+    "python.envFile": "${workspaceFolder}/.env",
+    "python.analysis.include": [
+        "/Users/makskliczkowski/Codes/pyqusolver/Python",
+        "${QES_PYPATH}",
+        "${QES_PYPATH}/QES",
+        "${QES_PYPATH}/",
+        "${QES_PYPATH}/QES/general_python",
+        "${QES_PYPATH_GEN_PYTHON}"
+    ],
+    "python.analysis.extraPaths": [
+        "/Users/makskliczkowski/Codes/pyqusolver/Python",
+        "${QES_PYPATH}",
+        "${QES_PYPATH_GEN_PYTHON}"
+    ]
 }

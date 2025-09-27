@@ -26,16 +26,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     # general thingies
-    from general_python.common.flog import get_global_logger, Logger
-    from general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
-    from general_python.common.binary import bin_search
+    from QES.general_python.common.flog import get_global_logger, Logger
+    from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
+    from QES.general_python.common.binary import bin_search
     
-    # already imported from general_python
+    # already imported from QES.general_python
     from Algebra.Hilbert.hilbert_jit_states import get_backend, JAX_AVAILABLE, ACTIVE_INT_TYPE, maybe_jit
 
     #################################################################################################
     if JAX_AVAILABLE:
-        from general_python.algebra.utils import pad_array
+        from QES.general_python.algebra.utils import pad_array
     
     #################################################################################################
     from Algebra.Operator.operator import ( Operator, LocalSpace, LocalSpaceTypes, StateTypes,      

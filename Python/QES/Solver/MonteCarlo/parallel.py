@@ -15,11 +15,11 @@ from dataclasses import dataclass
 from enum import Enum, auto, unique
 
 # from algebra
-from general_python.algebra.utils import JAX_AVAILABLE, get_backend
-from general_python.algebra.ran_wrapper import choice, randint, uniform
-from general_python.common.directories import Directories
-from general_python.common.flog import get_global_logger, Logger
-from general_python.common.timer import Timer
+from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
+from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
+from QES.general_python.common.directories import Directories
+from QES.general_python.common.flog import get_global_logger, Logger
+from QES.general_python.common.timer import Timer
 import general_python.common.binary as Binary
 
 ###################################

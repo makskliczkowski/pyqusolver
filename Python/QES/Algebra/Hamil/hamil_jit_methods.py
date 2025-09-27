@@ -21,7 +21,7 @@ matrix operations, eigenvalue solvers, and advanced Hamiltonian manipulation rou
 import numba
 import numpy as np
 import scipy.sparse as sp
-from general_python.algebra.utils import JAX_AVAILABLE, Array
+from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
 
 if JAX_AVAILABLE:
     import jax

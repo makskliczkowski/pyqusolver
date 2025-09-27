@@ -9,15 +9,15 @@ from dataclasses import dataclass
 from enum import Enum, auto, unique
 
 # from algebra
-from general_python.algebra.utils import JAX_AVAILABLE, get_backend
-from general_python.algebra.ran_wrapper import choice, randint, uniform
-from general_python.common.directories import Directories
+from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
+from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
+from QES.general_python.common.directories import Directories
 
 # from hilbert
 from Algebra.hilbert import HilbertSpace
 
 # precodintioners etc.
-from general_python.algebra.preconditioners import Preconditioner
+from QES.general_python.algebra.preconditioners import Preconditioner
 
 # JAX imports
 if JAX_AVAILABLE:

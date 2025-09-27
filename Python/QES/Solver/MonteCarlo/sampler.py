@@ -39,9 +39,9 @@ from abc import ABC, abstractmethod
 from enum import Enum, auto, unique
 
 # from algebra
-from general_python.algebra.utils import JAX_AVAILABLE, get_backend, DEFAULT_JP_INT_TYPE, DEFAULT_BACKEND_KEY, Array
-from general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, distinguish_type
-from general_python.algebra.ran_wrapper import choice, randint_np, randint_jax
+from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, DEFAULT_JP_INT_TYPE, DEFAULT_BACKEND_KEY, Array
+from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, distinguish_type
+from QES.general_python.algebra.ran_wrapper import choice, randint_np, randint_jax
 import general_python.common.binary as Binary
 
 # from hilbert
@@ -612,8 +612,11 @@ class Sampler(ABC):
         
         # set the backend
         self._backendstr    = 'np' if not self._isjax else 'jax'
-        self._statetype     = distinguish_type(statetype, 'numpy' if not self._isjax else 'jax')
         self._makediffer    = makediffer
+        
+        # handle the initial state
+        statetype           = int if statetype is None else statetype
+        self._statetype     = distinguish_type(statetype, 'numpy' if not self._isjax else 'jax')
         
         # handle the Hilbert space - may control state initialization
         self._hilbert       = hilbert
@@ -873,19 +876,26 @@ class Sampler(ABC):
     ###################################################################
     
     @abstractmethod
-    def get_sampler_jax(self, num_samples=None, num_chains=None):
+    def _get_sampler_jax(self, num_samples=None, num_chains=None):
         """
         Get the JAX sampler instance.
         """
         pass
     
     @abstractmethod
-    def get_sampler_np(self, num_samples=None, num_chains=None):
+    def _get_sampler_np(self, num_samples=None, num_chains=None):
         """
         Get the NumPy sampler instance.
         """
         pass
-    
+
+    @abstractmethod
+    def get_sampler(self, num_samples=None, num_chains=None):
+        """
+        Get the sampler instance based on the backend.
+        """
+        pass
+
 #######################################################################    
 
 class MCSampler(Sampler):
@@ -1006,7 +1016,7 @@ class MCSampler(Sampler):
         self._net_callable, self._parameters = self._set_net_callable(net)
 
         # set the parameters - this for modification of the distribution
-        self._mu            = mu
+        self._mu = mu
         if self._mu < 0.0 or self._mu > 2.0:
             raise ValueError(SamplerErrors.NOT_IN_RANGE_MU)
         
@@ -1028,11 +1038,7 @@ class MCSampler(Sampler):
             else:
                 # For NumPy backend, bind the RNG to the updater.
                 self._upd_fun = _propose_random_flip_np
-
-        if self._isjax:
-            self._static_sample_fun = self.get_sampler_jax(num_samples=self._numsamples, num_chains=self._numchains)
-        else:
-            self._static_sample_fun = self.get_sampler_np(num_samples=self._numsamples, num_chains=self._numchains)
+        self._static_sample_fun                 = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
     
     #####################################################################
     
@@ -2209,7 +2215,7 @@ class MCSampler(Sampler):
             return self._get_sampler_np(num_samples, num_chains)
         else:
             raise RuntimeError("Sampler backend must be either 'jax' or 'numpy'.")
-    
+
 #######################################################################
 
 @unique
@@ -2228,7 +2234,7 @@ class SamplerType(Enum):
             return SamplerType[s]
         except KeyError:
             raise ValueError(f"Invalid SamplerType: {s}") from None
-    
+
 #######################################################################
 
 def get_sampler(typek: Union[str, SamplerType, Sampler], *args, **kwargs) -> Sampler:

@@ -115,10 +115,10 @@ from Algebra.Operator.operator import (
 )
 ################################################################################
 
-from general_python.common.tests import GeneralAlgebraicTest
-from general_python.lattices.lattice import Lattice
-from general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
-from general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
+from QES.general_python.common.tests import GeneralAlgebraicTest
+from QES.general_python.lattices.lattice import Lattice
+from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
+from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
 import general_python.common.binary as _binary
 
 if JAX_AVAILABLE:

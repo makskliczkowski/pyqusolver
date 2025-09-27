@@ -32,7 +32,7 @@ from contextlib import contextmanager
 # IMPORTANT:
 # - No sys.path hacks here. The package should be installed/editable (`pip install -e .`).
 # - Use absolute, package-local imports.
-from general_python.algebra.utils import PRNGKey, backend_mgr, get_global_logger, get_global_backend
+from QES.general_python.algebra.utils import PRNGKey, backend_mgr, get_global_logger, get_global_backend
 
 ####################################################################################################
 

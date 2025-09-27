@@ -48,7 +48,7 @@ import numba
 from typing import List, Union, Optional, Callable, Sequence
 from functools import partial
 
-from general_python.algebra.utils import JAX_AVAILABLE, Array, DEFAULT_JP_FLOAT_TYPE, DEFAULT_JP_CPX_TYPE, DEFAULT_JP_INT_TYPE
+from QES.general_python.algebra.utils import JAX_AVAILABLE, Array, DEFAULT_JP_FLOAT_TYPE, DEFAULT_JP_CPX_TYPE, DEFAULT_JP_INT_TYPE
 from Algebra.Operator.operator import ensure_operator_output_shape_jax
 import general_python.common.binary as _binary
 

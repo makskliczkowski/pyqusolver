@@ -33,8 +33,8 @@ from typing import Union, Tuple, List               # type hints for the functio
 from functools import partial                       # partial function application for operator composition
 ####################################################################################################
 from Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, StateTypes, LocalOpKernels
-from general_python.algebra.utils import get_backend as get_backend, JAX_AVAILABLE, Array
-from general_python.lattices import Lattice
+from QES.general_python.algebra.utils import get_backend as get_backend, JAX_AVAILABLE, Array
+from QES.general_python.lattices import Lattice
 # from Algebra.hilbert import HilbertSpace
 ####################################################################################################
 
@@ -2066,7 +2066,7 @@ def initial_states(ns       : int,
             - jnp_state: a random JAX state (jnp.ndarray) of size ns
     '''
     import QES.general_python.common.binary as _bin_mod
-    from general_python.common.display import display_state
+    from QES.general_python.common.display import display_state
     
     #! Take the integer state as input
     int_state = np.random.randint(0, 2**(ns%64), dtype=np.int32) if int_state is None else int_state

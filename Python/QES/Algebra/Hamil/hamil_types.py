@@ -5,7 +5,7 @@ A Hamiltonian model is defined as a class of Hamiltonians that share a common st
 
 Date: 2025-02-01
 '''
-from general_python.algebra.utils import distinguish_type
+from QES.general_python.algebra.utils import distinguish_type
 from enum import Enum, unique
 import numba
 

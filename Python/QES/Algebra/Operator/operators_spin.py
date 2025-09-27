@@ -28,13 +28,13 @@ from Algebra.Operator.operator import (
     create_operator, ensure_operator_output_shape_numba
 )
 ################################################################################
-from general_python.common.tests import GeneralAlgebraicTest
-from general_python.lattices.lattice import Lattice
-from general_python.algebra.utils import DEFAULT_BACKEND, get_backend, maybe_jit
-from general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
-from general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
+from QES.general_python.common.tests import GeneralAlgebraicTest
+from QES.general_python.lattices.lattice import Lattice
+from QES.general_python.algebra.utils import DEFAULT_BACKEND, get_backend, maybe_jit
+from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
+from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
 import general_python.common.binary as _binary
-from general_python.common.binary import (
+from QES.general_python.common.binary import (
     flip, flip_all, check, base2int, int2base, int2binstr
 )
 ################################################################################
@@ -1316,7 +1316,7 @@ def test_spin_operator_matrices(nh = 4, site = 0):
         None
     """
     
-    from general_python.common.plot import MatrixPrinter
+    from QES.general_python.common.plot import MatrixPrinter
     
     # Set the Hilbert space dimension (for example, 4) and construct an identity.
     # Create a dense identity for the first subsystem.

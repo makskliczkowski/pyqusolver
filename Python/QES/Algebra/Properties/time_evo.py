@@ -20,8 +20,8 @@ import numpy as np
 from enum import Enum
 
 try:
-    from general_python.common import binary as BinaryMod
-    from general_python.algebra.utils import Array
+    from QES.general_python.common import binary as BinaryMod
+    from QES.general_python.algebra.utils import Array
 except ImportError as e:
     raise ImportError("Error importing modules in time_evo.py: " + str(e))
 

@@ -15,8 +15,8 @@ import numba
 _INT_BINARY_REPR       = 64
 _INT_HUGE_REPR         = np.iinfo(np.int64).max
 _SYM_NORM_THRESHOLD    = 1e-12
-from general_python.common.binary import bin_search
-from general_python.algebra.utils import get_backend, JAX_AVAILABLE, ACTIVE_INT_TYPE, Array, maybe_jit
+from QES.general_python.common.binary import bin_search
+from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, ACTIVE_INT_TYPE, Array, maybe_jit
 
 
 ####################################################################################################

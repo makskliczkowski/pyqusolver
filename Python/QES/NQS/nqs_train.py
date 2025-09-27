@@ -11,15 +11,15 @@ from contextlib import contextmanager
 from tqdm import trange
 from typing import Union
 
-from general_python.common.plot import Plotter, colorsCycle, linestylesCycle
-from general_python.common.flog import Logger
-from general_python.common.timer import timeit
+from QES.general_python.common.plot import Plotter, colorsCycle, linestylesCycle
+from QES.general_python.common.flog import Logger
+from QES.general_python.common.timer import timeit
 
 #! NQS
 from NQS.nqs import NQS
 from NQS.tdvp import TDVP
-from general_python.algebra.ode import IVP
-from general_python.ml.schedulers import Parameters, EarlyStopping
+from QES.general_python.algebra.ode import IVP
+from QES.general_python.ml.schedulers import Parameters, EarlyStopping
 
 class NQSTrainer:
     def __init__( self,

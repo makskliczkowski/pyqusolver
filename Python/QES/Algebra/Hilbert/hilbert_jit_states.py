@@ -13,9 +13,9 @@ from typing import Union, Optional, Callable, Tuple
 
 #! jax
 import Algebra.Hilbert.hilbert_jit_states_jax as jnp
-from general_python.algebra.utilities import pfaffian as pfaffian
-from general_python.algebra.utilities import hafnian as hafnian
-from general_python.common.binary import int2binstr, check_int_l
+from QES.general_python.algebra.utilities import pfaffian as pfaffian
+from QES.general_python.algebra.utilities import hafnian as hafnian
+from QES.general_python.common.binary import int2binstr, check_int_l
 
 # Signature: pfaff(A, n)    (antisymmetric, even n)
 PfFunc              = Callable[[Array, int], Union[float, complex]]

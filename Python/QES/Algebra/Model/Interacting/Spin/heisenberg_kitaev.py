@@ -19,8 +19,8 @@ from Algebra.Operator import operators_spin as operators_spin_module
 
 ##########################################################################################
 import general_python.algebra.linalg as linalg
-from general_python.lattices.lattice import Lattice, LatticeType
-from general_python.lattices.honeycomb import HoneycombLattice
+from QES.general_python.lattices.lattice import Lattice, LatticeType
+from QES.general_python.lattices.honeycomb import HoneycombLattice
 
 # ----------------------------------------------------------------------------------------
 #! DEFINE CONSTANTS
