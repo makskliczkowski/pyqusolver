@@ -76,8 +76,6 @@ class NQS(MonteCarloSolver):
                 # information on the Monte Carlo solver
                 batch_size  : Optional[int]                             = 1,
                 # information on the NQS
-                lower_states: Optional[list]                            = None,
-                lower_betas : Optional[list]                            = None,
                 nparticles  : Optional[int]                             = None,
                 # information on the Monte Carlo solver     
                 seed        : Optional[int]                             = None,
@@ -159,6 +157,7 @@ class NQS(MonteCarloSolver):
         self._nvisible          = self._size
         self._nparticles2       = self._nparticles**2
         self._nvisible2         = self._nvisible**2
+        self._beta_penalty      = kwargs.get('beta_penalty', 0.0)
         
         # --------------------------------------------------
         #! Backend
@@ -210,17 +209,8 @@ class NQS(MonteCarloSolver):
         self._model = model
         self._nqsproblem.setup(self._model, self._net)
         # For wavefunction problem we keep the same attribute name you used:
-        self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
+        self._local_en_func         = getattr(self._nqsproblem, "local_energy_fn", None)
 
-        #######################################
-        #! set the lower states
-        #######################################
-        
-        # if lower_states is not None and lower_betas is not None:
-        #     self._lower_states_manager = NQSLower(lower_states, lower_betas, self)
-        # else:
-        #     self._lower_states_manager = NQSLower([], [], self)
-            
         #######################################
         #! directory to save the results
         #######################################
@@ -1597,6 +1587,13 @@ class NQS(MonteCarloSolver):
     #####################################
     
     @property
+    def beta_penalty(self):
+        '''
+        Return the beta penalty.
+        '''
+        return self._beta_penalty
+    
+    @property
     def net(self):
         '''
         Return the neural network.
@@ -1673,6 +1670,20 @@ class NQS(MonteCarloSolver):
         Return the local energy function.
         '''
         return self._local_en_func
+    
+    @property
+    def nvis(self):
+        '''
+        Return the number of visible units in the neural network.
+        '''
+        return self._nvisible
+    
+    @property
+    def npar(self):
+        '''
+        Return the number of parameters in the neural network.
+        '''
+        return self._params_total_size
     
     #####################################
 

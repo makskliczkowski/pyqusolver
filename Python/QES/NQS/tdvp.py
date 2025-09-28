@@ -4,17 +4,28 @@ author  : Maksymilian Kliczkowski
 email   : maksymilian.kliczkowski@pwr.edu.pl
 '''
 
+import os
+import sys
 import numpy as np
-import numba
-
+import warnings
+from dataclasses import dataclass, field
 from contextlib import contextmanager
-from typing import Callable, Optional, Union, NamedTuple
-from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
-from QES.general_python.common.timer import timeit
+from typing import Callable, Optional, Union, Any, List
 
-import general_python.algebra.solvers.stochastic_rcnfg as sr
-import general_python.algebra.solvers as solvers
-import general_python.algebra.preconditioners as precond
+try:
+    JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
+    from QES.general_python.common.timer import timeit
+    from QES.general_python.algebra.utils import get_backend, Array
+    
+    # Stochastic reconfiguration for TDVP
+    import QES.general_python.algebra.solvers.stochastic_rcnfg as sr
+    
+    # Preconditioners and Solvers for A * x = b
+    import QES.general_python.algebra.preconditioners as precond
+    import QES.general_python.algebra.solvers as solvers
+except ImportError:
+    raise ImportError("Please install the 'general_python' package...")
+
 
 if JAX_AVAILABLE:
     import jax
@@ -25,15 +36,90 @@ else:
 
 #################################################################
 
-class TDVPStepInfo(NamedTuple):
+@dataclass
+class TDVPTimes:
+    prepare     : float = 0.0
+    gradient    : float = 0.0
+    covariance  : float = 0.0
+    x0          : float = 0.0
+    solve       : float = 0.0
+    
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
+
+    def todict(self):
+        return {
+            'prepare'   : self.prepare,
+            'gradient'  : self.gradient,
+            'covariance': self.covariance,
+            'x0'        : self.x0,
+            'solve'     : self.solve,
+            'epoch'     : self.prepare + self.gradient + self.covariance + self.x0 + self.solve
+        }
+        
+@dataclass
+class TDVPStepInfo:
     mean_energy     : Array
     std_energy      : Array
+    # other
     failed          : Optional[bool] = None
     sr_converged    : Optional[bool] = None
     sr_executed     : Optional[bool] = None
     sr_iterations   : Optional[int]  = None
-    times           : Optional[dict] = None
+    timings         : TDVPTimes = field(default_factory=TDVPTimes)
 
+#################################################################
+
+@dataclass
+class TDVPLowerPenalty:
+    # most important
+    excited_on_lower        : Array         # (n_j,) complex; ratios Ψ_{W}(σ_j)
+    lower_on_excited        : Array         # (n_j,) complex; ratios Ψ_{W_j}(σ)
+    # parameters of the lower state
+    lower_on_lower          : Array         # (n_j,) complex; ratios Ψ_{W_j}(σ_j)
+    excited_on_excited      : Array         # (n_j,) complex; ratios Ψ_{W}(σ)
+    # samples drawn from pi(.; params_j)
+    params_j                : Any
+    configs_j               : Array         # (n_j, ...)
+    
+    # optional, kept for symmetry
+    probabilities_j         : Optional[Array] = None
+    # penalty parameter
+    beta_j                  : float = 0.0
+    # optional, kept for symmetry
+    r_le                    : np.array = None  # (n_j,) complex; ratios Ψ_{W}(σ)/Ψ_{W_j}(σ) on configs_j
+    r_el                    : np.array = None  # (n_j,) complex; ratios E_loc^{W}(σ)Ψ_{W}(σ)/Ψ_{W_j}(σ) on configs
+    # backend
+    backend_np              : Any = jnp if JAX_AVAILABLE else np
+    
+    def compute_ratios(self):
+        '''
+        Compute the ratios needed for the penalty terms.
+        The results are stored in self.r_le and self.r_el.
+        '''
+        
+        if self.excited_on_lower.shape != self.lower_on_lower.shape:
+            raise ValueError(f"Shapes of excited_on_lower {self.excited_on_lower.shape} and lower_on_lower {self.lower_on_lower.shape} do not match.")
+        
+        if self.excited_on_excited.shape != self.lower_on_excited.shape:
+            raise ValueError(f"Shapes of excited_on_excited {self.excited_on_excited.shape} and lower_on_excited {self.lower_on_excited.shape} do not match.")
+        
+        if self.excited_on_lower.shape != self.excited_on_excited.shape:
+            raise ValueError(f"Shapes of excited_on_lower {self.excited_on_lower.shape} and excited_on_excited {self.excited_on_excited.shape} do not match.")
+        
+        #! compute r_le
+        self.r_le = self.backend_np.exp(self.lower_on_excited - self.excited_on_excited)
+        
+        #! compute r_el
+        self.r_el = self.backend_np.exp(self.excited_on_lower - self.lower_on_lower)
+
+    def __post_init__(self):
+        self.r_le = jnp.zeros_like(self.configs_j, dtype=jnp.complex64)
+        self.r_el = jnp.zeros_like(self.configs_j, dtype=jnp.complex64)
+        self.compute_ratios()
 
 #################################################################
 
@@ -85,33 +171,52 @@ class TDVP:
     
     '''
     
+    #!TODO: Create META for TDVP parameters - for SR and LinSolvers
+    @dataclass
+    class TDVPCompiledMeta:
+        gradient_fn         : Callable
+        loss_c_fn           : Callable
+        deriv_c_fn          : Callable
+        covariance_fn       : Callable
+        prepare_fn          : Callable
+        prepare_fn_m        : Callable
+        # jitted versions
+        gradient_fn_j       : Callable
+        loss_c_fn_j         : Callable
+        deriv_c_fn_j        : Callable
+        covariance_fn_j     : Callable
+        prepare_fn_j        : Callable
+        prepare_fn_m_j      : Callable
+        # flags
+        is_jax              : bool
+    
     def __init__(
             self,
             use_sr          : bool                              = True,
             use_minsr       : bool                              = False,
             rhs_prefactor   : Union[float, complex]             = 1.0,
             # Stochastic reconfiguration parameters
-            sr_lin_solver   : Optional[solvers.Solver]          = None,
-            sr_precond      : Optional[precond.Preconditioner]  = None,
-            sr_snr_tol      : float                             = 1e-3,
-            sr_pinv_tol     : float                             = 1e-14,
-            sr_pinv_cutoff  : float                             = 1e-8,
-            sr_diag_shift   : float                             = 0.0,
-            sr_lin_solver_t : Optional[solvers.SolverForm]      = solvers.SolverForm.GRAM,
-            sr_lin_x0       : Optional[Array]                   = None,
-            sr_maxiter      : int                               = 100,
+            sr_lin_solver   : Optional[solvers.Solver]          = None,     # default solver
+            sr_precond      : Optional[precond.Preconditioner]  = None,     # default preconditioner
+            sr_snr_tol      : float                             = 1e-3,     # for signal-to-noise ratio
+            sr_pinv_tol     : float                             = 1e-14,    # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
+            sr_pinv_cutoff  : float                             = 1e-8,     # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
+            sr_diag_shift   : float                             = 0.0,      # diagonal shift for the covariance matrix in case of ill-conditioning
+            sr_lin_solver_t : Optional[solvers.SolverForm]      = solvers.SolverForm.GRAM, # form of the solver - gram, matvec, matrix
+            sr_lin_x0       : Optional[Array]                   = None,     # initial guess for the solver
+            sr_maxiter      : int                               = 100,      # maximum number of iterations for the linear solver
             # Backend
-            backend         : str                               = 'default',
+            backend         : str                               = 'default',# 'jax' or 'numpy'
         ):
         
         self.backend         = get_backend(backend)
         self.is_jax          = not (backend == 'numpy' or backend == 'np' or backend == np)
         self.is_np           = not self.is_jax
         self.backend_str     = 'jax' if self.is_jax else 'numpy'
-            
+        
         self.use_sr          = use_sr
         self.use_minsr       = use_minsr
-        self.rhs_prefactor     = rhs_prefactor
+        self.rhs_prefactor   = rhs_prefactor
         self.form_matrix     = False    # flag to indicate if the full matrix is formed
         
         #! handle the stochastic reconfiguration parameters
@@ -122,18 +227,26 @@ class TDVP:
         self.sr_maxiter      = sr_maxiter
         
         #! handle the solver
-        self.sr_solve_lin    = None
-        self.sr_solve_lin_t  = sr_lin_solver_t
-        self.sr_solve_lin_fn = None
-        self.set_solver(sr_lin_solver)
-        
+        try:
+            self.sr_solve_lin    = None
+            self.sr_solve_lin_t  = sr_lin_solver_t
+            self.sr_solve_lin_fn = None
+            self.set_solver(sr_lin_solver)
+        except Exception as e:
+            warnings.warn(f"Solver could not be set: {e}")
+            raise e
+            
         #! handle the preconditioner
-        self.sr_precond      = None
-        self.sr_precond_fn   = None
-        self.set_preconditioner(sr_precond)
+        try:
+            self.sr_precond      = None
+            self.sr_precond_fn   = None
+            self.set_preconditioner(sr_precond)
+        except Exception as e:
+            warnings.warn(f"Preconditioner could not be set: {e}")
+            raise e
 
         self.meta            = None
-                
+        
         # Helper storage
         self._e_local_mean   = None
         self._e_local_std    = None
@@ -143,15 +256,8 @@ class TDVP:
         self._n_samples      = None     # number of samples
         self._full_size      = None     # full size of the covariance matrix
         self._x0             = sr_lin_x0
-        
-        self.timings         = {
-            'prepare'   : 0.0,
-            'gradient'  : 0.0,
-            'covariance': 0.0,
-            'x0'        : 0.0,
-            'solve'     : 0.0,
-        }
-        
+        self.timings         = TDVPTimes()
+
         #! functions
         self._init_functions()
 
@@ -172,7 +278,7 @@ class TDVP:
         yield result
 
     ###################
-    #! SETTERS
+    #! INITIALIZATION
     ###################
     
     def _init_functions(self):
@@ -188,49 +294,41 @@ class TDVP:
         current backend and configuration.
         """
         
-        self._gradient_fn    = sr.gradient_jax if self.is_jax else sr.gradient_np
-        self._loss_c_fn      = sr.loss_centered_jax if self.is_jax else sr.loss_centered
-        self._deriv_c_fn     = sr.derivatives_centered_jax if self.is_jax else sr.derivatives_centered
+        self._gradient_fn           = sr.gradient_jax if self.is_jax else sr.gradient_np
+        self._loss_c_fn             = sr.loss_centered_jax if self.is_jax else sr.loss_centered
+        self._deriv_c_fn            = sr.derivatives_centered_jax if self.is_jax else sr.derivatives_centered
         
+        # covariance functions - standard and minsr
         if self.use_minsr:
-            self._covariance_fn  = sr.covariance_jax_minsr if self.is_jax else sr.covariance_np_minsr
+            self._covariance_fn     = sr.covariance_jax_minsr if self.is_jax else sr.covariance_np_minsr
         else:
-            self._covariance_fn  = sr.covariance_jax if self.is_jax else sr.covariance_np
-            
+            self._covariance_fn     = sr.covariance_jax if self.is_jax else sr.covariance_np
+
         # modified and standard preparation functions
-        self._prepare_fn     = sr.solve_jax_prepare if self.is_jax else sr.solve_numpy_prepare
-        self._prepare_fn_m   = sr.solve_jax_prepare_modified_ratios if self.is_jax else sr.solve_numpy_prepare_modified_ratios
+        self._prepare_fn            = sr.solve_jax_prepare if self.is_jax else sr.solve_numpy_prepare
+        self._prepare_fn_m          = sr.solve_jax_prepare_modified_ratios if self.is_jax else sr.solve_numpy_prepare
             
-        #! store the jitted functions
-        if self.is_jax:
-            self._gradient_fn_j     = jax.jit(self._gradient_fn)
-            self._loss_c_fn_j       = jax.jit(self._loss_c_fn)
-            self._deriv_c_fn_j      = jax.jit(self._deriv_c_fn)
-            self._covariance_fn_j   = jax.jit(self._covariance_fn)
-            self._prepare_fn_j      = jax.jit(self._prepare_fn)
-            self._prepare_fn_m_j    = jax.jit(self._prepare_fn_m)
-        else:
-            self._gradient_fn_j     = self._gradient_fn
-            self._loss_c_fn_j       = self._loss_c_fn
-            self._deriv_c_fn_j      = self._deriv_c_fn
-            self._covariance_fn_j   = self._covariance_fn
-            self._prepare_fn_j      = self._prepare_fn
-            self._prepare_fn_m_j    = self._prepare_fn_m
-    
-    def set_solver(self, solver: Callable):
-        '''
-        Set the solver for the TDVP equation.
-        
-        Parameters
-        ----------
-        solver : Callable
-            The solver function to be used for the TDVP equation.
-        '''
-        self.sr_solve_lin = solver
-        self._init_solver_lin()
-    
+        try:
+            #! store the jitted functions
+            if self.is_jax:
+                self._gradient_fn_j     = jax.jit(self._gradient_fn)
+                self._loss_c_fn_j       = jax.jit(self._loss_c_fn)
+                self._deriv_c_fn_j      = jax.jit(self._deriv_c_fn)
+                self._covariance_fn_j   = jax.jit(self._covariance_fn)
+                self._prepare_fn_j      = jax.jit(self._prepare_fn)
+                self._prepare_fn_m_j    = jax.jit(self._prepare_fn_m)
+            else:
+                self._gradient_fn_j     = self._gradient_fn
+                self._loss_c_fn_j       = self._loss_c_fn
+                self._deriv_c_fn_j      = self._deriv_c_fn
+                self._covariance_fn_j   = self._covariance_fn
+                self._prepare_fn_j      = self._prepare_fn
+                self._prepare_fn_m_j    = self._prepare_fn_m
+        except Exception as e:
+            raise e
+
     def _init_solver_lin(self):
-        """
+        r"""
         Initializes the linear solver for the stochastic reconfiguration (SR) method.
         This method sets up the appropriate solver function (`sr_solve_lin_fn`) based on the type of solver specified
         by `sr_solve_lin_t` and the solver instance `sr_solve_lin`. It determines whether to form the full matrix or use
@@ -269,6 +367,55 @@ class TDVP:
             
         elif self.use_sr and self.sr_solve_lin is None:
             raise ValueError('The solver is not set. Please set the solver or use the default one.') 
+
+    def _init_preconditioner(self):
+        """
+        Initializes the preconditioner function for the stochastic reconfiguration (SR) solver
+        based on the selected solver form.
+
+        Depending on the value of `self.sr_solve_lin_t`, this method assigns the appropriate
+        preconditioner application function from `self.sr_precond` to `self.sr_precond_fn`:
+            - If `GRAM`,    uses `get_apply_gram()`
+            - If `MATVEC`,  uses `get_apply()`
+            - If `MATRIX`,  uses `get_apply_mat()`
+        Raises a ValueError if the solver form is unrecognized or if the preconditioner is not set.
+
+        Raises:
+            ValueError: If the preconditioner is not set or the solver form is invalid.
+        """
+        if  isinstance(self.sr_precond, str) or                                 \
+            isinstance(self.sr_precond, precond.PreconditionersTypeSym) or      \
+            isinstance(self.sr_precond, precond.PreconditionersTypeNoSym) or    \
+            isinstance(self.sr_precond, precond.PreconditionersType) or         \
+            hasattr(self.sr_precond, 'value') and isinstance(self.sr_precond.value, int):
+            
+            self.sr_precond = precond.choose_precond(precond_id=self.sr_precond, backend=self.backend)
+        
+        if self.sr_precond is not None:
+            if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
+                self.sr_precond_fn = self.sr_precond.get_apply_gram()
+            elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
+                self.sr_precond_fn = self.sr_precond.get_apply()
+            elif self.sr_solve_lin_t == solvers.SolverForm.MATRIX.value:
+                self.sr_precond_fn = self.sr_precond.get_apply_mat()
+            else:
+                raise ValueError('The preconditioner is not set. Please set the preconditioner or use the default one.')  
+    
+    ###################
+    #! SETTERS
+    ###################
+    
+    def set_solver(self, solver: Callable):
+        '''
+        Set the solver for the TDVP equation.
+        
+        Parameters
+        ----------
+        solver : Callable
+            The solver function to be used for the TDVP equation.
+        '''
+        self.sr_solve_lin = solver
+        self._init_solver_lin()
     
     def set_preconditioner(self, precond: Callable):
         '''
@@ -281,39 +428,6 @@ class TDVP:
         '''
         self.sr_precond = precond
         self._init_preconditioner()
-    
-    def _init_preconditioner(self):
-        """
-        Initializes the preconditioner function for the stochastic reconfiguration (SR) solver
-        based on the selected solver form.
-
-        Depending on the value of `self.sr_solve_lin_t`, this method assigns the appropriate
-        preconditioner application function from `self.sr_precond` to `self.sr_precond_fn`:
-            - If `GRAM`, uses `get_apply_gram()`
-            - If `MATVEC`, uses `get_apply()`
-            - If `MATRIX`, uses `get_apply_mat()`
-        Raises a ValueError if the solver form is unrecognized or if the preconditioner is not set.
-
-        Raises:
-            ValueError: If the preconditioner is not set or the solver form is invalid.
-        """
-        if      isinstance(self.sr_precond, str) or                                 \
-                isinstance(self.sr_precond, precond.PreconditionersTypeSym) or      \
-                isinstance(self.sr_precond, precond.PreconditionersTypeNoSym) or    \
-                isinstance(self.sr_precond, precond.PreconditionersType) or         \
-                hasattr(self.sr_precond, 'value') and isinstance(self.sr_precond.value, int):
-            print('Using preconditioner: ', self.sr_precond)
-            self.sr_precond = precond.choose_precond(precond_id=self.sr_precond, backend=self.backend)
-        
-        if self.sr_precond is not None:
-            if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
-                self.sr_precond_fn = self.sr_precond.get_apply_gram()
-            elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
-                self.sr_precond_fn = self.sr_precond.get_apply()
-            elif self.sr_solve_lin_t == solvers.SolverForm.MATRIX.value:
-                self.sr_precond_fn = self.sr_precond.get_apply_mat()
-            else:
-                raise ValueError('The preconditioner is not set. Please set the preconditioner or use the default one.')  
     
     def set_useminsr(self, use_minsr: bool):
         '''
@@ -383,7 +497,9 @@ class TDVP:
     
     def get_loss_centered(self, loss, loss_m = None):
         '''
-        Get the centered loss.
+        Get the centered loss:
+        
+        Calculates <E_loc>_c = E_loc - <E_loc>
         
         Parameters
         ----------
@@ -403,6 +519,8 @@ class TDVP:
         '''
         Get the centered derivative.
         
+        Calculates <O_k>_c = O_k - <O_k>
+        
         Parameters
         ----------
         deriv : Array
@@ -420,7 +538,7 @@ class TDVP:
     #! TDVP
     ##################
     
-    def _get_tdvp_standard_inner(self, loss, log_deriv, betas = None, r_psi_low_ov_exc = None, r_psi_exc_ov_low = None):
+    def _get_tdvp_standard_inner(self, loss, log_deriv, **kwargs):
         '''
         Get the standard TDVP loss and derivative.
         
@@ -442,20 +560,20 @@ class TDVP:
             The standard TDVP loss and derivative.
         '''
         
+        # optional parameters for excited states
+        excited_penalty: List[TDVPLowerPenalty] = kwargs.get('lower_states', None)
+        
         #! centered loss and derivative
-        if betas is None:
+        if excited_penalty is None or len(excited_penalty) == 0:
             (loss_c, var_deriv_c, var_deriv_c_h, self._n_samples, self._full_size) = self._prepare_fn_j(loss, log_deriv)
         else:
-            (loss_c, var_deriv_c, var_deriv_c_h, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, 
-                                                                                            betas, r_psi_low_ov_exc, r_psi_exc_ov_low)        
+            betas           = self.backend.array([x.beta_j for x in excited_penalty])
+            r_el            = self.backend.array([x.r_el for x in excited_penalty])
+            r_le            = self.backend.array([x.r_le for x in excited_penalty])
+            (loss_c, var_deriv_c, var_deriv_c_h, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)        
         return loss_c, var_deriv_c, var_deriv_c_h
     
-    def get_tdvp_standard(self, 
-                        loss, 
-                        log_deriv,
-                        betas               : Optional[Array] = None,
-                        r_psi_low_ov_exc    : Optional[Array] = None,
-                        r_psi_exc_ov_low    : Optional[Array] = None):
+    def get_tdvp_standard(self, loss, log_deriv, **kwargs):
         '''
         Get the standard TDVP loss and derivative.
         
@@ -472,21 +590,24 @@ class TDVP:
         Tuple[Array, Array]
             The standard TDVP loss and derivative.
         '''
+        
         #! state information
         self._e_local_mean  = self.backend.mean(loss, axis=0)
         self._e_local_std   = self.backend.std(loss, axis=0)
 
-        with self._time('prepare', self._get_tdvp_standard_inner, loss, log_deriv, betas, r_psi_low_ov_exc, r_psi_exc_ov_low) as prepare:
+        with self._time('prepare', self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
             loss_c, var_deriv_c, var_deriv_c_h = prepare
             
         # for minsr, it is unnecessary to calculate the force vector, however, do it anyway for now
         with self._time('gradient', self._gradient_fn_j, var_deriv_c_h, loss_c, self._n_samples) as gradient:
             self._f0 = gradient
         self._s0 = None
+        
         if self.form_matrix:
             # the function knows if it's minsr or not
             with self._time('covariance', self._covariance_fn_j, var_deriv_c, var_deriv_c_h, self._n_samples) as covariance:
                 self._s0 = covariance
+        
         return self._f0, self._s0, (loss_c, var_deriv_c, var_deriv_c_h)
 
     ##################
@@ -630,23 +751,12 @@ class TDVP:
         if self._x0 is None or self._x0.shape != vec_b.shape:
             self._x0 = self.backend.zeros_like(vec_b)
         return self._x0
-    
-    def solve(self, 
-            e_loc                   : Array,
-            log_deriv               : Array,
-            # for the excited states
-            betas                   : Optional[Array] = None,
-            r_psi_low_ov_exc        : Optional[Array] = None,
-            r_psi_exc_ov_low        : Optional[Array] = None,
-            **kwargs
-        ):
+
+    def solve(self, e_loc: Array, log_deriv: Array, **kwargs):
+        #? Get the lower states information penalty
         
-        #! obtain the loss and covariance without the preprocessor
-        self._f0, self._s0, (tdvp)  = self.get_tdvp_standard(e_loc,
-                                        log_deriv, 
-                                        betas               = betas,
-                                        r_psi_low_ov_exc    = r_psi_low_ov_exc,
-                                        r_psi_exc_ov_low    = r_psi_exc_ov_low)
+        # obtain the loss and covariance without the preprocessor
+        self._f0, self._s0, (tdvp)  = self.get_tdvp_standard(e_loc, log_deriv, **kwargs)
         
         f = self._f0                # the force vector
         s = self._s0                # the covariance matrix, if formed
@@ -665,6 +775,15 @@ class TDVP:
         #! prepare the rhs
         if self.rhs_prefactor != 1.0:
             vec_b = vec_b * self.rhs_prefactor
+
+        #! if not using SR, return the negative force vector as the solution
+        if not self.use_sr:
+            return solvers.SolverResult(
+                x               = -vec_b,
+                iterations      = 0,
+                residual_norm   = 0.0,
+                converged       = True,
+            )
 
         #! precondition the S matrices?
         if True:
@@ -712,8 +831,9 @@ class TDVP:
         Array
             The time-evolved quantum state.
         '''
-        #! get the loss and derivative
-        (loss, mean_loss, std_loss), log_deriv, (shapes, sizes, iscpx) = est_fn(net_params, t, configs, configs_ansatze, probabilities, **kwargs)
+        #! get the loss and derivative in the original scenario 
+        #? (MonteCarlo return -> (loss, mean_loss, std_loss), log_deriv, (meta))
+        (loss, mean_loss, std_loss), log_deriv, (shapes, sizes, iscpx) = est_fn(net_params, t, configs, configs_ansatze, probabilities)
         
         #! set the meta information
         self.meta       = TDVPStepInfo(
@@ -723,11 +843,8 @@ class TDVP:
             sr_converged    = False,
             sr_executed     = False,
             sr_iterations   = 0,
-            times           = self.timings
+            timings         = self.timings
         )
-        
-        if not self.use_sr:
-            return loss, self.meta, (shapes, sizes, iscpx)
         
         #! obtain the solution
         try:
@@ -740,7 +857,7 @@ class TDVP:
                 sr_converged    = solution.converged,
                 sr_executed     = True,
                 sr_iterations   = solution.iterations,
-                times           = self.timings
+                timings         = self.timings
             )
             
             return solution.x, self.meta, (shapes, sizes, iscpx)
@@ -754,8 +871,9 @@ class TDVP:
                 sr_converged    = False,
                 sr_executed     = False,
                 sr_iterations   = 0,
-                times           = self.timings
+                timings         = self.timings
             )
+        
         return None, self.meta, (shapes, sizes, iscpx)
     
     #########################
