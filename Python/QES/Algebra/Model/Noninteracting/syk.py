@@ -12,7 +12,7 @@ import numpy as np
 from typing import Optional, Union
 
 # import the quadratic base
-from Algebra.hamil_quadratic import QuadraticHamiltonian, JAX_AVAILABLE, Array
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian, JAX_AVAILABLE, Array
 from QES.general_python.algebra.ran_wrapper import RMT, random_matrix, set_global_seed
 
 # ---------------------------------------------------------------------

@@ -35,8 +35,8 @@ class QuadraticTerm(Enum):
     
 ##############################################################################
 
-from Algebra.hamil import Hamiltonian, HilbertSpace, Lattice, JAX_AVAILABLE, Logger, Array
-from Algebra.Hilbert.hilbert_jit_states import (
+from QES.Algebra.hamil import Hamiltonian, HilbertSpace, Lattice, JAX_AVAILABLE, Logger, Array
+from QES.Algebra.Hilbert.hilbert_jit_states import (
     calculate_slater_det,
     bogolubov_decompose,
     pairing_matrix,
@@ -55,7 +55,7 @@ if JAX_AVAILABLE:
     import jax 
     import jax.numpy as jnp
     from jax.experimental.sparse import BCOO
-    from Algebra.Hilbert.hilbert_jit_states_jax import (
+    from QES.Algebra.Hilbert.hilbert_jit_states_jax import (
     calculate_slater_det_jax,                               # for calculating fermionic states
     calculate_bcs_amp_jax,                                  # for calculating BCS-like states
     calculate_permament_jax                                 # for calculating permanent states
