@@ -248,7 +248,7 @@ class QuadraticSelection:
         gives exactly the same distribution as the first column of a Haar
         unitary (see, e.g., Mezzadri 2006).
         * If SciPy ≥ 1.4 is available we use `scipy.stats.unitary_group.rvs`
-        (QR‑based) instead, but the Gaussian trick is used as a fallback and
+        (QR-based) instead, but the Gaussian trick is used as a fallback and
         is typically faster.
 
         Examples

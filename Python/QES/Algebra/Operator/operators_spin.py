@@ -48,23 +48,23 @@ if JAX_AVAILABLE:
     # import Algebra.Operator.operators_spin_jax as jaxpy
     import jax.numpy as jnp
     # sigma x
-    from Algebra.Operator.operators_spin_jax import sigma_x_int_jnp, sigma_x_jnp, sigma_x_inv_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_x_int_jnp, sigma_x_jnp, sigma_x_inv_jnp
     # sigma y
-    from Algebra.Operator.operators_spin_jax import sigma_y_int_jnp, sigma_y_jnp, sigma_y_real_jnp, sigma_y_inv_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_y_int_jnp, sigma_y_jnp, sigma_y_real_jnp, sigma_y_inv_jnp
     # sigma z
-    from Algebra.Operator.operators_spin_jax import sigma_z_int_jnp, sigma_z_jnp, sigma_z_inv_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_z_int_jnp, sigma_z_jnp, sigma_z_inv_jnp
     # sigma plus
-    from Algebra.Operator.operators_spin_jax import sigma_plus_int_jnp, sigma_plus_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_plus_int_jnp, sigma_plus_jnp
     # sigma minus
-    from Algebra.Operator.operators_spin_jax import sigma_minus_int_jnp, sigma_minus_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_minus_int_jnp, sigma_minus_jnp
     # sigma pm
-    from Algebra.Operator.operators_spin_jax import sigma_pm_int_jnp, sigma_pm_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_pm_int_jnp, sigma_pm_jnp
     # sigma mp
-    from Algebra.Operator.operators_spin_jax import sigma_mp_int_jnp, sigma_mp_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_mp_int_jnp, sigma_mp_jnp
     # sigma k
-    from Algebra.Operator.operators_spin_jax import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
     # sigma z total
-    from Algebra.Operator.operators_spin_jax import sigma_z_total_int_jnp, sigma_z_total_jnp
+    from QES.Algebra.Operator.operators_spin_jax import sigma_z_total_int_jnp, sigma_z_total_jnp
 else:
     sigma_x_int_jnp     = sigma_x_jnp       = lambda s, v       : None
     sigma_y_int_jnp     = sigma_y_jnp       = lambda s, v       : None
@@ -1132,7 +1132,7 @@ def sig_p(  lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     """
-    Factory for the spin‑raising operator σ⁺.
+    Factory for the spin-raising operator σ⁺.
     """
     return create_operator(
         type_act    = type_act,
@@ -1158,7 +1158,7 @@ def sig_m(  lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     """
-    Factory for the spin‑lowering operator σ⁻.
+    Factory for the spin-lowering operator σ⁻.
     """
 
     return create_operator(
@@ -1185,7 +1185,7 @@ def sig_pm( lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     """
-    Factory for the alternating operator: even‑indexed sites σ⁺, odd‑indexed σ⁻.
+    Factory for the alternating operator: even-indexed sites σ⁺, odd-indexed σ⁻.
     """
 
     return create_operator(
@@ -1212,7 +1212,7 @@ def sig_mp( lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     """
-    Factory for the alternating operator: even‑indexed sites σ⁻, odd‑indexed σ⁺.
+    Factory for the alternating operator: even-indexed sites σ⁻, odd-indexed σ⁺.
     """
 
     return create_operator(
@@ -1240,7 +1240,7 @@ def sig_k(  k           : float,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     r"""
-    Factory for the momentum‑space operator  
+    Factory for the momentum-space operator  
 
         σₖ = (1/√N)\,\sum_{i\in\text{sites}} σ_z(i)\,e^{\,ik i}.
     """
@@ -1289,6 +1289,10 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
 # -----------------------------------------------------------------------------
 #! Finalize
 # -----------------------------------------------------------------------------
+
+# Aliases for legacy/test compatibility
+sig_plus = sig_p
+sig_minus = sig_m
 
 def test_spin_operator_matrices(nh = 4, site = 0):
     """

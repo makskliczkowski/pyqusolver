@@ -1,23 +1,31 @@
-import numpy as np
-import scipy as sp
-from numba import jit, njit, prange
-from typing import Union, Tuple, Union, Callable, Optional, Dict, Any
+'''
+Monte Carlo Solver base class.
+This module defines the abstract base class for Monte Carlo solvers, providing a common interface
+and shared functionality for various Monte Carlo simulation methods. It includes methods for
+initialization, state management, training loops, and statistical tracking.
 
-# for the abstract class
-from abc import ABC, abstractmethod
+Author: Maksymilian Kliczkowski
+Email: maksymilian.kliczkowski@pwr.edu.pl
+'''
+from typing import Union, Callable, Optional, Dict, Any
 from dataclasses import dataclass
-from enum import Enum, auto, unique
 
 # from algebra
-from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
-from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
-from QES.general_python.common.directories import Directories
-from QES.general_python.common.flog import get_global_logger, Logger
-from QES.general_python.common.timer import Timer
-import general_python.common.binary as Binary
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
+    from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
+    from QES.general_python.common.directories import Directories
+    from QES.general_python.common.flog import get_global_logger, Logger
+    from QES.general_python.common.timer import Timer
+    import general_python.common.binary as Binary
+except ImportError as e:
+    raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
 # from hilbert
-from Algebra.hilbert import HilbertSpace
+try:
+    from QES.Algebra.hilbert import HilbertSpace
+except ImportError as e:
+    raise ImportError("Failed to import HilbertSpace module. Ensure QES package is correctly installed.") from e
 
 # JAX imports
 if JAX_AVAILABLE:

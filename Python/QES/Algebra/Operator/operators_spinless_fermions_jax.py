@@ -49,7 +49,7 @@ from typing import List, Union, Optional, Callable, Sequence
 from functools import partial
 
 from QES.general_python.algebra.utils import JAX_AVAILABLE, Array, DEFAULT_JP_FLOAT_TYPE, DEFAULT_JP_CPX_TYPE, DEFAULT_JP_INT_TYPE
-from Algebra.Operator.operator import ensure_operator_output_shape_jax
+from QES.Algebra.Operator.operator import ensure_operator_output_shape_jax
 import general_python.common.binary as _binary
 
 if JAX_AVAILABLE:
@@ -87,7 +87,7 @@ if JAX_AVAILABLE:
         """
         mask      = (jnp.arange(state.shape[0]) < site)         # bool, static shape
         occ_left  = state * mask                                # same dtype as state
-        # ---- make sure we feed integers to the bit‑wise op --------------------
+        # ---- make sure we feed integers to the bit-wise op --------------------
         occ_i32   = occ_left.astype(jnp.int32)
         cnt       = jnp.sum(occ_i32, dtype=jnp.int32)
         parity    = cnt & 1                                     # integer 0 or 1
@@ -315,7 +315,7 @@ if JAX_AVAILABLE:
                 sites       : Sequence[int],
                 prefactor   : float = 1.0):
         """
-        JAX version of the number operator acting on an **integer‑encoded** state.
+        JAX version of the number operator acting on an **integer-encoded** state.
 
         Parameters
         ----------
@@ -331,13 +331,13 @@ if JAX_AVAILABLE:
         Returns
         -------
         out_state : jax.Array(shape=(1,), dtype=_DEFAULT_INT)
-            Same integer state, wrapped in a length‑1 array.
+            Same integer state, wrapped in a length-1 array.
         out_coeff : jax.Array(shape=(1,), dtype=_DEFAULT_FLOAT)
             1·prefactor**n  if **all** sites are occupied, else 0.
         """
         state_arr     = jnp.asarray(state, dtype=_DEFAULT_INT)
 
-        # bit positions to test:  pos = ns‑1‑site
+        # bit positions to test:  pos = ns-1-site
         pos           = ns - 1 - jnp.asarray(sites, dtype=_DEFAULT_INT)
         # occupancy of each requested site
         occ           = (state_arr >> pos) & 1

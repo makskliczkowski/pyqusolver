@@ -1,23 +1,24 @@
 import numpy as np
 import scipy as sp
-from numba import jit, njit, prange
-from typing import Union, Tuple, Union, Callable, Optional
+from typing import Union, Tuple, Union, Optional
 
 # for the abstract class
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum, auto, unique
 
 # from algebra
-from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
-from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
-from QES.general_python.common.directories import Directories
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
+    from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
+    from QES.general_python.common.directories import Directories
+except ImportError as e:
+    raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
 # from hilbert
-from Algebra.hilbert import HilbertSpace
-
-# precodintioners etc.
-from QES.general_python.algebra.preconditioners import Preconditioner
+try:
+    from QES.Algebra.hilbert import HilbertSpace
+except ImportError as e:
+    raise ImportError("Failed to import HilbertSpace module. Ensure QES package is correctly installed.") from e
 
 # JAX imports
 if JAX_AVAILABLE:

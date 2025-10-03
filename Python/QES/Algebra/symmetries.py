@@ -7,14 +7,20 @@ Description: This module contains functions to compute the symmetries of a given
 import math
 import numpy as np
 import time
-from typing import Tuple, Optional
+from typing import Tuple, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from QES.Algebra.hilbert import LocalSpace
 
 # operator module for operator overloading
-from Algebra.Operator.operator import Operator, SymmetryGenerators
+from QES.Algebra.Operator.operator import Operator, SymmetryGenerators
 
 # from general Python modules
-from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
-from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount, BACKEND_REPR, BACKEND_DEF_SPIN
+try:
+    from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
+    from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount, BACKEND_REPR, BACKEND_DEF_SPIN
+except ImportError as e:
+    raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
 ####################################################################################################
 

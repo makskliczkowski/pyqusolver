@@ -22,8 +22,8 @@ import numba
 from typing import Union, Optional
 
 # Assume these are available from the QES package:
-from Algebra.hilbert import HilbertSpace
-from Algebra.hamil import Hamiltonian
+from QES.Algebra.hilbert import HilbertSpace
+from QES.Algebra.hamil import Hamiltonian
 import Algebra.Operator.operators_spin as operators_spin_module
 
 ##########################################################################################

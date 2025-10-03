@@ -5,7 +5,7 @@ email   : maksymilian.kliczkowski@pwr.edu.pl
 '''
 
 
-from Algebra.Hilbert.hilbert_jit_methods import *
+from QES.Algebra.Hilbert.hilbert_jit_methods import *  # noqa: F401,F403 re-export JIT helpers
 import numpy as np
 from numba import njit, prange
 from numba.typed import List

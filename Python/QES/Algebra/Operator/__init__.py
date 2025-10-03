@@ -26,8 +26,8 @@ try:
     from .operator import Operator, SymmetryGenerators
     from .operator_matrix import *
     from .operators_spin import *
-    from .operators_spin import *
+    from .operators_spin import sig_plus, sig_minus
     
-    __all__ = ['Operator', 'SymmetryGenerators']
+    __all__ = ['Operator', 'SymmetryGenerators', 'sig_plus', 'sig_minus']
 except ImportError:
     __all__ = []

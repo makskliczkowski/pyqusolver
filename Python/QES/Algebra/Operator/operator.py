@@ -1590,7 +1590,7 @@ class Operator(ABC):
         Generate the matrix form of the operator without Hilbert space.
         """
         # create a dummy Hilbert space for convenience
-        from Algebra.hilbert import HilbertSpace
+        from QES.Algebra.hilbert import HilbertSpace
         from Algebra.Operator.operator_matrix import operator_create_np
         
         dummy_hilbert   = HilbertSpace(nh = dim, backend = self._backend)
@@ -1615,7 +1615,7 @@ class Operator(ABC):
         """
         Generate the matrix form of the operator without Hilbert space.
         """
-        from Algebra.hilbert import HilbertSpace
+        from QES.Algebra.hilbert import HilbertSpace
         
         # create a dummy Hilbert space for convenience
         dummy_hilbert = HilbertSpace(nh = dim, backend = self._backend)

@@ -1,18 +1,8 @@
-"""
-Interacting Models Module
-=========================
+"""Interacting quantum model definitions (placeholder).
 
-This module contains quantum many-body models with particle interactions.
-
-Submodules:
------------
-- Spin: Spin models (Heisenberg, Ising, XY, etc.)
-- Fermion: Fermionic models with interactions (planned)
-
-Author: Maksymilian Kliczkowski
-Email: maksymilian.kliczkowski@pwr.edu.pl
+This subpackage currently has no public API objects defined.  The file exists
+to ensure the directory is treated as a Python package so relative imports
+work reliably throughout the project.
 """
 
-from . import Spin as spin
-
-__all__ = ['spin']
+__all__: list[str] = []

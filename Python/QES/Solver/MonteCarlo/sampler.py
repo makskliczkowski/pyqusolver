@@ -26,26 +26,33 @@ Functions:
 
 import numpy as np
 import numba
-import scipy as sp
 from numba import prange
-from typing import Union, Tuple, Callable, Optional, Any
 from functools import partial
-
-# flax for the network
-from flax import linen as nn
-
+from typing import Union, Tuple, Callable, Optional, Any
 # for the abstract class
 from abc import ABC, abstractmethod
 from enum import Enum, auto, unique
 
+# flax for the network
+try:
+    from flax import linen as nn
+except ImportError as e:
+    raise ImportError("Failed to import flax module. Ensure flax is correctly installed.") from e
+
 # from algebra
-from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, DEFAULT_JP_INT_TYPE, DEFAULT_BACKEND_KEY, Array
-from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, distinguish_type
-from QES.general_python.algebra.ran_wrapper import choice, randint_np, randint_jax
-import general_python.common.binary as Binary
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, DEFAULT_JP_INT_TYPE, DEFAULT_BACKEND_KEY, Array
+    from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, distinguish_type
+    from QES.general_python.algebra.ran_wrapper import choice, randint_np, randint_jax
+    import general_python.common.binary as Binary
+except ImportError as e:
+    raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
 # from hilbert
-from Algebra.hilbert import HilbertSpace
+try:
+    from QES.Algebra.hilbert import HilbertSpace
+except ImportError as e:
+    raise ImportError("Failed to import HilbertSpace module. Ensure QES package is correctly installed.") from e
 
 #! JAX imports
 if JAX_AVAILABLE:

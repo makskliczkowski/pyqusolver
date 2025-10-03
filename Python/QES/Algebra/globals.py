@@ -4,20 +4,25 @@ This file contains the global imports and definitions for the Algebra module.
 '''
 
 # Import the necessary modules
-import math
 import numpy as np
-import time
-from functools import partial
-from typing import Callable, Union, Tuple, List, Optional
+from typing import Callable, Union, Optional
 from abc import ABC, abstractmethod
 
-# operator module for operator overloading
-from Algebra.Operator.operator import Operator, GlobalSymmetries
+# operator module for operator overloading (absolute import for reliability)
+try:
+    from QES.Algebra.Operator.operator import Operator, GlobalSymmetries
+except ImportError as e:
+    raise ImportError("Failed to import Operator module. Ensure QES package is correctly installed.") from e
 
 # from general Python modules
-from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
-from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount
-from QES.general_python.algebra.utils import get_backend
+try:
+    from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
+    from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount
+    from QES.general_python.algebra.utils import get_backend
+except ImportError as e:
+    raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
+
+# ---------------------------
 
 class GlobalSymmetry(ABC):
     """
@@ -155,3 +160,7 @@ def get_u1_sym(lat: Lattice, val: float) -> GlobalSymmetry:
     sym = GlobalSymmetry(lat, val, GlobalSymmetries.U1)
     sym.set_fun(u1_sym)
     return sym
+
+# ---------------------------
+#! End of globals.py
+# ---------------------------

@@ -8,32 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial package structure and setup
-- Comprehensive setup.py with proper metadata
-- pyproject.toml for modern Python packaging
-- Development dependencies and optional extras
-- Documentation configuration
+
+- Central `qes_globals` module providing singleton accessors for logger and backend manager.
+- Singleton identity tests (`test_globals_singleton.py`).
+- Lightweight import-time health test (`test_imports_lightweight.py`) for key modules.
+- README documentation for global singleton usage and migration pattern.
+- Initial package structure and setup (consolidated historical note).
 
 ### Changed
-- Improved package organization
-- Updated dependency management
+
+- Refactored all fragile/bare imports to use absolute or explicit relative imports for robustness.
+- Refactored `general_python.algebra.utils` to obtain logger via `qes_globals` preventing duplicate initialization.
+- Enhanced `QES.__init__` to re-export global accessor helpers and use new reseed wrappers.
+- Improved package organization & dependency management (historical consolidation).
+
+### Fixed
+
+- Eliminated double initialization of logger and backend RNG state across multiple import paths.
+- Fixed missing imports, type guards, and indentation errors from import refactor.
+- Package installation and dependency issues (historical note).
 
 ### Deprecated
+
 - Nothing yet
 
 ### Removed
+
 - Nothing yet
 
-### Fixed
-- Package installation and dependency issues
-
 ### Security
+
 - Nothing yet
 
 ## [0.1.0] - 2025-05-24
 
-### Added
-- Initial release of QES package
+### Initial Release Summary
+
 - Core quantum eigenvalue solving functionality
 - Neural Quantum States (NQS) implementation
 - Monte Carlo solver framework
@@ -47,12 +57,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ------------------------------------------------------------------------------------------------------------------------
 
-## [0.1.0] - 2025-05-25
-
-### Added
-- Tests for core functionality
-
-[Unreleased]: https://github.com/makskliczkowski/QuantumEigenSolver/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/makskliczkowski/QuantumEigenSolver/releases/tag/v0.1.0
-
-------------------------------------------------------------------------------------------------------------------------
+<!-- Removed duplicate 0.1.0 section & redundant links to satisfy linters -->

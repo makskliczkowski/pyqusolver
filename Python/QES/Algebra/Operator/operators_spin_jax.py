@@ -11,12 +11,12 @@ Date        : February 2025
 Version     : 1.0
 """
 
-import math
+import numpy as np
 from typing import List, Union
 from functools import partial
 
 ################################################################################
-from Algebra.Operator.operator import Operator, OperatorTypeActing, SymmetryGenerators, ensure_operator_output_shape_jax
+from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, SymmetryGenerators, ensure_operator_output_shape_jax
 ################################################################################
 
 ################################################################################

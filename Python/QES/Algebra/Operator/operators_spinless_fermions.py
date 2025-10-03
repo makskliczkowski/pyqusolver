@@ -109,7 +109,7 @@ import numba
 from typing import List, Union, Optional, Callable
 
 ################################################################################
-from Algebra.Operator.operator import (
+from QES.Algebra.Operator.operator import (
     Operator, OperatorTypeActing, SymmetryGenerators, create_operator,
     ensure_operator_output_shape_numba
 )
@@ -122,7 +122,7 @@ from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_
 import general_python.common.binary as _binary
 
 if JAX_AVAILABLE:
-    from Algebra.Operator.operators_spinless_fermions_jax import c_dag_jnp, c_jnp, c_k_jnp, c_k_dag_jnp, n_jax, n_int_jax
+    from QES.Algebra.Operator.operators_spinless_fermions_jax import c_dag_jnp, c_jnp, c_k_jnp, c_k_dag_jnp, n_jax, n_int_jax
 else:
     c_dag_jnp = c_jnp = c_k_jnp = c_k_dag_jnp = n_jax = n_jax_int = None
 
