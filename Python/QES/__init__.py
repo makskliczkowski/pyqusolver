@@ -1,9 +1,24 @@
+
 """
-Quantum EigenSolver Package
-Author      : Maksymilian Kliczkowski
-Email       : maksymilian.kliczkowski@pwr.edu.pl
-Date        : 2025-02-01
-file        : QES/__init__.py
+QES package initialization
+=========================
+
+Author: Maks Kliczkowski
+Email: maxgrom97@gmail.com
+Date: 01.10.25
+File: QES/__init__.py
+
+This is the top-level package for Quantum EigenSolver (QES).
+It provides unified access to all submodules, global singletons, and core functionality.
+
+Usage
+-----
+Import QES and its submodules:
+
+    import QES
+    from QES import qes_globals, Algebra, NQS, Solver
+    log = qes_globals.get_logger()
+    backend = qes_globals.get_backend_manager()
 """
 
 __version__         = "0.1.0"

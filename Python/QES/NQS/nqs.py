@@ -1,11 +1,26 @@
-#   file    : QES/NQS/nqs.py
-#   author  : Maksymilian Kliczkowski
-#   date    : 2025-04-01
-#   version : 0.1
 
-'''
+"""
+QES.NQS.nqs
+===========
+
+Author: Maks Kliczkowski
+Email: maxgrom97@gmail.com
+Date: 01.10.25
+
 Neural Quantum State (NQS) Solver.
-'''
+
+Implements a Monte Carlo-based training method for optimizing NQS models.
+Supports both NumPy and JAX backends for efficiency and flexibility.
+
+Usage
+-----
+Import and use the NQS solver:
+
+    from QES.NQS.nqs import NQS
+    nqs = NQS(...)
+
+See the documentation and examples for details.
+"""
 
 import json
 import h5py
@@ -15,6 +30,9 @@ from typing import Union, Tuple, Union, Callable, Optional, Any, Sequence, List,
 from functools import partial
 from pathlib import Path
 from dataclasses import dataclass
+
+# Import timeit utility for timing code blocks
+from QES.general_python.common.timer import timeit
 
 # import physical problems
 from .src.nqs_physics import *
