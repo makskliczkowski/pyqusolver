@@ -44,7 +44,7 @@ try:
     from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, DEFAULT_JP_INT_TYPE, DEFAULT_BACKEND_KEY, Array
     from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, distinguish_type
     from QES.general_python.algebra.ran_wrapper import choice, randint_np, randint_jax
-    import general_python.common.binary as Binary
+    import QES.general_python.common.binary as Binary
 except ImportError as e:
     raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 

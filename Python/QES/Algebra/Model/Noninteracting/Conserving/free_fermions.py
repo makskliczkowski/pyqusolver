@@ -11,7 +11,7 @@ import numba
 from typing import Optional, Union
 
 # import the quadratic base
-from Algebra.hamil_quadratic import QuadraticHamiltonian, JAX_AVAILABLE, Array
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian, JAX_AVAILABLE, Array
 
 # ---------------------------------------------------------------------
 #! Spectrum

@@ -17,7 +17,7 @@ try:
     from QES.general_python.common.directories import Directories
     from QES.general_python.common.flog import get_global_logger, Logger
     from QES.general_python.common.timer import Timer
-    import general_python.common.binary as Binary
+    import QES.general_python.common.binary as Binary
 except ImportError as e:
     raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 

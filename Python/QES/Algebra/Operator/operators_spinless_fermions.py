@@ -119,7 +119,7 @@ from QES.general_python.common.tests import GeneralAlgebraicTest
 from QES.general_python.lattices.lattice import Lattice
 from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
 from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
-import general_python.common.binary as _binary
+import QES.general_python.common.binary as _binary
 
 if JAX_AVAILABLE:
     from QES.Algebra.Operator.operators_spinless_fermions_jax import c_dag_jnp, c_jnp, c_k_jnp, c_k_dag_jnp, n_jax, n_int_jax

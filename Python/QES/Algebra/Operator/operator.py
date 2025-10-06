@@ -1591,7 +1591,7 @@ class Operator(ABC):
         """
         # create a dummy Hilbert space for convenience
         from QES.Algebra.hilbert import HilbertSpace
-        from Algebra.Operator.operator_matrix import operator_create_np
+        from QES.Algebra.Operator.operator_matrix import operator_create_np
         
         dummy_hilbert   = HilbertSpace(nh = dim, backend = self._backend)
         if verbose:
@@ -2330,7 +2330,7 @@ def test_operators(op,
     from IPython import get_ipython
     from IPython.display import display, Markdown
     import pandas as pd
-    import general_python.common.binary as bin_mod
+    import QES.general_python.common.binary as bin_mod
     
     if ns is None:
         ns = 32

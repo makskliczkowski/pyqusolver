@@ -27,7 +27,7 @@ from QES.Algebra.hamil import Hamiltonian
 import Algebra.Operator.operators_spin as operators_spin_module
 
 ##########################################################################################
-import general_python.algebra.linalg as linalg
+import QES.general_python.algebra.linalg as linalg
 from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, JAX_AVAILABLE
 from QES.general_python.common import binary as _binary
 ##########################################################################################

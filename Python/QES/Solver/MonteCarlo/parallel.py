@@ -20,7 +20,7 @@ from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
 from QES.general_python.common.directories import Directories
 from QES.general_python.common.flog import get_global_logger, Logger
 from QES.general_python.common.timer import Timer
-import general_python.common.binary as Binary
+import QES.general_python.common.binary as Binary
 
 ###################################
 from Solver.MonteCarlo.montecarlo import MonteCarloSolver, McsTrain, TrainStepVars

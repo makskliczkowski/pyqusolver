@@ -12,10 +12,10 @@ from numba.typed import List as NList
 from numba import types, int32, int64, float32, float64, complex64, complex128, typeof
 from QES.general_python.algebra.utils import JAX_AVAILABLE
 from typing import Callable, Tuple, Optional, Any, List
-from Algebra.Hamil.hamil_energy_helper import unpack_operator_terms, flatten_operator_terms
+from QES.Algebra.Hamil.hamil_energy_helper import unpack_operator_terms, flatten_operator_terms
 
 if JAX_AVAILABLE:
-    from Algebra.Hamil.hamil_energy_jax import local_energy_jax_wrap
+    from QES.Algebra.Hamil.hamil_energy_jax import local_energy_jax_wrap
     import jax.numpy as jnp
 else:
     local_energy_jax_wrap = None

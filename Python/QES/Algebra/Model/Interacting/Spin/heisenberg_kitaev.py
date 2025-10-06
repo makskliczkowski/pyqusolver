@@ -15,10 +15,10 @@ from typing import List, Tuple, Union, Optional
 # Assume these are available from the QES package:
 import Algebra.hilbert as hilbert_module
 import Algebra.hamil as hamil_module
-from Algebra.Operator import operators_spin as operators_spin_module
+from QES.Algebra.Operator import operators_spin as operators_spin_module
 
 ##########################################################################################
-import general_python.algebra.linalg as linalg
+import QES.general_python.algebra.linalg as linalg
 from QES.general_python.lattices.lattice import Lattice, LatticeType
 from QES.general_python.lattices.honeycomb import HoneycombLattice
 

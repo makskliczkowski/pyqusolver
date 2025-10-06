@@ -10,7 +10,7 @@ import numpy as np
 from typing import Optional, Union, Tuple, List
 
 # import the quadratic base
-from Algebra.hamil_quadratic import QuadraticHamiltonian
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
 from QES.general_python.lattices import Lattice
 
 try:

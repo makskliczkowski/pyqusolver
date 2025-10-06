@@ -1750,7 +1750,7 @@ def test_generic_hamiltonian(ham: Hamiltonian, ns: int):
     Returns:
     '''
     import Algebra.Operator.operators_spin as op_spin
-    import general_python.common.binary as bin_mod
+    import QES.general_python.common.binary as bin_mod
 
     sites   = [0, 2]
 

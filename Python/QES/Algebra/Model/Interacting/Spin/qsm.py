@@ -15,17 +15,15 @@ Version : 0.1
 """
 
 import numpy as np
-import numba
-from typing import List, Tuple, Union, Optional
-from functools import partial
+from typing import List, Union, Optional
 
 # Assume these are available from the QES package:
-import Algebra.hilbert as hilbert_module
-import Algebra.hamil as hamil_module
-from Algebra.Operator import operators_spin as operators_spin_module
+import QES.Algebra.hilbert as hilbert_module
+import QES.Algebra.hamil as hamil_module
+from QES.Algebra.Operator import operators_spin as operators_spin_module
 
 ##########################################################################################
-import general_python.algebra.linalg as linalg
+import QES.general_python.algebra.linalg as linalg
 from QES.general_python.algebra.ran_wrapper import RMT, random_matrix, random_vector
 from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, JAX_AVAILABLE
 

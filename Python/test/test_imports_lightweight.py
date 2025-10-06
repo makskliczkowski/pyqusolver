@@ -12,7 +12,7 @@ MODULES = [
     "QES.Algebra",
     "QES.Algebra.Operator",
     "QES.Algebra.hilbert",
-    "QES.Algebra.hamil",
+    "QES.Algebra.hamil", 
     "QES.Algebra.symmetries",
     "QES.general_python.common.flog",
     "QES.general_python.algebra.utils",
