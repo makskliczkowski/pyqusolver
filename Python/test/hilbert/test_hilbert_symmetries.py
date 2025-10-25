@@ -96,7 +96,7 @@ def print_state(state: int, ns: int, label: str = "State") -> None:
     """
     binary = int2binstr(state, ns)
     particle_num = popcount(state)
-    print(f"{INDENT}{label}: {state:4d} = |{binary}⟩, N = {particle_num}")
+    print(f"{INDENT}{label}: {state:4d} = |{binary}>, N = {particle_num}")
 
 
 def print_hilbert_info(hilbert: HilbertSpace, title: str = "") -> None:
@@ -331,7 +331,7 @@ class TestTranslationSymmetry:
         for state in test_states:
             rep, phase = hilbert.find_repr(state)
             print_state(state, ns, "Original")
-            print_state(rep, ns, f"{INDENT}→ Representative")
+            print_state(rep, ns, f"{INDENT}-> Representative")
             print(f"{INDENT}  Phase: {phase:.4f}")
             
             # Representative should be minimal in orbit
@@ -498,7 +498,7 @@ class TestNormalization:
             state = hilbert.mapping[idx]
             norm = hilbert.norm(idx)
             binary = int2binstr(state, ns)
-            print(f"{INDENT}State |{binary}⟩: norm = {norm:.4f}")
+            print(f"{INDENT}State |{binary}>: norm = {norm:.4f}")
             
             # Normalization should be positive and <= sqrt(ns)
             assert norm > 0, f"Non-positive normalization for state {idx}"

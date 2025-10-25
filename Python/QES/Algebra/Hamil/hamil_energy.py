@@ -307,7 +307,7 @@ def local_energy_int_wrap(ns            : int,
     for m in m_nmod_sites_flat:  mns_nb.append(np.array([m], dtype=dtype))
     for m in m_nmod_nos_flat:    mnn_nb.append(np.array([m], dtype=dtype))
 
-    # 5) Map dtype → small int code
+    # 5) Map dtype -> small int code
     code = {np.float32:0, np.float64:1, np.complex64:2, np.complex128:3}[dtype]
 
     # 6) Compile one flat, nopython entrypoint

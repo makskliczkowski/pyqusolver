@@ -84,9 +84,9 @@ def main():
     
     print("=" * 70)
     if total_issues == 0:
-        print("✓ All imports follow the QES hygiene guidelines!")
+        print("(v) All imports follow the QES hygiene guidelines!")
     else:
-        print(f"✗ Found {total_issues} import issue(s) to fix.")
+        print(f"(x) Found {total_issues} import issue(s) to fix.")
         sys.exit(1)
     print("=" * 70)
 

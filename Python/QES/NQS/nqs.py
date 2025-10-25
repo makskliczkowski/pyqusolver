@@ -1787,7 +1787,7 @@ class NQS(MonteCarloSolver):
             timings[f"obs_{i}"]     = timings_op
             results[op]             = dict(raw=vals, mean=mu, std=sig)
             color                   = ["red","blue","green","orange","purple","brown"][i%6]
-            logger.info(f"{op}: ⟨O⟩ = ({mu:.4f}) ± ({sig:.4f})  (N={len(vals)})", color=color)
+            logger.info(f"{op}: <O> = ({mu:.4f}) \pm ({sig:.4f})  (N={len(vals)})", color=color)
 
             #! compare to true value
             if true_values is not None and true_values[i] is not None:

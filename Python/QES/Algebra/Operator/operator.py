@@ -2285,7 +2285,7 @@ def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
     op_label : str | sequence[str], optional
         LaTeX label(s).  If *None*, uses ``op.name`` for every operator.
     to_bin : Callable[[int, int], str], optional
-        Integer → binary-string formatter.  Defaults to
+        Integer -> binary-string formatter.  Defaults to
         ``lambda k,L: format(k, f'0{L}b')``.
     just_time : bool, default = False
         If True, only measure the time taken for the operation without
@@ -2299,13 +2299,17 @@ def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
     """
     
     from QES.general_python.common.timer import Timer
-    if not just_time:
-        from IPython.display import Math, display
-        from QES.general_python.common.display import (
-            display_state,
-            prepare_labels
-        )
-
+    
+    try:
+        if not just_time:
+            from IPython.display import Math, display
+            from QES.general_python.common.display import (
+                display_state,
+                prepare_labels
+            )
+    except:
+        raise ImportError("IPython is required for displaying operator actions.")
+    
     # ------------------------------------------------------------------
     ops      = (op,) if not isinstance(op, Sequence) else tuple(op)
     is_int   = isinstance(state, (numbers.Integral, int, np.integer)) 

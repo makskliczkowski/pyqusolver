@@ -31,7 +31,7 @@ def test_lightweight_import():
     assert 'QES.Algebra.hilbert' not in sys.modules, "hilbert imported too early"
     assert 'QES.Algebra.hamil' not in sys.modules, "hamil imported too early"
     
-    print("  ✓ Top-level import is lightweight")
+    print("  v Top-level import is lightweight")
 
 # -------------------------------------------------------------------
 
@@ -46,7 +46,7 @@ def test_lazy_subpackages():
     assert 'QES.Algebra' in sys.modules, "Algebra not loaded after access"
     assert algebra is not None
     
-    print("  ✓ Lazy subpackage loading works")
+    print("  v Lazy subpackage loading works")
 
 # -------------------------------------------------------------------
 
@@ -67,7 +67,7 @@ def test_module_discovery():
     assert isinstance(desc, str), "describe_module should return a string"
     assert len(desc) > 0, "Description should not be empty"
     
-    print(f"  ✓ Found {len(modules)} modules with descriptions")
+    print(f"  v Found {len(modules)} modules with descriptions")
 
 # -------------------------------------------------------------------
 
@@ -91,7 +91,7 @@ def test_convenience_exports():
     assert hs_class is HilbertSpace
     assert ham_class is Hamiltonian
     
-    print("  ✓ Convenience exports work and match canonical imports")
+    print("  v Convenience exports work and match canonical imports")
 
 # -------------------------------------------------------------------
 
@@ -111,7 +111,7 @@ def test_global_singletons():
     logger2 = QES.get_logger()
     assert logger is logger2, "Logger should be a singleton"
     
-    print("  ✓ Global singletons accessible and unique")
+    print("  v Global singletons accessible and unique")
 
 # -------------------------------------------------------------------
 
@@ -128,7 +128,7 @@ def test_backward_compatibility():
     assert Hamiltonian is not None
     assert operators_spin is not None
     
-    print("  ✓ Backward-compatible imports work")
+    print("  v Backward-compatible imports work")
 
 # -------------------------------------------------------------------
 
@@ -152,17 +152,17 @@ def main():
         try:
             test()
         except AssertionError as e:
-            print(f"  ✗ FAILED: {e}")
+            print(f"  (x) FAILED: {e}")
             sys.exit(1)
         except Exception as e:
-            print(f"  ✗ ERROR: {e}")
+            print(f"  (x) ERROR: {e}")
             import traceback
             traceback.print_exc()
             sys.exit(1)
     
     print()
     print("=" * 70)
-    print("✓ All integration tests passed!")
+    print("(v) All integration tests passed!")
     print("=" * 70)
 
 # -------------------------------------------------------------------

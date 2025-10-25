@@ -34,15 +34,27 @@ try:
     from .operators_spin import sig_plus, sig_minus
     from .operators_spinless_fermions import *
     from .operators_anyon import *
+    from .phase_utils import (
+        bit_popcount,
+        bit_popcount_mask,
+        fermionic_parity_int,
+        fermionic_parity_array,
+    )
 
     __all__ = [
+        'OPERATOR_CATALOG',
         'Operator',
         'SymmetryGenerators',
         'operator_from_local',
-        'OPERATOR_CATALOG',
         'register_local_operator',
+        # Operator matrix builders
         'sig_plus',
         'sig_minus',
+        # Phase utilities and functions
+        'bit_popcount',
+        'bit_popcount_mask',
+        'fermionic_parity_int',
+        'fermionic_parity_array',
     ]
 except ImportError:
     __all__ = []

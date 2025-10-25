@@ -295,7 +295,7 @@ if JAX_AVAILABLE:
         return sigma_y_jnp(state, sites, spin, -spin_value)
 
 # -----------------------------------------------------------------------------
-#! Sigma-Z (σ_z) operator
+#! Sigma-Z (\sum _z) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -307,7 +307,7 @@ if JAX_AVAILABLE:
                         spin        : bool      = BACKEND_DEF_SPIN,
                         spin_value  : float     = _SPIN):
         """
-        σ_z on an integer state.
+        \sum _z on an integer state.
         For each site, if the bit at (ns-1-site) is set then multiply by spin_value; else by -spin_value.
         The state is unchanged.
         
@@ -358,7 +358,7 @@ if JAX_AVAILABLE:
                     spin        : bool = BACKEND_DEF_SPIN,
                     spin_value  : float = _SPIN):
         """
-        σ_z on a JAX array state.
+        \sum _z on a JAX array state.
         
         Parameters:
             state (np.ndarray) :
@@ -394,7 +394,7 @@ if JAX_AVAILABLE:
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
         r"""
-        Apply the inverse of the Pauli-Z (σ_z) operator on a JAX array state.
+        Apply the inverse of the Pauli-Z (\sum _z) operator on a JAX array state.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
         meaning that we want to find all the states s' that lead to the state s.
@@ -719,7 +719,7 @@ if JAX_AVAILABLE:
         # return new_state, coeff
 
 # -----------------------------------------------------------------------------
-#! Sigma-K (σₖ) operator
+#! Sigma-K (\sigma _k) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -754,7 +754,7 @@ if JAX_AVAILABLE:
                     spin        : bool = BACKEND_DEF_SPIN,
                     spin_value  : float = _SPIN):
         """
-        Compute the Fourier-transformed spin operator (σₖ) on a JAX array state.
+        Compute the Fourier-transformed spin operator (\sigma _k) on a JAX array state.
         Uses lax.fori_loop.
         Parameters:
             state (np.ndarray) :
@@ -796,7 +796,7 @@ if JAX_AVAILABLE:
                         spin_value  : float = _SPIN):
         r"""
         Apply the inverse
-        of the Fourier-transformed spin operator (σₖ) on a JAX array state.
+        of the Fourier-transformed spin operator (\sigma _k) on a JAX array state.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
         

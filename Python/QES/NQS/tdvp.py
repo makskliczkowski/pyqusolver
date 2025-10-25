@@ -76,10 +76,10 @@ class TDVPStepInfo:
 @dataclass
 class TDVPLowerPenalty:
     # most important
-    excited_on_lower        : Array         # (n_j,) complex; ratios Ψ_{W}(σ_j)
+    excited_on_lower        : Array         # (n_j,) complex; ratios Ψ_{W}(\sum _j)
     lower_on_excited        : Array         # (n_j,) complex; ratios Ψ_{W_j}(σ)
     # parameters of the lower state
-    lower_on_lower          : Array         # (n_j,) complex; ratios Ψ_{W_j}(σ_j)
+    lower_on_lower          : Array         # (n_j,) complex; ratios Ψ_{W_j}(\sum _j)
     excited_on_excited      : Array         # (n_j,) complex; ratios Ψ_{W}(σ)
     # samples drawn from pi(.; params_j)
     params_j                : Any

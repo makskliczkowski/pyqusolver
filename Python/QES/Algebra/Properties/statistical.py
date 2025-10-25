@@ -288,7 +288,7 @@ def _alloc_bin_info(uniform_bins: bool, uniform_log_bins: bool, bins: Optional[n
 @numba.njit(fastmath=True, cache=True)
 def _normalize_by_bin_width(sums: np.ndarray, bins: np.ndarray) -> None:
     """
-    In-place divide by Δω; counts- or typical-normalization can be done elsewhere.
+    In-place divide by Δ\Omega; counts- or typical-normalization can be done elsewhere.
     """
     nbins = bins.shape[0] - 1
     for i in range(nbins):
@@ -374,7 +374,7 @@ def pair_histogram(eigvals,
     Returns
     -------
     values : (K,2) float
-        (ω, value) pairs if not histogram mode, else empty.
+        (\Omega, value) pairs if not histogram mode, else empty.
     counts : (nbins,) uint64
         Bin counts if histogram mode.
     sums : (nbins,) float
@@ -576,7 +576,7 @@ else:
 def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True) -> np.ndarray:
     """
     Compute IPR_j = ∑_i |ψ_{i j}|^{2q} for each column j of `states`.
-    If `new_basis` is provided (shape n \times n), then ψ → B^T·ψ is used
+    If `new_basis` is provided (shape n \times n), then ψ -> B^T·ψ is used
     before raising to the 2q power.  Works on 1D or 2D `states`.
 
     Parameters

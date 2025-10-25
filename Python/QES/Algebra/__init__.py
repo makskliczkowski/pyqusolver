@@ -31,13 +31,36 @@ MODULE_DESCRIPTION = "Algebra for quantum many-body: Hilbert spaces, Hamiltonian
 
 # Import main classes with explicit relative imports to avoid ambiguity
 try:
-    from .hilbert import HilbertSpace   # type: ignore
-    from .hamil import Hamiltonian      # type: ignore
+    from .hilbert import HilbertSpace                           # type: ignore
+    from .hilbert_config import HilbertConfig, SymmetrySpec     # type: ignore
+    from .hamil import Hamiltonian                              # type: ignore
+    from .hamil_config import (                                 # type: ignore
+        HamiltonianConfig,
+        HAMILTONIAN_REGISTRY,
+        register_hamiltonian,
+    )
     from . import symmetries as _sym    # type: ignore
     # Curate exported symmetry names (skip private/dunder)
     _sym_exports    = [n for n in dir(_sym) if not n.startswith("_")]
-    __all__         = ['HilbertSpace', 'Hamiltonian', *_sym_exports]
+    __all__         = [
+        'HilbertSpace',
+        'HilbertConfig',
+        'SymmetrySpec',
+        'Hamiltonian',
+        'HamiltonianConfig',
+        'HAMILTONIAN_REGISTRY',
+        'register_hamiltonian',
+        *_sym_exports,
+    ]
 except Exception:                                       # Broad except to keep package import resilient
-    __all__         = ['HilbertSpace', 'Hamiltonian']   # Minimal exports if imports fail
+    __all__         = [
+        'HilbertSpace',
+        'Hamiltonian',
+        'HilbertConfig',
+        'SymmetrySpec',
+        'HamiltonianConfig',
+        'HAMILTONIAN_REGISTRY',
+        'register_hamiltonian',
+    ]   # Minimal exports if imports fail
     
 # ----------------------------------------------------------------------------

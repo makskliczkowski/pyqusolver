@@ -162,7 +162,7 @@ if JAX_AVAILABLE:
                   sites: jnp.ndarray,
                   pref : float = 1.0):
         """
-        In-place creation on an occupation array (1 → already occupied).
+        In-place creation on an occupation array (1 -> already occupied).
         """
         bits      = jnp.take(state, sites)
         any_occ   = jnp.any(bits == 1)
@@ -320,7 +320,7 @@ if JAX_AVAILABLE:
         Parameters
         ----------
         state : int | jax.Array
-            Basis state encoded as an integer (Jordan–Wigner binary).
+            Basis state encoded as an integer (Jordan-Wigner binary).
         ns : int
             Total number of sites.
         sites : Sequence[int]
@@ -367,8 +367,8 @@ if JAX_AVAILABLE:
         tuple
             (state, amplitude) with
 
-            * **state** – unchanged input array (not copied);
-            * **amplitude** – :math:`\Bigl(\prod_i \mathrm{occ}_i\Bigr)\,
+            * **state** - unchanged input array (not copied);
+            * **amplitude** - :math:`\Bigl(\prod_i \mathrm{occ}_i\Bigr)\,
             \text{prefactor}^{\,m}`.
         """
         occ_prod  = jnp.prod(state[sites], dtype=_DEFAULT_FLOAT)
