@@ -12,7 +12,7 @@ from numba.typed import List
 from typing import Union, Optional, Callable, Tuple
 
 #! jax
-import Algebra.Hilbert.hilbert_jit_states_jax as jnp
+from QES.Algebra.Hilbert import hilbert_jit_states_jax as jnp
 from QES.general_python.algebra.utilities import pfaffian as pfaffian
 from QES.general_python.algebra.utilities import hafnian as hafnian
 from QES.general_python.common.binary import int2binstr, check_int_l
@@ -575,12 +575,12 @@ def calculate_permanent(sp_eigvecs          : np.ndarray,   # U matrix (Ns x Nor
 #############################################################################
 
 # @njit(cache=True, parallel=True)
-def _fill_batched_space(   matrix_arg               : np.ndarray,            
-                            calculator_func         : CallableCoefficient,   
-                            target_basis_states     : Array,
-                            target_basis_states_idx : Array,
-                            result_vector_slice     : Array,
-                            ns                      : int,                  
+def _fill_batched_space(matrix_arg              : np.ndarray,            
+                        calculator_func         : CallableCoefficient,   
+                        target_basis_states     : Array,
+                        target_basis_states_idx : Array,
+                        result_vector_slice     : Array,
+                        ns                      : int,                  
                         ):
     """
     Numba-jitted loop to compute amplitudes for many-body state construction.

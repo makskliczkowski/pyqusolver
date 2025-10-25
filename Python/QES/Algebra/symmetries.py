@@ -5,6 +5,7 @@ Description: This module contains functions to compute the symmetries of a given
 
 # Import the necessary modules
 import math
+import cmath
 import numpy as np
 import time
 from typing import Tuple, Optional, TYPE_CHECKING
@@ -204,10 +205,9 @@ def translation(lat : Lattice,
     """
     if lat is None:
         raise ValueError(_LATTICE_NONE_ERROR)
-    
-    if dim is None:
-        dim = lat.dim()
 
+    if dim is None:
+        dim = lat.dim
     lx = lat.lx
     ly = lat.ly if dim > 1 and hasattr(lat, 'ly') else 1
     lz = lat.lz if dim > 2 and hasattr(lat, 'lz') else 1
@@ -226,7 +226,7 @@ def translation(lat : Lattice,
         k           = kz
     else:
         op_fun      = translation_x(lat, backend)
-    phase = math.exp(1j * k)
+    phase = cmath.exp(1j * k)  # Use cmath.exp for complex exponentials
     
     # get the symmetry generator type
     typek = SymmetryGenerators.Translation_x
@@ -237,8 +237,8 @@ def translation(lat : Lattice,
     
     name = f'T_{direction.name}'
     
-    return Operator(lattice = lat, eigval = phase, fun = op_fun,
-            type = typek, backend = backend, name = name)
+    return Operator(lattice = lat, eigval = phase, fun_int = op_fun,
+            typek = typek, backend = backend, name = name)
 
 ####################################################################################################
 #! Reflection Symmetries - spin-1/2

@@ -226,7 +226,7 @@ class MonteCarloSolver(Solver):
             str: A formatted string representing the object.
         """
 
-        return f"[{self._replica_idx}] I am a {self.__class__.__name__} object with {self._info} at β = {self._beta : .2f}."
+        return f"[{self._replica_idx}] I am a {self.__class__.__name__} object with {self._info} at \beta = {self._beta : .2f}."
     
     # ----------------
     

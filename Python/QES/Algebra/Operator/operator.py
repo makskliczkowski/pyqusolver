@@ -23,6 +23,7 @@ import copy
 import time
 import numpy as np
 import numba
+from numba.core.registry import CPUDispatcher
 import numbers
 
 #####################################################################################################
@@ -32,7 +33,7 @@ from typing import Optional, Callable, Union, Sequence, Any, Set
 from typing import Union, Tuple, List               # type hints for the functions and methods
 from functools import partial                       # partial function application for operator composition
 ####################################################################################################
-from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, StateTypes, LocalOpKernels
+from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, LocalOperator, StateTypes, LocalOpKernels
 from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
 from QES.general_python.lattices import Lattice
 
@@ -599,8 +600,12 @@ class OperatorFunction:
         # apply the operator function based on the number of necessary arguments
         result = self._dispatch(s, *args)
 
-        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], (int, np.ndarray, jnp.ndarray)):
-            return result
+        # Check if result is a valid (state, value) tuple
+        # Accept int, np.integer (for np.int64, etc.), np.ndarray, or jnp.ndarray for state
+        if isinstance(result, tuple) and len(result) == 2:
+            state_valid = isinstance(result[0], (int, np.integer, np.ndarray, jnp.ndarray))
+            if state_valid:
+                return result
         elif isinstance(result, list) and all(isinstance(item, tuple) and len(item) == 2 for item in result):
             return result
         raise ValueError("Operator function returned an invalid type. Expected a tuple or a list of (state, value) pairs.")
@@ -1461,8 +1466,8 @@ class Operator(ABC):
                     - The first list contains the transformed states.
                     - The second list contains the corresponding values.
         """
-        if (hasattr(states, 'shape') and len(states.shape) == 1) or isinstance(states, (int, np.int8, np.int16, np.int32, np.int64)):
-            # if the state is a single state, apply the function directly
+        if (hasattr(states, 'shape') and len(states.shape) <= 1) or isinstance(states, (int, np.integer)):
+            # if the state is a single state (scalar or 0-d/1-d array), apply the function directly
             st, val = self._fun(states)
             return st, val * self._eigval
         
@@ -1484,8 +1489,8 @@ class Operator(ABC):
                 - The second list contains the corresponding values or results of the operation.
                 If the input is a single state, the result is returned as a single state and value.
         """
-        if (hasattr(states, 'shape') and len(states.shape) == 1) or isinstance(states, (int, np.int8, np.int16, np.int32, np.int64)):
-            # if the state is a single state, apply the function directly
+        if (hasattr(states, 'shape') and len(states.shape) <= 1) or isinstance(states, (int, np.integer)):
+            # if the state is a single state (scalar or 0-d/1-d array), apply the function directly
             st, val = self._fun(states, i)
             return st, val * self._eigval
         results     = [self._fun(state, i) for state in states]
@@ -1801,11 +1806,14 @@ def create_operator(type_act        : int | OperatorTypeActing,
         sites           = tuple(sites) if isinstance(sites, list) else sites
         sites_np        = np.array(sites, dtype = np.int32)
         
-        @numba.njit
-        def fun_int(state):
-            return op_func_int(state, ns, sites, *extra_args)
-        
-        @numba.njit
+        if isinstance(op_func_int, CPUDispatcher):
+            @numba.njit
+            def fun_int(state):
+                return op_func_int(state, ns, sites, *extra_args)
+        else:
+            def fun_int(state):
+                return op_func_int(state, ns, sites, *extra_args)
+
         def fun_np(state):
             return op_func_np(state, sites_np, *extra_args)
 
@@ -1830,12 +1838,16 @@ def create_operator(type_act        : int | OperatorTypeActing,
     #! Local operator: the operator acts on one specific site. The returned functions expect an extra site argument.
     elif type_act == OperatorTypeActing.Local.value:
         
-        @numba.njit
-        def fun_int(state, i):
-            sites_1 = np.array([i], dtype=np.int32)
-            return op_func_int(state, ns, sites_1, *extra_args)
-        
-        @numba.njit
+        if isinstance(op_func_int, CPUDispatcher):
+            @numba.njit
+            def fun_int(state, i):
+                sites_1 = np.array([i], dtype=np.int32)
+                return op_func_int(state, ns, sites_1, *extra_args)
+        else:
+            def fun_int(state, i):
+                sites_1 = np.array([i], dtype=np.int32)
+                return op_func_int(state, ns, sites_1, *extra_args)
+
         def fun_np(state, i):
             sites_1 = np.array([i], dtype=np.int32)
             return op_func_np(state, sites_1, *extra_args)
@@ -1865,12 +1877,16 @@ def create_operator(type_act        : int | OperatorTypeActing,
     #! Correlation operator: the operator acts on a pair of sites.
     elif type_act == OperatorTypeActing.Correlation.value:
         
-        @numba.njit
-        def fun_int(state, i, j):
-            sites_2 = np.array([i, j], dtype=np.int32)
-            return op_func_int(state, ns, sites_2, *extra_args)
-        
-        @numba.njit
+        if isinstance(op_func_int, CPUDispatcher):
+            @numba.njit
+            def fun_int(state, i, j):
+                sites_2 = np.array([i, j], dtype=np.int32)
+                return op_func_int(state, ns, sites_2, *extra_args)
+        else:
+            def fun_int(state, i, j):
+                sites_2 = np.array([i, j], dtype=np.int32)
+                return op_func_int(state, ns, sites_2, *extra_args)
+
         def fun_np(state, i, j):
             sites_2 = np.array([i, j], dtype=np.int32)
             return op_func_np(state, sites_2, *extra_args)
@@ -1898,6 +1914,53 @@ def create_operator(type_act        : int | OperatorTypeActing,
     
     else:
         raise ValueError("Invalid OperatorTypeActing")
+
+
+def operator_from_local(local_op: LocalOperator,
+                        *,
+                        lattice: Optional[Lattice] = None,
+                        ns: Optional[int] = None,
+                        name: Optional[str] = None,
+                        type_override: Optional[OperatorTypeActing] = None) -> Operator:
+    """
+    Convert a catalogued :class:`LocalOperator` into a concrete :class:`Operator`.
+    """
+
+    kernels = local_op.kernels
+    if kernels.fun_int is None:
+        raise ValueError(f"Integer backend not available for operator '{local_op.key}'.")
+
+    def _missing_np_kernel(*_args, **_kwargs):
+        raise NotImplementedError(
+            f"NumPy backend not available for operator '{local_op.key}'."
+        )
+
+    def _missing_jax_kernel(*_args, **_kwargs):
+        raise NotImplementedError(
+            f"JAX backend not available for operator '{local_op.key}'."
+        )
+
+    fun_np = kernels.fun_np if kernels.fun_np is not None else _missing_np_kernel
+    fun_jnp = kernels.fun_jax if kernels.fun_jax is not None else _missing_jax_kernel
+
+    type_map = {
+        0: OperatorTypeActing.Global,
+        1: OperatorTypeActing.Local,
+        2: OperatorTypeActing.Correlation,
+    }
+    type_act = type_override or type_map.get(kernels.site_parity, OperatorTypeActing.Local)
+
+    return create_operator(
+        type_act=type_act,
+        op_func_int=kernels.fun_int,
+        op_func_np=fun_np,
+        op_func_jnp=fun_jnp,
+        lattice=lattice,
+        ns=ns,
+        extra_args=kernels.default_extra_args,
+        name=name or local_op.key,
+        modifies=kernels.modifies_state,
+    )
 
 # Example usage:
 # (Assume sigma_x_int_np, sigma_x_np, sigma_x_jnp are defined elsewhere and JAX_AVAILABLE is set.)

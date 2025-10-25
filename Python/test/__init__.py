@@ -1,5 +1,5 @@
-'''
-This is the test module.
-'''
+"""
+Test module for QES package.
 
-from .. import *
+This file exists to make the test directory a Python package.
+"""

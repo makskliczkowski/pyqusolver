@@ -12,9 +12,9 @@ import numpy as np
 import numba
 from typing import List, Tuple, Union, Optional
 
-# Assume these are available from the QES package:
-import Algebra.hilbert as hilbert_module
-import Algebra.hamil as hamil_module
+# QES package imports
+from QES.Algebra import hilbert as hilbert_module
+from QES.Algebra import hamil as hamil_module
 from QES.Algebra.Operator import operators_spin as operators_spin_module
 
 ##########################################################################################

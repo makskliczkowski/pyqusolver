@@ -23,10 +23,10 @@ Usage Pattern
 -------------
     from QES.qes_globals import get_logger, get_backend_manager, get_numpy_rng, next_jax_key
 
-    log         = get_logger()
-    backend_mgr = get_backend_manager()
-    xp          = backend_mgr.np
-    rng         = get_numpy_rng()
+    log                 = get_logger()
+    backend_mgr         = get_backend_manager()
+    xp                  = backend_mgr.np
+    rng                 = get_numpy_rng()
 
     with backend_mgr.seed_scope(123):
         ... deterministic code ...
@@ -53,6 +53,10 @@ _LOCK               = threading.Lock()
 _LOGGER: Any        = None
 _BACKEND_MGR: Any   = None
 
+# ----------------------------------------------------------------
+#! Global logger accessor
+# ----------------------------------------------------------------
+
 def get_logger(**kwargs):
     """
     Return the process-global logger instance.
@@ -72,6 +76,10 @@ def get_logger(**kwargs):
             _LOGGER = get_global_logger(**kwargs)
     return _LOGGER
 
+# ----------------------------------------------------------------
+#! Global backend manager accessor
+# ----------------------------------------------------------------
+
 def get_backend_manager() -> Any:
     """
     Return the global backend manager (lazy import).
@@ -88,6 +96,8 @@ def get_backend_manager() -> Any:
             _BACKEND_MGR = backend_mgr
     return _BACKEND_MGR
 
+# ----------------------------------------------------------------
+#! RNG accessors
 # ----------------------------------------------------------------
 
 def get_numpy_rng():
@@ -128,3 +138,4 @@ __all__ = [
 
 # ----------------------------------------------------------------
 #! End of QES global singletons
+# ----------------------------------------------------------------

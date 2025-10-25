@@ -46,7 +46,7 @@ if True:
 
     # b) find the representative of a given state
     
-    @numba.jit(nopython=False)
+    @numba.jit(nopython=False, forceobj=True)
     def find_repr_int(state,
                     _sym_group,
                     _reprmap    : np.ndarray = None):
@@ -60,17 +60,20 @@ if True:
             state (int):
                 The state to find the representative for.
             _sym_group (list):
-                The symmetry group of the system.
+                The symmetry group of the system. Each element is a tuple of operators
+                to apply sequentially. Empty tuple () represents identity.
             _reprmap (np.ndarray):
                 The mapping of the states to their representatives.
                 If None, the representative is calculated.
         Returns:
             int:
                 The representative of the state.
+            float:
+                The symmetry eigenvalue.
         """
                 
-        # If mapping exists, return saved representative.
-        if _reprmap is not None and len(_reprmap) > 0:
+        # If mapping exists and is a proper numpy array, return saved representative.
+        if _reprmap is not None and isinstance(_reprmap, np.ndarray) and len(_reprmap) > 0:
             idx     = _reprmap[state, 0]
             sym_eig = _reprmap[state, 1]
             return idx, sym_eig
@@ -82,12 +85,27 @@ if True:
         _sec = _INT_HUGE_REPR
         _val = 1.0
         
-        # loop over all states in symmetry sectors
-        for g in _sym_group:
-            _st, _retval = g(state)
+        # loop over all symmetry group elements (each is a tuple of operators)
+        for op_tuple in _sym_group:
+            # Apply operators sequentially
+            _st     = state
+            _retval = 1.0
+            
+            # Empty tuple means identity
+            if len(op_tuple) == 0:
+                _st     = state
+                _retval = 1.0
+            else:
+                # Apply each operator in sequence
+                for op in op_tuple:
+                    _st, phase  = op(_st)
+                    _retval    *= phase
+            
+            # Keep track of minimum state
             if _st < _sec:
                 _sec = _st
                 _val = _retval
+                
         return _sec, _val
 
     # c) find the representative of a given state in a given symmetry sector

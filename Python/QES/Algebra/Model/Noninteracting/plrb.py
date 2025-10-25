@@ -8,8 +8,8 @@ import numpy as np
 from typing import List, Optional, Union
 
 #! QES package imports
-import Algebra.hilbert as hilbert_module
-import Algebra.hamil as hamil_module
+from QES.Algebra import hilbert as hilbert_module
+from QES.Algebra import hamil as hamil_module
 
 #! Random matrix wrapper and linear algebra utilities
 from QES.general_python.algebra.ran_wrapper import set_global_seed

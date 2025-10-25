@@ -28,6 +28,8 @@ try:
     # main imports
     from QES.Algebra.Operator.operator import (Operator, OperatorTypeActing, SymmetryGenerators, 
                                         create_operator, ensure_operator_output_shape_numba)
+    from QES.Algebra.Operator.catalog import register_local_operator
+    from QES.Algebra.Hilbert.hilbert_local import LocalOpKernels, LocalSpaceTypes
 except ImportError as e:
     raise ImportError("Failed to import required modules. Ensure that the QES package is correctly installed.") from e
 
@@ -1790,3 +1792,107 @@ class SpinOperatorTests(GeneralAlgebraicTest):
         self.tests.append(self.test_sig_k_global_np)
 
 # -----------------------------------------------------------------------------
+
+################################################################################
+# Registration with the operator catalog
+################################################################################
+
+
+def _register_catalog_entries():
+    """
+    Register standard spin-1/2 onsite operators with the global catalog.
+    """
+
+    def _sigma_x_factory() -> LocalOpKernels:
+        return LocalOpKernels(
+            fun_int=sigma_x_int,
+            fun_np=sigma_x_np,
+            fun_jax=sigma_x_jnp if JAX_AVAILABLE else None,
+            site_parity=1,
+            modifies_state=True,
+        )
+
+    def _sigma_y_factory() -> LocalOpKernels:
+        return LocalOpKernels(
+            fun_int=sigma_y_int,
+            fun_np=sigma_y_np,
+            fun_jax=sigma_y_jnp if JAX_AVAILABLE else None,
+            site_parity=1,
+            modifies_state=True,
+        )
+
+    def _sigma_z_factory() -> LocalOpKernels:
+        return LocalOpKernels(
+            fun_int=sigma_z_int,
+            fun_np=sigma_z_np,
+            fun_jax=sigma_z_jnp if JAX_AVAILABLE else None,
+            site_parity=1,
+            modifies_state=False,
+        )
+
+    def _sigma_plus_factory() -> LocalOpKernels:
+        return LocalOpKernels(
+            fun_int=sigma_plus_int_np,
+            fun_np=sigma_plus_np,
+            fun_jax=sigma_plus_jnp if JAX_AVAILABLE else None,
+            site_parity=1,
+            modifies_state=True,
+        )
+
+    def _sigma_minus_factory() -> LocalOpKernels:
+        return LocalOpKernels(
+            fun_int=sigma_minus_int_np,
+            fun_np=sigma_minus_np,
+            fun_jax=sigma_minus_jnp if JAX_AVAILABLE else None,
+            site_parity=1,
+            modifies_state=True,
+        )
+
+    register_local_operator(
+        LocalSpaceTypes.SPIN_1_2,
+        key="sigma_x",
+        factory=_sigma_x_factory,
+        description="Pauli σₓ flip acting on spin-1/2 basis states.",
+        algebra="σₓ² = 1,   {σₓ, σ_y} = 0,   [σₓ, σ_z] = 2i σ_y",
+        sign_convention="No non-trivial sign; operates locally in the σ_z eigenbasis.",
+        tags=("spin", "pauli"),
+    )
+    register_local_operator(
+        LocalSpaceTypes.SPIN_1_2,
+        key="sigma_y",
+        factory=_sigma_y_factory,
+        description="Pauli σ_y rotation acting on spin-1/2 basis states.",
+        algebra="σ_y² = 1,   {σ_y, σₓ} = 0,   [σ_y, σ_z] = -2i σₓ",
+        sign_convention="Standard Pauli matrix in σ_z basis; introduces ±i phases.",
+        tags=("spin", "pauli"),
+    )
+    register_local_operator(
+        LocalSpaceTypes.SPIN_1_2,
+        key="sigma_z",
+        factory=_sigma_z_factory,
+        description="Pauli σ_z operator (magnetisation in the computational basis).",
+        algebra="σ_z² = 1,   [σ_z, σ_±] = ±2 σ_±",
+        sign_convention="Diagonal in σ_z basis; no additional sign factors.",
+        tags=("spin", "pauli"),
+    )
+    register_local_operator(
+        LocalSpaceTypes.SPIN_1_2,
+        key="sigma_plus",
+        factory=_sigma_plus_factory,
+        description="Spin raising operator σ⁺ = (σₓ + i σ_y)/2.",
+        algebra="σ⁺σ⁻ + σ⁻σ⁺ = 1,   [σ_z, σ⁺] = 2σ⁺",
+        sign_convention="Acts locally without JW strings; raises σ_z eigenvalue by one.",
+        tags=("spin", "raising"),
+    )
+    register_local_operator(
+        LocalSpaceTypes.SPIN_1_2,
+        key="sigma_minus",
+        factory=_sigma_minus_factory,
+        description="Spin lowering operator σ⁻ = (σₓ - i σ_y)/2.",
+        algebra="σ⁺σ⁻ + σ⁻σ⁺ = 1,   [σ_z, σ⁻] = -2σ⁻",
+        sign_convention="Acts locally without JW strings; lowers σ_z eigenvalue by one.",
+        tags=("spin", "lowering"),
+    )
+
+
+_register_catalog_entries()

@@ -113,6 +113,16 @@ from QES.Algebra.Operator.operator import (
     Operator, OperatorTypeActing, SymmetryGenerators, create_operator,
     ensure_operator_output_shape_numba
 )
+from QES.Algebra.Operator.catalog import register_local_operator
+from QES.Algebra.Hilbert.hilbert_local import LocalOpKernels, LocalSpaceTypes
+from QES.Algebra.Operator.operators_hardcore import (
+    hardcore_create_int,
+    hardcore_create_np,
+    hardcore_annihilate_int,
+    hardcore_annihilate_np,
+    hardcore_number_int,
+    hardcore_number_np,
+)
 ################################################################################
 
 from QES.general_python.common.tests import GeneralAlgebraicTest
@@ -792,6 +802,122 @@ def n( lattice      : Optional[Lattice]     = None,
         name        = "n",
         modifies    = False
     )
+
+################################################################################
+# Registration with the operator catalog
+################################################################################
+
+
+def _register_catalog_entries():
+    """
+    Register canonical spinless fermion operators with the global catalog.
+    """
+
+    def _creation_factory(statistics_angle: float = np.pi) -> LocalOpKernels:
+        def _int_kernel(state, ns, sites):
+            out_state, out_coeff = hardcore_create_int(state, ns, sites, statistics_angle)
+            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        def _np_kernel(state, sites):
+            out_state, out_coeff = hardcore_create_np(state, sites, statistics_angle)
+            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        if JAX_AVAILABLE:
+            def _jax_kernel(state, sites):
+                return c_dag_jnp(state, sites, pref=1.0)
+        else:
+            _jax_kernel = None
+
+        return LocalOpKernels(
+            fun_int=_int_kernel,
+            fun_np=_np_kernel,
+            fun_jax=_jax_kernel,
+            site_parity=1,
+            modifies_state=True,
+        )
+
+    def _annihilation_factory(statistics_angle: float = np.pi) -> LocalOpKernels:
+        def _int_kernel(state, ns, sites):
+            out_state, out_coeff = hardcore_annihilate_int(state, ns, sites, statistics_angle)
+            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        def _np_kernel(state, sites):
+            out_state, out_coeff = hardcore_annihilate_np(state, sites, statistics_angle)
+            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        if JAX_AVAILABLE:
+            def _jax_kernel(state, sites):
+                return c_jnp(state, sites, pref=1.0)
+        else:
+            _jax_kernel = None
+
+        return LocalOpKernels(
+            fun_int=_int_kernel,
+            fun_np=_np_kernel,
+            fun_jax=_jax_kernel,
+            site_parity=1,
+            modifies_state=True,
+        )
+
+    def _number_factory() -> LocalOpKernels:
+        def _int_kernel(state, ns, sites):
+            out_state, out_coeff = hardcore_number_int(state, ns, sites)
+            return out_state, out_coeff.astype(_DEFAULT_FLOAT, copy=False)
+
+        def _np_kernel(state, sites):
+            out_state, out_coeff = hardcore_number_np(state, sites)
+            return out_state, out_coeff.astype(_DEFAULT_FLOAT, copy=False)
+
+        if JAX_AVAILABLE:
+            def _jax_kernel(state, sites):
+                return n_jax(state, sites, pref=1.0)
+        else:
+            _jax_kernel = None
+
+        return LocalOpKernels(
+            fun_int=_int_kernel,
+            fun_np=_np_kernel,
+            fun_jax=_jax_kernel,
+            site_parity=1,
+            modifies_state=False,
+        )
+
+    register_local_operator(
+        LocalSpaceTypes.SPINLESS_FERMIONS,
+        key="c_dag",
+        factory=_creation_factory,
+        description="Fermionic creation operator c†_i acting on the computational basis.",
+        algebra="{c_i, c_j†} = δ_{ij}",
+        sign_convention="Jordan-Wigner string counting occupied sites to the left of i.",
+        tags=("fermion", "creation"),
+    )
+
+    register_local_operator(
+        LocalSpaceTypes.SPINLESS_FERMIONS,
+        key="c",
+        factory=_annihilation_factory,
+        description="Fermionic annihilation operator c_i.",
+        algebra="{c_i, c_j†} = δ_{ij}",
+        sign_convention="Jordan-Wigner string counting occupied sites to the left of i.",
+        tags=("fermion", "annihilation"),
+    )
+
+    register_local_operator(
+        LocalSpaceTypes.SPINLESS_FERMIONS,
+        key="n",
+        factory=_number_factory,
+        description="Onsite fermion number operator n_i = c†_i c_i.",
+        algebra="[n_i, c_j†] = δ_{ij} c_j†,  [n_i, c_j] = -δ_{ij} c_j",
+        sign_convention="No additional phase; diagonal in occupation basis.",
+        tags=("fermion", "number"),
+    )
+
+
+_register_catalog_entries()
 
 ##############################################################################
 #! End of file

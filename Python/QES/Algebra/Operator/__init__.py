@@ -18,16 +18,35 @@ Classes:
 - Operator: Base class for quantum operators
 - SymmetryGenerators: Symmetry operation generators
 
-Author: Maksymilian Kliczkowski
-Email: maksymilian.kliczkowski@pwr.edu.pl
+File    : QES/Algebra/Operator/__init__.py
+Author  : Maksymilian Kliczkowski
+Email   : maksymilian.kliczkowski@pwr.edu.pl
 """
 
+# A short, user-facing description used by QES.registry
+MODULE_DESCRIPTION = "Operator classes and concrete operators (spin, fermions) with matrix builders."
+
 try:
-    from .operator import Operator, SymmetryGenerators
+    from .catalog import OPERATOR_CATALOG, register_local_operator
+    from .operator import Operator, SymmetryGenerators, operator_from_local
     from .operator_matrix import *
     from .operators_spin import *
     from .operators_spin import sig_plus, sig_minus
-    
-    __all__ = ['Operator', 'SymmetryGenerators', 'sig_plus', 'sig_minus']
+    from .operators_spinless_fermions import *
+    from .operators_anyon import *
+
+    __all__ = [
+        'Operator',
+        'SymmetryGenerators',
+        'operator_from_local',
+        'OPERATOR_CATALOG',
+        'register_local_operator',
+        'sig_plus',
+        'sig_minus',
+    ]
 except ImportError:
     __all__ = []
+
+# ----------------------------------------------------------------------------
+#! EOF
+# ----------------------------------------------------------------------------

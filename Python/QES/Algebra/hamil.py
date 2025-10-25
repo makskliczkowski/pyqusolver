@@ -1749,7 +1749,7 @@ def test_generic_hamiltonian(ham: Hamiltonian, ns: int):
             The number of sites.
     Returns:
     '''
-    import Algebra.Operator.operators_spin as op_spin
+    from QES.Algebra.Operator import operators_spin as op_spin
     import QES.general_python.common.binary as bin_mod
 
     sites   = [0, 2]
