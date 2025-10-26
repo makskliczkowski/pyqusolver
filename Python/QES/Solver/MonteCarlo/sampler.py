@@ -1418,7 +1418,7 @@ class MCSampler(Sampler):
         update_proposer : Function that proposes a new state. Signature should be: new_state = update_proposer(key, state, update_proposer_arg)
         log_probability : Function to compute the log-probability; signature: new_logprob = log_probability(new_state, net_callable=..., net_params=params)
         accept_config   : Function to compute the acceptance probability from current and candidate log-probabilities.
-        net_callable    : The network callable (e.g. returns Re(logψ(s)))
+        net_callable    : The network callable (e.g. returns Re(log\psi (s)))
         steps           : Number of update steps to perform.
         
         Returns:
@@ -1814,7 +1814,7 @@ class MCSampler(Sampler):
         # Flatten the collected states from all sample steps.
         configs_flat        = collected_samples.reshape((-1,) + shape)
         
-        # Evaluate the network in a fully batched (vectorized) manner to obtain log_ψ.
+        # Evaluate the network in a fully batched (vectorized) manner to obtain log_\psi .
         net_apply           = lambda conf: net_callable_fun(params, conf)
         batched_log_ansatz  = jax.vmap(net_apply)(configs_flat)
 

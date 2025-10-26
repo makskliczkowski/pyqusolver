@@ -8,7 +8,7 @@ email   : maksymilian.kliczkowski@pwr.edu.pl
 import numpy as np
 import scipy as sp
 
-from typing import List, Tuple, Union, Optional, Sequence
+from typing import Any, Dict, List, Tuple, Union, Optional, Sequence
 from enum import Enum, unique
 from abc import ABC
 from functools import partial
@@ -36,6 +36,7 @@ class QuadraticTerm(Enum):
 ##############################################################################
 
 from QES.Algebra.hamil import Hamiltonian, HilbertSpace, Lattice, JAX_AVAILABLE, Logger, Array
+from QES.Algebra.hamil_config import HamiltonianConfig, register_hamiltonian
 from QES.Algebra.Hilbert.hilbert_jit_states import (
     calculate_slater_det,
     bogolubov_decompose,
@@ -305,7 +306,7 @@ class QuadraticSelection:
         Reference
         ---------
         Mezzadri, F. (2006). How to generate random matrices from the classical groups.
-        Notices of the AMS, 54(5), 592–604.
+        Notices of the AMS, 54(5), 592-604.
 
         Examples
         --------
@@ -494,7 +495,7 @@ class QuadraticHamiltonian(Hamiltonian):
 
     and is represented by an :math:`N_s \times N_s` matrix.
 
-    For non-particle-conserving systems (e.g., Bogoliubov–de Gennes, BdG), the Hamiltonian is:
+    For non-particle-conserving systems (e.g., Bogoliubov-de Gennes, BdG), the Hamiltonian is:
         .. math::
 
             H = \frac{1}{2} \Psi^\dagger H_\mathrm{BdG} \Psi
@@ -515,6 +516,15 @@ class QuadraticHamiltonian(Hamiltonian):
     - Diagonalize the Hamiltonian to obtain single-particle eigenvalues and eigenvectors.
     - Compute many-body energies and wavefunctions for Slater determinants (fermions), permanents (bosons), and Bogoliubov vacua (superconductors).
     - Support for both NumPy and JAX backends for high-performance and differentiable computations.
+    - Integrates with :class:`~QES.Algebra.hamil_config.HamiltonianConfig` / ``register_hamiltonian`` so users can instantiate it via registry keys.
+
+    Example
+    -------
+    >>> from QES.Algebra import HilbertConfig, HamiltonianConfig, HilbertSpace, Hamiltonian
+    >>> hilbert_cfg = HilbertConfig(ns=4, is_manybody=False)
+    >>> ham_cfg = HamiltonianConfig(kind='quadratic', hilbert=hilbert_cfg, parameters={'ns': 4})
+    >>> quad_ham = Hamiltonian.from_config(ham_cfg)
+    >>> quad_ham.add_hopping(0, 1, 1.0)
 
     Mathematical background:
     - For fermions, the ground state of a quadratic Hamiltonian is a Slater determinant (particle-conserving) or a Bogoliubov vacuum (BdG).
@@ -525,7 +535,7 @@ class QuadraticHamiltonian(Hamiltonian):
     - Altland, A., & Simons, B. (2010). "Condensed Matter Field Theory" (2nd ed.), Cambridge University Press.
     - Blaizot, J.-P., & Ripka, G. (1986). "Quantum Theory of Finite Systems", MIT Press.
     - Peschel, I., & Eisler, V. (2009). "Reduced density matrices and entanglement entropy in free lattice models", J. Phys. A: Math. Theor. 42, 504003.
-    - See also: https://en.wikipedia.org/wiki/Bogoliubov–de_Gennes_equations
+    - See also: https://en.wikipedia.org/wiki/Bogoliubov-de_Gennes_equations
 
     --------------------------------------------------------------------
     Key properties used in this class:
@@ -598,31 +608,26 @@ class QuadraticHamiltonian(Hamiltonian):
         self._constant_offset       = constant_offset
         self._isfermions            = particles.lower() == 'fermions'
         self._isbosons              = not self._isfermions
-        if self._hilbert_space.particle_conserving != particle_conserving:
+        if self._hilbert_space is not None and self._hilbert_space.particle_conserving != particle_conserving:
             raise self._ERR_MODE_MISMATCH
-        
+
         if self._is_sparse:
             raise NotImplementedError("Sparse matrix support not implemented yet. TODO: implement sparse matrix handling.")
         
-        # Determine shape based on conservation (simple case)
-        # BdG case (not particle conserving) needs 2Ns x 2Ns and different term handling.
-        if not particle_conserving:
-            self._log("Warning: particle_conserving=False implies BdG Hamiltonian structure. Ensure _build_quadratic handles 2Nsx2Ns matrix and pairing terms correctly.",
-                    log='warning')
-            self._hamil_sp_size         = 2 * ns
-        else:
-            self._hamil_sp_size         = ns
-        
-        # Set matrix shape
-        self._hamil_sp_shape            = (self._hamil_sp_size, self._hamil_sp_size)
-        self._dtypeint                  = self._backend.int32 if self.ns < 2**32 - 1 else self._backend.int64
+        # Determine single-particle dimension and allocate storage.
+        self._dtype = self._dtype or self._backend.complex128
+        self._hamil_sp_size         = ns
+        self._hamil_sp_shape        = (self._hamil_sp_size, self._hamil_sp_size)
+        self._dtypeint              = self._backend.int32 if self.ns < 2**32 - 1 else self._backend.int64
 
-        # Store quadratic terms (hopping, pairing, onsite)
+        xp                          = self._backend
+        self._hamil_sp              = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        self._delta_sp              = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        if not particle_conserving:
+            self._log('Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.', lvl=2, log='info')
+
         self._name                      = f"QuadraticHamiltonian(Ns={self._ns},{'BdG' if not self._particle_conserving else 'N-conserving'})"
         self._occupied_orbitals_cached  = None
-        self._mb_calculator             = self._many_body_state_calculator()
-        
-        # for storing the pairing terms (Bogoliubov-de Gennes terms when not conserving particles)
         self._F                         = None
         self._G                         = None
         self._U                         = None
@@ -673,46 +678,93 @@ class QuadraticHamiltonian(Hamiltonian):
             If the system is particle-conserving, pairing terms are ignored.
         - Logs the operation and invalidates cached eigensystem and many-body states.
         """
-        xp      = self._backend
         if isinstance(sites, int):
             sites = (sites,)
         val     = -value if remove else value
-        valc    = val.conjugate() if isinstance(val, (complex, np.complex)) else val
+        valc    = val.conjugate() if isinstance(val, complex) or hasattr(val, "conjugate") else val
 
         if term_type is QuadraticTerm.Onsite:
             if len(sites) != 1:
                 raise ValueError("Onsite term needs one index")
-            i                       = sites[0]
-            self._hamil_sp[i, i]   += val
+            i = sites[0]
+            if self._is_numpy:
+                self._hamil_sp[i, i] += val
+            else:
+                self._hamil_sp = self._hamil_sp.at[i, i].add(val)
         elif term_type is QuadraticTerm.Hopping:
             if len(sites) != 2:
                 raise ValueError("Hopping term needs two indices")
-            i, j                    = sites
-            self._hamil_sp[i, j]   += val
-            self._hamil_sp[j, i]   += valc
+            i, j = sites
+            if self._is_numpy:
+                self._hamil_sp[i, j] += val
+                self._hamil_sp[j, i] += valc
+            else:
+                self._hamil_sp = self._hamil_sp.at[i, j].add(val)
+                self._hamil_sp = self._hamil_sp.at[j, i].add(valc)
         elif term_type is QuadraticTerm.Pairing:
             if self._particle_conserving:
                 self._log("Pairing ignored: particle_conserving=True", lvl=2, log='warning')
                 return
             if len(sites) != 2:
                 raise ValueError("Pairing term needs two indices")
-            i, j                    = sites
-            if self._isfermions: # antisymmetric
-                self._delta_sp[i, j]   +=  value
-                self._delta_sp[j, i]   += -value
-            else: # bosons: symmetric
-                self._delta_sp[i, j]   +=  value
-                self._delta_sp[j, i]   +=  value
+            i, j = sites
+            if self._isfermions:  # antisymmetric
+                if self._is_numpy:
+                    self._delta_sp[i, j] += value
+                    self._delta_sp[j, i] -= value
+                else:
+                    self._delta_sp = self._delta_sp.at[i, j].add(value)
+                    self._delta_sp = self._delta_sp.at[j, i].add(-value)
+            else:  # bosons: symmetric
+                if self._is_numpy:
+                    self._delta_sp[i, j] += value
+                    self._delta_sp[j, i] += value
+                else:
+                    self._delta_sp = self._delta_sp.at[i, j].add(value)
+                    self._delta_sp = self._delta_sp.at[j, i].add(value)
         else:
             raise TypeError(term_type)
+        self._invalidate_cache()
         self._log(f"add_term: {term_type.name} {sites} {value:+.4g}", lvl=3, log='debug')
+
+    def add_onsite(self, site: int, value: complex, *, remove: bool = False):
+        """Convenience wrapper for adding onsite terms."""
+        self.add_term(QuadraticTerm.Onsite, site, value, remove=remove)
+
+    def add_hopping(self, i: int, j: int, value: complex, *, remove: bool = False):
+        """Convenience wrapper for adding hopping terms."""
+        self.add_term(QuadraticTerm.Hopping, (i, j), value, remove=remove)
+
+    def add_pairing(self, i: int, j: int, value: complex, *, remove: bool = False):
+        """Convenience wrapper for adding pairing terms."""
+        self.add_term(QuadraticTerm.Pairing, (i, j), value, remove=remove)
+
+    def reset_terms(self):
+        """Clear onsite/hopping/pairing matrices."""
+        xp              = self._backend
+        self._hamil_sp  = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        self._delta_sp  = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        self._invalidate_cache()
+
+    def info(self) -> Dict[str, Any]:
+        """Return a lightweight dictionary describing the current quadratic model."""
+        has_pairing = bool(np.any(np.asarray(self._delta_sp)))
+        return {
+            "Ns": self._ns,
+            "particle_conserving": self._particle_conserving,
+            "particles": "fermions" if self._isfermions else "bosons",
+            "backend": getattr(self._backend, "__name__", str(self._backend)),
+            "dtype": str(self._dtype),
+            "has_pairing": has_pairing,
+            "constant_offset": self._constant_offset,
+        }
 
     def set_single_particle_matrix(self, H: Array):
         if not self._particle_conserving:
             raise RuntimeError("Use set_bdg_matrices for non-conserving case")
         if H.shape != (self._ns, self._ns):
             raise ValueError(f"shape mismatch, expected {(self._ns, self._ns)}")
-        self._hamil_sp = H
+        self._hamil_sp = self._backend.array(H, dtype=self._dtype)
         self._invalidate_cache()
         self._log(f"set_single_particle_matrix: {H.shape}", lvl=3, log='debug')
 
@@ -746,18 +798,34 @@ class QuadraticHamiltonian(Hamiltonian):
         if K.shape != (self._ns, self._ns) or Delta.shape != (self._ns, self._ns):
             raise ValueError("shape mismatch")
         
-        self._hamil_sp[:]   = K
-        self._delta_sp[:]   = Delta
+        self._hamil_sp      = self._backend.array(K, dtype=self._dtype)
+        self._delta_sp      = self._backend.array(Delta, dtype=self._dtype)
         self._invalidate_cache()
         self._log(f"set_bdg_matrices: {K.shape}, {Delta.shape}", lvl=3, log='debug')
         
+    def build_single_particle_matrix(self, copy: bool = True):
+        """Return the Ns\timesNs single-particle matrix."""
+        return self._backend.array(self._hamil_sp) if copy else self._hamil_sp
+
+    def build_bdg_matrix(self, copy: bool = True):
+        """Return the 2Ns\times2Ns BdG matrix (raises if particle-conserving)."""
+        if self._particle_conserving:
+            raise RuntimeError("BdG matrix requested but particle_conserving=True.")
+        xp = self._backend
+        bdg = xp.block([
+            [self._hamil_sp,                 self._delta_sp],
+            [-xp.conjugate(self._delta_sp), -xp.conjugate(self._hamil_sp.T)],
+        ])
+        return xp.array(bdg) if copy else bdg
+
     def _hamiltonian_quadratic(self, use_numpy: bool = False):
-        '''
-        Generates the Hamiltonian matrix whenever the Hamiltonian is single-particle. 
-        This method needs to be implemented by the subclasses.
-        '''
-        #!TODO: To be overriden by others
-        pass
+        """
+        Assemble the quadratic Hamiltonian matrix prior to diagonalization.
+        """
+        if self._particle_conserving:
+            self._hamil = self._hamil_sp
+        else:
+            self._hamil = self.build_bdg_matrix(copy=False)
 
     ###########################################################################
     #! Diagonalization
@@ -922,7 +990,7 @@ class QuadraticHamiltonian(Hamiltonian):
                 eigenstates (orbitals \alpha or quasiparticles γ).
 
         Returns:
-            The total energy E = Σ_{\alpha\inoccupied} ε_\alpha (or E = Σ_{γ\inoccupied} E_γ for BdG).
+            The total energy E = \sum _{\alpha\inoccupied} \varepsilon_\alpha (or E = \sum _{γ\inoccupied} E_γ for BdG).
             Result includes the constant_offset.
         """
         
@@ -1043,7 +1111,7 @@ class QuadraticHamiltonian(Hamiltonian):
         """
         Return a function object that implements
 
-            ψ = calc(matrix_arg, basis_state_int, ns)
+            \psi  = calc(matrix_arg, basis_state_int, ns)
         together with the constant `matrix_arg` it needs.
 
         The closure is JIT-compatible with Numba (`nopython=True`) when
@@ -1122,7 +1190,7 @@ class QuadraticHamiltonian(Hamiltonian):
         target_basis
             Currently only `"sites"` is supported.
         many_body_hs
-            If provided, must expose mapping → 1-D np.ndarray`.
+            If provided, must expose mapping -> 1-D np.ndarray`.
             The output vector is ordered according to that mapping.
             If `None`, a full vector of length `2**ns` is produced.
         batch_size
@@ -1168,3 +1236,36 @@ class QuadraticHamiltonian(Hamiltonian):
     ##########################################################################
     
 ##############################################################################
+
+# ---------------------------------------------------------------------------
+# Registry integration
+# ---------------------------------------------------------------------------
+
+# Register the quadratic Hamiltonian in the global registry so that users
+# can instantiate it via `HamiltonianConfig(kind="quadratic", ...)`.
+
+def _build_quadratic_hamiltonian(config: HamiltonianConfig, params: Dict[str, Any]) -> Hamiltonian:
+    hilbert = config.resolve_hilbert()
+    
+    if hilbert is not None:
+        params.setdefault('hilbert_space', hilbert)
+        params.setdefault('ns', hilbert.get_Ns())
+        params.setdefault('particle_conserving', hilbert.particle_conserving)
+        
+    ns = params.get('ns')
+    if ns is None:
+        raise ValueError("Quadratic Hamiltonian requires 'ns' or a Hilbert space.")
+    
+    params.setdefault('particles', 'fermions')
+    return QuadraticHamiltonian(**params)
+
+register_hamiltonian(
+    'quadratic',
+    builder     = _build_quadratic_hamiltonian,
+    description = 'Quadratic (free) Hamiltonian supporting onsite, hopping, and pairing terms.',
+    tags        = ('quadratic', 'noninteracting', 'fermion', 'boson'),
+)
+
+# ---------------------------------------------------------------------------
+#! End of file
+# ---------------------------------------------------------------------------

@@ -18,12 +18,10 @@ import time
 import numpy as np
 
 from abc import ABC
-from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Union, Optional, Callable, List, Tuple, Dict
-from enum import Enum
 
 # other
-from numba import njit, jit
 from itertools import combinations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -46,6 +44,7 @@ try:
                                             operator_identity, operator_from_local)
     from QES.Algebra.globals import GlobalSymmetry
     from QES.Algebra.symmetries import choose, translation
+    from QES.Algebra.hilbert_config import HilbertConfig
     
     #################################################################################################
     #! WRAPPER FOR JIT AND NUMBA
@@ -78,6 +77,22 @@ if JAX_AVAILABLE:
             int: The mapping of the state.
         """
         return mapping[state] if len(mapping) > state else state
+
+#####################################################################################################
+
+
+@lru_cache(maxsize=128)
+def _enumerate_generator_index_combos(num_generators: int) -> Tuple[Tuple[int, ...], ...]:
+    """
+    Return all index combinations (including the empty tuple) for ``num_generators`` entries.
+    """
+    combos: List[Tuple[int, ...]] = [tuple()]
+    if num_generators <= 0:
+        return tuple(combos)
+    indices = tuple(range(num_generators))
+    for r in range(1, num_generators + 1):
+        combos.extend(tuple(combo) for combo in combinations(indices, r))
+    return tuple(combos)
 
 #####################################################################################################
 #! Hilbert space class
@@ -183,6 +198,8 @@ class HilbertSpace(ABC):
                 state_type      : StateTypes                        = StateTypes.INTEGER,
                 backend         : str                               = 'default',
                 dtype           : np.dtype                          = np.float64,
+                boundary_flux   : Optional[Union[float, Dict[LatticeDirection, float]]] = None,
+                state_filter    : Optional[Callable[[int], bool]]   = None,
                 logger          : Optional[Logger]                  = None,
                 **kwargs):
         """
@@ -213,6 +230,14 @@ class HilbertSpace(ABC):
                 Backend to use for vectors and matrices. Default is 'default'.
             dtype (optional):
                 Data type for Hilbert space arrays. Default is np.float64.
+            boundary_flux (Optional[float or dict]):
+                Optional Peierls phase specification applied to lattice boundary
+                crossings. Accepts a scalar phase (in radians) or a mapping from
+                :class:`LatticeDirection` to per-direction phases.
+            state_filter (Optional[Callable[[int], bool]]):
+                Optional predicate applied to integer-encoded basis labels during
+                symmetry reduction.  States for which the predicate returns False
+                are skipped.  Useful for enforcing additional conserved quantities.
             logger (Optional[Logger], optional):
                 Logger instance for logging. Default is None.
             **kwargs:
@@ -244,6 +269,10 @@ class HilbertSpace(ABC):
 
         # infer the system sizes
         self._check_ns_infer(lattice=lattice, ns=ns, nh=nh)
+        self._boundary_flux = boundary_flux
+        if self._lattice is not None and boundary_flux is not None:
+            self._lattice.flux = boundary_flux
+        self._state_filter = state_filter
 
         # Nh: Effective dimension of the *current* representation
         # Initial estimate:
@@ -314,6 +343,42 @@ class HilbertSpace(ABC):
         statetype = HilbertSpace.reset_statetype(state_type, _backend)
         return _backend, _backend_str, statetype
     
+    @property
+    def boundary_flux(self):
+        """Return the boundary flux specification applied to the lattice."""
+        return self._boundary_flux
+
+    @boundary_flux.setter
+    def boundary_flux(self, value: Optional[Union[float, Dict[LatticeDirection, float]]]):
+        self._boundary_flux = value
+        if self._lattice is not None:
+            self._lattice.flux = value
+
+    @property
+    def state_filter(self) -> Optional[Callable[[int], bool]]:
+        """Predicate applied to integer states during mapping generation."""
+        return self._state_filter
+
+    @state_filter.setter
+    def state_filter(self, value: Optional[Callable[[int], bool]]):
+        self._state_filter = value
+
+    @classmethod
+    def from_config(cls, config: HilbertConfig, **overrides):
+        """
+        Instantiate a HilbertSpace from a :class:`HilbertConfig`.
+
+        Parameters
+        ----------
+        config:
+            Base configuration blueprint.
+        **overrides:
+            Keyword arguments applied on top of the blueprint before instantiation.
+        """
+        cfg = config.with_override(**overrides) if overrides else config
+        return cls(**cfg.to_kwargs())
+
+
     @staticmethod
     def reset_statetype(state_type: str, backend):
         """
@@ -395,33 +460,32 @@ class HilbertSpace(ABC):
         t                   = None  
         direction           = LatticeDirection.X
         for idx, (gen, sec) in enumerate(sym_gen):
-            
-            # proceed if this is a translation
-            if gen.has_translation():
-                
-                # Check if the lattice has periodic boundary conditions
-                has_translation = (self._lattice.bc == LatticeBC.PBC)
-                
-                if has_translation:
-                    self._sym_group_sec.append((gen, sec))
-                    
-                # Remove the translation generator from the list
-                sym_gen.pop(idx)
-                
-                # create the operator
-                
-                direction   = LatticeDirection.X
-                direction   = LatticeDirection.Y if gen == SymmetryGenerators.Translation_y else direction
-                direction   = LatticeDirection.Z if gen == SymmetryGenerators.Translation_z else direction 
-                kx          = sec if direction == LatticeDirection.X else 0.0
-                ky          = sec if direction == LatticeDirection.Y else 0.0
-                kz          = sec if direction == LatticeDirection.Z else 0.0
-                t           = translation(self._lattice, kx = kx, ky = ky, kz = kz, direction = direction, backend = self._backend)
-                
-                # Check for complex sector: nonzero momentum (unless at half filling with even Ns)
-                if sec != 0 and not (sec == self.Ns // 2 and self.Ns % 2 == 0):
-                    has_cpx_translation = True
+
+            if not gen.has_translation():
+                continue
+
+            direction = LatticeDirection.X
+            if gen == SymmetryGenerators.Translation_y:
+                direction = LatticeDirection.Y
+            elif gen == SymmetryGenerators.Translation_z:
+                direction = LatticeDirection.Z
+
+            sym_gen.pop(idx)
+            if not self._lattice.is_periodic(direction):
+                self._log(f"Translation along {direction.name} requested but boundary is not periodic.", log='warning', lvl=1)
                 break
+
+            has_translation = True
+            self._sym_group_sec.append((gen, sec))
+
+            kx = sec if direction == LatticeDirection.X else 0.0
+            ky = sec if direction == LatticeDirection.Y else 0.0
+            kz = sec if direction == LatticeDirection.Z else 0.0
+            t = translation(self._lattice, kx=kx, ky=ky, kz=kz, direction=direction, backend=self._backend)
+
+            if sec != 0 and not (sec == self.Ns // 2 and self.Ns % 2 == 0):
+                has_cpx_translation = True
+            break
             
         if has_translation:
             self._log("Translation symmetry is present.", lvl = 1)
@@ -434,7 +498,7 @@ class HilbertSpace(ABC):
         Apply the translation symmetry to all existing symmetry group elements.
         
         This creates new symmetry operations by combining translation with existing operations.
-        For a lattice with size L in the translation direction, we generate T, T², ..., T^(L-1)
+        For a lattice with size L in the translation direction, we generate T, T^2, ..., T^(L-1)
         and combine each with existing symmetry operations.
         
         Args:
@@ -449,9 +513,12 @@ class HilbertSpace(ABC):
             self._log("Adding translation to symmetry group combinations.", lvl = 2, color = 'yellow')
             
             # check the direction to determine lattice size
-            size        = self._lattice.lx if direction == LatticeDirection.X else 1
-            size        = self._lattice.ly if direction == LatticeDirection.Y else size
-            size        = self._lattice.lz if direction == LatticeDirection.Z else size
+            if direction == LatticeDirection.X:
+                size = self._lattice.lx
+            elif direction == LatticeDirection.Y:
+                size = getattr(self._lattice, 'ly', self._lattice.lx)
+            else:
+                size = getattr(self._lattice, 'lz', self._lattice.lx)
             
             sym_gen_out = sym_gen_op.copy()
             
@@ -601,18 +668,14 @@ class HilbertSpace(ABC):
         self._sym_group.append(())
         
         # Generate combinations for r = 1, 2, ..., _size_gen
-        for r in range(1, _size_gen + 1):
-            # r = number of generators to combine
-            
-            for indices in combinations(range(_size_gen), r):
-                # Create list of operators for this combination
-                ops_to_apply = []
-                for idx in indices:
-                    op_i = choose(sym_gen[idx], ns = self._ns, lat = self._lattice, backend = self._backend)
-                    ops_to_apply.append(op_i)
-                
-                # Store as tuple of operators to apply sequentially
-                self._sym_group.append(tuple(ops_to_apply))
+        if _size_gen > 0:
+            generator_ops = [
+                choose(sym_gen[idx], ns=self._ns, lat=self._lattice, backend=self._backend)
+                for idx in range(_size_gen)
+            ]
+            for combo in _enumerate_generator_index_combos(_size_gen)[1:]:
+                ops_tuple = tuple(generator_ops[idx] for idx in combo)
+                self._sym_group.append(ops_tuple)
         
         # apply the translation symmetry by combining with existing operators
         if has_t:
@@ -642,7 +705,7 @@ class HilbertSpace(ABC):
         if not self._is_many_body:
             self._log("Skipping mapping initialization in quadratic mode.", log='debug', lvl=2)
             return
-        if not gen and not self._global_syms:
+        if not gen and not self._global_syms and self._state_filter is None:
             self._log("No symmetries provided, mapping is trivial (identity).", log='debug', lvl=2)
             self._nh            = self._nhfull
             self._mapping       = None
@@ -1079,7 +1142,7 @@ class HilbertSpace(ABC):
             state (int): The state to find the symmetry normalization for.
         
         Returns:
-            float: The symmetry normalization of the state, sqrt(Σ|λ_g|²) where g leaves state invariant
+            float: The symmetry normalization of the state, sqrt(Σ|λ_g|^2) where g leaves state invariant
         """
         norm = 0.0
         for op_tuple in self._sym_group:
@@ -1186,10 +1249,10 @@ class HilbertSpace(ABC):
         Finds the representative for a given base index in the "sector alfa" and applies
         normalization from "sector beta".
 
-        This procedure is used when an operator acts on a representative |r⟩ (in sector \alpha),
-        transforming it to a state |m⟩. We then:
-        1. Find the representative |r'⟩ for state |m⟩ 
-        2. Determine the symmetry phase φ connecting |m⟩ to |r'⟩
+        This procedure is used when an operator acts on a representative |r> (in sector \alpha),
+        transforming it to a state |m>. We then:
+        1. Find the representative |r'> for state |m> 
+        2. Determine the symmetry phase φ connecting |m> to |r'>
         3. Apply normalization: N_\beta / N_\alpha * φ*
         
         The result is the matrix element contribution with proper normalization and phase.
@@ -1237,6 +1300,8 @@ class HilbertSpace(ABC):
         norm_threaded   = []
         
         for j in range(start, stop):
+            if self._state_filter is not None and not self._state_filter(j):
+                continue
             # Check all global symmetries (e.g., U(1) particle number)
             global_checker = True
             if self._global_syms:
@@ -1253,7 +1318,9 @@ class HilbertSpace(ABC):
             # Only add the state if it is its own representative
             # (this ensures each symmetry sector is represented once)
             if rep == j:
-                # Calculate normalization: sqrt of sum of |eigenvalues|² for orbit
+                if self._state_filter is not None and not self._state_filter(rep):
+                    continue
+                # Calculate normalization: sqrt of sum of |eigenvalues|^2 for orbit
                 n = self._find_sym_norm_int(j)
                 if abs(n) > 1e-7:  # Only add if normalization is non-zero
                     map_threaded.append(j)
@@ -1276,6 +1343,9 @@ class HilbertSpace(ABC):
         self._reprmap = []
         
         for j in range(self._nhfull):
+            if self._state_filter is not None and not self._state_filter(j):
+                self._reprmap.append((bin_search._BAD_BINARY_SEARCH_STATE, 0.0))
+                continue
             global_checker = True
             
             if self._global_syms:
@@ -1297,6 +1367,9 @@ class HilbertSpace(ABC):
             rep, sym_eig    = self.find_repr(j)
             idx             = bin_search.binary_search(self._mapping, 0, mapping_size - 1, rep)
             if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
+                if self._state_filter is not None and not self._state_filter(rep):
+                    self._reprmap.append((bin_search._BAD_BINARY_SEARCH_STATE, 0.0))
+                    continue
                 sym_eigc = sym_eig.conjugate() if hasattr(sym_eig, "conjugate") else sym_eig
                 self._reprmap.append((idx, np.conj(sym_eigc)))
             else:
@@ -1335,21 +1408,21 @@ class HilbertSpace(ABC):
         fuller      = self._nhfull
         # For demonstration, use self.threadNum if set; otherwise default to 1.
         if self._threadnum > 1:
-            self._mapping       = []
-            self._normalization = []
-            futures             = []
-            
-            # create the threads
+            results: List[Tuple[List[int], List[float]]] = []
             with ThreadPoolExecutor(max_workers=self._threadnum) as executor:
-                
+                futures = []
                 for t in range(self._threadnum):
                     start   = int(fuller * t / self._threadnum)
-                    stop    = fuller if (t+1) == self._threadnum else int(fuller * (t+1) / self._threadnum)
+                    stop    = fuller if (t + 1) == self._threadnum else int(fuller * (t + 1) / self._threadnum)
                     futures.append(executor.submit(self._mapping_kernel_int, start, stop, t))
                 for future in as_completed(futures):
-                    m, n    = future.result()
-                    self._mapping.extend(m)
-                    self._normalization.extend(n)
+                    results.append(future.result())
+            combined = []
+            for mapping_chunk, norm_chunk in results:
+                combined.extend(zip(mapping_chunk, norm_chunk))
+            combined.sort(key=lambda item: item[0])
+            self._mapping       = [state for state, _ in combined]
+            self._normalization = [norm for _, norm in combined]
         else:
             self._mapping, self._normalization = self._mapping_kernel_int(0, fuller, 0)
         self._nh = len(self._mapping)
@@ -1371,7 +1444,7 @@ class HilbertSpace(ABC):
     def get_matrix_element(self, k, new_k, kmap = None, h_conj = False):
         r"""
         Compute the matrix element between two states in the Hilbert space.
-        This method determines the matrix element corresponding to the transition between a given state |k⟩ and a new state defined by new_k.
+        This method determines the matrix element corresponding to the transition between a given state |k> and a new state defined by new_k.
         It accounts for the possibility that the new state may not be in its representative form, in which case it finds the representative state
         and applies the corresponding normalization factor or symmetry eigenvalue. The ordering of the returned tuple elements may be
         reversed based on the flag h_conj; if h_conj is False, the result is ((representative, k), factor), otherwise ((k, representative), factor).
@@ -1408,6 +1481,8 @@ class HilbertSpace(ABC):
         self._fullmap = []
         if self._global_syms:
             for j in range(self._nhfull):
+                if self._state_filter is not None and not self._state_filter(j):
+                    continue
                 global_checker = True
                 for g in self._global_syms:
                     global_checker = global_checker and g(j)

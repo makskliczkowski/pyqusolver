@@ -66,15 +66,15 @@ def _ensure_operator_modules_for(local_type: LocalSpaceTypes) -> None:
     """
     try:
         if local_type in (LocalSpaceTypes.SPIN_1_2, LocalSpaceTypes.SPIN_1):
-            import QES.Algebra.Operator.operators_spin  # noqa: F401
+            import QES.Algebra.Operator.operators_spin                  # noqa: F401
         elif local_type == LocalSpaceTypes.SPINLESS_FERMIONS:
-            import QES.Algebra.Operator.operators_spinless_fermions  # noqa: F401,E402
+            import QES.Algebra.Operator.operators_spinless_fermions     # noqa: F401,E402
         elif local_type == LocalSpaceTypes.ANYON_ABELIAN:
-            import QES.Algebra.Operator.operators_anyon  # noqa: F401,E402
-        elif local_type == LocalSpaceTypes.BOSONS:
-            import QES.Algebra.Operator.operators_bosons  # noqa: F401,E402
+            import QES.Algebra.Operator.operators_anyon                 # noqa: F401,E402
+        # elif local_type == LocalSpaceTypes.BOSONS:
+            # import QES.Algebra.Operator.operators_bosons  # noqa: F401,E402
     except ImportError:
-        # Optional module – if it is genuinely missing the catalog will
+        # Optional module - if it is genuinely missing the catalog will
         # simply expose whatever was registered elsewhere.
         pass
 

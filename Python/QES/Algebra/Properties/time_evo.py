@@ -121,7 +121,7 @@ if _JAX_AVAILABLE:
             A 1D array of expectation values of the quench operator for each time-evolved state.
         Notes
         -----
-        The function computes ⟨ψ(t)|O|ψ(t)> for each time-evolved state |ψ(t)>, where O is the quench operator.
+        The function computes <\psi (t)|O|\psi (t)> for each time-evolved state |\psi (t)>, where O is the quench operator.
         """
         quenched_values_t = jnp.einsum('ij,ji->i', jnp.conj(quenched_states_t.T), quench_operator_m @ quenched_states_t)
         return quenched_values_t    
@@ -282,7 +282,7 @@ def time_evo_evaluate(quenched_states_t : Array,
 
     Notes
     -----
-    The function computes ⟨ψ(t)|O|ψ(t)> for each time-evolved state |ψ(t)>, where O is the quench operator.
+    The function computes <\psi (t)|O|\psi (t)> for each time-evolved state |\psi (t)>, where O is the quench operator.
     """
     quenched_values_t = np.einsum('ij,ji->i', np.conj(quenched_states_t.T), quench_operator_m @ quenched_states_t)
     return quenched_values_t
@@ -303,13 +303,13 @@ def diagonal_ensemble_jax(  soverlaps    : Array,
     Returns:
         Array: The diagonal ensemble, computed as the sum of the product of overlaps and the diagonal elements of the matrix.
     """
-    # \sum _n a_nn |<ψ|n>|^2
+    # \sum _n a_nn |<\psi |n>|^2
     return jnp.dot(soverlaps, diag_mat)
     return jnp.sum(overlaps * diag_mat)    
 
 def diagonal_ensemble(soverlaps  : Array,
                     diag_mat    : Array):
-    # \sum _n a_nn |<ψ|n>|^2
+    # \sum _n a_nn |<\psi |n>|^2
     return np.dot(soverlaps, diag_mat)
     return np.sum(overlaps * diag_mat)
 

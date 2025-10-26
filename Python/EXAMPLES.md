@@ -7,7 +7,7 @@ code assumes you are working inside the editable `pyqusolver` checkout so
 
 ---
 
-## 1. Interacting spin model (Heisenberg–Kitaev)
+## 1. Interacting spin model (Heisenberg-Kitaev)
 
 ```python
 import numpy as np
@@ -29,7 +29,7 @@ hilbert = HilbertSpace(
     gen_mapping=True,
 )
 
-# 2) Instantiate the Heisenberg–Kitaev Hamiltonian.
+# 2) Instantiate the Heisenberg-Kitaev Hamiltonian.
 ham = HeisenbergKitaev(
     lattice=lattice,
     hilbert_space=hilbert,

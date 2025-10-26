@@ -22,11 +22,16 @@ from abc import ABC
 import time
 
 ###################################################################################################
-from QES.Algebra.hilbert import HilbertSpace, set_operator_elem, Logger, Lattice
+from QES.Algebra.hilbert import HilbertSpace, HilbertConfig, set_operator_elem, Logger, Lattice
 from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_add_operator
 from QES.Algebra.Operator.operator_matrix import operator_create_np
 from QES.Algebra.Hamil.hamil_types import *
 from QES.Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wrap
+from QES.Algebra.hamil_config import (
+    HamiltonianConfig,
+    HAMILTONIAN_REGISTRY,
+    register_hamiltonian,
+)
 ###################################################################################################
 import QES.Algebra.Hamil.hamil_jit_methods as hjm
 ###################################################################################################
@@ -87,7 +92,12 @@ class Hamiltonian(ABC):
         "mode_mismatch"              : _ERR_MODE_MISMATCH,
         "ns_not_provided"            : _ERR_NS_NOT_PROVIDED
     }
-        
+
+    @classmethod
+    def from_config(cls, config: HamiltonianConfig, **overrides):
+        """Construct a Hamiltonian instance from a registered configuration."""
+        return HAMILTONIAN_REGISTRY.instantiate(config, **overrides)
+
     # ----------------------------------------------------------------------------------------------
     
     @staticmethod
@@ -124,7 +134,7 @@ class Hamiltonian(ABC):
     def __init__(self,
                 # concerns the definition of the system type
                 is_manybody     : bool                      = True,         # True for many-body Hamiltonian, False for non-interacting
-                hilbert_space   : Optional[HilbertSpace]    = None,         # Required if is_manybody=True
+                hilbert_space   : Optional[Union[HilbertSpace, HilbertConfig]]    = None,         # Required if is_manybody=True
                 ns              : Optional[int]             = None,         # Number of sites/modes (if not provided, will be inferred from hilbert_space or lattice)
                 lattice         : Optional[Union[str, List[int]]] = None,   # Alternative way to specify ns and get the Hilbert space
                 # concerns the matrix and computation
@@ -144,8 +154,8 @@ class Hamiltonian(ABC):
         is_manybody : bool, optional
             If True, the Hamiltonian is treated as a many-body Hamiltonian.
             If False, it is treated as a non-interacting (single-particle) Hamiltonian. Default is True.
-        hilbert_space : HilbertSpace or None, optional
-            The Hilbert space object describing the system. Required if is_manybody=True.
+        hilbert_space : HilbertSpace, HilbertConfig, or None, optional
+            The Hilbert space object describing the system or a blueprint to build it. Required if is_manybody=True.
         lattice : str or list of int or None, optional
             Lattice information or list of site indices. Used to infer the number of sites (ns) and optionally construct the Hilbert space.
         is_sparse : bool, optional
@@ -164,6 +174,9 @@ class Hamiltonian(ABC):
         ValueError
             If required information (such as Hilbert space or lattice) is missing or inconsistent.
         """
+        if isinstance(hilbert_space, HilbertConfig):
+            hilbert_space = HilbertSpace.from_config(hilbert_space)
+
         self._seed                  = seed
         self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k) = Hamiltonian._set_backend(backend, self._seed)
         self._is_jax                = JAX_AVAILABLE and self._backend != np
@@ -1387,7 +1400,7 @@ class Hamiltonian(ABC):
                     if self._isfermions:
                         self._hamil = backend.block([   [ self._hamil_sp, self._delta_sp ],
                                                         [-self._delta_sp.conj(), -self._hamil_sp.conj().T ]])
-            else:  # bosons – use ΣH to make it Hermitian
+            else:  # bosons - use ΣH to make it Hermitian
                 sigma = backend.block([ [backend.eye(self.ns), backend.zeros_like(self._hamil)  ],
                                         [backend.zeros_like(self._hamil), -backend.eye(self.ns) ]])
                 self._hamil = sigma @ backend.block([[ self._hamil_sp,  self._delta_sp          ],

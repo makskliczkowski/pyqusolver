@@ -73,7 +73,7 @@ general_python            Shared scientific utilities: algebra backends, logging
 
 ## Package Structure
 
-```
+```markdown
 QES/
   __init__.py             # Lazy top-level API, globals, registry
   qes_globals.py          # Singleton logger and backend manager
@@ -87,23 +87,46 @@ QES/
   NQS/                    # Neural Quantum States, training, TDVP
   Solver/                 # Solvers (exact diag, Monte Carlo, etc.)
   general_python/         # Reusable scientific utilities (backend, lattices, maths, ML, physics)
-```
+
 
 ---
+
+## Documentation for General Utilities and Physics
+
+- [General Python Utilities README](QES/general_python/README.md): Overview of all scientific and numerical tools (algebra, lattices, maths, ML, etc.)
+- [Physics Utilities README](QES/general_python/physics/README.md): Advanced quantum/statistical physics tools (thermal, spectral, response, etc.)
+
+See these for subpackage-specific details and links to further documentation.
+```
+
+## Physics Module Documentation
+
+The `general_python/physics` module is a comprehensive toolkit for condensed matter and quantum statistical physics, with advanced features for thermal, spectral, and response calculations.
+
+- [Physics Module Structure & API](./PHYSICS_MODULE.md): Directory structure, submodules, and capabilities
+- [Physics Module: Mathematical Background](./PHYSICS_MATH.md): Mathematical descriptions of implemented algorithms and quantities
+- [Physics Module: Usage Examples](./PHYSICS_EXAMPLES.md): Extended code examples for all major features
+
+Additional walkthroughs (including interacting/quadratic Hamiltonian tutorials) live in [EXAMPLES.md](./EXAMPLES.md).
+
+See these documents for detailed usage, mathematical background, and advanced examples.
 
 ## Installation
 
 **Standard:**
+
 ```bash
 pip install -e .
 ```
 
 **With JAX support:**
+
 ```bash
 pip install -e ".[jax]"
 ```
 
 **With all optional dependencies:**
+
 ```bash
 pip install -e ".[all]"
 ```
@@ -113,6 +136,7 @@ pip install -e ".[all]"
 ## Development
 
 ### Run Tests
+
 ```bash
 pytest
 # or
@@ -120,11 +144,13 @@ python -m unittest discover -s test
 ```
 
 ### Check Imports
+
 ```bash
 python test/test_imports_lightweight.py
 ```
 
 ### Build Documentation
+
 ```bash
 make docs
 ```
@@ -147,5 +173,8 @@ CC-BY-4.0 (see [LICENSE](../LICENSE))
 
 ## Author
 
-Maksymilian Kliczkowski  
-Email: maksymilian.kliczkowski@pwr.edu.pl
+(C) Maksymilian Kliczkowski 2025
+Date    : 2025
+Email   : maxgrom97@gmail.com
+
+---

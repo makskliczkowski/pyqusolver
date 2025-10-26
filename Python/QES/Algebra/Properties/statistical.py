@@ -575,8 +575,8 @@ else:
 @numba.njit(parallel=True, fastmath=True)
 def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True) -> np.ndarray:
     """
-    Compute IPR_j = ∑_i |ψ_{i j}|^{2q} for each column j of `states`.
-    If `new_basis` is provided (shape n \times n), then ψ -> B^T·ψ is used
+    Compute IPR_j = ∑_i |\psi _{i j}|^{2q} for each column j of `states`.
+    If `new_basis` is provided (shape n \times n), then \psi  -> B^T·\psi  is used
     before raising to the 2q power.  Works on 1D or 2D `states`.
 
     Parameters
@@ -586,8 +586,8 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
     q : float
         Exponent in the IPR definition (default 1.0).
     new_basis : np.ndarray, optional
-        Change-of-basis matrix (n \times n).  If not None, each state ψ_j is
-        transformed via B^T·ψ_j before computing |·|^(2q).
+        Change-of-basis matrix (n \times n).  If not None, each state \psi _j is
+        transformed via B^T·\psi _j before computing |·|^(2q).
 
     Returns
     -------
@@ -616,7 +616,7 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
                 acc    += p
             out[j] = acc
     else:
-        # on-the-fly transform: φ_i = ∑_k B[k,i]*ψ_k
+        # on-the-fly transform: φ_i = ∑_k B[k,i]*\psi _k
         # then acc += |φ_i|^(2q)
         B = new_basis
         for j in numba.prange(m):
@@ -624,7 +624,7 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
             for i in range(n):
                 re = 0.0
                 im = 0.0
-                # compute (B^T·ψ)_i = ∑_k B[k,i] * ψ[k,j]
+                # compute (B^T·\psi )_i = ∑_k B[k,i] * \psi [k,j]
                 for k in range(n):
                     b   = B[k, i]
                     s   = states[k, j]

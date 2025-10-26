@@ -1131,7 +1131,7 @@ class NQS(MonteCarloSolver):
                                     parameters      = params,           # network parameters
                                     batch_size      = batch_size) # batch size
         
-        #! b) compute the gradients O_k = ∇ log ψ
+        #! b) compute the gradients O_k = ∇ log \psi 
         # The output `flat_grads` will have the dtype determined by single_sample_flat_grad_fun
         # For complex NQS, this is typically complex. Shape: (batch_size, n_params_flat)
         flat_grads, shapes, sizes, iscpx = compute_grad_f(net_apply     = ansatz_fn,

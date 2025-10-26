@@ -286,7 +286,7 @@ def bogolubov_decompose(eig_val, eig_vec, tol = _TOLERANCE) -> Tuple[Array, Arra
 @njit(cache=True)
 def pairing_matrix(u_mat: Array, v_mat: Array) -> Array:
     """
-    Solve V = F·U  →  F = V·U^{-1}
+    Solve V = F·U  ->  F = V·U^{-1}
     without forming U^{-1} explicitly.
     
     Valid for both fermionic (antisymmetric F) and bosonic (symmetric G)
@@ -627,7 +627,7 @@ def many_body_state_mapping(matrix_arg          : Array,
                             dtype               = np.complex128) -> Array:
     """
     Given ``mapping_array[j] = bitstring of Hilbert basis state j``,
-    return the coefficient vector ``ψ_j`` **in the same order** as
+    return the coefficient vector ``\psi _j`` **in the same order** as
     ``mapping_array``.
 
     Suitable when a high-level Hilbert-space class already stores an
@@ -646,7 +646,7 @@ def many_body_state_mapping(matrix_arg          : Array,
     return result_vec
 
 # ###########################################################################
-#! Full Hilbert–space version (loops over all integers)
+#! Full Hilbert-space version (loops over all integers)
 # ###########################################################################
 
 # @njit(cache=True, fastmath=True)
@@ -851,7 +851,7 @@ def test_many_body_states(seed: int = 12345) -> None:
                         arg[0], arg[1], np.array([0]), st, ns_, pf),
                         ns)
     
-    # norm ratio equals ⟨γ₀γ₀\dag⟩ = 1
+    # norm ratio equals <γ₀γ₀\dag> = 1
     assert np.isclose(np.sum(np.abs(psi_exc)**2) /
                     np.sum(np.abs(psi_bdg)**2), 1.0)
 
@@ -863,7 +863,7 @@ def test_many_body_states(seed: int = 12345) -> None:
                 ns)
     # empty state amplitude again 1
     assert np.isclose(psi_bos[0], 1.0)
-    print("✓ all Gaussian-state tests passed")
+    print("(v) all Gaussian-state tests passed")
 
 if __name__ == "__main__":
     test_many_body_states()

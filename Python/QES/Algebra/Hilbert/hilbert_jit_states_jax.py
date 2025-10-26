@@ -30,7 +30,7 @@ if JAX_AVAILABLE:
         Args:
             sp_eigvecs (jnp.ndarray):
                 Eigenvector matrix U (shape: Ns x Norb). Assumes columns are eigenvectors,
-                so sp_eigvecs[i, \alpha] = <i|ψ_\alpha>.
+                so sp_eigvecs[i, \alpha] = <i|\psi _\alpha>.
             occupied_orbitals (jnp.ndarray):
                 1D array (length N) of integer indices of the occupied orbitals {\alpha_k}.
             org_basis_state (Union[int, jnp.ndarray]):

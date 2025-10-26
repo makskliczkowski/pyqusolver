@@ -19,7 +19,7 @@ from QES.Algebra.Operator.operator import Operator, SymmetryGenerators
 # from general Python modules
 try:
     from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
-    from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount, BACKEND_REPR, BACKEND_DEF_SPIN
+    from QES.general_python.common.binary import flip_all, rev, popcount, BACKEND_REPR, BACKEND_DEF_SPIN
 except ImportError as e:
     raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
@@ -28,6 +28,8 @@ except ImportError as e:
 _LATTICE_NONE_ERROR = "Lattice object is None."
 _LATTICE_DIM2_ERROR = "Lattice dimension must be at least 2..."
 _LATTICE_DIM3_ERROR = "Lattice dimension must be at least 3..."
+
+_TRANSLATION_CACHE_ATTR = '_translation_cache'
 
 ####################################################################################################
 #! Fermionic helpers
@@ -51,132 +53,131 @@ def _fermionic_boundary_sign_array_1d(state_vec: np.ndarray, crossing_indices: n
 #! Tanslational Symmetries - spin-1/2
 ####################################################################################################
 
-def translation_x(lat: Lattice, backend='default', local_space: Optional['LocalSpace'] = None):
+def _axis_index(lat: Lattice, direction: LatticeDirection) -> int:
+    axis_map = {
+        LatticeDirection.X: 0,
+        LatticeDirection.Y: 1,
+        LatticeDirection.Z: 2,
+    }
+    axis = axis_map[direction]
+    if axis >= lat.dim:
+        raise ValueError(f"Direction {direction} is not supported for lattice dimension {lat.dim}.")
+    return axis
+
+
+def _compute_translation_data(lat: Lattice, direction: LatticeDirection):
     """
-    Translation in the X direction.
-    - For 1D: 
-        rotates the entire state by one to the left:
-        
-        e.g. 0b1010 -> 0b0101 or [1, 0, 1, 0] -> [0, 1, 0, 1] or [1, 0, 0, 1] -> [0, 0, 1, 1]
-        
-    - For 2D: 
-        treats the state as rows of length $L_x$ and cyclically shifts each row.
-    - For 3D: 
-        applies the same row-shift on every (y-)row in each z-slice.
+    Pre-compute permutation data for a unit translation.
+    Returns ``(perm, crossing_mask)`` where ``perm`` maps source indices to
+    destination indices and ``crossing_mask`` marks sites that cross the
+    boundary when translated.
     """
-    
+    cache = getattr(lat, _TRANSLATION_CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        setattr(lat, _TRANSLATION_CACHE_ATTR, cache)
+    if direction in cache:
+        return cache[direction]
+
+    if not lat.is_periodic(direction):
+        raise ValueError(f"Translation along {direction.name} requires periodic boundary conditions.")
+
+    axis = _axis_index(lat, direction)
+    dims = (lat.lx, lat.ly if lat.dim > 1 else 1, lat.lz if lat.dim > 2 else 1)
+    size_axis = dims[axis]
+    perm = np.empty(lat.ns, dtype=np.int64)
+    crossing_mask = np.zeros(lat.ns, dtype=bool)
+
+    for site in range(lat.ns):
+        coord = list(lat.get_coordinates(site))
+        while len(coord) < 3:
+            coord.append(0)
+        new_coord = coord.copy()
+        new_coord[axis] += 1
+        wrap = False
+        if new_coord[axis] >= size_axis:
+            new_coord[axis] -= size_axis
+            wrap = True
+        dest = lat.site_index(int(new_coord[0]), int(new_coord[1]), int(new_coord[2]))
+        perm[site] = dest
+        if wrap:
+            crossing_mask[site] = True
+
+    cache[direction] = (perm, crossing_mask)
+    return perm, crossing_mask
+
+
+def _apply_translation_int(state: int, perm: np.ndarray, crossing_mask: np.ndarray,
+                           lat: Lattice, direction: LatticeDirection) -> Tuple[int, complex]:
+    """Apply translation permutation to integer-encoded basis states."""
+    ns = lat.ns
+    new_state = 0
+    for src in range(ns):
+        if (state >> (ns - 1 - src)) & 1:
+            dest = int(perm[src])
+            new_state |= 1 << (ns - 1 - dest)
+
+    if crossing_mask.any():
+        crossing_sites = np.nonzero(crossing_mask)[0]
+        occ_cross = sum(1 for src in crossing_sites if (state >> (ns - 1 - src)) & 1)
+    else:
+        occ_cross = 0
+    phase = lat.boundary_phase(direction, occ_cross)
+    return new_state, phase
+
+
+def _apply_translation_array(state, perm: np.ndarray, crossing_mask: np.ndarray,
+                             lat: Lattice, direction: LatticeDirection):
+    """Apply translation permutation to array-encoded basis states."""
+    state_arr = np.asarray(state)
+    flat = state_arr.reshape(-1)
+    if flat.size != lat.ns:
+        raise ValueError(f"State size {flat.size} incompatible with lattice size {lat.ns}.")
+    new_flat = np.empty_like(flat)
+    new_flat[perm] = flat
+
+    if crossing_mask.any():
+        occ_cross = int(np.count_nonzero(flat[crossing_mask]))
+    else:
+        occ_cross = 0
+    phase = lat.boundary_phase(direction, occ_cross)
+    return new_flat.reshape(state_arr.shape), phase
+
+
+def _translation_operator(lat: Lattice, direction: LatticeDirection, backend='default'):
     if lat is None:
         raise ValueError(_LATTICE_NONE_ERROR)
-    
-    lx          = lat.lx
-    ly          = lat.ly if lat.dim > 1 and hasattr(lat, 'ly') else 1
-    lz          = lat.lz if lat.dim > 2 and hasattr(lat, 'lz') else 1
-    ns          = lat.sites
+    perm, crossing_mask = _compute_translation_data(lat, direction)
 
-    if lat.dim == 1:
-        def op(state):
-            '''
-            This is a placeholder function that will be returned.
-            '''
-            # Integer state: binary representation (e.g. 0b0101 for 4 sites)
-            new_state = rotate_left(state, ns, backend)
-            return (new_state, 1.0)
-        return op
-    elif lat.dim == 2:
-        row_mask = (1 << lx) - 1
-        def op(state):
-            '''
-            This is a placeholder function that will be returned.
-            '''
-            # Integer state: binary representation (e.g. 0b0101 for 4 sites)
-            if not isinstance(state, int):
-                state_r     = state.reshape((ly, lx))
-                new_state_r = rotate_left(state_r, ns, backend, axis=1)
-                return (new_state_r.reshape(-1), 1.0)
-            return (rotate_left_ax(state, lx, row_mask, ly, lz, -1, axis=1, backend=backend), 1.0)
-        return op
-    elif lat.dim == 3:
-        def op(state):
-            '''
-            This is a placeholder function that will be returned.
-            '''
-            # Integer state: binary representation (e.g. 0b0101 for 4 sites)
-            if not isinstance(state, int):
-                state_r     = state.reshape((lz, ly, lx))
-                new_state_r = rotate_left(state_r, ns, backend, axis=2)
-                return (new_state_r.reshape(-1), 1.0)
-            return (rotate_left_ax(state, lx, row_mask, ly, lz, 1, axis=2, backend=backend), 1.0)
-        return op
-    return None
+    def op(state):
+        if isinstance(state, (int, np.integer)):
+            return _apply_translation_int(int(state), perm, crossing_mask, lat, direction)
+        return _apply_translation_array(state, perm, crossing_mask, lat, direction)
+
+    return op
+
+
+def translation_x(lat: Lattice, backend='default', local_space: Optional['LocalSpace'] = None):
+    """
+    Translation in the X direction using permutation data derived from the lattice.
+    """
+    return _translation_operator(lat, LatticeDirection.X, backend=backend)
 
 def translation_y(lat, backend='default'):
     """
-    Translation in the Y direction.
-    - For 2D: treats the state as a (ly x lx) array and cyclically shifts the rows.
-    - For 3D: treats the state as a (lz x ly x lx) array and cyclically shifts the rows within each z-slice.
-    
-    For integer states (binary encoded), it cyclically reassigns entire rows.
+    Translation in the Y direction using permutation data derived from the lattice.
     """
-    if lat is None:
-        raise ValueError(_LATTICE_NONE_ERROR)
     if lat.dim == 1:
         raise ValueError(_LATTICE_DIM2_ERROR)
-
-    lx = lat.lx
-    ly = lat.ly if lat.dim > 1 and hasattr(lat, 'ly') else 1
-    lz = lat.lz if lat.dim > 2 and hasattr(lat, 'lz') else 1
-    ns = lat.sites
-
-    if lat.dim == 2:
-        def op(state):
-            '''
-            This is a placeholder function that will be returned.
-            '''
-            if isinstance(state, int):
-                raise NotImplementedError("Translation in the Y direction is not implemented for integer states.")
-            state_r = state.reshape((ly, lx))
-            new_state_r = rotate_left(state_r, ns, backend, axis = 1)
-            return (new_state_r.reshape(-1), 1.0)
-        return op
-    
-    def op_3d(state):
-        '''
-        This is a placeholder function that will be returned.
-        '''
-        if isinstance(state, int):
-            raise NotImplementedError("Translation in the Y direction is not implemented for integer states.")
-        state_r = state.reshape((lz, ly, lx))
-        new_state_r = rotate_left(state_r, ns, backend, axis = 1)
-        return (new_state_r.reshape(-1), 1.0)
-    return op_3d
+    return _translation_operator(lat, LatticeDirection.Y, backend=backend)
 
 def translation_z(lat, backend='default'):
     """
-    Translation in the Z direction (applicable only for 3D lattices).
-    - For array states: reshapes the state as (lz, ly, lx) and cyclically shifts the z-slices (roll along axis 0).
-    - For integer states: performs a cyclic shift of the z-slices.
+    Translation in the Z direction using permutation data derived from the lattice.
     """
-    if lat is None:
-        raise ValueError(_LATTICE_NONE_ERROR)
     if lat.dim != 3:
         raise ValueError(_LATTICE_DIM3_ERROR)
-    
-    lx = lat.lx
-    ly = lat.ly
-    lz = lat.lz
-    ns = lat.sites
-
-    if lat.dim == 3:
-        def op(state):
-            '''
-            This is a placeholder function that will be returned.
-            '''
-            if isinstance(state, int):
-                raise NotImplementedError("Translation in the Z direction is not implemented for integer states.")
-            state_r = state.reshape((lz, ly, lx))
-            new_state_r = rotate_left(state_r, ns, backend, axis = 0)
-            return (new_state_r.reshape(-1), 1.0)
-        return op
+    return _translation_operator(lat, LatticeDirection.Z, backend=backend)
 
 def translation(lat : Lattice,
                 kx  : int,
@@ -188,7 +189,8 @@ def translation(lat : Lattice,
     """
     Generates a translation operator with a momentum phase factor.
     The phase is defined as exp(i * 2π * (k / L)) along the chosen direction.
-    
+    Boundary flux phases stored on the lattice are incorporated automatically.
+
     Parameters:
         - lat:
             lattice object.
