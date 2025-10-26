@@ -4,6 +4,14 @@ Local Hilbert-space helpers.
 This module defines light-weight containers that describe local Hilbert spaces
 and their onsite operators.  They are used both by the operator catalog and by
 high-level Hilbert space builders.
+
+For more details, see the documentation of the `LocalSpace` and `LocalOperator`
+classes below.
+
+File        : Algebra/Operator/hilbert_local.py
+Author      : Maksymilian Kliczkowski
+Date        : 2025-10-01
+License     : MIT
 """
 
 import numpy as np
@@ -17,6 +25,7 @@ from typing import Callable, Dict, Optional, Tuple
 # int:   (state:int, ns:int,    sites:np.ndarray[int32], *extra) -> (np.ndarray[int64], np.ndarray[float/complex])
 # numpy: (state:np.ndarray,     sites:np.ndarray[int32], *extra) -> (np.ndarray[...,],  np.ndarray[...])
 # jax:   (state:jnp.ndarray,    sites:jnp.ndarray[int32],*extra) -> (jnp.ndarray[...,], jnp.ndarray[...])
+# extra args are operator-specific parameters passed at call-time
 @dataclass(frozen=True)
 class LocalOpKernels:
     fun_int             : Callable
@@ -50,7 +59,6 @@ class LocalOperator:
         """
         return f"{self.key}: {self.description} ({self.algebra})"
 
-
 class LocalSpaceTypes(Enum):
     SPIN_1_2            = "spin-1/2"
     SPIN_1              = "spin-1"
@@ -58,6 +66,9 @@ class LocalSpaceTypes(Enum):
     ANYON_ABELIAN       = "abelian-anyons"
     BOSONS              = "bosons"
 
+# ------------------------------------------------------------------
+#! Helper functions
+# ------------------------------------------------------------------
 
 def _ensure_operator_modules_for(local_type: LocalSpaceTypes) -> None:
     """
@@ -77,6 +88,10 @@ def _ensure_operator_modules_for(local_type: LocalSpaceTypes) -> None:
         # Optional module - if it is genuinely missing the catalog will
         # simply expose whatever was registered elsewhere.
         pass
+
+# ------------------------------------------------------------------
+#! LocalSpace container
+# ------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class LocalSpace:
@@ -219,4 +234,6 @@ class StateTypes(Enum):
     def __str__(self):
         return self.value
 
+#####################################################################################################
+#! EOF
 #####################################################################################################

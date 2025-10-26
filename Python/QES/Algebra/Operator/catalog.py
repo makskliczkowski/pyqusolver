@@ -72,6 +72,8 @@ class OperatorSpec:
 class OperatorCatalog:
     """
     Registry that keeps track of onsite operator specifications.
+    The catalog allows registering and querying operator metadata and
+    kernel factories in a structured manner.
 
     Operators are grouped by the identifier of the local space they belong to.
     The identifier can either be a ``LocalSpaceTypes`` enum member, or an
@@ -82,7 +84,7 @@ class OperatorCatalog:
         self._registry: Dict[str, Dict[str, OperatorSpec]] = {}
 
     # -----------------------------
-    # Utilities
+    #! Utilities
     # -----------------------------
 
     @staticmethod
@@ -93,11 +95,21 @@ class OperatorCatalog:
         if hasattr(local_space, "name") and hasattr(local_space, "value"):
             enum_name = f"{local_space.__class__.__name__}.{local_space.name}"
             return enum_name.lower()
+        
         if isinstance(local_space, str):
             return local_space.strip().lower()
+        
         return str(local_space).strip().lower()
 
     def _space_bucket(self, local_space: Any) -> Dict[str, OperatorSpec]:
+        """
+        Retrieve or create the registry bucket for a specific local space.
+        
+        Parameters
+        ----------
+        local_space:
+            ``LocalSpaceTypes`` enum member or string identifying the local space.
+        """
         key = self._normalise_space_key(local_space)
         if key not in self._registry:
             self._registry[key] = {}
@@ -112,8 +124,7 @@ class OperatorCatalog:
         local_space     : Any,
         spec            : OperatorSpec,
         *,
-        overwrite       : bool = False,
-    ) -> None:
+        overwrite       : bool = False) -> None:
         """
         Register a new operator specification.
 
@@ -133,7 +144,7 @@ class OperatorCatalog:
         bucket[spec.key] = spec
 
     # -----------------------------
-    # Query helpers
+    #! Query helpers
     # -----------------------------
 
     def specs_for(self, local_space: Any) -> Iterable[OperatorSpec]:
@@ -149,7 +160,7 @@ class OperatorCatalog:
         yield from self._space_bucket(local_space).keys()
 
     # -----------------------------
-    # Instantiation helpers
+    #! Instantiation helpers
     # -----------------------------
 
     def instantiate(self, local_space: Any, key: str, **kwargs: Any):
@@ -165,34 +176,28 @@ class OperatorCatalog:
         try:
             spec = bucket[key]
         except KeyError as exc:
-            raise KeyError(
-                f"Operator '{key}' not registered for local space {local_space!r}."
-            ) from exc
+            raise KeyError(f"Operator '{key}' not registered for local space {local_space!r}.") from exc
 
         merged_kwargs = dict(spec.default_kwargs)
         merged_kwargs.update(kwargs)
 
         # Local import to avoid circular dependency during module initialisation.
-        from QES.Algebra.Hilbert.hilbert_local import (
-            LocalOperator,
-            LocalOpKernels,
-        )
+        from QES.Algebra.Hilbert.hilbert_local import LocalOperator, LocalOpKernels
 
         kernels = spec.factory(**merged_kwargs)
+        
+        # Verify correct return type
         if not isinstance(kernels, LocalOpKernels):
-            raise TypeError(
-                f"Factory for operator '{key}' returned {type(kernels)!r}, "
-                "expected LocalOpKernels."
-            )
+            raise TypeError(f"Factory for operator '{key}' returned {type(kernels)!r}, expected LocalOpKernels.")
 
         return LocalOperator(
-            key=spec.key,
-            kernels=kernels,
-            description=spec.description,
-            algebra=spec.algebra,
-            sign_convention=spec.sign_convention,
-            tags=spec.tags,
-            parameters=merged_kwargs,
+            key             = spec.key,
+            kernels         = kernels,
+            description     = spec.description,
+            algebra         = spec.algebra,
+            sign_convention = spec.sign_convention,
+            tags            = spec.tags,
+            parameters      = merged_kwargs,
         )
 
     def build_local_operator_map(self, local_space: Any, **kwargs: Any) -> Dict[str, Any]:

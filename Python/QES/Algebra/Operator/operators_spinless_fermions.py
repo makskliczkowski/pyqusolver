@@ -86,24 +86,15 @@ Acting on a basis state gives a superposition with amplitudes
 
     \langle\mathbf{n}|\,c_k\,|\mathbf{n}\rangle =
     \frac{1}{\sqrt{|S|}} \sum_{i\in S} \mathcal{P}_i(\mathbf{n})\,n_i\,e^{-ik i}
+    
+----------------------------------------------------------------
 
-Author
-------
-
-Maksymilian Kliczkowski, WUST, Poland
-
-Date
-----
-
-May 2025
-
-Version
--------
-
-1.0
+File        : Algebra/Operator/operators_spinless_fermions.py
+Author      : Maksymilian Kliczkowski
+Date        : 2025-10-25
+License     : MIT
 """
 
-import math
 import numpy as np
 import numba
 from typing import List, Union, Optional, Callable
@@ -636,11 +627,12 @@ def c_k_dag(state     : Union[int, np.ndarray],
         return c_k_dag_np(state, sites, k, prefactor)
     return c_k_dag_jnp(state, ns, sites, k, prefactor)
 
-def n(state      : Union[int, np.ndarray],
-    ns           : int,
-    sites        : Optional[List[int]],
-    prefactor    : float = 1.0):
-    """Number operator dispatcher."""
+def n(  state           : Union[int, np.ndarray],
+        ns              : int,
+        sites           : Optional[List[int]],
+        prefactor       : float = 1.0):
+    r"""Number operator dispatcher."""
+    
     if sites is None:
         sites = list(range(ns))
     if isinstance(state, (int, np.integer)):
@@ -658,7 +650,7 @@ def c( lattice  : Optional[Lattice]     = None,
     type_act    : OperatorTypeActing    = OperatorTypeActing.Local,
     sites       : Optional[List[int]]   = None,
     prefactor   : float                 = 1.0) -> Operator:
-    """
+    r"""
     Factory for the fermionic annihilation operator c_i.
     """
     return create_operator(
@@ -679,7 +671,7 @@ def cdag( lattice   : Optional[Lattice]     = None,
         type_act    : OperatorTypeActing    = OperatorTypeActing.Local,
         sites       : Optional[List[int]]   = None,
         prefactor   : float                 = 1.0) -> Operator:
-    """
+    r"""
     Factory for the fermionic creation operator c_i\dag.
     """
     return create_operator(
@@ -741,6 +733,10 @@ def ckdag(  k         : float,
         modifies    = True
     )
 
+# ------------------------------------------------------------------------------
+#! Number operator factory
+# ------------------------------------------------------------------------------
+
 def n( lattice      : Optional[Lattice]     = None,
         ns          : Optional[int]         = None,
         type_act    : OperatorTypeActing    = OperatorTypeActing.Local,
@@ -766,21 +762,21 @@ def n( lattice      : Optional[Lattice]     = None,
 # Registration with the operator catalog
 ################################################################################
 
-
 def _register_catalog_entries():
     """
     Register canonical spinless fermion operators with the global catalog.
     """
 
     def _creation_factory(statistics_angle: float = np.pi) -> LocalOpKernels:
+        r''' Creation operator c\dag factory '''
         def _int_kernel(state, ns, sites):
-            out_state, out_coeff = hardcore_create_int(state, ns, sites, statistics_angle)
-            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            out_state, out_coeff    = hardcore_create_int(state, ns, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
             return out_state, coeff
 
         def _np_kernel(state, sites):
-            out_state, out_coeff = hardcore_create_np(state, sites, statistics_angle)
-            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            out_state, out_coeff    = hardcore_create_np(state, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
             return out_state, coeff
 
         if JAX_AVAILABLE:
@@ -790,22 +786,24 @@ def _register_catalog_entries():
             _jax_kernel = None
 
         return LocalOpKernels(
-            fun_int=_int_kernel,
-            fun_np=_np_kernel,
-            fun_jax=_jax_kernel,
-            site_parity=1,
-            modifies_state=True,
+            fun_int         =   _int_kernel,
+            fun_np          =   _np_kernel,
+            fun_jax         =   _jax_kernel,
+            site_parity     =   1,
+            modifies_state  =   True,
         )
 
     def _annihilation_factory(statistics_angle: float = np.pi) -> LocalOpKernels:
+        r''' Annihilation operator c_i factory '''
+        
         def _int_kernel(state, ns, sites):
-            out_state, out_coeff = hardcore_annihilate_int(state, ns, sites, statistics_angle)
-            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            out_state, out_coeff    = hardcore_annihilate_int(state, ns, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
             return out_state, coeff
 
         def _np_kernel(state, sites):
-            out_state, out_coeff = hardcore_annihilate_np(state, sites, statistics_angle)
-            coeff = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            out_state, out_coeff    = hardcore_annihilate_np(state, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
             return out_state, coeff
 
         if JAX_AVAILABLE:
@@ -815,14 +813,16 @@ def _register_catalog_entries():
             _jax_kernel = None
 
         return LocalOpKernels(
-            fun_int=_int_kernel,
-            fun_np=_np_kernel,
-            fun_jax=_jax_kernel,
-            site_parity=1,
-            modifies_state=True,
+            fun_int         =   _int_kernel,
+            fun_np          =   _np_kernel,
+            fun_jax         =   _jax_kernel,
+            site_parity     =   1,
+            modifies_state  =   True,
         )
 
     def _number_factory() -> LocalOpKernels:
+        ''' Number operator n_i = c\dag_i c_i factory '''
+        
         def _int_kernel(state, ns, sites):
             out_state, out_coeff = hardcore_number_int(state, ns, sites)
             return out_state, out_coeff.astype(_DEFAULT_FLOAT, copy=False)
@@ -838,44 +838,48 @@ def _register_catalog_entries():
             _jax_kernel = None
 
         return LocalOpKernels(
-            fun_int=_int_kernel,
-            fun_np=_np_kernel,
-            fun_jax=_jax_kernel,
-            site_parity=1,
-            modifies_state=False,
+            fun_int         =   _int_kernel,
+            fun_np          =   _np_kernel,
+            fun_jax         =   _jax_kernel,
+            site_parity     =   1,
+            modifies_state  =   False,
         )
 
+    # --------------------------------------------------------------------------
+    #! Register operators in the global catalog
+    # --------------------------------------------------------------------------
+
     register_local_operator(
         LocalSpaceTypes.SPINLESS_FERMIONS,
-        key="c_dag",
-        factory=_creation_factory,
-        description="Fermionic creation operator c\dag_i acting on the computational basis.",
-        algebra="{c_i, c_j\dag} = δ_{ij}",
-        sign_convention="Jordan-Wigner string counting occupied sites to the left of i.",
-        tags=("fermion", "creation"),
+        key             =   "c_dag",
+        factory         =   _creation_factory,
+        description     =   r"Fermionic creation operator c\dag_i acting on the computational basis.",
+        algebra         =   r"{c_i, c_j\dag} = \delta _{ij}",
+        sign_convention =   "Jordan-Wigner string counting occupied sites to the left of i.",
+        tags            =   ("fermion", "creation"),
     )
 
     register_local_operator(
         LocalSpaceTypes.SPINLESS_FERMIONS,
-        key="c",
-        factory=_annihilation_factory,
-        description="Fermionic annihilation operator c_i.",
-        algebra="{c_i, c_j\dag} = δ_{ij}",
-        sign_convention="Jordan-Wigner string counting occupied sites to the left of i.",
-        tags=("fermion", "annihilation"),
+        key             =   "c",
+        factory         =   _annihilation_factory,
+        description     =   r"Fermionic annihilation operator c_i.",
+        algebra         =   r"{c_i, c_j\dag} = \delta _{ij}",
+        sign_convention =   "Jordan-Wigner string counting occupied sites to the left of i.",
+        tags            =   ("fermion", "annihilation"),
     )
 
     register_local_operator(
         LocalSpaceTypes.SPINLESS_FERMIONS,
-        key="n",
-        factory=_number_factory,
-        description="Onsite fermion number operator n_i = c\dag_i c_i.",
-        algebra="[n_i, c_j\dag] = δ_{ij} c_j\dag,  [n_i, c_j] = -δ_{ij} c_j",
-        sign_convention="No additional phase; diagonal in occupation basis.",
-        tags=("fermion", "number"),
+        key             =   "n",
+        factory         =   _number_factory,
+        description     =   r"Onsite fermion number operator n_i = c\dag_i c_i.",
+        algebra         =   r"[n_i, c_j\dag] = \delta _{ij} c_j\dag,  [n_i, c_j] = -\delta _{ij} c_j",
+        sign_convention =   "No additional phase; diagonal in occupation basis.",
+        tags            =   ("fermion", "number"),
     )
 
-
+# Execute registration upon module import
 _register_catalog_entries()
 
 ##############################################################################

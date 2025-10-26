@@ -27,13 +27,16 @@ from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_a
 from QES.Algebra.Operator.operator_matrix import operator_create_np
 from QES.Algebra.Hamil.hamil_types import *
 from QES.Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wrap
+import QES.Algebra.Hamil.hamil_jit_methods as hjm
+
 from QES.Algebra.hamil_config import (
     HamiltonianConfig,
     HAMILTONIAN_REGISTRY,
     register_hamiltonian,
 )
 ###################################################################################################
-import QES.Algebra.Hamil.hamil_jit_methods as hjm
+from QES.Algebra.Hamil.hamil_diag_engine import DiagonalizationEngine
+import QES.Algebra.Hamil.hamil_diag_helpers as diag_helpers
 ###################################################################################################
 from QES.general_python.algebra.ran_wrapper import random_vector
 from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, ACTIVE_INT_TYPE, Array
@@ -71,28 +74,31 @@ class Hamiltonian(ABC):
     '''
     
     # Error messages for Hamiltonian class
-    _ERR_EIGENVALUES_NOT_AVAILABLE  = "Eigenvalues are not available. Please diagonalize the Hamiltonian first."
-    _ERR_HAMILTONIAN_NOT_AVAILABLE  = "Hamiltonian matrix is not available. Please build or initialize the Hamiltonian."
-    _ERR_HAMILTONIAN_INITIALIZATION = "Failed to initialize the Hamiltonian matrix. Check Hilbert space, lattice, and parameters."
-    _ERR_HAMILTONIAN_BUILD          = "Failed to build the Hamiltonian matrix. Ensure all operators and spaces are properly set."
-    _ERR_HILBERT_SPACE_NOT_PROVIDED = "Hilbert space is not provided or is invalid. Please supply a valid HilbertSpace object."
-    _ERR_NS_NOT_PROVIDED            = "'ns' (number of sites/modes) must be provided, e.g., via 'ns' kwarg or a Lattice object."
-    _ERR_NEED_LATTICE               = "Lattice information is required but not provided. Please specify a lattice or number of sites."
-    _ERR_COUP_VEC_SIZE              = "Invalid coupling vector size. Coupling must be a scalar, a string, or a list/array of length ns."
-    _ERR_MODE_MISMATCH              = "Operation not supported for the current Hamiltonian mode (Many-Body/Quadratic). Check 'is_manybody' flag."
+    _ERR_EIGENVALUES_NOT_AVAILABLE      = "Eigenvalues are not available. Please diagonalize the Hamiltonian first."
+    _ERR_HAMILTONIAN_NOT_AVAILABLE      = "Hamiltonian matrix is not available. Please build or initialize the Hamiltonian."
+    _ERR_HAMILTONIAN_INITIALIZATION     = "Failed to initialize the Hamiltonian matrix. Check Hilbert space, lattice, and parameters."
+    _ERR_HAMILTONIAN_BUILD              = "Failed to build the Hamiltonian matrix. Ensure all operators and spaces are properly set."
+    _ERR_HILBERT_SPACE_NOT_PROVIDED     = "Hilbert space is not provided or is invalid. Please supply a valid HilbertSpace object."
+    _ERR_NS_NOT_PROVIDED                = "'ns' (number of sites/modes) must be provided, e.g., via 'ns' kwarg or a Lattice object."
+    _ERR_NEED_LATTICE                   = "Lattice information is required but not provided. Please specify a lattice or number of sites."
+    _ERR_COUP_VEC_SIZE                  = "Invalid coupling vector size. Coupling must be a scalar, a string, or a list/array of length ns."
+    _ERR_MODE_MISMATCH                  = "Operation not supported for the current Hamiltonian mode (Many-Body/Quadratic). Check 'is_manybody' flag."
     
+    # Dictionary of error messages
     _ERRORS = {
-        "eigenvalues_not_available"  : _ERR_EIGENVALUES_NOT_AVAILABLE,
-        "hamiltonian_not_available"  : _ERR_HAMILTONIAN_NOT_AVAILABLE,
-        "hamiltonian_initialization" : _ERR_HAMILTONIAN_INITIALIZATION,
-        "hamiltonian_build"          : _ERR_HAMILTONIAN_BUILD,
-        "hilbert_space_not_provided" : _ERR_HILBERT_SPACE_NOT_PROVIDED,
-        "need_lattice"               : _ERR_NEED_LATTICE,
-        "coupling_vector_size"       : _ERR_COUP_VEC_SIZE,
-        "mode_mismatch"              : _ERR_MODE_MISMATCH,
-        "ns_not_provided"            : _ERR_NS_NOT_PROVIDED
+        "eigenvalues_not_available"     : _ERR_EIGENVALUES_NOT_AVAILABLE,
+        "hamiltonian_not_available"     : _ERR_HAMILTONIAN_NOT_AVAILABLE,
+        "hamiltonian_initialization"    : _ERR_HAMILTONIAN_INITIALIZATION,
+        "hamiltonian_build"             : _ERR_HAMILTONIAN_BUILD,
+        "hilbert_space_not_provided"    : _ERR_HILBERT_SPACE_NOT_PROVIDED,
+        "need_lattice"                  : _ERR_NEED_LATTICE,
+        "coupling_vector_size"          : _ERR_COUP_VEC_SIZE,
+        "mode_mismatch"                 : _ERR_MODE_MISMATCH,
+        "ns_not_provided"               : _ERR_NS_NOT_PROVIDED
     }
 
+    # ----------------------------------------------------------------------------------------------
+    
     @classmethod
     def from_config(cls, config: HamiltonianConfig, **overrides):
         """Construct a Hamiltonian instance from a registered configuration."""
@@ -105,11 +111,16 @@ class Hamiltonian(ABC):
         '''
         Get the backend, scipy, and random number generator for the backend.
         
-        Args:
-            backend (str) : The backend to use.
+        Parameters:
+        -----------
+            backend (str):
+                The backend to use.
+            seed (int, optional):
+                The seed for the random number generator.
         
         Returns:
-            tuple : The backend, scipy, and random number generator for the backend.
+            tuple : 
+                The backend, scipy, and random number generator for the backend.
         '''
         if isinstance(backend, str):
             bck = get_backend(backend, scipy=True, random=True, seed=seed)
@@ -130,21 +141,81 @@ class Hamiltonian(ABC):
         return Hamiltonian._set_backend(_backendstr)
     
     # ----------------------------------------------------------------------------------------------
-    
+    #! Initialization
+    ################################################################################################
+
+    def _handle_system(self, ns : Optional[int], hilbert_space : Optional[HilbertSpace], lattice : Optional[Lattice], logger : Optional[Logger], **kwargs):
+        
+        if ns is not None:  # if the number of sites is provided, set it
+            self._ns        = ns
+            self._lattice   = lattice
+            if self._logger: 
+                self._log(f"Inferred number of sites ns={self._ns} from provided ns argument.", lvl = 3, color = 'green')
+                
+        elif hilbert_space is not None:
+            # if the Hilbert space is provided, get the number of sites
+            self._ns        = hilbert_space.get_Ns()
+            self._lattice   = hilbert_space.get_lattice()
+            if self._dtype is None:
+                self._dtype = hilbert_space.dtype
+            if self._logger: 
+                self._log(f"Inferred number of sites ns={self._ns} from provided Hilbert space.", lvl = 3, color = 'green')
+                
+        elif lattice is not None:
+            self._ns        = lattice.ns
+            self._lattice   = lattice
+            
+            if self._logger: 
+                self._log(f"Inferred number of sites ns={self._ns} from provided lattice.", lvl = 3, color = 'green')
+        else:
+            # if the number of sites is not provided, raise an error
+            raise ValueError(Hamiltonian._ERR_NS_NOT_PROVIDED)
+        
+        if self._hilbert_space is None:
+            # try to infer from lattice or number of sites
+            if self._lattice is None:
+                # if the lattice is not provided, create Hilbert space from number of sites
+                if self._ns is None:
+                    raise ValueError(Hamiltonian._ERR_NS_NOT_PROVIDED)
+                
+            self._hilbert_space = HilbertSpace(ns       = self._ns,
+                                            lattice     = self._lattice,
+                                            is_manybody = self._is_manybody,
+                                            dtype       = self._dtype,
+                                            backend     = self._backendstr,
+                                            logger      = logger,
+                                            **kwargs)
+        else:
+            # otherwise proceed 
+            if self._is_manybody:
+                if not self._hilbert_space._is_many_body:
+                    raise ValueError(Hamiltonian._ERR_MODE_MISMATCH)
+                self._hamil_sp = None
+            else:
+                if not self._hilbert_space._is_quadratic:
+                    raise ValueError(Hamiltonian._ERR_MODE_MISMATCH)
+                self._hamil = None
+        
+        if self._hilbert_space.get_Ns() != self._ns:
+            raise ValueError(f"Ns mismatch: {self._hilbert_space.get_Ns()} != {self._ns}")
+        
+    # ----------------------------------------------------------------------------------------------
+        
     def __init__(self,
                 # concerns the definition of the system type
-                is_manybody     : bool                      = True,         # True for many-body Hamiltonian, False for non-interacting
-                hilbert_space   : Optional[Union[HilbertSpace, HilbertConfig]]    = None,         # Required if is_manybody=True
-                ns              : Optional[int]             = None,         # Number of sites/modes (if not provided, will be inferred from hilbert_space or lattice)
-                lattice         : Optional[Union[str, List[int]]] = None,   # Alternative way to specify ns and get the Hilbert space
+                is_manybody     : bool                                          = True,     # True for many-body Hamiltonian, False for non-interacting
+                *,
+                hilbert_space   : Optional[Union[HilbertSpace, HilbertConfig]]  = None,     # Required if is_manybody=True
+                ns              : Optional[int]                                 = None,     # Number of sites/modes (if not provided, will be inferred from hilbert_space or lattice)
+                lattice         : Optional[Union[str, List[int]]]               = None,     # Alternative way to specify ns and get the Hilbert space
                 # concerns the matrix and computation
-                is_sparse       : bool                      = True,         # True for sparse matrix, False for dense matrix    
-                dtype                                       = None,         # Data type for the Hamiltonian matrix elements (if None, inferred from hilbert_space or backend)
-                backend         : str                       = 'default',
+                is_sparse       : bool                                          = True,     # True for sparse matrix, False for dense matrix
+                dtype           : Optional[Union[str, np.dtype]]                = None,     # Data type for the Hamiltonian matrix elements (if None, inferred from hilbert_space or backend)
+                backend         : str                                           = 'default',
                 # logger and other kwargs
-                use_forward     : bool                      = False,
-                logger          : Optional[Logger]          = None,
-                seed            : Optional[int]             = None,
+                use_forward     : bool                                          = False,
+                logger          : Optional[Logger]                              = None,
+                seed            : Optional[int]                                 = None,
                 **kwargs):
         """
         Initialize the Hamiltonian class.
@@ -175,10 +246,13 @@ class Hamiltonian(ABC):
             If required information (such as Hilbert space or lattice) is missing or inconsistent.
         """
         if isinstance(hilbert_space, HilbertConfig):
-            hilbert_space = HilbertSpace.from_config(hilbert_space)
+            hilbert_space           = HilbertSpace.from_config(hilbert_space)
 
+        (self._backendstr,
+         self._backend, self._backend_sp,
+         (self._rng, self._rng_k))  = Hamiltonian._set_backend(backend, seed)
+        
         self._seed                  = seed
-        self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k) = Hamiltonian._set_backend(backend, self._seed)
         self._is_jax                = JAX_AVAILABLE and self._backend != np
         self._is_numpy              = not self._is_jax
         self._is_sparse             = is_sparse
@@ -188,104 +262,67 @@ class Hamiltonian(ABC):
         self._use_forward           = use_forward
         
         # get the backend, scipy, and random number generator for the backend
-        self._dtypeint      = self._backend.int64
-        self._dtype         = dtype
-        self._hilbert_space = hilbert_space             # Hilbert space of the system, if any
-        self._lattice       = lattice
-        
-        if ns is not None:
-            # if the number of sites is provided, set it
-            self._ns        = ns
-            self._lattice   = lattice
-        elif hilbert_space is not None:
-            # if the Hilbert space is provided, get the number of sites
-            self._ns        = hilbert_space.get_Ns()
-            self._lattice   = hilbert_space.get_lattice()
-            if self._dtype is None:
-                self._dtype = hilbert_space.dtype
-        elif lattice is not None:
-            self._ns        = lattice.ns
-            self._lattice   = lattice
-        else:
-            # if the number of sites is not provided, raise an error
-            raise ValueError(Hamiltonian._ERR_NS_NOT_PROVIDED)
-        
-        if self._hilbert_space is None:
-            # try to infer from lattice or number of sites
-            if self._lattice is None:
-                # if the lattice is not provided, create Hilbert space from number of sites
-                if self._ns is None:
-                    raise ValueError(Hamiltonian._ERR_NS_NOT_PROVIDED)
-            self._hilbert_space = HilbertSpace(ns       = self._ns,
-                                            lattice     = self._lattice,
-                                            is_manybody = self._is_manybody,
-                                            dtype       = self._dtype,
-                                            backend     = self._backendstr,
-                                            logger      = logger,
-                                            **kwargs)
-        else:
-            # otherwise proceed 
-            if self._is_manybody:
-                if not self._hilbert_space._is_many_body:
-                    raise ValueError(Hamiltonian._ERR_MODE_MISMATCH)
-                self._hamil_sp = None
-            else:
-                if not self._hilbert_space._is_quadratic:
-                    raise ValueError(Hamiltonian._ERR_MODE_MISMATCH)
-                self._hamil = None
-        
-        if self._hilbert_space.get_Ns() != self._ns:
-            raise ValueError(f"Ns mismatch: {self._hilbert_space.get_Ns()} != {self._ns}")
+        self._dtypeint              = self._backend.int64   # Integer type for the model
+        self._dtype                 = dtype
+        self._hilbert_space         = hilbert_space         # Hilbert space of the system, if any
+        self._logger                = self._hilbert_space.logger if logger is None and self._hilbert_space is not None else logger
+        self._handle_system(ns, hilbert_space, lattice, logger, **kwargs)        
                 
         # if the Hilbert space is provided, get the number of sites
-        self._lattice       = self._hilbert_space.get_lattice()
-                    
-        if self._dtype is None:
-            self._dtype     = self._hilbert_space.dtype
-        self._nh            = self._hilbert_space.get_Nh()
+        self._lattice               = self._hilbert_space.get_lattice()
+        self._nh                    = self._hilbert_space.get_Nh()                
+        if self._dtype is None:     self._dtype = self._hilbert_space.dtype
         
         #! other properties
-        self._startns       = 0 # for starting hamil calculation (potential loop over sites)
-        self._logger        = self._hilbert_space.logger if logger is None else logger
+        self._startns               = 0 # for starting hamil calculation (potential loop over sites)
         
         # for the Hamiltonian matrix properties, and energy properties    
-        self._av_en_idx         = 0
-        self._av_en             = 0.0
-        self._std_en            = 0.0
-        self._min_en            = 0.0
-        self._max_en            = 0.0
+        self._av_en_idx             = 0
+        self._av_en                 = 0.0
+        self._std_en                = 0.0
+        self._min_en                = 0.0
+        self._max_en                = 0.0
         
         # for the matrix representation of the Hamiltonian
-        self._hamil             : np.ndarray = None  # will store the Hamiltonian matrix with Nh x Nh full Hilbert space
+        self._hamil                 : np.ndarray = None  # will store the Hamiltonian matrix with Nh x Nh full Hilbert space
         
         #! single particle Hamiltonian info
-        self._hamil_sp          : np.ndarray = None  # will store Ns x Ns (2Ns x 2Ns for BdG) matrix for quadratic Hamiltonian
-        self._delta_sp          : np.ndarray = None
-        self._constant_offset   = 0.0
-        self._isfermions        = True
-        self._isbosons          = False
+        self._hamil_sp              : np.ndarray = None  # will store Ns x Ns (2Ns x 2Ns for BdG) matrix for quadratic Hamiltonian
+        self._delta_sp              : np.ndarray = None
+        self._constant_offset       = 0.0
+        self._isfermions            = True
+        self._isbosons              = False
         
         #! general Hamiltonian info
-        self._eig_vec           : np.ndarray = None
-        self._eig_val           : np.ndarray = None
-        self._krylov            : np.ndarray = None
-        self._name              = "Hamiltonian"
-        self._max_local_ch      = 1 # maximum number of local changes - through the loc_energy function
-        self._max_local_ch_o    = self._max_local_ch # maximum number of local changes - through the operator
+        self._eig_vec               : np.ndarray = None
+        self._eig_val               : np.ndarray = None
+        self._krylov                : np.ndarray = None
+        self._name                  = "Hamiltonian"
+        self._max_local_ch          = 1                             # maximum number of local changes - through the loc_energy function
+        self._max_local_ch_o        = self._max_local_ch            # maximum number of local changes - through the operator
+
+        #! Diagonalization engine - modular approach
+        self._diag_engine           : Optional[DiagonalizationEngine] = None
+        self._diag_method           : str                   = 'auto'# Default to auto-selection
         
         #! set the local energy functions and the corresponding methods
-        self._ops_nmod_nosites      = [[] for _ in range(self.ns)]      # operators that do not modify the state and do not act on any site (through the function call)
-        self._ops_nmod_sites        = [[] for _ in range(self.ns)]      # operators that do not modify the state and act on a given site(s)
-        self._ops_mod_nosites       = [[] for _ in range(self.ns)]      # operators that modify the state and do not act on any site (through the function call)
-        self._ops_mod_sites         = [[] for _ in range(self.ns)]      # operators that modify the state and act on a given site(s)
+        self._ops_nmod_nosites      = [[] for _ in range(self.ns)]  # operators that do not modify the state and do not act on any site (through the function call)
+        self._ops_nmod_sites        = [[] for _ in range(self.ns)]  # operators that do not modify the state and act on a given site(s)
+        self._ops_mod_nosites       = [[] for _ in range(self.ns)]  # operators that modify the state and do not act on any site (through the function call)
+        self._ops_mod_sites         = [[] for _ in range(self.ns)]  # operators that modify the state and act on a given site(s)
         self._loc_energy_int_fun    : Optional[Callable]    = None
         self._loc_energy_np_fun     : Optional[Callable]    = None
         self._loc_energy_jax_fun    : Optional[Callable]    = None
         
+        #! determine if complex dtype
         if self._is_jax:
             self._iscpx = jnp.iscomplexobj(self._dtype)
         else:
             self._iscpx = np.iscomplexobj(self._dtype)        
+
+    # ----------------------------------------------------------------------------------------------
+    #! Representation - helpers
+    ################################################################################################
 
     @staticmethod
     def repr(**kwargs):
@@ -354,20 +391,21 @@ class Hamiltonian(ABC):
     
     def clear(self):
         '''
-        Clears the Hamiltonian matrix.
+        Clears the Hamiltonian matrix and related properties.
+        If you want to re-build the Hamiltonian, you need to call the build method again.
         '''
-        self._hamil      = None
-        self._hamil_sp   = None
-        self._delta_sp   = None
-        self._constant_sp= None
-        self._eig_vec    = None
-        self._eig_val    = None
-        self._krylov     = None
-        self._av_en      = None
-        self._std_en     = None
-        self._min_en     = None
-        self._max_en     = None
-        self._av_en_idx  = None
+        self._hamil         = None
+        self._hamil_sp      = None
+        self._delta_sp      = None
+        self._constant_sp   = None
+        self._eig_vec       = None
+        self._eig_val       = None
+        self._krylov        = None
+        self._av_en         = None
+        self._std_en        = None
+        self._min_en        = None
+        self._max_en        = None
+        self._av_en_idx     = None
         self._log("Hamiltonian cleared...", lvl = 2, color = 'blue')
     
     # ----------------------------------------------------------------------------------------------
@@ -375,259 +413,133 @@ class Hamiltonian(ABC):
     # ----------------------------------------------------------------------------------------------
     
     @property
-    def dtype(self):
-        '''
-        Returns the data type of the Hamiltonian matrix.
-        '''
-        return self._dtype
+    def dtype(self):                    return self._dtype
     
     @property
-    def dtypeint(self):
-        '''
-        Returns the data type of the Hamiltonian matrix.
-        '''
-        return self._dtypeint
+    def dtypeint(self):                 return self._dtypeint
+    @property
+    def inttype(self):                  return self._dtypeint
     
     @property
-    def inttype(self):
-        ''' Integer types for the model '''
-        return self._dtypeint
-    
-    @property
-    def backend(self):
-        ''' Returns string backend '''
-        return self._backendstr
+    def backend(self):                 return self._backendstr
 
     @property
-    def quadratic(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is quadratic or not.
-        '''
-        return not self._is_quadratic
+    def quadratic(self):                return self._is_quadratic
+    def is_quadratic(self):             return self._is_quadratic
     
-    def is_quadratic(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is quadratic or not.
-        '''
-        return self._is_quadratic
     
     @property
-    def manybody(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is many-body or not.
-        '''
-        return self._is_manybody
-    
-    def is_manybody(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is many-body or not.
-        '''
-        return self._is_manybody
+    def manybody(self):                 return self._is_manybody
+    def is_manybody(self):              return self._is_manybody
     
     @property
-    def sparse(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is sparse or not.
-        '''
-        return self._is_sparse
-    
-    def is_sparse(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is sparse or not.
-        '''
-        return self.sparse
+    def sparse(self):                   return self._is_sparse
+    def is_sparse(self):                return self._is_sparse
 
     @property
-    def particle_conserving(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is particle conserving or not.
-        '''
-        return self._particle_conserving if not self._is_manybody else None
-    
-    @property
-    def is_particle_conserving(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is particle conserving or not.
-        '''
-        return self._particle_conserving if not self._is_manybody else None
-    
-    @property
-    def is_bdg(self):
-        '''
-        Returns a flag indicating whether the Hamiltonian is Bogoliubov-de Gennes (BdG) or not.
-        '''
-        return self.particle_conserving
+    def max_local_changes(self):        return self._max_local_ch if self._is_manybody else 2
 
-    @property
-    def max_local_changes(self):
-        '''
-        Returns the maximum number of local changes.
-        '''
-        return self._max_local_ch if self._is_manybody else 2
-
-    @property
-    def name(self):
-        '''
-        Returns the name of the Hamiltonian.
-        '''
-        return self._name
+    # quadratic Hamiltonian properties
     
+    @property
+    def particle_conserving(self):      return self._particle_conserving if not self._is_manybody else None
+    @property
+    def is_particle_conserving(self):   return self.particle_conserving
+    @property
+    def is_bdg(self):                   return not self.particle_conserving
+
+    # general properties
+    
+    @property
+    def name(self):                     return self._name
     @name.setter
-    def name(self, name : str):
-        '''
-        Sets the name of the Hamiltonian.
-        
-        Args:
-            name (str) : The name of the Hamiltonian.
-        '''
-        self._name = name
+    def name(self, name : str):         self._name = name
     
-    #! LATTICE BASED
+    # lattice and sites properties
     
     @property
-    def ns(self):
-        '''
-        Returns the number of sites.
-        '''
-        return self._ns # directly stored for the convenience
+    def ns(self):                       return self._ns
+    @property
+    def sites(self):                    return self.ns
+    
+    @property
+    def lattice(self):                  return self._lattice
+    
+    # modes and hilbert space properties
+    
+    @property
+    def modes(self):                    return self._hilbert_space.get_modes() if self._hilbert_space is not None else None
+    @property
+    def hilbert_space(self):            return self._hilbert_space
+    @property
+    def hilbert_size(self):             return self._hilbert_space.get_Nh()
+    
+    # eigenvalues and eigenvectors properties
 
     @property
-    def sites(self):
-        '''
-        Returns the number of sites.
-        '''
-        return self.ns
-    
+    def eig_val(self):                  return self._eig_val
     @property
-    def lattice(self):
-        '''
-        Returns the lattice associated with the Hamiltonian.
-        '''
-        return self._lattice
-    
-    #! HILBERT BASED
-    
+    def eig_vec(self):                  return self._eig_vec
     @property
-    def modes(self):
-        '''
-        Returns the modes of the Hamiltonian.
-        '''
-        return self._hilbert_space.get_modes() if self._hilbert_space is not None else None
-    
+    def krylov(self):                   return self._krylov
+
     @property
-    def hilbert_space(self):
-        '''
-        Returns the Hilbert space associated with the Hamiltonian.
-        '''
-        return self._hilbert_space
-    
-    @property
-    def hilbert_size(self):
-        '''
-        Returns the number of sites in the Hilbert space.
-        '''
-        return self._hilbert_space.get_Nh()
-    
-    #! EIGENVALUES AND EIGENVECTORS
-    
-    @property
-    def hamil(self):
-        '''
-        Returns the Hamiltonian matrix.
-        '''
-        return self._hamil
-    
+    def hamil(self):                    return self._hamil
     @hamil.setter
-    def hamil(self, hamil):
-        '''
-        Sets the Hamiltonian matrix.
-        
-        Args:
-            hamil : The Hamiltonian matrix.
-        '''
-        self._hamil = hamil
-    
+    def hamil(self, hamil):             self._hamil = hamil
+
     @property
-    def hamil_sp(self):
+    def diag(self):
         '''
-        Returns the single-particle Hamiltonian matrix.
+        Returns the diagonal of the Hamiltonian matrix.
+        Distinguish between JAX and NumPy/SciPy. 
         '''
-        return self._hamil_sp
+        
+        target_hamiltonian: np.ndarray = self.hamil
     
+        if JAX_AVAILABLE and self._backend != np:
+            if isinstance(target_hamiltonian, BCOO):
+                return target_hamiltonian.diagonal()
+            elif isinstance(target_hamiltonian, jnp.ndarray):
+                return jnp.diag(target_hamiltonian)
+            else:
+                # dunnno what to do here
+                return None
+        elif sp.sparse.issparse(target_hamiltonian):
+            return target_hamiltonian.diagonal()
+        elif isinstance(target_hamiltonian, np.ndarray):
+            return target_hamiltonian.diagonal()
+        else:
+            # dunnno what to do here
+            return None
+    
+    # single-particle Hamiltonian properties
+    @property
+    def hamil_sp(self):                 return self._hamil_sp
     @hamil_sp.setter
-    def hamil_sp(self, hamil_sp):
-        '''
-        Sets the single-particle Hamiltonian matrix.
-        
-        Args:
-            hamil_sp : The single-particle Hamiltonian matrix.
-        '''
-        self._hamil_sp = hamil_sp
+    def hamil_sp(self, hamil_sp):       self._hamil_sp = hamil_sp
         
     @property
-    def delta_sp(self):
-        '''
-        Returns the delta matrix of the single-particle Hamiltonian.
-        '''
-        return self._delta_sp
-    
+    def delta_sp(self):                 return self._delta_sp
     @delta_sp.setter
-    def delta_sp(self, delta_sp):
-        '''
-        Sets the delta matrix of the single-particle Hamiltonian.
-        
-        Args:
-            delta_sp : The delta matrix of the single-particle Hamiltonian.
-        '''
-        self._delta_sp = delta_sp
+    def delta_sp(self, delta_sp):       self._delta_sp = delta_sp
     
     @property
-    def constant_sp(self):
-        '''
-        Returns the constant matrix of the single-particle Hamiltonian.
-        '''
-        return self._constant_sp
+    def constant_sp(self):              return self._constant_sp
     
     @constant_sp.setter
-    def constant_sp(self, constant_sp):
-        '''
-        Sets the constant matrix of the single-particle Hamiltonian.
+    def constant_sp(self, constant_sp): self._constant_sp = constant_sp
+    
+    # energy properties
+    @property
+    def av_en(self):                    return self._av_en
+    @property
+    def std_en(self):                   return self._std_en
+    @property
+    def min_en(self):                   return self._min_en
+    @property
+    def max_en(self):                   return self._max_en
         
-        Args:
-            constant_sp : The constant matrix of the single-particle Hamiltonian.
-        '''
-        self._constant_sp = constant_sp
-    
-    @property
-    def eig_vec(self):
-        '''
-        Returns the eigenvectors of the Hamiltonian.
-        '''
-        return self._eig_vec
-    
-    @property
-    def eig_val(self):
-        '''
-        Returns the eigenvalues of the Hamiltonian.
-        '''
-        return self._eig_val
-    
-    @property
-    def krylov(self):
-        '''
-        Returns the Krylov subspace vectors.
-        '''
-        return self._krylov
-    
-    #! ENERGY PROPERTIES
-    
-    @property
-    def av_en(self):
-        '''
-        Returns the average energy of the Hamiltonian.
-        '''
-        return self._av_en
-    
     @property
     def av_en_idx(self):
         '''
@@ -672,112 +584,37 @@ class Hamiltonian(ABC):
         right_index     = max(min(hilbert_size, energy_index + fraction_in // 2), energy_index + 5)
 
         return left_index, right_index, energy_index
-
-    @property
-    def std_en(self):
-        '''
-        Returns the standard deviation of the energy of the Hamiltonian.
-        '''
-        return self._std_en
-    
-    @property
-    def min_en(self):
-        '''
-        Returns the minimum energy of the Hamiltonian.
-        '''
-        return self._min_en
-    
-    @property
-    def max_en(self):
-        '''
-        Returns the maximum energy of the Hamiltonian.
-        '''
-        return self._max_en
-    
-    @property
-    def diag(self):
-        '''
-        Returns the diagonal of the Hamiltonian matrix.
-        Distinguish between JAX and NumPy/SciPy. 
-        '''
-        
-        target_hamiltonian: np.ndarray = self.hamil
-    
-        if JAX_AVAILABLE and self._backend != np:
-            if isinstance(target_hamiltonian, BCOO):
-                return target_hamiltonian.diagonal()
-            elif isinstance(target_hamiltonian, jnp.ndarray):
-                return jnp.diag(target_hamiltonian)
-            else:
-                # dunnno what to do here
-                return None
-        elif sp.sparse.issparse(target_hamiltonian):
-            return target_hamiltonian.diagonal()
-        elif isinstance(target_hamiltonian, np.ndarray):
-            return target_hamiltonian.diagonal()
-        else:
-            # dunnno what to do here
-            return None
     
     # ----------------------------------------------------------------------------------------------
     #! Local energy getters
     # ----------------------------------------------------------------------------------------------
     
     @property
-    def fun_int(self):
-        '''
-        Returns the local energy of the Hamiltonian - integer representation
-        '''
-        return self._loc_energy_int_fun
+    def fun_int(self):                  return self._loc_energy_int_fun
+    def get_loc_energy_int_fun(self):   return self._loc_energy_int_fun
     
-    def get_loc_energy_int_fun(self):
-        '''
-        Returns the local energy of the Hamiltonian
+    @property
+    def fun_npy(self):                  return self._loc_energy_np_fun
+    def get_loc_energy_np_fun(self):    return self._loc_energy_np_fun
+    
+    @property
+    def fun_jax(self):                  return self._loc_energy_jax_fun
+    def get_loc_energy_jax_fun(self):   return self._loc_energy_jax_fun
         
-        Returns:
-            A function that takes an integer k and returns the local energy for an integer representation.
-        '''
-        return self._loc_energy_int_fun
-    
-    @property
-    def fun_npy(self):
-        '''
-        Returns the local energy of the Hamiltonian - NumPy representation
-        '''
-        return self._loc_energy_np_fun
-    
-    def get_loc_energy_np_fun(self):
-        '''
-        Returns the local energy of the Hamiltonian
-        Returns:
-            A function that takes an integer k and returns the local energy for a NumPy representation.
-        '''
-        return self._loc_energy_np_fun
-    
-    @property
-    def fun_jax(self):
-        '''
-        Returns the local energy of the Hamiltonian - JAX representation
-        '''
-        return self._loc_energy_jax_fun
-    
-    def get_loc_energy_jax_fun(self):
-        '''
-        Returns the local energy of the Hamiltonian
-        Returns:
-            A function that takes an integer k and returns the local energy for a JAX representation.
-        '''
-        return self._loc_energy_jax_fun
-    
-    #! ----------------------------------------------------------------------------------------------
-    
-    def get_loc_energy_arr_fun(self, backend: str = 'default'):
+    def get_loc_energy_arr_fun(self, backend: str = 'default', typek: str = 'int'):
         '''
         Returns the local energy of the Hamiltonian
         Returns:
             A function that takes an integer k and returns the local energy for an array representation in
             a given backend - either NumPy or JAX.
         '''
+        if typek == 'int':
+            return self.get_loc_energy_int_fun()
+        if typek == 'jax':
+            return self.get_loc_energy_jax_fun()
+        if typek == 'npy':
+            return self.get_loc_energy_np_fun()
+        
         if (backend == 'default' or backend == 'jax' or backend == 'jnp') and JAX_AVAILABLE:
             return self.fun_jax
         return self.fun_npy
@@ -965,6 +802,197 @@ class Hamiltonian(ABC):
             return self._eig_val[args[0]]
         else:
             raise ValueError("Invalid arguments provided for eigenvalue retrieval.")
+
+    # ----------------------------------------------------------------------------------------------
+    #! Basis Transformation Methods (Krylov <-> Original)
+    # ----------------------------------------------------------------------------------------------
+    
+    def has_krylov_basis(self) -> bool:
+        """
+        Check if a Krylov basis is available from the last diagonalization.
+        
+        The Krylov basis is available when using iterative methods (Lanczos,
+        Block Lanczos, Arnoldi, Shift-Invert) with store_basis=True.
+        
+        Returns:
+        --------
+            bool : True if Krylov basis is available, False otherwise.
+        
+        Example:
+        --------
+            >>> hamil.diagonalize(method='lanczos', k=10, store_basis=True)
+            >>> if hamil.has_krylov_basis():
+            ...     print("Krylov basis available for transformations")
+        """
+        return diag_helpers.has_krylov_basis(self._diag_engine, self._krylov)
+    
+    def get_krylov_basis(self) -> Optional[Array]:
+        """
+        Get the Krylov basis from the last diagonalization.
+        
+        Returns:
+        --------
+            ndarray or None : 
+                Krylov basis matrix V (shape n x k), or None if not available.
+        
+        Example:
+        --------
+            >>> V = hamil.get_krylov_basis()
+            >>> if V is not None:
+            ...     print(f"Krylov basis shape: {V.shape}")
+        """
+        return diag_helpers.get_krylov_basis(self._diag_engine, self._krylov)
+    
+    def to_original_basis(self, vec: Array) -> Array:
+        """
+        Transform a vector from Krylov/computational basis to original basis.
+        
+        For exact diagonalization, this is a no-op (returns the same vector).
+        For iterative methods with Krylov basis V: returns V @ vec.
+        
+        This is useful when working with Ritz vectors or when projecting
+        computations done in the reduced Krylov subspace back to the full
+        Hilbert space.
+        
+        Parameters:
+        -----------
+            vec : ndarray
+                Vector(s) in Krylov/computational basis.
+                - 1D array of shape (k,): single vector
+                - 2D array of shape (k, m): m vectors as columns
+        
+        Returns:
+        --------
+            ndarray : Vector(s) in original Hilbert space basis.
+        
+        Examples:
+        ---------
+            >>> # Diagonalize using Lanczos
+            >>> hamil.diagonalize(method='lanczos', k=10)
+            >>> 
+            >>> # Get first Ritz vector (in Krylov basis)
+            >>> ritz_vec = np.zeros(10)
+            >>> ritz_vec[0] = 1.0  # First Ritz vector
+            >>> 
+            >>> # Transform to original basis
+            >>> state = hamil.to_original_basis(ritz_vec)
+            >>> print(f"State in full Hilbert space: shape {state.shape}")
+        
+        See Also:
+        ---------
+            to_krylov_basis : Inverse transformation
+            has_krylov_basis : Check if basis is available
+        """
+        return diag_helpers.to_original_basis(vec, self._diag_engine, 
+                                             self.get_diagonalization_method())
+
+    def to_krylov_basis(self, vec: Array) -> Array:
+        """
+        Transform a vector from original basis to Krylov/computational basis.
+        
+        For exact diagonalization, this is a no-op (returns the same vector).
+        For iterative methods with Krylov basis V: returns V.H @ vec (or V.T for real).
+        
+        This is useful for projecting states from the full Hilbert space onto
+        the reduced Krylov subspace for efficient computations.
+        
+        Parameters:
+        -----------
+            vec : ndarray
+                Vector(s) in original Hilbert space basis.
+                - 1D array of shape (n,): single vector
+                - 2D array of shape (n, m): m vectors as columns
+        
+        Returns:
+        --------
+            ndarray : Vector(s) in Krylov basis.
+        
+        Examples:
+        ---------
+            >>> # Diagonalize using Lanczos
+            >>> hamil.diagonalize(method='lanczos', k=10)
+            >>> 
+            >>> # Create a random state in full Hilbert space
+            >>> state = np.random.randn(hamil.nh)
+            >>> state /= np.linalg.norm(state)
+            >>> 
+            >>> # Project onto Krylov subspace
+            >>> krylov_coeffs = hamil.to_krylov_basis(state)
+            >>> print(f"Krylov coefficients: shape {krylov_coeffs.shape}")
+        
+        Raises:
+        -------
+            ValueError : If no Krylov basis is available.
+        
+        See Also:
+        ---------
+            to_original_basis : Inverse transformation
+            has_krylov_basis : Check if basis is available
+        """
+        return diag_helpers.to_krylov_basis(vec, self._diag_engine)
+
+    def get_basis_transform(self) -> Optional[Array]:
+        """
+        Get the transformation matrix from Krylov to original basis.
+        
+        Returns the Krylov basis matrix V such that:
+            v_original = V @ v_krylov
+        
+        Returns:
+        --------
+            ndarray or None : 
+                Transformation matrix V (shape n x k), or None if not applicable.
+        
+        Example:
+        --------
+            >>> V = hamil.get_basis_transform()
+            >>> if V is not None:
+            ...     # Manual transformation
+            ...     v_krylov = np.array([1, 0, 0, ...])  # First Ritz vector
+            ...     v_original = V @ v_krylov
+        """
+        return diag_helpers.get_basis_transform(self._diag_engine, self._krylov)
+    
+    def get_diagonalization_method(self) -> Optional[str]:
+        """
+        Get the diagonalization method used in the last diagonalize() call.
+        
+        Returns:
+        --------
+            str or None : 
+                Method name ('exact', 'lanczos', 'block_lanczos', 'arnoldi', 'shift-invert'),
+                or None if not yet diagonalized.
+        
+        Example:
+        --------
+            >>> hamil.diagonalize(method='auto', k=10)
+            >>> method = hamil.get_diagonalization_method()
+            >>> print(f"Used method: {method}")
+        """
+        return diag_helpers.get_diagonalization_method(self._diag_engine)
+    
+    def get_diagonalization_info(self) -> dict:
+        """
+        Get detailed information about the last diagonalization.
+        
+        Returns:
+        --------
+            dict : Dictionary containing:
+                - method            : str - Method used
+                - converged         : bool - Convergence status
+                - iterations        : int - Number of iterations (if applicable)
+                - residual_norms    : ndarray - Residual norms (if available)
+                - has_krylov_basis  : bool - Whether Krylov basis is available
+                - num_eigenvalues   : int - Number of computed eigenvalues
+        
+        Example:
+        --------
+            >>> hamil.diagonalize(method='lanczos', k=10)
+            >>> info = hamil.get_diagonalization_info()
+            >>> print(f"Method: {info['method']}")
+            >>> print(f"Converged: {info['converged']}")
+        """
+        return diag_helpers.get_diagonalization_info(self._diag_engine, self._eig_val, self._krylov)
 
     # ----------------------------------------------------------------------------------------------
     #! Initialization methods
@@ -1400,7 +1428,7 @@ class Hamiltonian(ABC):
                     if self._isfermions:
                         self._hamil = backend.block([   [ self._hamil_sp, self._delta_sp ],
                                                         [-self._delta_sp.conj(), -self._hamil_sp.conj().T ]])
-            else:  # bosons - use ΣH to make it Hermitian
+            else:  # bosons - use \Sigma H to make it Hermitian
                 sigma = backend.block([ [backend.eye(self.ns), backend.zeros_like(self._hamil)  ],
                                         [backend.zeros_like(self._hamil), -backend.eye(self.ns) ]])
                 self._hamil = sigma @ backend.block([[ self._hamil_sp,  self._delta_sp          ],
@@ -1408,51 +1436,206 @@ class Hamiltonian(ABC):
     
     def diagonalize(self, verbose: bool = False, **kwargs):
         """
-        Diagonalizes the Hamiltonian matrix using one of several methods.
+        Diagonalizes the Hamiltonian matrix using a modular, flexible approach.
         
-        Supported methods:
-        - 'eigh'        : Full diagonalization using a dense eigen-solver.
-        - 'lanczos'     : Iterative Lanczos diagonalization via SciPy's eigsh.
-        - 'shift-invert': Iterative shift-invert diagonalization via SciPy's eigsh.
+        This method provides a unified interface to multiple diagonalization strategies:
+        - 'auto'            : Automatically select method based on matrix size/properties
+        - 'exact'           : Full diagonalization (all eigenvalues)
+        - 'lanczos'         : Lanczos iteration for sparse symmetric matrices
+        - 'block_lanczos'   : Block Lanczos for multiple eigenpairs
+        - 'arnoldi'         : Arnoldi iteration for general matrices
+        - 'shift-invert'    : Shift-invert mode for interior eigenvalues
         
-        Additional kwargs:
-        - k (int)       : Number of eigenpairs to compute (default: 6 for Lanczos/shift-invert).
-        - sigma (float) : Shift value for shift-invert (default: 0.0).
-        - which (str)   : Eigenvalue selection criteria ('SA' for Lanczos, 'LM' for shift-invert).
+        The method stores Krylov basis information when using iterative methods,
+        enabling transformations between Krylov and original basis spaces.
+        
+        Parameters:
+        -----------
+            verbose : bool, optional
+                Enable verbose output. Default is False.
+            **kwargs : dict
+                Method selection and solver parameters:
+                
+                Method Selection:
+                    method : str
+                        Diagonalization method ('auto', 'exact', 'lanczos', 
+                        'block_lanczos', 'arnoldi', 'shift-invert'). Default: 'auto'.
+                    backend : str
+                        Computational backend ('numpy', 'scipy', 'jax'). 
+                        Default: inferred from Hamiltonian.
+                    use_scipy : bool
+                        Prefer SciPy implementations. Default: True.
+                
+                Eigenvalue Selection:
+                    k : int
+                        Number of eigenvalues to compute. Default: 6 for iterative,
+                        all for exact.
+                    which : str
+                        Which eigenvalues to find:
+                        - Lanczos/Block Lanczos: 'smallest', 'largest', 'both'
+                        - Arnoldi: 'LM', 'SM', 'LR', 'SR', 'LI', 'SI'
+                        - Shift-invert: eigenvalues nearest to sigma
+                        Default: 'smallest'.
+                    sigma : float
+                        Shift value for shift-invert mode. Finds eigenvalues
+                        nearest to this value. Default: 0.0.
+                
+                Convergence Control:
+                    tol : float
+                        Convergence tolerance. Default: 1e-10.
+                    max_iter : int
+                        Maximum number of iterations. Default: auto.
+                
+                Block Lanczos Specific:
+                    block_size : int
+                        Size of block for Block Lanczos. Default: min(k, 3).
+                    reorthogonalize : bool
+                        Enable reorthogonalization. Default: True.
+                
+                Basis Storage:
+                    store_basis : bool
+                        Store Krylov basis for transformations. Default: True.
         
         Updates:
-        - self._eig_val: Eigenvalues.
-        - self._eig_vec: Eigenvectors.
-        """
-        diag_start          = time.perf_counter()
-        method              = kwargs.get("method", "standard")
-        kwargs['method']    = method
-        backend             = self._backend if not isinstance(self._hamil, np.ndarray) and not sp.sparse.isspmatrix(self._hamil) else np
-        if verbose:
-            self._log(f"Diagonalization started using ({method})...", lvl = 1)
+        --------
+            self._eig_val : ndarray
+                Computed eigenvalues (sorted).
+            self._eig_vec : ndarray
+                Computed eigenvectors (columns).
+            self._krylov : ndarray
+                Krylov basis (for iterative methods, if store_basis=True).
+            self._diag_engine : DiagonalizationEngine
+                Engine instance with full result information.
+        
+        Examples:
+        ---------
+            >>> # Auto-select method and compute all eigenvalues (small matrix)
+            >>> hamil.diagonalize(verbose=True)
             
-        if self._is_quadratic:
-            self._diagonalize_quadratic_prepare(backend, **kwargs)
+            >>> # Lanczos for 10 smallest eigenvalues
+            >>> hamil.diagonalize(method='lanczos', k=10, which='smallest')
+            
+            >>> # Block Lanczos for 20 eigenvalues with custom block size
+            >>> hamil.diagonalize(method='block_lanczos', k=20, block_size=5, 
+            ...                   tol=1e-8, verbose=True)
+            
+            >>> # Use JAX backend for GPU acceleration
+            >>> hamil.diagonalize(method='exact', backend='jax')
         
-        #! try to diagonalize the Hamiltonian matrix
-        try:
-            if self._is_sparse or method.lower() in ["lanczos", "shift-invert"]:
-                self._eig_val, self._eig_vec = linalg.eigsh(self._hamil, backend, **kwargs)
+        Raises:
+        -------
+            ValueError
+                If Hamiltonian matrix not available or invalid parameters.
+            RuntimeError
+                If diagonalization fails.
+        
+        See Also:
+        ---------
+            to_original_basis : Transform vector from Krylov to original basis
+            to_krylov_basis : Transform vector from original to Krylov basis
+            has_krylov_basis : Check if Krylov basis is available
+        """
+        
+        # Validate Hamiltonian matrix
+        if self._hamil is None:
+            raise ValueError(
+                "Hamiltonian matrix not available. Call build() or init() first."
+            )
+        
+        # Start timing
+        diag_start      = time.perf_counter()
+        
+        # Extract parameters
+        method          = kwargs.get("method", self._diag_method)
+        backend_str     = kwargs.get("backend", None)
+        use_scipy       = kwargs.get("use_scipy", True)
+        store_basis     = kwargs.get("store_basis", True)
+        k               = kwargs.get("k", None)
+        which           = kwargs.get("which", "smallest")
+        hermitian       = kwargs.get("hermitian", True)
+        
+        # Determine backend
+        if backend_str is None:
+            # Infer from current Hamiltonian backend
+            if self._is_jax:
+                backend_str = 'jax'
             else:
-                self._eig_val, self._eig_vec = linalg.eigh(self._hamil, backend, **kwargs)
-        except Exception as e:
-            raise ValueError(f"Failed to diagonalize the Hamiltonian using method '{method}' : {e}") from e
+                backend_str = 'scipy' if use_scipy else 'numpy'
         
+        # Special handling for quadratic Hamiltonians
+        if self._is_quadratic:
+            self._diagonalize_quadratic_prepare(self._backend, **kwargs)
+        
+        # Log start
+        if verbose:
+            self._log(f"Diagonalization started using method='{method}'...", lvl=1)
+            if k is not None:
+                self._log(f"  Computing {k} eigenvalues", lvl=2)
+            self._log(f"  Backend: {backend_str}", lvl=2)
+        
+        # Initialize or reuse diagonalization engine
+        if self._diag_engine is None or self._diag_engine.method != method:
+            self._diag_engine = DiagonalizationEngine(
+                method      = method,
+                backend     = backend_str,
+                use_scipy   = use_scipy,
+                verbose     = verbose
+            )
+        
+        # Prepare solver kwargs (remove our custom parameters)
+        solver_kwargs = {key: val for key, val in kwargs.items() 
+                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian']}
+        
+        # Perform diagonalization
+        try:
+            result = self._diag_engine.diagonalize(
+                A               = self._hamil,
+                k               = k,
+                hermitian       = hermitian,
+                which           = which,
+                store_basis     = store_basis,
+                **solver_kwargs
+            )
+        except Exception as e:
+            raise RuntimeError(f"Diagonalization failed with method '{method}': {e}") from e
+        
+        # Store results in Hamiltonian
+        self._eig_val       = result.eigenvalues
+        self._eig_vec       = result.eigenvectors
+        
+        # Store Krylov basis if available
+        if store_basis and self._diag_engine.has_krylov_basis():
+            self._krylov    = self._diag_engine.get_krylov_basis()
+        else:
+            self._krylov    = None
+        
+        # JAX: ensure results are materialized
         if JAX_AVAILABLE:
             if hasattr(self._eig_val, "block_until_ready"):
                 self._eig_val = self._eig_val.block_until_ready()
             if hasattr(self._eig_vec, "block_until_ready"):
                 self._eig_vec = self._eig_vec.block_until_ready()
         
+        # Calculate average energy
+        self._calculate_av_en()
+        
+        # Log completion
         diag_duration = time.perf_counter() - diag_start
         if verbose:
-            self._log(f"Diagonalization ({method}) completed in {diag_duration:.6f} seconds.", lvl = 2)
-        self._calculate_av_en()
+            method_used = self._diag_engine.get_method_used()
+            self._log(
+                f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds.",
+                lvl=2, color="green"
+            )
+            if hasattr(result, 'converged'):
+                if result.converged:
+                    self._log(f"  Converged in {result.iterations} iterations", lvl=2)
+                else:
+                    self._log(
+                        f"  Warning: Did not converge after {result.iterations} iterations",
+                        lvl=2, color="yellow"
+                    )
+            self._log(f"  Ground state energy: {self._eig_val[0]:.10f}", lvl=2)
 
     # ----------------------------------------------------------------------------------------------
     #! Setters
@@ -1749,6 +1932,7 @@ class Hamiltonian(ABC):
     def fmt(name, value, prec=1):
         """Choose scalar vs array formatter."""
         return Hamiltonian._fmt_scalar(name, value, prec=prec) if np.isscalar(value) else Hamiltonian._fmt_array(name, value, prec=prec)
+
 # --------------------------------------------------------------------------------------------------
 
 def test_generic_hamiltonian(ham: Hamiltonian, ns: int):

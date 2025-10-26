@@ -100,12 +100,12 @@ class RosenzweigPorter(hamil_module.Hamiltonian):
         """
         Build the Rosenzweig-Porter Hamiltonian.
 
-        H = D + λ * V
+        H = D + \lambda * V
 
         where
             - D is a random diagonal with entries ~ N(0,1)
             - V is a GOE (or GUE if complex) random matrix
-            - λ = N^{-gamma/2}, with N = hilbert space dimension (_nh)
+            - \lambda = N^{-gamma/2}, with N = hilbert space dimension (_nh)
 
         Parameters
         ----------

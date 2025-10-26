@@ -21,7 +21,7 @@ if JAX_AVAILABLE:
                                 org_basis_state     : Union[int, jnp.ndarray],
                                 ns                  : int
                                 ) -> jnp.ndarray: # Returns JAX array (scalar)
-        """
+        r"""
         Calculates the Slater determinant using JAX.
 
         Represents the amplitude <Fock(R)|State_F(O)>. See NumPy version docstring

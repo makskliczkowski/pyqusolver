@@ -94,7 +94,7 @@ def fermi_grand_potential(
     x = beta * (epsilon - mu)
     x = np.clip(x, -500, 500)
     
-    # \Omega = -(1/\beta) Σ ln(1 + exp(-x))
+    # \Omega = -(1/\beta) \Sigma  ln(1 + exp(-x))
     return -np.sum(np.log(1.0 + np.exp(-x))) / beta
 
 
@@ -182,7 +182,7 @@ def fermi_heat_capacity(
     epsilon = np.asarray(epsilon)
     f = fermi_occupation(epsilon, beta, mu)
     
-    # C_V = \beta^2 Σ (\varepsilon - \mu)^2 f(1-f)
+    # C_V = \beta^2 \Sigma  (\varepsilon - \mu)^2 f(1-f)
     return beta**2 * np.sum((epsilon - mu)**2 * f * (1.0 - f))
 
 

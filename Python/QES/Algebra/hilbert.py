@@ -9,9 +9,9 @@ Date    : 2025-02-01
 Version : 1.0.0
 Changes : 
     - 2025.02.01 : 1.0.0 - Initial version of the Hilbert space class. - MK
+    - 2025.10.26 : 1.1.0 - Refactored symmetry group generation and added detailed logging. - MK
     
 """
-import os
 import sys
 import math
 import time
@@ -55,8 +55,8 @@ try:
         jitted_find_repr_int, jitted_get_mapping, jitted_get_matrix_element
     )   
 except ImportError as e:
-    print("Could not import some modules:", e)
-    sys.exit(1)
+    # Avoid exiting the entire test process; re-raise for clearer diagnostics upstream
+    raise
 
 #####################################################################################################
 
@@ -121,8 +121,7 @@ class HilbertSpace(ABC):
     }
     
     @staticmethod
-    def _raise(s: str):
-        raise ValueError(s)
+    def _raise(s: str): raise ValueError(s)
 
     def _check_init_sym_errors(self, sym_gen, global_syms, gen_mapping):
         ''' Check for initialization symmetry errors '''
@@ -134,7 +133,8 @@ class HilbertSpace(ABC):
             HilbertSpace._raise(HilbertSpace._ERRORS["gen_mapping"])
 
     def _check_ns_infer(self, lattice, ns, nh):
-
+        ''' Check and infer the system size Ns from provided parameters '''
+        
         # infer local dimension
         _local_dim = self._local_space.local_dim if self._local_space else 2
 
@@ -322,6 +322,25 @@ class HilbertSpace(ABC):
             self._sym_group = [operator_identity(self._backend)]
     
     # --------------------------------------------------------------------------------------------------
+    #! Configuration from HilbertConfig
+    # --------------------------------------------------------------------------------------------------
+    
+    @classmethod
+    def from_config(cls, config: HilbertConfig, **overrides):
+        """
+        Instantiate a HilbertSpace from a :class:`HilbertConfig`.
+
+        Parameters
+        ----------
+        config:
+            Base configuration blueprint.
+        **overrides:
+            Keyword arguments applied on top of the blueprint before instantiation.
+        """
+        cfg = config.with_override(**overrides) if overrides else config
+        return cls(**cfg.to_kwargs())    
+
+    # --------------------------------------------------------------------------------------------------
     #! Resets
     # --------------------------------------------------------------------------------------------------
     
@@ -362,22 +381,6 @@ class HilbertSpace(ABC):
     @state_filter.setter
     def state_filter(self, value: Optional[Callable[[int], bool]]):
         self._state_filter = value
-
-    @classmethod
-    def from_config(cls, config: HilbertConfig, **overrides):
-        """
-        Instantiate a HilbertSpace from a :class:`HilbertConfig`.
-
-        Parameters
-        ----------
-        config:
-            Base configuration blueprint.
-        **overrides:
-            Keyword arguments applied on top of the blueprint before instantiation.
-        """
-        cfg = config.with_override(**overrides) if overrides else config
-        return cls(**cfg.to_kwargs())
-
 
     @staticmethod
     def reset_statetype(state_type: str, backend):
@@ -883,6 +886,24 @@ class HilbertSpace(ABC):
         Returns:
             list: The symmetry group.
         """
+        # Expose a callable view for external consumers (tests, utilities)
+        # while keeping the internal tuple representation for JIT routines.
+        if self._sym_group and isinstance(self._sym_group[0], tuple):
+            def wrap_ops_tuple(ops_tuple):
+                def op(state):
+                    st = state
+                    phase = 1.0
+                    for g in ops_tuple:
+                        # Each g is an Operator; call and accumulate phase
+                        st, val = g(st)
+                        try:
+                            phase = phase * val
+                        except Exception:
+                            # If phase types differ (e.g., real vs complex), coerce via multiplication
+                            phase = phase * (val.real if hasattr(val, 'real') else val)
+                    return st, phase
+                return op
+            return [wrap_ops_tuple(t) for t in self._sym_group]
         return self._sym_group
     
     @property
@@ -1122,7 +1143,7 @@ class HilbertSpace(ABC):
     ####################################################################################################
     
     def _find_sym_norm_base(self, state):
-        """
+        r"""
         Finds the normalization for a given state (baseIdx) by summing the eigenvalues
         over all symmetry operators that return the same state.
         
@@ -1131,7 +1152,7 @@ class HilbertSpace(ABC):
         pass
     
     def _find_sym_norm_int(self, state):
-        """
+        r"""
         Find the symmetry normalization of a given state.
         
         The normalization factor is calculated as sqrt(sum of |eigenvalues|^2) for all
@@ -1142,7 +1163,7 @@ class HilbertSpace(ABC):
             state (int): The state to find the symmetry normalization for.
         
         Returns:
-            float: The symmetry normalization of the state, sqrt(Σ|λ_g|^2) where g leaves state invariant
+            float: The symmetry normalization of the state, sqrt(\Sigma |\lambda _g|^2) where g leaves state invariant
         """
         norm = 0.0
         for op_tuple in self._sym_group:
@@ -1201,8 +1222,22 @@ class HilbertSpace(ABC):
                 - representative_state: The minimum state in the symmetry orbit
                 - symmetry_eigenvalue: The phase factor from the symmetry operation
         """
-        # If mapping exists, return saved representative.
-        return find_repr_int(state, self._sym_group, self._reprmap)
+        # Fast-path: if a full representative map exists, translate mapping index to state
+        try:
+            if self._reprmap is not None and hasattr(self._reprmap, "__len__") and len(self._reprmap) > 0:
+                idx     = self._reprmap[state, 0]
+                sym     = self._reprmap[state, 1]
+                # reprmap stores the index into self._mapping; convert to actual representative state
+                from QES.general_python.common.binary import bin_search as _bs
+                
+                if idx != _bs._BAD_BINARY_SEARCH_STATE and self._mapping is not None and 0 <= int(idx) < len(self._mapping):
+                    rep_state = int(self._mapping[int(idx)])
+                    return rep_state, sym
+        except Exception:
+            pass
+
+        # Fallback: compute by scanning symmetry group
+        return find_repr_int(state, self._sym_group, None)
     
     def find_repr(self, state):
         """
@@ -1756,4 +1791,6 @@ def process_matrix_batch_np(batch_start, batch_end, hilbert : HilbertSpace, func
     total_counts                                        = np.sum(counts_batch)
     return unique_cols_batch, summed_vals_batch, counts_batch, total_counts
 
+#####################################################################################################
+#! End of file
 #####################################################################################################

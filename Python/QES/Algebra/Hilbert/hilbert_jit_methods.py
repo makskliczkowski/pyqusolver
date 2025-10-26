@@ -46,7 +46,8 @@ if True:
 
     # b) find the representative of a given state
     
-    @numba.jit(nopython=False, forceobj=True)
+    # Note: keep this as a regular Python function to avoid Numba attempting
+    # to type Python tuples of Operator instances (which causes warnings).
     def find_repr_int(state,
                     _sym_group,
                     _reprmap    : np.ndarray = None):
@@ -110,7 +111,7 @@ if True:
 
     # c) find the representative of a given state in a given symmetry sector
 
-    @numba.jit(nopython=False)
+    @numba.jit(forceobj=True)
     def find_representative_int(
                             _state                  : int,
                             _mapping                : np.ndarray,
@@ -152,7 +153,7 @@ if True:
 
     # d) get the matrix element of a given state
 
-    @numba.jit(nopython=False)
+    @numba.jit(forceobj=True)
     def get_matrix_element(
             k               : int,
             new_k           : int,
@@ -205,11 +206,11 @@ if True:
 
     ###############################
 
-    @numba.jit(nopython=False)
+    @numba.jit(forceobj=True)
     def jitted_find_repr_int(state, _sym_group, _reprmap = None):
         return find_repr_int(state, _sym_group, _reprmap)
 
-    @numba.jit(nopython=False)
+    @numba.jit(forceobj=True)
     def jitted_find_representative_int(_state, _mapping, _normalization, _normalization_beta, _sym_group, _reprmap = None):
         return find_representative_int(_state, _mapping, _normalization, _normalization_beta, _sym_group, _reprmap)
         
@@ -217,7 +218,7 @@ if True:
     def jitted_get_mapping(mapping, state):
         return get_mapping(mapping, state)
 
-    @numba.jit(nopython=False)
+    @numba.jit(forceobj=True)
     def jitted_get_matrix_element(k, new_k, kmap = None, h_conj = False, _mapping = None, _norm = None, _sym_group = None, _reprmap = None):
         return get_matrix_element(k, new_k, kmap, h_conj, _mapping, _norm, _sym_group, _reprmap)
 

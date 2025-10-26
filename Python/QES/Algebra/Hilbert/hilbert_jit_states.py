@@ -625,7 +625,7 @@ def many_body_state_mapping(matrix_arg          : Array,
                             mapping_array       : Array,
                             ns                  : int,
                             dtype               = np.complex128) -> Array:
-    """
+    r"""
     Given ``mapping_array[j] = bitstring of Hilbert basis state j``,
     return the coefficient vector ``\psi _j`` **in the same order** as
     ``mapping_array``.
@@ -829,11 +829,11 @@ def test_many_body_states(seed: int = 12345) -> None:
     assert np.allclose(psi_sd, psi_ref)
 
     # 2) fermionic BdG vacuum
-    # craft simple pairing: Δ (nearest-neighbour) on ring
+    # craft simple pairing: \delta  (nearest-neighbour) on ring
     K           = np.diag(np.ones(ns-1), 1)+np.diag(np.ones(ns-1), -1)
-    Δ           = 0.3*(np.roll(np.eye(ns), 1, 1)-np.roll(np.eye(ns), -1, 1))
-    Hbdg        = np.block([[ K,  Δ],
-                    [-Δ, -K]])
+    delta       = 0.3*(np.roll(np.eye(ns), 1, 1)-np.roll(np.eye(ns), -1, 1))
+    Hbdg        = np.block([[ K,  delta ],
+                            [-delta , -K]])
     E, W        = np.linalg.eigh(Hbdg)
     Ub, Vb, Ep  = bogolubov_decompose(E, W)
     F           = pairing_matrix(Ub, Vb)

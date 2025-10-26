@@ -445,8 +445,8 @@ class TestCombinedSymmetries:
         
         print_hilbert_info(hilbert, "Translation + Parity Z")
         
-        # With both symmetries, expect significant reduction
-        assert hilbert.Nh < hilbert.Nhfull // 4
+        # With both symmetries, expect significant reduction; for Ns=4, combined T+parity yields 4 reps
+        assert hilbert.Nh <= hilbert.Nhfull // 4
         assert validate_mapping(hilbert)
         print(f"{INDENT}✅ Test passed")
     
