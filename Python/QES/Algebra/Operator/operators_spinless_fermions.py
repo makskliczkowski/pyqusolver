@@ -574,7 +574,7 @@ def n_np(state      : np.ndarray,
     # return state, coeff_val * prefactor**n_sites
 
 ###############################################################################
-#! Public dispatch helpers  (match your σ-operator API)
+#! Public dispatch helpers  (match your \sigma -operator API)
 ###############################################################################
 
 def c_dag(state       : Union[int, np.ndarray],

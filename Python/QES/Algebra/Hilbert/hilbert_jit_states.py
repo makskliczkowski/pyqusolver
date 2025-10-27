@@ -233,7 +233,7 @@ def calculate_slater_det(sp_eigvecs         : np.ndarray,
 #############################################################################
 
 # ---------------------------------------------------------------------------
-# a)  Pairing matrices  F = V·U^{-1}   (fermions)   /   G = V·U^{-1} (bosons)
+# a)  Pairing matrices  F = V\cdot U^{-1}   (fermions)   /   G = V\cdot U^{-1} (bosons)
 # ---------------------------------------------------------------------------
 
 @njit(cache=True)
@@ -286,7 +286,7 @@ def bogolubov_decompose(eig_val, eig_vec, tol = _TOLERANCE) -> Tuple[Array, Arra
 @njit(cache=True)
 def pairing_matrix(u_mat: Array, v_mat: Array) -> Array:
     """
-    Solve V = F·U  ->  F = V·U^{-1}
+    Solve V = F\cdot U  ->  F = V\cdot U^{-1}
     without forming U^{-1} explicitly.
     
     Valid for both fermionic (antisymmetric F) and bosonic (symmetric G)

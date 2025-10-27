@@ -576,7 +576,7 @@ else:
 def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True) -> np.ndarray:
     """
     Compute IPR_j = ∑_i |\psi _{i j}|^{2q} for each column j of `states`.
-    If `new_basis` is provided (shape n \times n), then \psi  -> B^T·\psi  is used
+    If `new_basis` is provided (shape n \times n), then \psi  -> B^T\cdot \psi  is used
     before raising to the 2q power.  Works on 1D or 2D `states`.
 
     Parameters
@@ -587,7 +587,7 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
         Exponent in the IPR definition (default 1.0).
     new_basis : np.ndarray, optional
         Change-of-basis matrix (n \times n).  If not None, each state \psi _j is
-        transformed via B^T·\psi _j before computing |·|^(2q).
+        transformed via B^T\cdot \psi _j before computing |\cdot |^(2q).
 
     Returns
     -------
@@ -624,7 +624,7 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
             for i in range(n):
                 re = 0.0
                 im = 0.0
-                # compute (B^T·\psi )_i = ∑_k B[k,i] * \psi [k,j]
+                # compute (B^T\cdot \psi )_i = ∑_k B[k,i] * \psi [k,j]
                 for k in range(n):
                     b   = B[k, i]
                     s   = states[k, j]

@@ -35,34 +35,6 @@ _LATTICE_DIM3_ERROR         = "Lattice dimension must be at least 3..."
 _TRANSLATION_CACHE_ATTR     = '_translation_cache'
 
 ####################################################################################################
-#! Fermionic helpers
-####################################################################################################
-
-def _fermionic_boundary_sign_int_1d(state: int, ns: int, site_moving_mask: int) -> int:
-    """
-    Returns (-1)^{n_cross}, where n_cross is the number of particles that cross the boundary
-    during a cyclic shift. For a left shift by 1 in 1D, particles at site 0 move to site Ns-1 (or vice versa depending on encoding).
-    site_moving_mask marks those crossing sites (usually a single bit).
-    """
-    # Count how many occupied bits cross the boundary:
-    return -1 if ((state & site_moving_mask) != 0) else +1
-
-def _fermionic_boundary_sign_array_1d(state_vec: np.ndarray, crossing_indices: np.ndarray) -> int:
-    # crossing_indices are the indices that wrap around; count occupations mod 2
-    n_cross = int(state_vec[crossing_indices].sum()) & 1
-    return -1 if n_cross == 1 else +1
-
-def _apply_translation_int(state: int, perm: np.ndarray, crossing_mask: np.ndarray,
-def _apply_translation_array(state, perm: np.ndarray, crossing_mask: np.ndarray,
-def _translation_operator(lat: Lattice, direction: LatticeDirection, backend='default'):
-def translation_x(lat: Lattice, backend='default', local_space: Optional['LocalSpace'] = None):
-def translation_y(lat, backend='default'):
-def translation_z(lat, backend='default'):
-def translation(lat : Lattice,
-
-# Translation, reflection, and parity symmetries are now handled in QES.Algebra.Symmetries modules.
-
-####################################################################################################
 #! Reflection Symmetries - spin-1/2
 ####################################################################################################
 
@@ -206,7 +178,16 @@ def choose(sym_specifier : Tuple[SymmetryGenerators, int],
     """
     gen, eig = sym_specifier
     if gen in (SymmetryGenerators.Translation_x, SymmetryGenerators.Translation_y, SymmetryGenerators.Translation_z):
-        return TranslationSymmetry(lat)
+        if lat is None:
+            raise ValueError("Translation symmetry requires a lattice instance.")
+        direction_map = {
+            SymmetryGenerators.Translation_x: LatticeDirection.X,
+            SymmetryGenerators.Translation_y: LatticeDirection.Y,
+            SymmetryGenerators.Translation_z: LatticeDirection.Z,
+        }
+        direction       = direction_map[gen]
+        momentum_index  = eig if isinstance(eig, int) else None
+        return TranslationSymmetry(lat, direction=direction, momentum_index=momentum_index)
     elif gen == SymmetryGenerators.Reflection:
         return ReflectionSymmetry(lat)
     elif gen in (SymmetryGenerators.ParityX, SymmetryGenerators.ParityY, SymmetryGenerators.ParityZ):

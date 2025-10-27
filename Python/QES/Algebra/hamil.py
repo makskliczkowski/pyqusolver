@@ -303,7 +303,7 @@ class Hamiltonian(ABC):
 
         #! Diagonalization engine - modular approach
         self._diag_engine           : Optional[DiagonalizationEngine] = None
-        self._diag_method           : str                   = 'auto'# Default to auto-selection
+        self._diag_method           : str = 'exact'# Default to auto-selection
         
         #! set the local energy functions and the corresponding methods
         self._ops_nmod_nosites      = [[] for _ in range(self.ns)]  # operators that do not modify the state and do not act on any site (through the function call)
@@ -1546,13 +1546,14 @@ class Hamiltonian(ABC):
         diag_start      = time.perf_counter()
         
         # Extract parameters
-        method          = kwargs.get("method", self._diag_method)
-        backend_str     = kwargs.get("backend", None)
-        use_scipy       = kwargs.get("use_scipy", True)
-        store_basis     = kwargs.get("store_basis", True)
-        k               = kwargs.get("k", None)
-        which           = kwargs.get("which", "smallest")
-        hermitian       = kwargs.get("hermitian", True)
+        if True:
+            method          = kwargs.get("method", self._diag_method)
+            backend_str     = kwargs.get("backend", None)
+            use_scipy       = kwargs.get("use_scipy", True)
+            store_basis     = kwargs.get("store_basis", True)
+            k               = kwargs.get("k", None)
+            which           = kwargs.get("which", "smallest")
+            hermitian       = kwargs.get("hermitian", True)
         
         # Determine backend
         if backend_str is None:
@@ -1576,20 +1577,32 @@ class Hamiltonian(ABC):
         # Initialize or reuse diagonalization engine
         if self._diag_engine is None or self._diag_engine.method != method:
             self._diag_engine = DiagonalizationEngine(
-                method      = method,
-                backend     = backend_str,
-                use_scipy   = use_scipy,
-                verbose     = verbose
-            )
+                                        method      = method,
+                                        backend     = backend_str,
+                                        use_scipy   = use_scipy,
+                                        verbose     = verbose
+                                    )
         
         # Prepare solver kwargs (remove our custom parameters)
-        solver_kwargs = {key: val for key, val in kwargs.items() 
+        solver_kwargs   = {key: val for key, val in kwargs.items() 
                         if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian']}
         
+        matrix_to_diag  = self._hamil
+
+        if method == 'exact':
+            if sp.sparse.issparse(matrix_to_diag):
+                if verbose:
+                    self._log("Converting sparse Hamiltonian to dense array for exact diagonalization.", lvl=2, color="yellow")
+                matrix_to_diag = matrix_to_diag.toarray()
+            elif JAX_AVAILABLE and BCOO is not None and isinstance(matrix_to_diag, BCOO):
+                if verbose:
+                    self._log("Converting JAX sparse Hamiltonian to dense array for exact diagonalization.", lvl=2, color="yellow")
+                matrix_to_diag = np.asarray(matrix_to_diag.todense())
+
         # Perform diagonalization
         try:
             result = self._diag_engine.diagonalize(
-                A               = self._hamil,
+                A               = matrix_to_diag,
                 k               = k,
                 hermitian       = hermitian,
                 which           = which,
@@ -1621,21 +1634,17 @@ class Hamiltonian(ABC):
         
         # Log completion
         diag_duration = time.perf_counter() - diag_start
+        
         if verbose:
             method_used = self._diag_engine.get_method_used()
-            self._log(
-                f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds.",
-                lvl=2, color="green"
-            )
+            self._log(f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds.", lvl=2, color="green")
+            
             if hasattr(result, 'converged'):
                 if result.converged:
                     self._log(f"  Converged in {result.iterations} iterations", lvl=2)
                 else:
-                    self._log(
-                        f"  Warning: Did not converge after {result.iterations} iterations",
-                        lvl=2, color="yellow"
-                    )
-            self._log(f"  Ground state energy: {self._eig_val[0]:.10f}", lvl=2)
+                    self._log(f"  Warning: Did not converge after {result.iterations} iterations", lvl=2, color="yellow")
+            self._log(f"  Ground state energy: {self._eig_val[0]:.10f}", lvl=2, log='debug')
 
     # ----------------------------------------------------------------------------------------------
     #! Setters

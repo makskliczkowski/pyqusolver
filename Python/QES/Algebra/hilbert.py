@@ -19,7 +19,7 @@ import numpy as np
 
 from abc import ABC
 from functools import lru_cache
-from typing import Union, Optional, Callable, List, Tuple, Dict
+from typing import Union, Optional, Callable, List, Tuple, Dict, Any
 
 # other
 from itertools import combinations
@@ -43,7 +43,9 @@ try:
                                             SymmetryGenerators, GlobalSymmetries, OperatorTypeActing,
                                             operator_identity, operator_from_local)
     from QES.Algebra.globals import GlobalSymmetry
-    from QES.Algebra.symmetries import choose, translation
+    from QES.Algebra.symmetries import choose
+    from QES.Algebra.Symmetries.base import SymmetryOperator
+    from QES.Algebra.Symmetries.translation import TranslationSymmetry
     from QES.Algebra.hilbert_config import HilbertConfig
     
     #################################################################################################
@@ -202,7 +204,7 @@ class HilbertSpace(ABC):
                 state_filter    : Optional[Callable[[int], bool]]   = None,
                 logger          : Optional[Logger]                  = None,
                 **kwargs):
-        """
+        r"""
         Initializes a HilbertSpace object with specified system and local space properties, symmetries, and backend configuration.
         
         Parameters:
@@ -296,11 +298,16 @@ class HilbertSpace(ABC):
 
         # Modular symmetry group (new, extensible)
         from QES.Algebra.symmetries import choose
-        self._sym_group_modular = []
-        if sym_gen is not None:
+        self._sym_group_modular: List[SymmetryOperator] = []
+        self._sym_group_modular_map: Dict[
+            Tuple[SymmetryGenerators, Optional[Any]], SymmetryOperator
+        ] = {}
+        if sym_gen:
             for sym in sym_gen:
-                op = choose(sym, lat=self._lattice)
-                self._sym_group_modular.append(op)
+                if not isinstance(sym, tuple) or len(sym) != 2:
+                    continue
+                gen, sec = sym
+                self._register_modular_symmetry(gen, sec)
 
         # initialize the properties of the Hilbert space
         self._mapping               = None
@@ -369,6 +376,187 @@ class HilbertSpace(ABC):
         
         statetype = HilbertSpace.reset_statetype(state_type, _backend)
         return _backend, _backend_str, statetype
+
+    # --------------------------------------------------------------------------------------------------
+    #! Momentum-sector helpers
+    # --------------------------------------------------------------------------------------------------
+
+    def analyze_momentum_sectors(
+        self,
+        directions: Optional[List[LatticeDirection]] = None,
+        verbose: bool = False
+    ) -> Dict:
+        """
+        Analyze momentum sector structure for the Hilbert space.
+        
+        Automatically detects dimensionality and handles:
+        - 1D systems: single k quantum number
+        - 2D systems: (k_x, k_y) quantum numbers  
+        - Lattices with multiple sites per unit cell
+        
+        Parameters
+        ----------
+        directions : List[LatticeDirection], optional
+            Translation directions to analyze. If None, uses all active directions.
+        verbose : bool
+            Print detailed sector analysis.
+        
+        Returns
+        -------
+        Dict
+            Momentum sector structure with representatives and quantum numbers.
+            Format depends on dimensionality:
+            - 1D: {k: [(rep, info), ...]}
+            - 2D: {(k_x, k_y): [(rep, info), ...]}
+        """
+        from QES.Algebra.Symmetries.momentum_sectors import MomentumSectorAnalyzer
+        
+        if self._lattice is None:
+            raise ValueError("Momentum sector analysis requires a lattice.")
+        
+        analyzer = MomentumSectorAnalyzer(self._lattice)
+        
+        if analyzer.dim == 0:
+            raise ValueError("Lattice has no active translation directions.")
+        elif analyzer.dim == 1:
+            direction = directions[0] if directions else analyzer.active_directions[0]
+            return analyzer.analyze_1d_sectors(direction=direction, verbose=verbose)
+        elif analyzer.dim >= 2:
+            if directions and len(directions) >= 2:
+                dirs = (directions[0], directions[1])
+            else:
+                dirs = None
+            return analyzer.analyze_2d_sectors(directions=dirs, verbose=verbose)
+        else:
+            raise NotImplementedError("3D momentum analysis not yet implemented")
+    
+    def get_momentum_representatives(
+        self,
+        momentum_indices: Optional[Dict[LatticeDirection, int]] = None
+    ) -> List[int]:
+        """
+        Get representative states for specified momentum sector.
+        
+        Parameters
+        ----------
+        momentum_indices : Dict[LatticeDirection, int], optional
+            Momentum quantum numbers for each translation direction.
+            If None, returns all representatives across all sectors.
+        
+        Returns
+        -------
+        List[int]
+            Representative states in the momentum sector.
+        
+        Examples
+        --------
+        >>> # 1D chain with k=0 sector
+        >>> reps = hilbert.get_momentum_representatives({LatticeDirection.X: 0})
+        
+        >>> # 2D lattice with (k_x, k_y) = (0, π) sector  
+        >>> from QES.Algebra.Symmetries.translation import LatticeDirection
+        >>> reps = hilbert.get_momentum_representatives({
+        ...     LatticeDirection.X: 0,
+        ...     LatticeDirection.Y: lattice.Ly // 2  # π sector
+        ... })
+        """
+        from QES.Algebra.Symmetries.momentum_sectors import MomentumSectorAnalyzer
+        
+        if self._lattice is None:
+            raise ValueError("Momentum sector analysis requires a lattice.")
+        
+        analyzer = MomentumSectorAnalyzer(self._lattice)
+        return analyzer.get_sector_representatives(momentum_indices)
+    
+    def build_momentum_basis(
+        self,
+        momentum_indices: Dict[LatticeDirection, int],
+        normalize: bool = True
+    ) -> Dict[int, Dict[int, complex]]:
+        """
+        Build complete momentum-resolved basis for specified quantum numbers.
+        
+        Parameters
+        ----------
+        momentum_indices : Dict[LatticeDirection, int]
+            Momentum quantum number for each translation direction.
+        normalize : bool
+            Whether to normalize the momentum eigenstates.
+        
+        Returns
+        -------
+        Dict[int, Dict[int, complex]]
+            Mapping from representative to {basis_state: coefficient}.
+            Each entry represents one momentum eigenstate.
+        
+        Examples
+        --------
+        >>> # Build k=π sector for 1D chain
+        >>> basis = hilbert.build_momentum_basis({LatticeDirection.X: L//2})
+        >>> # basis[rep] gives the momentum eigenstate built from representative 'rep'
+        
+        >>> # Build (k_x, k_y) = (0, π) sector for 2D lattice
+        >>> basis = hilbert.build_momentum_basis({
+        ...     LatticeDirection.X: 0,
+        ...     LatticeDirection.Y: Ly//2
+        ... })
+        """
+        from QES.Algebra.Symmetries.momentum_sectors import build_momentum_basis
+        
+        if self._lattice is None:
+            raise ValueError("Momentum basis construction requires a lattice.")
+        
+        return build_momentum_basis(self._lattice, momentum_indices, normalize)
+
+    def build_momentum_superposition(self,
+                                    base_state      : int,
+                                    momenta         : Optional[Dict[LatticeDirection, int]] = None,
+                                    normalize       : bool = True,) -> Dict[int, complex]:
+        """
+        Construct a momentum-resolved superposition seeded from ``base_state``.
+
+        If ``momenta`` is None, momentum indices are inferred from translation
+        symmetries registered via ``sym_gen`` during initialization. 
+        Otherwise,
+        the provided mapping must pair :class:`LatticeDirection` entries with
+        the desired momentum integers (k-values).
+        
+        """
+        from QES.Algebra.Symmetries.translation import (
+            TranslationSymmetry,
+            build_momentum_superposition as _build_momentum_superposition,
+        )
+
+        if self._lattice is None:
+            raise ValueError("Momentum superposition requires a lattice.")
+
+        translations: Dict[LatticeDirection, TranslationSymmetry] = {}
+        inferred_momenta: Dict[LatticeDirection, int] = {}
+
+        for sym in getattr(self, '_sym_group_modular', []) or []:
+            if isinstance(sym, TranslationSymmetry):
+                translations[sym.direction] = sym
+                if sym.momentum_index is not None:
+                    inferred_momenta[sym.direction] = sym.momentum_index
+
+        if momenta is None:
+            momenta = inferred_momenta
+        else:
+            momenta = {direction: int(k) for direction, k in momenta.items()}
+            for direction, translator in list(translations.items()):
+                if direction not in momenta:
+                    translations.pop(direction)
+
+        if not translations:
+            raise ValueError("No translation symmetries registered for momentum projection.")
+
+        if set(momenta.keys()) != set(translations.keys()):
+            missing = set(translations.keys()) - set(momenta.keys())
+            raise ValueError(
+                f"Momentum specification missing for directions: {', '.join(d.name for d in missing)}"
+            )
+
+        return _build_momentum_superposition(translations, int(base_state), momenta, normalize=normalize)
     
     @property
     def boundary_flux(self):
@@ -412,7 +600,7 @@ class HilbertSpace(ABC):
     
     # --------------------------------------------------------------------------------------------------
     
-    def log(self, msg : str, log : Union[int, str] = Logger.LEVELS_R['info'], lvl : int = 0, color : str = "white", append_msg = False):
+    def _log(self, msg : str, log : Union[int, str] = Logger.LEVELS_R['info'], lvl : int = 0, color : str = "white", append_msg = True):
         """
         Log the message.
         
@@ -421,136 +609,202 @@ class HilbertSpace(ABC):
             log (Union[int, str]) : The flag to log the message (default is 'info').
             lvl (int) : The level of the message.
         """
-        if isinstance(log, str):
-            log = Logger.LEVELS_R[log]
-        self._log(msg, log=log, lvl=lvl, color=color, append_msg=append_msg)
-    
-    def _log(self, msg : str, log : Union[int, str] = Logger.LEVELS_R['info'], lvl : int = 0, color : str = "white", append_msg = True):
-        """
-        Log the message.
         
-        Args:
-            msg (str) : The message to log.
-            log (int) : The flag to log the message (default is 'info').
-            lvl (int) : The level of the message.
-        """
         if isinstance(log, str):
             log = Logger.LEVELS_R[log]
         if append_msg:
             msg = f"[HilbertSpace] {msg}"
         msg = self._logger.colorize(msg, color)
-        self._logger.say(msg, log = log, lvl = lvl)
-    
-    ####################################################################################################
-    #! Generate the symmetry group and all properties of the generation
-    ####################################################################################################
-    
-    #! Translation related
-    
-    def _gen_sym_group_check_t(self, sym_gen : list) -> (list, Tuple[bool, bool], Tuple[Operator, LatticeDirection]):
-        '''
-        Helper function to check the translation symmetry. This function is used to check the translation symmetry.
-        It gets the translation generator and checks if it satisfies the symmetry conditions. If the translation
-        is not possible with the boundary conditions provided, the function returns.
-        
-        Args:
-            sym_gen (list) : A list of symmetry generators.
-        Returns:
-            list, tuple : A list of symmetry generators and a tuple of flags (has_translation, has_cpx_translation).
-        '''
-        if self._lattice is None:
-            has_translation = any(g[0].has_translation() for g in sym_gen if hasattr(g,'__len__') and len(g) > 0)
-            if has_translation:
-                    self._log("Translation requested but no Lattice; ignoring.", log='warning', lvl=1)
-            # Remove translation generators if found
-            sym_gen_out = [(g, s) for (g, s) in (sym_gen or []) if not g.has_translation()]
-            return sym_gen_out, (False, False), (None, LatticeDirection.X)
-        
-        has_cpx_translation = False
-        has_translation     = False
-        t                   = None  
-        direction           = LatticeDirection.X
-        for idx, (gen, sec) in enumerate(sym_gen):
+        self._logger.say(msg, log=log, lvl=lvl)
 
-            if not gen.has_translation():
+    def _register_modular_symmetry(
+        self,
+        generator: SymmetryGenerators,
+        sector: Optional[int] = None,
+    ) -> Optional[SymmetryOperator]:
+        """Ensure a single modular operator instance per symmetry generator."""
+
+        translation_generators = (
+            SymmetryGenerators.Translation_x,
+            SymmetryGenerators.Translation_y,
+            SymmetryGenerators.Translation_z,
+        )
+
+        if generator in translation_generators:
+            if self._lattice is None:
+                self._log(
+                    "Translation symmetry requested without lattice; skipping modular registration.",
+                    log="warning",
+                    lvl=1,
+                )
+                return None
+
+            direction_map = {
+                SymmetryGenerators.Translation_x: LatticeDirection.X,
+                SymmetryGenerators.Translation_y: LatticeDirection.Y,
+                SymmetryGenerators.Translation_z: LatticeDirection.Z,
+            }
+            direction = direction_map[generator]
+            key = (generator, direction)
+
+            momentum_index: Optional[int] = None
+            if isinstance(sector, (int, np.integer)):
+                momentum_index = int(sector)
+            elif isinstance(sector, float) and float(sector).is_integer():
+                momentum_index = int(sector)
+
+            existing = self._sym_group_modular_map.get(key)
+            if existing is None:
+                translator = TranslationSymmetry(
+                    self._lattice,
+                    direction=direction,
+                    momentum_index=momentum_index,
+                )
+                self._sym_group_modular.append(translator)
+                self._sym_group_modular_map[key] = translator
+                existing = translator
+            elif momentum_index is not None and existing.momentum_index is None:
+                existing.momentum_index = momentum_index
+            return existing
+
+        key = (generator, sector)
+        existing = self._sym_group_modular_map.get(key)
+        if existing is not None:
+            return existing
+
+        try:
+            operator = choose(
+                (generator, sector if sector is not None else 0),
+                lat=self._lattice,
+                ns=self._ns,
+                backend=self._backend_str,
+            )
+        except Exception as exc:  # pragma: no cover - safeguard for incomplete configs
+            self._log(
+                f"Failed to instantiate modular symmetry {generator}: {exc}",
+                log="warning",
+                lvl=1,
+            )
+            return None
+
+        self._sym_group_modular.append(operator)
+        self._sym_group_modular_map[key] = operator
+        return operator
+
+    ####################################################################################################
+    #! Translation related
+    ####################################################################################################
+
+    def _gen_sym_group_check_t(
+        self,
+        sym_gen: list,
+    ) -> Tuple[list, Dict[LatticeDirection, SymmetryOperator], bool]:
+        """
+        Extract translation generators, validating lattice compatibility and registering
+        their modular counterparts. Returns the filtered generator list, the mapping of
+        directions to translation operators, and whether complex translation sectors are present.
+        """
+
+        direction_map = {
+            SymmetryGenerators.Translation_x: LatticeDirection.X,
+            SymmetryGenerators.Translation_y: LatticeDirection.Y,
+            SymmetryGenerators.Translation_z: LatticeDirection.Z,
+        }
+
+        if self._lattice is None:
+            has_translation = any(
+                hasattr(gen, "has_translation") and gen.has_translation()
+                for gen, _ in (sym_gen or [])
+            )
+            if has_translation:
+                self._log("Translation requested but no Lattice; ignoring.", log="warning", lvl=1)
+            filtered = [
+                (gen, sec)
+                for gen, sec in (sym_gen or [])
+                if not (hasattr(gen, "has_translation") and gen.has_translation())
+            ]
+            return filtered, {}, False
+
+        translations: Dict[LatticeDirection, SymmetryOperator] = {}
+        has_cpx_translation = False
+        filtered: list = []
+
+        for gen, sec in sym_gen or []:
+            if not hasattr(gen, "has_translation") or not gen.has_translation():
+                filtered.append((gen, sec))
                 continue
 
-            direction = LatticeDirection.X
-            if gen == SymmetryGenerators.Translation_y:
-                direction = LatticeDirection.Y
-            elif gen == SymmetryGenerators.Translation_z:
-                direction = LatticeDirection.Z
-
-            sym_gen.pop(idx)
+            direction = direction_map.get(gen, LatticeDirection.X)
             if not self._lattice.is_periodic(direction):
-                self._log(f"Translation along {direction.name} requested but boundary is not periodic.", log='warning', lvl=1)
-                break
+                self._log(
+                    f"Translation along {direction.name} requested but boundary is not periodic.",
+                    log="warning",
+                    lvl=1,
+                )
+                continue
 
-            has_translation = True
+            translator = self._register_modular_symmetry(gen, sec)
+            if translator is None:
+                continue
+
+            translations[direction] = translator
             self._sym_group_sec.append((gen, sec))
 
-            kx = sec if direction == LatticeDirection.X else 0.0
-            ky = sec if direction == LatticeDirection.Y else 0.0
-            kz = sec if direction == LatticeDirection.Z else 0.0
-            t = translation(self._lattice, kx=kx, ky=ky, kz=kz, direction=direction, backend=self._backend)
-
-            if sec != 0 and not (sec == self.Ns // 2 and self.Ns % 2 == 0):
+            momentum_index = getattr(translator, "momentum_index", None)
+            if momentum_index not in (None, 0) and not (
+                momentum_index == self.Ns // 2 and self.Ns % 2 == 0
+            ):
                 has_cpx_translation = True
-            break
-            
-        if has_translation:
-            self._log("Translation symmetry is present.", lvl = 1)
-            if has_cpx_translation:
-                self._log("Translation in complex sector...", lvl = 2, color = 'blue')
-        return sym_gen, (has_translation, has_cpx_translation), (t, direction)
 
-    def _gen_sym_apply_t(self, sym_gen_op : list, t : Optional[Operator] = None, direction : LatticeDirection = LatticeDirection.X):
-        """
-        Apply the translation symmetry to all existing symmetry group elements.
-        
-        This creates new symmetry operations by combining translation with existing operations.
-        For a lattice with size L in the translation direction, we generate T, T^2, ..., T^(L-1)
-        and combine each with existing symmetry operations.
-        
-        Args:
-            sym_gen_op (list): Existing list of symmetry operator tuples
-            t (Optional[Operator]): Translation operator
-            direction (LatticeDirection): Direction of translation
-            
-        Returns:
-            list: Extended list of symmetry operator tuples including translation combinations
-        """
-        if t is not None:
-            self._log("Adding translation to symmetry group combinations.", lvl = 2, color = 'yellow')
-            
-            # check the direction to determine lattice size
+        return filtered, translations, has_cpx_translation
+
+    def _gen_sym_apply_t(
+        self,
+        sym_gen_op: list,
+        translations: Dict[LatticeDirection, SymmetryOperator],
+    ) -> list:
+        """Combine modular translations with the existing symmetry tuples (multi-direction aware)."""
+
+        if not translations:
+            return sym_gen_op
+
+        sym_gen_out = list(sym_gen_op)
+
+        for direction, translator in translations.items():
+            if translator is None:
+                continue
+
             if direction == LatticeDirection.X:
-                size = self._lattice.lx
+                extent = getattr(self._lattice, 'lx', getattr(self._lattice, 'Lx', self._ns))
             elif direction == LatticeDirection.Y:
-                size = getattr(self._lattice, 'ly', self._lattice.lx)
+                extent = getattr(self._lattice, 'ly', getattr(self._lattice, 'Ly', self._ns))
             else:
-                size = getattr(self._lattice, 'lz', self._lattice.lx)
-            
-            sym_gen_out = sym_gen_op.copy()
-            
-            # Generate T, T^2, T^3, ..., T^(size-1) and combine with existing ops
-            t_powers = [t]  # T^1
-            for power in range(2, size):
-                # T^power = T applied power times
-                t_powers.append(tuple([t] * power))
-            
-            # Combine each power of T with all existing symmetry operations
+                extent = getattr(self._lattice, 'lz', getattr(self._lattice, 'Lz', self._ns))
+
+            extent = int(extent) if extent is not None else self._ns
+            if extent <= 1:
+                continue
+
+            self._log(
+                f"Adding translation symmetry along {direction.name} (extent {extent}).",
+                lvl=2,
+                color='yellow',
+            )
+
+            base_ops = list(sym_gen_out)
+            t_powers: List[Union[SymmetryOperator, Tuple[SymmetryOperator, ...]]] = [translator]
+            for power in range(2, extent):
+                t_powers.append(tuple([translator] * power))
+
             for t_pow in t_powers:
-                for op_tuple in sym_gen_op:
-                    # Combine: prepend t_pow operations to op_tuple
+                for op_tuple in base_ops:
                     if isinstance(t_pow, tuple):
                         combined = t_pow + op_tuple
                     else:
                         combined = (t_pow,) + op_tuple
                     sym_gen_out.append(combined)
-                    
-            return sym_gen_out
-        return sym_gen_op
+
+        return sym_gen_out
 
     #! Global symmetries related
     
@@ -564,7 +818,202 @@ class HilbertSpace(ABC):
             self._log("U(1) global symmetry is present.", lvl = 2, color = 'blue')
         return has_u1, u1_val
 
-    #! Removers for the symmetry generators
+    #! Symmetry compatibility filtering
+
+    def _filter_incompatible_symmetries(
+        self,
+        sym_gen: list,
+        translations: Dict[LatticeDirection, SymmetryOperator],
+        has_u1: bool,
+        u1_val: float,
+    ) -> list:
+        r"""
+        Filter symmetry generators using group-theoretic commutation rules.
+        
+        This method automatically removes incompatible symmetries based on:
+        1. Momentum-dependent commutation: Reflection ↔ Translation only at k=0,\pi
+        2. U(1) constraints: Parity incompatible with generic filling
+        3. General compatibility rules from SymmetryOperator.commutes_with()
+        
+        Args:
+            sym_gen: List of (SymmetryGenerator, sector) tuples to filter
+            translations: Active translation operators by direction
+            has_u1: Whether U(1) global symmetry is present
+            u1_val: U(1) sector value (particle number)
+            
+        Returns:
+            Filtered list of compatible symmetry generators
+        """
+        from QES.Algebra.Symmetries.compatibility import (
+            check_compatibility,
+            infer_momentum_sector_from_operators,
+        )
+
+        # Build list of all symmetry operators (translations + locals)
+        all_operators: List[SymmetryOperator] = list(translations.values())
+        
+        # Instantiate local symmetry operators for checking (temporary, not registered)
+        local_operators: List[SymmetryOperator] = []
+        for generator, sector in sym_gen:
+            # Use choose to create operator instance WITHOUT registering it
+            op = choose(
+                (generator, sector),
+                ns=self._ns,
+                lat=self._lattice,
+                backend=self._backend_str,
+            )
+            local_operators.append(op)
+        
+        # Filter by local Hilbert space compatibility
+        # Check if each operator supports the local space type
+        filtered_local_ops = []
+        removed_local_space = []
+        for op, (gen, sec) in zip(local_operators, sym_gen):
+            if not op.is_valid_for_local_space(self._local_space.typ):
+                removed_local_space.append(f"{op.symmetry_class.name} (incompatible with {self._local_space.typ.name})")
+            else:
+                filtered_local_ops.append(op)
+        
+        # Log local space incompatibilities
+        if removed_local_space:
+            self._log(
+                f"Removed {len(removed_local_space)} symmetry/symmetries incompatible with local space {self._local_space.typ.name}: {', '.join(removed_local_space)}",
+                lvl=1,
+                color='yellow',
+            )
+        
+        # Update sym_gen to only include compatible operators
+        sym_gen_filtered = []
+        for op, (gen, sec) in zip(local_operators, sym_gen):
+            if op in filtered_local_ops:
+                sym_gen_filtered.append((gen, sec))
+        sym_gen = sym_gen_filtered
+        local_operators = filtered_local_ops
+        
+        all_operators.extend(local_operators)
+        
+        # Check compatibility with automatic filtering (infers momentum sector automatically)
+        warnings = []
+        compatible_ops, removed_names = check_compatibility(
+            all_operators,
+            warn_callback=lambda msg: warnings.append(msg)
+        )
+        
+        # Log warnings
+        for warning in warnings:
+            self._log(warning, log='warning', lvl=2, color='yellow')
+        
+        # Map back to generator list - only for compatible operators
+        compatible_generators = []
+        for op in compatible_ops:
+            # Skip translations (already registered)
+            if any(op is trans for trans in translations.values()):
+                continue
+            # Find matching generator tuple
+            for (gen, sec), local_op in zip(sym_gen, local_operators):
+                if op is local_op:
+                    compatible_generators.append((gen, sec))
+                    break
+        
+        # Apply global symmetry constraints on parity operators
+        # These constraints arise from physical filling/conservation laws
+        compatible_generators = self._apply_global_symmetry_constraints(
+            compatible_generators, has_u1, u1_val
+        )
+        
+        # Log removed symmetries
+        removed_count = len(sym_gen) - len(compatible_generators)
+        if removed_count > 0:
+            self._log(
+                f"Automatic compatibility check removed {removed_count} incompatible symmetry/symmetries.",
+                lvl=1,
+                color='yellow',
+            )
+        
+        return compatible_generators
+
+    def _apply_global_symmetry_constraints(
+        self,
+        sym_gen: list,
+        has_u1: bool,
+        u1_val: float,
+    ) -> list:
+        r"""
+        Apply physical constraints from global symmetries to local symmetry generators.
+        
+        Global Symmetry Constraints
+        ============================
+        
+        U(1) Particle Number Conservation:
+        ----------------------------------
+        - Constraint: Parity X/Y incompatible at non-half-filling
+        - Reason: Particle-hole symmetry P: c_i -> c_i^†, c_i^† -> c_i
+          Maps N -> Ns - N, so requires N = Ns/2 (half-filling)
+        - Applies to: Hubbard model, t-J model, fermion systems
+        - Action: Remove ParityX, ParityY if N ≠ Ns/2 or Ns odd
+        
+        U(1) Spin Conservation (S^z_total):
+        -----------------------------------
+        - Constraint: ParityX, ParityY break S^z conservation
+        - Reason: \sigma ^x, \sigma ^y flip spins -> change total magnetization M
+        - Only ParityZ preserves S^z (flips all -> M -> -M, but |M| same)
+        - Applies to: XXZ model, anisotropic models with S^z conservation
+        - Action: Would remove ParityX, ParityY if U1_SPIN active
+          (Not implemented yet - requires global symmetry type detection)
+        
+        Time-Reversal Symmetry:
+        ----------------------
+        - Constraint: Complex phases incompatible with real wavefunctions
+        - Applies to: Systems without magnetic field
+        - Action: Would enforce specific momentum sectors
+          (Not implemented yet - requires time-reversal operator)
+        
+        Args:
+            sym_gen: List of compatible (SymmetryGenerator, sector) tuples
+            has_u1: Whether U(1) particle number conservation is active
+            u1_val: Particle number N
+            
+        Returns:
+            Filtered list after applying global symmetry constraints
+        """
+        if not has_u1:
+            return sym_gen
+        
+        # U(1) particle number constraint: Parity X/Y only at half-filling
+        self._log(
+            "U(1) particle conservation detected. Checking parity compatibility...",
+            log='info',
+            lvl=1,
+            color='yellow'
+        )
+        
+        at_half_filling = (int(u1_val) == self._ns // 2) and (self._ns % 2 == 0)
+        
+        filtered_gens = []
+        for (gen, sec) in sym_gen:
+            if gen in (SymmetryGenerators.ParityX, SymmetryGenerators.ParityY):
+                if not at_half_filling:
+                    self._log(
+                        f"Removing {gen.name} due to U(1) constraint: "
+                        f"Requires half-filling N=Ns/2={self._ns//2} (even Ns), "
+                        f"but N={int(u1_val)}, Ns={self._ns}.",
+                        log='info',
+                        lvl=2,
+                        color='blue',
+                    )
+                    continue
+                else:
+                    self._log(
+                        f"Allowing {gen.name} at half-filling (N={int(u1_val)}, Ns/2={self._ns//2}).",
+                        log='debug',
+                        lvl=2,
+                        color='green',
+                    )
+            filtered_gens.append((gen, sec))
+        
+        return filtered_gens
+
+    #! Removers for the symmetry generators (legacy, now replaced by _filter_incompatible_symmetries)
 
     def _gen_sym_remove_reflection(self, sym_gen : list, has_cpx_translation : bool):
         """
@@ -575,7 +1024,11 @@ class HilbertSpace(ABC):
             has_cpx_translation (bool) : A flag for complex translation - momentum is different than 0 or pi.
         """
         if has_cpx_translation and sym_gen is not None and hasattr(sym_gen, "__iter__"):
-            sym_gen = [gen for gen in sym_gen if not isinstance(gen[0], SymmetryGenerators.Reflection)]
+            sym_gen = [
+                entry
+                for entry in sym_gen
+                if entry[0] != SymmetryGenerators.Reflection
+            ]
             self._log("Removed reflection symmetry from the symmetry generators.", lvl = 2, color = 'blue')
         return sym_gen
     
@@ -599,23 +1052,29 @@ class HilbertSpace(ABC):
         return sym_gen
     
     #! Printer
-    def _gen_sym_print(self, t: Optional[Operator] = None) -> None:
-        """
-        Print the symmetry group.
+    def _gen_sym_print(
+        self,
+        translations: Optional[Dict[LatticeDirection, SymmetryOperator]] = None,
+    ) -> None:
+        """Emit a concise summary of the active local and translation symmetries."""
 
-        Parameters
-        ----------
-        has_t : bool
-            Flag for the translation symmetry.
-        t : Operator
-            The translation operator.        
-        """
-        
-        self._log("Using local symmetries:", lvl = 1, color = 'green')
+        self._log("Using local symmetries:", lvl=1, color='green')
         for (g, sec) in self._sym_group_sec:
-            self._log(f"{g}: {sec}", lvl = 2, color = 'blue')
-        if t is not None:
-            self._log(f"{t}: {t.eigval}", lvl = 2, color = 'blue')
+            self._log(f"{g}: {sec}", lvl=2, color='blue')
+
+        if not translations:
+            return
+
+        for direction, translator in translations.items():
+            if isinstance(translator, TranslationSymmetry):
+                info = f"Translation({direction.name})"
+                momentum = getattr(translator, 'momentum_index', None)
+                if momentum is not None:
+                    info += f" k={momentum}"
+                self._log(info, lvl=2, color='blue')
+            else:
+                eigval = getattr(translator, 'eigval', None)
+                self._log(f"{translator}: {eigval}", lvl=2, color='blue')
         self._log("Using global symmetries:", lvl = 1, color = 'green')
         for g in self._global_syms:
             self._log(f"{g}: {g.get_val()}", lvl = 2, color = 'blue')
@@ -628,9 +1087,10 @@ class HilbertSpace(ABC):
         
         This method constructs the full symmetry group by:
         1. Checking and filtering generators based on lattice and global symmetries
-        2. Creating all combinations of local symmetry generators
-        3. Combining with translation symmetry if present
-        4. Ensuring the identity element is included
+        2. Validating symmetry compatibility using group-theoretic commutation rules
+        3. Creating all combinations of compatible local symmetry generators
+        4. Combining with translation symmetry if present
+        5. Ensuring the identity element is included
         
         The symmetry group is stored in self._sym_group as a list of Operator objects.
         Each operator, when called with a state, returns (new_state, eigenvalue).
@@ -657,13 +1117,11 @@ class HilbertSpace(ABC):
         has_u1, u1_val              = self._gen_sym_group_check_u1()
         
         # process translation symmetries
-        sym_gen, (has_t, has_cpx_t), (t, direction) = self._gen_sym_group_check_t(sym_gen)
+        sym_gen, translations, has_cpx_t = self._gen_sym_group_check_t(sym_gen)
+        has_t = bool(translations)
         
-        # remove reflections from the symmetry generators if the complex translation is present
-        sym_gen                     = self._gen_sym_remove_reflection(sym_gen, has_cpx_t)
-
-        # check the existence of the parity when U(1) is present
-        sym_gen                     = self._gen_sym_remove_parity(sym_gen, has_u1, u1_val)
+        # Filter incompatible symmetries based on group-theoretic commutation rules
+        sym_gen = self._filter_incompatible_symmetries(sym_gen, translations, has_u1, u1_val)
         
         # save all sector values for convenience
         for gen, sec in sym_gen:
@@ -680,20 +1138,27 @@ class HilbertSpace(ABC):
         
         # Generate combinations for r = 1, 2, ..., _size_gen
         if _size_gen > 0:
-            generator_ops = [
-                choose(sym_gen[idx], ns=self._ns, lat=self._lattice, backend=self._backend)
-                for idx in range(_size_gen)
-            ]
+            generator_ops: List[SymmetryOperator] = []
+            for generator, sector in sym_gen:
+                op = self._register_modular_symmetry(generator, sector)
+                if op is None:
+                    op = choose(
+                        (generator, sector),
+                        ns=self._ns,
+                        lat=self._lattice,
+                        backend=self._backend_str,
+                    )
+                generator_ops.append(op)
             for combo in _enumerate_generator_index_combos(_size_gen)[1:]:
                 ops_tuple = tuple(generator_ops[idx] for idx in combo)
                 self._sym_group.append(ops_tuple)
         
         # apply the translation symmetry by combining with existing operators
         if has_t:
-            self._sym_group = self._gen_sym_apply_t(self._sym_group, t, direction)
+            self._sym_group = self._gen_sym_apply_t(self._sym_group, translations)
 
         # Log the symmetry group information
-        self._gen_sym_print(t)
+        self._gen_sym_print(translations)
     
     # --------------------------------------------------------------------------------------------------
     
@@ -911,6 +1376,7 @@ class HilbertSpace(ABC):
                             phase = phase * (val.real if hasattr(val, 'real') else val)
                     return st, phase
                 return op
+
             return [wrap_ops_tuple(t) for t in self._sym_group]
         return self._sym_group
     

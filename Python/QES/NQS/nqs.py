@@ -1348,8 +1348,8 @@ class NQS(MonteCarloSolver):
             st, w       = jax.vmap(self._modifier_func)(x)
             M           = st.shape[1]                                               # number of modified states
             #! flatten (B * M) so we can call the network once
-            st_flat     = st.reshape(-1, st.shape[-1])                              # (B·M, N_dim)
-            log_psi     = jax.vmap(lambda s: model_callable(params, s))(st_flat)    # (B·M,)
+            st_flat     = st.reshape(-1, st.shape[-1])                              # (B\cdot M, N_dim)
+            log_psi     = jax.vmap(lambda s: model_callable(params, s))(st_flat)    # (B\cdot M,)
             #! reshape the log_psi to (B, M)
             log_psi_r   = log_psi.reshape(B, -1)                                    # (B, M)
             log_psi_r  += jnp.log(w.astype(log_psi_r.dtype))

@@ -333,7 +333,7 @@ if JAX_AVAILABLE:
         out_state : jax.Array(shape=(1,), dtype=_DEFAULT_INT)
             Same integer state, wrapped in a length-1 array.
         out_coeff : jax.Array(shape=(1,), dtype=_DEFAULT_FLOAT)
-            1·prefactor**n  if **all** sites are occupied, else 0.
+            1\cdot prefactor**n  if **all** sites are occupied, else 0.
         """
         state_arr     = jnp.asarray(state, dtype=_DEFAULT_INT)
 

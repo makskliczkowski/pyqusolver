@@ -111,7 +111,7 @@ class SymmetryGenerators(Enum):
     ParityZ         = auto()    # spin-only (sigma-z parity)
 
     # fermion-specific
-    FermionParity   = auto()    # (−1)^{N}
+    FermionParity   = auto()    # (-1)^{N}
     ParticleHole    = auto()    # PH transform
     TimeReversal    = auto()    # optional placeholder, depends on model
 

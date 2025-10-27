@@ -353,11 +353,11 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 #! check the directional bond contributions - Kitaev
                 if True:
                     if nn == HEI_KIT_Z_BOND_NEI:
-                        sz_sz  += self._kz[i]
+                        sz_sz  += self._kz
                     elif nn == HEI_KIT_Y_BOND_NEI:
-                        sy_sy  += self._ky[i]
+                        sy_sy  += self._ky
                     else:
-                        sx_sx  += self._kx[i]
+                        sx_sx  += self._kx
                 if True:
                     #? SzSz
                     if not np.isclose(sz_sz, 0.0, rtol=1e-10):
@@ -373,24 +373,24 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                         self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
                 
                 #! Gamma terms
-                if True:
+                # if True:
                     #? Gamma_x terms
-                    if self._gx is not None and not np.isclose(self._gx[i], 0.0, rtol=1e-10):
-                        self.add(op_sx_sy_c, sites = [i, nei], multiplier = self._gx[i] * phase, modifies = True)
-                        self.add(op_sy_sx_c, sites = [i, nei], multiplier = self._gx[i] * phase, modifies = True)
-                        self._log(f"Adding Gamma_x SxSy + SySx at {i},{nei} with value {self._gx[i]:.2f}", lvl = 2, log = 'debug')
+                    # if self._gx is not None and not np.isclose(self._gx, 0.0, rtol=1e-10):
+                    #     self.add(op_sx_sy_c, sites = [i, nei], multiplier = self._gx * phase, modifies = True)
+                    #     self.add(op_sy_sx_c, sites = [i, nei], multiplier = self._gx * phase, modifies = True)
+                    #     self._log(f"Adding Gamma_x SxSy + SySx at {i},{nei} with value {self._gx:.2f}", lvl = 2, log = 'debug')
                         
-                    #? Gamma_y terms
-                    if self._gy is not None and not np.isclose(self._gy[i], 0.0, rtol=1e-10):
-                        self.add(op_sy_sz_c, sites = [i, nei], multiplier = self._gy[i] * phase, modifies = True)
-                        self.add(op_sz_sy_c, sites = [i, nei], multiplier = self._gy[i] * phase, modifies = True)
-                        self._log(f"Adding Gamma_y SySz + SzSy at {i},{nei} with value {self._gy[i]:.2f}", lvl = 2, log = 'debug')
+                    # #? Gamma_y terms
+                    # if self._gy is not None and not np.isclose(self._gy, 0.0, rtol=1e-10):
+                    #     self.add(op_sy_sz_c, sites = [i, nei], multiplier = self._gy * phase, modifies = True)
+                    #     self.add(op_sz_sy_c, sites = [i, nei], multiplier = self._gy * phase, modifies = True)
+                    #     self._log(f"Adding Gamma_y SySz + SzSy at {i},{nei} with value {self._gy:.2f}", lvl = 2, log = 'debug')
                         
-                    #? Gamma_z terms
-                    if self._gz is not None and not np.isclose(self._gz[i], 0.0, rtol=1e-10):
-                        self.add(op_sz_sx_c, sites = [i, nei], multiplier = self._gz[i] * phase, modifies = True)
-                        self.add(op_sx_sz_c, sites = [i, nei], multiplier = self._gz[i] * phase, modifies = True)
-                        self._log(f"Adding Gamma_z SzSx + SxSz at {i},{nei} with value {self._gz[i]:.2f}", lvl = 2, log = 'debug')
+                    # #? Gamma_z terms
+                    # if self._gz is not None and not np.isclose(self._gz, 0.0, rtol=1e-10):
+                    #     self.add(op_sz_sx_c, sites = [i, nei], multiplier = self._gz * phase, modifies = True)
+                    #     self.add(op_sx_sz_c, sites = [i, nei], multiplier = self._gz * phase, modifies = True)
+                    #     self._log(f"Adding Gamma_z SzSx + SxSz at {i},{nei} with value {self._gz:.2f}", lvl = 2, log = 'debug')
 
                 #! Finalize the operator addition for this neighbor
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')

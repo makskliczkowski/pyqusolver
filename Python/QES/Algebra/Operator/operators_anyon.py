@@ -1,8 +1,8 @@
-"""
+r"""
 Abelian anyon onsite operators.
 
 These operators describe hard-core abelian anyons characterised by an exchange
-angle ``statistics_angle``.  For ``statistics_angle = π`` they reduce to
+angle ``statistics_angle``.  For ``statistics_angle = \pi`` they reduce to
 fermionic operators, whereas ``statistics_angle = 0`` yields hard-core bosons.
 """
 
@@ -99,9 +99,9 @@ def _register_catalog_entries():
         LocalSpaceTypes.ANYON_ABELIAN,
         key="n",
         factory=_number_factory,
-        description="Occupation operator for hard-core abelian anyons (diagonal).",
-        algebra="[n_i, a_j\dag] = δ_{ij} a_j\dag,  [n_i, a_j] = -δ_{ij} a_j",
-        sign_convention="No phase; diagonal in occupation basis.",
+        description=r"Occupation operator for hard-core abelian anyons (diagonal).",
+        algebra=r"[n_i, a_j\dag] = δ_{ij} a_j\dag,  [n_i, a_j] = -δ_{ij} a_j",
+        sign_convention=r"No phase; diagonal in occupation basis.",
         tags=("anyon", "number"),
     )
 
