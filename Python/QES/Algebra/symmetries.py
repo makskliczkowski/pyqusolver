@@ -10,26 +10,18 @@ Author      : Maksymilian Kliczkowski
 Date        : 2025-11-05 
 '''
 
-# Import the necessary modules
-import math
-import cmath
+# Modular symmetry imports
 import numpy as np
 import time
 from typing import Tuple, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from QES.Algebra.hilbert import LocalSpace
-
-#! operator module for operator overloading
 try:
-    from QES.Algebra.Operator.operator import Operator, SymmetryGenerators
-except ImportError as e:
-    raise ImportError("Failed to import Operator module. Ensure QES package is correctly installed.") from e
-
-#! from general Python modules
-try:
+    from QES.Algebra.Symmetries.translation import TranslationSymmetry
+    from QES.Algebra.Symmetries.reflection import ReflectionSymmetry
+    from QES.Algebra.Symmetries.parity import ParitySymmetry
+    from QES.Algebra.Symmetries.base import SymmetryRegistry, SymmetryOperator
     from QES.general_python.lattices.lattice import Lattice, LatticeDirection
     from QES.general_python.common.binary import flip_all, rev, popcount, BACKEND_REPR, BACKEND_DEF_SPIN
+    from QES.Algebra.Operator.operator import Operator, SymmetryGenerators
 except ImportError as e:
     raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
@@ -60,197 +52,15 @@ def _fermionic_boundary_sign_array_1d(state_vec: np.ndarray, crossing_indices: n
     n_cross = int(state_vec[crossing_indices].sum()) & 1
     return -1 if n_cross == 1 else +1
 
-####################################################################################################
-#! Tanslational Symmetries - spin-1/2
-####################################################################################################
-
-def _axis_index(lat: Lattice, direction: LatticeDirection) -> int:
-    axis_map = {
-        LatticeDirection.X: 0,
-        LatticeDirection.Y: 1,
-        LatticeDirection.Z: 2,
-    }
-    axis = axis_map[direction]
-    if axis >= lat.dim:
-        raise ValueError(f"Direction {direction} is not supported for lattice dimension {lat.dim}.")
-    return axis
-
-def _compute_translation_data(lat: Lattice, direction: LatticeDirection):
-    """
-    Pre-compute permutation data for a unit translation.
-    Returns ``(perm, crossing_mask)`` where ``perm`` maps source indices to
-    destination indices and ``crossing_mask`` marks sites that cross the
-    boundary when translated.
-    """
-    cache = getattr(lat, _TRANSLATION_CACHE_ATTR, None)
-    if cache is None:
-        cache = {}
-        setattr(lat, _TRANSLATION_CACHE_ATTR, cache)
-    if direction in cache:
-        return cache[direction]
-
-    if not lat.is_periodic(direction):
-        raise ValueError(f"Translation along {direction.name} requires periodic boundary conditions.")
-
-    axis = _axis_index(lat, direction)
-    dims = (lat.lx, lat.ly if lat.dim > 1 else 1, lat.lz if lat.dim > 2 else 1)
-    size_axis = dims[axis]
-    perm = np.empty(lat.ns, dtype=np.int64)
-    crossing_mask = np.zeros(lat.ns, dtype=bool)
-
-    for site in range(lat.ns):
-        coord = list(lat.get_coordinates(site))
-        while len(coord) < 3:
-            coord.append(0)
-        new_coord = coord.copy()
-        new_coord[axis] += 1
-        wrap = False
-        if new_coord[axis] >= size_axis:
-            new_coord[axis] -= size_axis
-            wrap = True
-        dest = lat.site_index(int(new_coord[0]), int(new_coord[1]), int(new_coord[2]))
-        perm[site] = dest
-        if wrap:
-            crossing_mask[site] = True
-
-    cache[direction] = (perm, crossing_mask)
-    return perm, crossing_mask
-
-
 def _apply_translation_int(state: int, perm: np.ndarray, crossing_mask: np.ndarray,
-                           lat: Lattice, direction: LatticeDirection) -> Tuple[int, complex]:
-    """Apply translation permutation to integer-encoded basis states."""
-    ns = lat.ns
-    new_state = 0
-    for src in range(ns):
-        if (state >> (ns - 1 - src)) & 1:
-            dest = int(perm[src])
-            new_state |= 1 << (ns - 1 - dest)
-
-    if crossing_mask.any():
-        crossing_sites = np.nonzero(crossing_mask)[0]
-        occ_cross = sum(1 for src in crossing_sites if (state >> (ns - 1 - src)) & 1)
-    else:
-        occ_cross = 0
-    phase = lat.boundary_phase(direction, occ_cross)
-    return new_state, phase
-
-
 def _apply_translation_array(state, perm: np.ndarray, crossing_mask: np.ndarray,
-                             lat: Lattice, direction: LatticeDirection):
-    """Apply translation permutation to array-encoded basis states."""
-    state_arr = np.asarray(state)
-    flat = state_arr.reshape(-1)
-    if flat.size != lat.ns:
-        raise ValueError(f"State size {flat.size} incompatible with lattice size {lat.ns}.")
-    new_flat = np.empty_like(flat)
-    new_flat[perm] = flat
-
-    if crossing_mask.any():
-        occ_cross = int(np.count_nonzero(flat[crossing_mask]))
-    else:
-        occ_cross = 0
-    phase = lat.boundary_phase(direction, occ_cross)
-    return new_flat.reshape(state_arr.shape), phase
-
-
 def _translation_operator(lat: Lattice, direction: LatticeDirection, backend='default'):
-    if lat is None:
-        raise ValueError(_LATTICE_NONE_ERROR)
-    perm, crossing_mask = _compute_translation_data(lat, direction)
-
-    def op(state):
-        if isinstance(state, (int, np.integer)):
-            return _apply_translation_int(int(state), perm, crossing_mask, lat, direction)
-        return _apply_translation_array(state, perm, crossing_mask, lat, direction)
-
-    return op
-
-
 def translation_x(lat: Lattice, backend='default', local_space: Optional['LocalSpace'] = None):
-    """
-    Translation in the X direction using permutation data derived from the lattice.
-    """
-    return _translation_operator(lat, LatticeDirection.X, backend=backend)
-
 def translation_y(lat, backend='default'):
-    """
-    Translation in the Y direction using permutation data derived from the lattice.
-    """
-    if lat.dim == 1:
-        raise ValueError(_LATTICE_DIM2_ERROR)
-    return _translation_operator(lat, LatticeDirection.Y, backend=backend)
-
 def translation_z(lat, backend='default'):
-    """
-    Translation in the Z direction using permutation data derived from the lattice.
-    """
-    if lat.dim != 3:
-        raise ValueError(_LATTICE_DIM3_ERROR)
-    return _translation_operator(lat, LatticeDirection.Z, backend=backend)
-
 def translation(lat : Lattice,
-                kx  : int,
-                ky  : Optional[int] = 0,
-                kz  : Optional[int] = 0,
-                dim : Optional[int] = None,
-                direction           = LatticeDirection.X,
-                backend             = 'default'):
-    """
-    Generates a translation operator with a momentum phase factor.
-    The phase is defined as exp(i * 2π * (k / L)) along the chosen direction.
-    Boundary flux phases stored on the lattice are incorporated automatically.
 
-    Parameters:
-        - lat:
-            lattice object.
-        - kx, ky, kz: 
-            momentum quantum numbers.
-        - dim: 
-            lattice dimension (if not provided, lat.get_Dim() is used).
-        - direction: 
-            one of 'x', 'y', or 'z' (default is 'x').
-        - backend: 
-            backend specifier for array operations.
-    Returns:
-        Operator: The translation operator with the defined momentum phase factor.    
-    """
-    if lat is None:
-        raise ValueError(_LATTICE_NONE_ERROR)
-
-    if dim is None:
-        dim = lat.dim
-    lx = lat.lx
-    ly = lat.ly if dim > 1 and hasattr(lat, 'ly') else 1
-    lz = lat.lz if dim > 2 and hasattr(lat, 'lz') else 1
-    kx = 2 * math.pi * kx / lx
-    ky = 2 * math.pi * ky / ly if dim > 1 and ky is not None else 0
-    kz = 2 * math.pi * kz / lz if dim > 2 and kz is not None else 0
-    k  = kx
-    
-    if direction == LatticeDirection.X:
-        op_fun      = translation_x(lat, backend)
-    elif direction == LatticeDirection.Y:
-        op_fun      = translation_y(lat, backend)
-        k           = ky
-    elif direction == LatticeDirection.Z:
-        op_fun      = translation_z(lat, backend)
-        k           = kz
-    else:
-        op_fun      = translation_x(lat, backend)
-    phase = cmath.exp(1j * k)  # Use cmath.exp for complex exponentials
-    
-    # get the symmetry generator type
-    typek = SymmetryGenerators.Translation_x
-    if direction == LatticeDirection.Y:
-        typek = SymmetryGenerators.Translation_y
-    elif direction == LatticeDirection.Z:
-        typek = SymmetryGenerators.Translation_z
-    
-    name = f'T_{direction.name}'
-    
-    return Operator(lattice = lat, eigval = phase, fun_int = op_fun,
-            typek = typek, backend = backend, name = name)
+# Translation, reflection, and parity symmetries are now handled in QES.Algebra.Symmetries modules.
 
 ####################################################################################################
 #! Reflection Symmetries - spin-1/2
@@ -392,50 +202,20 @@ def choose(sym_specifier : Tuple[SymmetryGenerators, int],
         backend : str = 'default', spin_value : Optional[float] = BACKEND_REPR, spin : Optional[bool] = BACKEND_DEF_SPIN):
     """
     Given a symmetry specification (a tuple of (SymmetryGenerators, eigenvalue))
-    and a lattice, returns the corresponding symmetry operator.
-    Parameters:
-        - sym_specifier: 
-            a tuple of (SymmetryGenerators, eigenvalue) specifying the symmetry.
-        - ns: 
-            number of sites in the lattice.
-        - lat: 
-            lattice object.
-    Returns:
-        Operator: The symmetry operator corresponding to the given specification.    
-    
-    Example sym_spec values:
-        (SymmetryGenerators.T, k)           -> Translation with momentum sector k
-        (SymmetryGenerators.R, sec)         -> Reflection with eigenvalue sec
-        (SymmetryGenerators.PX, sec)        -> Parity (σ^x) with eigenvalue sec
-        (SymmetryGenerators.PY, sec)        -> Parity (σ^y) with eigenvalue sec
-        (SymmetryGenerators.PZ, sec)        -> Parity (σ^z) with eigenvalue sec
-        (SymmetryGenerators.E, _)           -> Identity
+    and a lattice, returns the corresponding symmetry operator (modular version).
     """
     gen, eig = sym_specifier
-    
-    if lat is not None:
-        ns = lat.sites
-    elif ns is None:
-        raise ValueError(_LATTICE_NONE_ERROR)
-    
-    if gen == SymmetryGenerators.Translation_x:
-        return translation(lat, kx=eig, dim = lat.dim, direction = LatticeDirection.X)
-    elif gen == SymmetryGenerators.Translation_y:
-        return translation(lat, kx=0, ky=eig, dim = lat.dim, direction = LatticeDirection.Y)
-    elif gen == SymmetryGenerators.Translation_z:
-        return translation(lat, kx=0, ky=0, kz=eig, dim = lat.dim, direction = LatticeDirection.Z)
+    if gen in (SymmetryGenerators.Translation_x, SymmetryGenerators.Translation_y, SymmetryGenerators.Translation_z):
+        return TranslationSymmetry(lat)
     elif gen == SymmetryGenerators.Reflection:
-        return reflection(sec=eig, lat=lat, ns=ns, backend=backend)
-    elif gen == SymmetryGenerators.ParityX:
-        return parity_x(sec=eig, lat=lat, ns=ns, backend=backend, spin=spin, spin_value=spin_value)
-    elif gen == SymmetryGenerators.ParityY:
-        return parity_y(sec=eig, lat=lat, ns=ns, backend=backend, spin=spin, spin_value=spin_value)
-    elif gen == SymmetryGenerators.ParityZ:
-        return parity_z(sec=eig, lat=lat, ns=ns, backend=backend, spin=spin, spin_value=spin_value)
+        return ReflectionSymmetry(lat)
+    elif gen in (SymmetryGenerators.ParityX, SymmetryGenerators.ParityY, SymmetryGenerators.ParityZ):
+        axis = {SymmetryGenerators.ParityX: 'x', SymmetryGenerators.ParityY: 'y', SymmetryGenerators.ParityZ: 'z'}[gen]
+        return ParitySymmetry(lat, axis=axis)
     elif gen == SymmetryGenerators.E:
         return Operator(lat)
-    # default return
-    return Operator(lat)
+    else:
+        raise ValueError(f"Unknown symmetry generator: {gen}")
 
 ####################################################################################################
 

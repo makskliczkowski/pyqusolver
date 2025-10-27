@@ -10,11 +10,6 @@ Author      : Maksymilian Kliczkowski, WUST, Poland
 Date        : February 2025
 Version     : 1.0
 
-Future Work:
-- Implement sigma_x, sigma_y, sigma_z operator functions.
-- Define functionality for raising and lowering operator functions.
-- Implement products of spin operators.
-- Add tests for each functionality implemented.
 """
 
 import os 

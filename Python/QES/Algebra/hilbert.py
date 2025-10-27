@@ -56,8 +56,8 @@ try:
     )   
 except ImportError as e:
     # Avoid exiting the entire test process; re-raise for clearer diagnostics upstream
-    raise
-
+    raise e
+ 
 #####################################################################################################
 
 if JAX_AVAILABLE:
@@ -287,22 +287,30 @@ class HilbertSpace(ABC):
             self._nh = self._nhfull
             self._log(f"Initialized HilbertSpace in many-body mode: Ns={self._ns}, initial Nh={self._nh} (potentially reducible).", color='green', log='debug', lvl=1)
 
-        #! Initialize the symmetries
+        #! Initialize the symmetries (legacy and modular)
         self._normalization         = []                            # normalization of the states - how to return to the representative
         self._sym_group             = []
         self._sym_group_sec         = []
         self._global_syms           = global_syms if global_syms is not None else []
         self._particle_conserving   = part_conserv
-    
+
+        # Modular symmetry group (new, extensible)
+        from QES.Algebra.symmetries import choose
+        self._sym_group_modular = []
+        if sym_gen is not None:
+            for sym in sym_gen:
+                op = choose(sym, lat=self._lattice)
+                self._sym_group_modular.append(op)
+
         # initialize the properties of the Hilbert space
         self._mapping               = None
         self._reprmap               = None                          # mapping of the representatives (vector of tuples (state, representative value))
         self._fullmap               = None                          # mapping of the full Hilbert space
-        
+
         self._getmapping_fun        = None                          # function to get the mapping of the states
         # setup the logger instance for the Hilbert space
         self._threadnum             = kwargs.get('threadnum', 1)    # number of threads to use
-        
+
         if self._is_many_body:
             if gen_mapping:
                 self._log("Explicitly requested immediate mapping generation.", log='debug', lvl=2)
@@ -316,7 +324,7 @@ class HilbertSpace(ABC):
             # Setup sym group if generators provided, but don't build map
             if sym_gen:
                 self._gen_sym_group(sym_gen) #!TODO: How to define this?
-        
+
         # Ensure symmetry group always has at least the identity
         if not self._sym_group or len(self._sym_group) == 0:
             self._sym_group = [operator_identity(self._backend)]

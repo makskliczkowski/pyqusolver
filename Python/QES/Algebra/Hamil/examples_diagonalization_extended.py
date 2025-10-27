@@ -8,9 +8,11 @@ Demonstrates usage of the newly added methods:
 - lobpcg (preconditioned)
 - jax-eigh (GPU-accelerated)
 
+----------------------------------------
 File        : QES/Algebra/Hamil/examples_diagonalization_extended.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-10-26
+----------------------------------------
 """
 
 import numpy as np

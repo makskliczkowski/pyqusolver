@@ -410,7 +410,7 @@ assert np.allclose(evals_reduced, evals_full)
 
 | Method | Memory | Speed | Best For |
 |--------|--------|-------|----------|
-| Exact | O(n²) | Fast for small n | n < 1000, need all eigenvalues |
+| Exact | O(n^2) | Fast for small n | n < 1000, need all eigenvalues |
 | Lanczos | O(nk) | Fast | Large sparse, few eigenvalues |
 | Block Lanczos | O(n·k·b) | Moderate | Many eigenvalues, degeneracies |
 | Arnoldi | O(nk) | Moderate | Non-symmetric matrices |

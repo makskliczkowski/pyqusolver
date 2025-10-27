@@ -19,10 +19,12 @@ The engine automatically decides the best method based on matrix size, sparsity,
 The engine stores Krylov basis information when using iterative methods and
 provides utilities to transform between Krylov and original basis.
 
+----------------------------------------
 File        : QES/Algebra/Hamil/hamil_diag_engine.py
 Author      : Maksymilian Kliczkowski
 Email       : maxgrom97@gmail.com
 Date        : 2025-10-26
+----------------------------------------
 """
 
 import numpy as np

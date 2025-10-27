@@ -98,7 +98,7 @@ class LocalSpace:
     name                : str
     typ                 : LocalSpaceTypes
     local_dim           : int   # e.g. 2S+1 for spins, cutoff+1 for bosons
-    sign_rule           : int   # +1 for bosons/spins, −1 for fermions
+    sign_rule           : int   # +1 for bosons/spins, -1 for fermions
     cutoff              : int   # 0 unless a truncation is imposed
     max_occupation      : int   # 1 for hard-core species, cutoff for bosons
     onsite_operators    : Dict[str, LocalOperator] = field(default_factory=dict)
@@ -172,7 +172,7 @@ class LocalSpace:
 
     @staticmethod
     def default_fermion_spinless(**kwargs):
-        # Spinless fermion: dim=2, Pauli exclusion, fermionic sign −1
+        # Spinless fermion: dim=2, Pauli exclusion, fermionic sign -1
         base = LocalSpace(
             name                =   LocalSpaceTypes.SPINLESS_FERMIONS.value,
             local_dim           =   2,
