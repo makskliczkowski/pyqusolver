@@ -22,6 +22,13 @@ Typical usage
 >>> sx = OPERATOR_CATALOG.instantiate(LocalSpaceTypes.SPIN_1_2, "sigma_x")
 >>> sx.description
 'Pauli-X flip'
+
+----------------------------------------------------
+File        : QES/Algebra/Operator/catalog.py
+Description : Operator catalog implementation
+Author      : Maksymilian Kliczkowski
+Date        : 2025-10-30
+----------------------------------------------------
 """
 
 from __future__ import annotations

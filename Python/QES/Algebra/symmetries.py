@@ -165,38 +165,6 @@ def parity_x(sec : int, ns : Optional[int] = None, lat : Optional[Lattice] = Non
         raise ValueError(_LATTICE_NONE_ERROR)
     return Operator(lattice = lat, eigval = sec, fun_int=_flip_x(ns, backend, spin, spin_value), typek=SymmetryGenerators.ParityX)
 
-####################################################################################################
-# Choose Symmetry
-####################################################################################################
-
-def choose(sym_specifier : Tuple[SymmetryGenerators, int], 
-        ns : Optional[int] = None, lat : Optional[Lattice] = None,
-        backend : str = 'default', spin_value : Optional[float] = BACKEND_REPR, spin : Optional[bool] = BACKEND_DEF_SPIN):
-    """
-    Given a symmetry specification (a tuple of (SymmetryGenerators, eigenvalue))
-    and a lattice, returns the corresponding symmetry operator (modular version).
-    """
-    gen, eig = sym_specifier
-    if gen in (SymmetryGenerators.Translation_x, SymmetryGenerators.Translation_y, SymmetryGenerators.Translation_z):
-        if lat is None:
-            raise ValueError("Translation symmetry requires a lattice instance.")
-        direction_map = {
-            SymmetryGenerators.Translation_x: LatticeDirection.X,
-            SymmetryGenerators.Translation_y: LatticeDirection.Y,
-            SymmetryGenerators.Translation_z: LatticeDirection.Z,
-        }
-        direction       = direction_map[gen]
-        momentum_index  = eig if isinstance(eig, int) else None
-        return TranslationSymmetry(lat, direction=direction, momentum_index=momentum_index)
-    elif gen == SymmetryGenerators.Reflection:
-        return ReflectionSymmetry(lat)
-    elif gen in (SymmetryGenerators.ParityX, SymmetryGenerators.ParityY, SymmetryGenerators.ParityZ):
-        axis = {SymmetryGenerators.ParityX: 'x', SymmetryGenerators.ParityY: 'y', SymmetryGenerators.ParityZ: 'z'}[gen]
-        return ParitySymmetry(lat, axis=axis)
-    elif gen == SymmetryGenerators.E:
-        return Operator(lat)
-    else:
-        raise ValueError(f"Unknown symmetry generator: {gen}")
 
 ####################################################################################################
 

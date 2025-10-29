@@ -13,8 +13,8 @@ Core Components:
 - translation.py       : Translation symmetry (momentum sectors)
 - reflection.py        : Spatial reflection/inversion
 - parity.py            : Spin-flip (parity) operators
-- compatibility.py     : Automatic symmetry compatibility checking
 - momentum_sectors.py  : Momentum sector analysis and construction
+- compatibility.py     : Automatic symmetry compatibility checking
 
 Available Symmetries
 --------------------
@@ -26,7 +26,7 @@ Available Symmetries
 
 2. ReflectionSymmetry
    - Spatial inversion/mirror symmetries
-   - Parity quantum numbers r = ±1
+   - Parity quantum numbers r = +/- 1
    - Compatible with translation at k=0, pi
 
 3. ParitySymmetry

@@ -13,6 +13,9 @@ Integrates with:
 - TranslationSymmetry operators for orbit generation
 - Lattice objects for proper unit cell handling
 
+IMPORTANT:
+    CURRENTLY, INTEGER REPRESENTATION OF STATES IS ASSUMED (e.g., 64-bit integers for up to 64 sites for spin-1/2 systems).
+
 ---------------------------------------------------
 File        : QES/Algebra/Symmetries/momentum_sectors.py
 Description : Momentum sector analysis and construction utilities
@@ -30,56 +33,64 @@ try:
     from QES.general_python.lattices.lattice import Lattice, LatticeDirection
 except ImportError:
     LatticeDirection = None  # type: ignore
+    
+# --------------------------------------------------
 
-from QES.Algebra.Symmetries.translation import TranslationSymmetry
+try:
+    from QES.Algebra.Symmetries.translation import TranslationSymmetry
+except ImportError:
+    raise ImportError("TranslationSymmetry could not be imported. Check your QES installation.")
+    
+# --------------------------------------------------
 
 class MomentumSectorAnalyzer:
     """
     Analyzes momentum sector structure for systems with translation symmetry.
     
     Handles:
-    - 1D translation: single k quantum number
-    - 2D translation: (k_x, k_y) quantum numbers
-    - 3D translation: (k_x, k_y, k_z) quantum numbers
+    - 1D translation    : single k quantum number
+    - 2D translation    : (k_x, k_y) quantum numbers
+    - 3D translation    : (k_x, k_y, k_z) quantum numbers
     - Multiple sites per unit cell (honeycomb, etc.)
     
     The analyzer properly determines:
-    - Number of unit cells vs total sites
+    - Number of unit cells vs total sites in lattice
+        - This considers lattices with multiple sites per unit cell, which is important for correct momentum quantization
     - Orbit periods under each translation
+        - Important for determining allowed momentum values
     - Allowed momentum quantum numbers
+        - These are determined by the lattice geometry and the active translation directions
     - Representative states for each sector
     """
-    
-    def __init__(self, lattice: 'Lattice'):
+
+    def __init__(self, lattice: 'Lattice') -> None:
         """
         Initialize momentum sector analyzer for a lattice.
         
         Parameters
         ----------
         lattice : Lattice
-            Lattice object with translation structure.
+            Lattice object with translation structure. See general_python dependencies.
         """
-        self.lattice = lattice
-        
-        # Get lattice parameters
-        self.ns = getattr(lattice, 'Ns', None) or getattr(lattice, 'ns', None)
+        self.lattice    = lattice        
+        self.ns         = getattr(lattice, 'Ns', None) or getattr(lattice, 'ns', None)
         if self.ns is None:
             raise ValueError("Could not determine number of sites from lattice")
         
         # Unit cell dimensions
-        self.Lx = getattr(lattice, 'Lx', None) or getattr(lattice, '_lx', None) or getattr(lattice, 'lx', None)
-        self.Ly = getattr(lattice, 'Ly', None) or getattr(lattice, '_ly', None) or getattr(lattice, 'ly', None) or 1
-        self.Lz = getattr(lattice, 'Lz', None) or getattr(lattice, '_lz', None) or getattr(lattice, 'lz', None) or 1
+        self.Lx         = getattr(lattice, 'Lx', None) or getattr(lattice, '_lx', None) or getattr(lattice, 'lx', None)
+        self.Ly         = getattr(lattice, 'Ly', None) or getattr(lattice, '_ly', None) or getattr(lattice, 'ly', None) or 1
+        self.Lz         = getattr(lattice, 'Lz', None) or getattr(lattice, '_lz', None) or getattr(lattice, 'lz', None) or 1
         
         if self.Lx is None:
             raise ValueError("Could not determine lattice extent Lx")
         
         # Determine sites per unit cell
-        expected_sites = self.Lx * self.Ly * self.Lz
+        expected_sites  = self.Lx * self.Ly * self.Lz
         if self.ns == expected_sites:
             self.sites_per_cell = 1
         else:
-            self.sites_per_cell = self.ns // expected_sites
+            self.sites_per_cell = self.ns // expected_sites     # Assume integer division
         
         # Determine active dimensions
         self.active_directions = []
@@ -90,7 +101,10 @@ class MomentumSectorAnalyzer:
         if self.Lz > 1:
             self.active_directions.append(LatticeDirection.Z)
         
+        # Dimension of active translations
         self.dim = len(self.active_directions)
+        
+    # --------------------------------------------------
     
     def get_extent(self, direction: LatticeDirection) -> int:
         """Get lattice extent (number of unit cells) in a direction."""
@@ -103,13 +117,22 @@ class MomentumSectorAnalyzer:
         else:
             return 1
     
-    def analyze_1d_sectors(
-        self,
-        direction: LatticeDirection = LatticeDirection.X,
-        verbose: bool = False
-    ) -> Dict[int, List[Tuple[int, Dict]]]:
+    # --------------------------------------------------
+    
+    def analyze_1d_sectors(self, 
+            direction           : LatticeDirection  = LatticeDirection.X, 
+            verbose             : bool              = False,
+            local_hilbert_base  : int               = 2
+        ) -> Dict[int, List[Tuple[int, Dict]]]:
         """
         Analyze 1D momentum sectors for a single translation direction.
+        The analysis identifies representative states, their orbits, periods,
+        and allowed momentum quantum numbers. This is irrespective of the number
+        of sites per unit cell. In principle:
+        
+        - We start from a given state and generate its orbit under translation
+        - The period of the orbit determines which momentum quantum numbers are allowed
+        - The representative state is chosen as the minimum integer in the orbit
         
         Parameters
         ----------
@@ -117,64 +140,72 @@ class MomentumSectorAnalyzer:
             Translation direction to analyze.
         verbose : bool
             Print detailed analysis.
+        local_hilbert_base : int
+            Local Hilbert space base (e.g., 2 for spin-1/2).
         
         Returns
         -------
         Dict[int, List[Tuple[int, Dict]]]
             Mapping from momentum index k to list of (representative, info) pairs.
         """
-        extent = self.get_extent(direction)
-        translator = TranslationSymmetry(self.lattice, direction=direction)
-        
+        extent          = self.get_extent(direction)
+        translator      = TranslationSymmetry(self.lattice, direction=direction)
         representatives = {}
-        visited = set()
+        visited         = set()
         
-        for state in range(2**self.ns):
+        #TODO: Optimize for large systems by avoiding full enumeration. Implement the orbit finding more efficiently.
+        # Implement different local bases (e.g., fermionic occupation)
+        
+        total_states    = local_hilbert_base ** self.ns
+        for state in range(total_states):
+            
             if state in visited:
                 continue
             
             # Generate orbit
-            orbit = []
-            current = state
-            seen = set()
-            
+            orbit           = []
+            current         = state
+            seen            = set()
+
             while current not in seen:
                 orbit.append(current)
                 seen.add(current)
                 current, _ = translator.apply(current)
             
-            period = len(orbit)
+            period          = len(orbit)
+            representative  = min(orbit)
             visited.update(orbit)
             
-            # Representative is minimum in orbit
-            representative = min(orbit)
-            
             # Allowed momenta: k where k·period ≡ 0 (mod extent)
-            allowed_k = []
+            allowed_k       = []
+            
+            # Find allowed momentum indices
             for q in range(extent):
                 if (q * period) % extent == 0:
                     allowed_k.append(q)
             
             representatives[representative] = {
-                'orbit': orbit,
-                'period': period,
-                'allowed_k': allowed_k,
-                'norm': np.sqrt(period)
+                'orbit'     : orbit,                # Full orbit states
+                'period'    : period,               # Orbit period
+                'allowed_k' : allowed_k,            # Allowed momentum indices
+                'norm'      : np.sqrt(period)       # Normalization factor
             }
         
         # Organize by momentum sector
         momentum_sectors = defaultdict(list)
+        
+        # Distribute representatives into momentum sectors
         for rep_state, info in representatives.items():
             for k in info['allowed_k']:
                 momentum_sectors[k].append((rep_state, info))
         
         return dict(momentum_sectors)
     
-    def analyze_2d_sectors(
-        self,
-        directions: Optional[Tuple[LatticeDirection, LatticeDirection]] = None,
-        verbose: bool = False
-    ) -> Dict[Tuple[int, int], List[Tuple[int, Dict]]]:
+    def analyze_2d_sectors(self,
+            directions                      : Optional[Tuple[LatticeDirection, LatticeDirection]] = None,
+            verbose                         : bool = False,
+            local_hilbert_base              : int = 2
+        ) -> Dict[Tuple[int, int], List[Tuple[int, Dict]]]:
         """
         Analyze 2D momentum sectors for two translation directions.
         
@@ -184,7 +215,9 @@ class MomentumSectorAnalyzer:
             Pair of translation directions. Defaults to (X, Y).
         verbose : bool
             Print detailed analysis.
-        
+        local_hilbert_base : int
+            Local Hilbert space base (e.g., 2 for spin-1/2).
+
         Returns
         -------
         Dict[Tuple[int, int], List[Tuple[int, Dict]]]
@@ -195,36 +228,37 @@ class MomentumSectorAnalyzer:
                 raise ValueError("Lattice must have at least 2 active directions for 2D analysis")
             directions = (self.active_directions[0], self.active_directions[1])
         
-        dir_x, dir_y = directions
-        extent_x = self.get_extent(dir_x)
-        extent_y = self.get_extent(dir_y)
-        
-        translator_x = TranslationSymmetry(self.lattice, direction=dir_x)
-        translator_y = TranslationSymmetry(self.lattice, direction=dir_y)
-        
+        dir_x, dir_y    = directions
+        extent_x        = self.get_extent(dir_x)
+        extent_y        = self.get_extent(dir_y)
+
+        translator_x    = TranslationSymmetry(self.lattice, direction=dir_x)
+        translator_y    = TranslationSymmetry(self.lattice, direction=dir_y)
+
         representatives = {}
-        visited = set()
-        
-        for state in range(2**self.ns):
+        visited         = set()
+        total_states    = local_hilbert_base ** self.ns
+
+        for state in range(total_states):
             if state in visited:
                 continue
             
             # Generate orbit under first direction
-            orbit_x = []
-            current = state
-            seen_x = set()
+            orbit_x     = []
+            current     = state
+            seen_x      = set()
             
             while current not in seen_x:
                 orbit_x.append(current)
                 seen_x.add(current)
                 current, _ = translator_x.apply(current)
             
-            period_x = len(orbit_x)
+            period_x    = len(orbit_x)
             
             # Generate orbit under second direction
-            orbit_y = []
-            current = state
-            seen_y = set()
+            orbit_y     = []
+            current     = state
+            seen_y      = set()
             
             while current not in seen_y:
                 orbit_y.append(current)
@@ -259,14 +293,14 @@ class MomentumSectorAnalyzer:
                     allowed_ky.append(q)
             
             representatives[representative] = {
-                'orbit_x': orbit_x,
-                'orbit_y': orbit_y,
-                'orbit_2d': orbit_2d,
-                'period_x': period_x,
-                'period_y': period_y,
-                'allowed_kx': allowed_kx,
-                'allowed_ky': allowed_ky,
-                'norm': np.sqrt(len(orbit_2d))
+                'orbit_x'      : orbit_x,
+                'orbit_y'      : orbit_y,
+                'orbit_2d'     : orbit_2d,
+                'period_x'     : period_x,
+                'period_y'     : period_y,
+                'allowed_kx'   : allowed_kx,
+                'allowed_ky'   : allowed_ky,
+                'norm'         : np.sqrt(len(orbit_2d))
             }
         
         # Organize by (k_x, k_y) momentum sector
@@ -278,10 +312,11 @@ class MomentumSectorAnalyzer:
         
         return dict(momentum_sectors)
     
-    def get_sector_representatives(
-        self,
-        momentum_indices: Optional[Dict[LatticeDirection, int]] = None
-    ) -> List[int]:
+    # --------------------------------------------------
+    #! Get representatives
+    # --------------------------------------------------
+    
+    def get_sector_representatives(self, momentum_indices: Optional[Dict[LatticeDirection, int]] = None) -> List[int]:
         """
         Get representative states for specified momentum sector(s).
         
@@ -303,14 +338,14 @@ class MomentumSectorAnalyzer:
         if momentum_indices is None:
             # Return all representatives across all sectors
             if self.dim == 1:
-                sectors = self.analyze_1d_sectors(self.active_directions[0])
-                all_reps = set()
+                sectors     = self.analyze_1d_sectors(self.active_directions[0])
+                all_reps    = set()
                 for reps_list in sectors.values():
                     all_reps.update(rep for rep, _ in reps_list)
                 return sorted(all_reps)
             elif self.dim == 2:
-                sectors = self.analyze_2d_sectors()
-                all_reps = set()
+                sectors     = self.analyze_2d_sectors()
+                all_reps    = set()
                 for reps_list in sectors.values():
                     all_reps.update(rep for rep, _ in reps_list)
                 return sorted(all_reps)
@@ -319,26 +354,25 @@ class MomentumSectorAnalyzer:
         
         # Return representatives for specific momentum sector
         if self.dim == 1:
-            direction = self.active_directions[0]
-            k = momentum_indices.get(direction, 0)
+            direction       = self.active_directions[0]
+            k               = momentum_indices.get(direction, 0)
             sectors = self.analyze_1d_sectors(direction)
             return [rep for rep, _ in sectors.get(k, [])]
         
         elif self.dim == 2:
-            kx = momentum_indices.get(self.active_directions[0], 0)
-            ky = momentum_indices.get(self.active_directions[1], 0)
-            sectors = self.analyze_2d_sectors()
+            kx              = momentum_indices.get(self.active_directions[0], 0)
+            ky              = momentum_indices.get(self.active_directions[1], 0)
+            sectors         = self.analyze_2d_sectors()
             return [rep for rep, _ in sectors.get((kx, ky), [])]
-        
+
         else:
             raise NotImplementedError("3D momentum analysis not yet implemented")
 
+# ------------------------------------------------------
+#! Build momentum basis
+# ------------------------------------------------------
 
-def build_momentum_basis(
-    lattice: 'Lattice',
-    momentum_indices: Dict[LatticeDirection, int],
-    normalize: bool = True
-) -> Dict[int, Dict[int, complex]]:
+def build_momentum_basis(lattice: 'Lattice', momentum_indices: Dict[LatticeDirection, int], normalize: bool = True) -> Dict[int, Dict[int, complex]]:
     """
     Build momentum-resolved basis states for a lattice system.
     
@@ -396,7 +430,6 @@ def build_momentum_basis(
     
     return momentum_basis
 
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# EOF
+#! EOF
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

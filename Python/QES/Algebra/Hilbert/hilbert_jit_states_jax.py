@@ -15,6 +15,23 @@ else:
 
 if JAX_AVAILABLE:
     
+    # a) MAPPING
+    
+    @jax.jit
+    def get_mapping_jax(mapping, state):
+        """
+        Get the mapping of the state.
+        
+        Args:
+            mapping (list)  : The mapping of the states.
+            state (int)     : The state to get the mapping for.
+        
+        Returns:
+            int: The mapping of the state.
+        """
+        return mapping[state] if len(mapping) > state else state
+    
+    
     @partial(jax.jit)
     def calculate_slater_det_jax(sp_eigvecs         : jnp.ndarray,      # U matrix (Ns x Norb)
                                 occupied_orbitals   : jnp.ndarray,      # Indices {\alpha_k}

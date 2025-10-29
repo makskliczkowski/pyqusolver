@@ -615,7 +615,16 @@ class QuadraticHamiltonian(Hamiltonian):
             raise NotImplementedError("Sparse matrix support not implemented yet. TODO: implement sparse matrix handling.")
         
         # Determine single-particle dimension and allocate storage.
-        self._dtype = self._dtype or self._backend.complex128
+        # Prefer an explicit dtype if given, otherwise inherit from Hilbert space
+        # when available; fall back to complex for quadratic Hamiltonians.
+        if self._dtype is None:
+            if self._hilbert_space is not None:
+                try:
+                    self._dtype = getattr(self._hilbert_space, 'dtype', None) or self._backend.complex128
+                except Exception:
+                    self._dtype = self._backend.complex128
+            else:
+                self._dtype = self._backend.complex128
         self._hamil_sp_size         = ns
         self._hamil_sp_shape        = (self._hamil_sp_size, self._hamil_sp_size)
         self._dtypeint              = self._backend.int32 if self.ns < 2**32 - 1 else self._backend.int64

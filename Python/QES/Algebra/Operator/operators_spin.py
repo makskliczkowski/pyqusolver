@@ -1877,7 +1877,7 @@ def _register_catalog_entries():
         factory             =   _sigma_y_factory,
         description         =   r"Pauli \sigma_y rotation acting on spin-1/2 basis states.",
         algebra             =   r"\sigma_y^2 = 1,   {\sigma_y, \sigma_x} = 0,   [\sigma_y, \sigma_z] = -2i \sigma_x",
-        sign_convention     =   r"Standard Pauli matrix in \sigma_z basis; introduces ±i phases.",
+        sign_convention     =   r"Standard Pauli matrix in \sigma_z basis; introduces +/- i phases.",
         tags                =   ("spin", "pauli"),
     )
     register_local_operator(
@@ -1885,7 +1885,7 @@ def _register_catalog_entries():
         key                 =   "sigma_z",
         factory             =   _sigma_z_factory,
         description         =   r"Pauli \sigma_z operator (magnetisation in the computational basis).",
-        algebra             =   r"\sigma_z^2 = 1,   [\sigma_z, \sigma_±] = ±2 \sigma_±",
+        algebra             =   r"\sigma_z^2 = 1,   [\sigma_z, \sigma_+/- ] = +/- 2 \sigma_+/- ",
         sign_convention     =   r"Diagonal in \sigma_z basis; no additional sign factors.",
         tags                =   ("spin", "pauli"),
     )

@@ -471,7 +471,7 @@ if JAX_AVAILABLE:
         idx         : Optional[int] = None) -> Array:
         """
         JAX version of fidelity susceptibility. If idx is given (and in-range),
-        returns a scalar χ_idx; otherwise returns an Array of shape (N,) with all χ_i.
+        returns a scalar chi_idx; otherwise returns an Array of shape (N,) with all chi_i.
         """
         mu2 = mu * mu
 

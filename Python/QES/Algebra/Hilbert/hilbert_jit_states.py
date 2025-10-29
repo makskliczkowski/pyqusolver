@@ -405,7 +405,7 @@ def calculate_bogoliubov_amp_exc(F      : Array,     # (ns, ns)
         for q in range(n):
             M[p, q] = F[ip, occ[q]]
 
-    # cross blocks (±U)
+    # cross blocks (+/- U)
     for p in range(n):
         ip = occ[p]
         for j in range(k):

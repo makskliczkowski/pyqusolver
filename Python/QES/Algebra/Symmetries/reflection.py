@@ -35,7 +35,7 @@ class ReflectionSymmetry(SymmetryOperator):
     - 2D: Mirror planes in square/triangular lattices
     - 3D: Inversion through lattice center
     
-    Quantum numbers: Reflection parity r = ±1
+    Quantum numbers: Reflection parity r = +/- 1
     - r = +1: Even parity (symmetric states)
     - r = -1: Odd parity (antisymmetric states)
     
@@ -65,7 +65,6 @@ class ReflectionSymmetry(SymmetryOperator):
     
     symmetry_class          = SymmetryClass.REFLECTION
     compatible_with         = {
-                                SymmetryClass.U1_GLOBAL,
                                 SymmetryClass.U1_PARTICLE,
                                 SymmetryClass.U1_SPIN,
                                 SymmetryClass.PARITY,
@@ -80,21 +79,56 @@ class ReflectionSymmetry(SymmetryOperator):
     # Reflection is universal - works for all local space types
     supported_local_spaces  = set()  # Empty = universal
     
-    def __init__(self, lattice: 'Lattice', base: int = 2):
+    def __init__(self, lattice: 'Lattice', sector: int, ns: int, base: int = 2):
+        """
+        Initialize reflection symmetry operator.
+        
+        Parameters
+        ----------
+        lattice : Lattice
+            Lattice instance for geometry information
+        sector : int
+            Reflection quantum number (+1 or -1)
+        ns : int
+            Number of sites in the system
+        base : int, optional
+            Local Hilbert space dimension (default 2 for spin-1/2)
+        """
         self.lattice            = lattice
+        self.sector             = sector
+        self.ns                 = ns
         self.base               = base
 
-    def __call__(self, state: int) -> Tuple[int, complex]:
-        return self.apply(state)
+    def __call__(self, state: int, ns: int = None, **kwargs) -> Tuple[int, complex]:
+        return self.apply_int(state, ns or self.ns, **kwargs)
 
-    def apply(self, state: int) -> Tuple[int, complex]:
-        ns = getattr(self.lattice, 'Ns', None) or getattr(self.lattice, 'ns', None) or getattr(self.lattice, 'sites', None)
+    def apply_int(self, state: int, ns: int, **kwargs) -> Tuple[int, complex]:
+        """Apply reflection operator to integer state representation."""
         if rev is None:
             raise ImportError("rev() not available. Ensure QES.general_python.common.binary is installed.")
         new_state = rev(state, ns, backend='default')
         # Ensure result is within ns-bit space
         new_state = int(new_state) & ((1 << ns) - 1)
         return new_state, 1.0
+    
+    def apply_numpy(self, state, **kwargs):
+        """Apply reflection operator to numpy array state representation."""
+        import numpy as np
+        if not isinstance(state, np.ndarray):
+            state = np.array(state)
+        # For numpy arrays, delegate to integer operations
+        new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
+        return np.array(new_state), phase
+    
+    def apply_jax(self, state, **kwargs):
+        """Apply reflection operator to JAX array state representation."""
+        try:
+            import jax.numpy as jnp
+        except ImportError:
+            raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
+        # For jax arrays, delegate to integer operations
+        new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
+        return jnp.array(new_state), phase
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

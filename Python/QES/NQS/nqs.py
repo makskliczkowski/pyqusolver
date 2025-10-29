@@ -1809,7 +1809,7 @@ class NQS(MonteCarloSolver):
                 batch_size     = batch_size,
             )
             energy = dict(raw=e_vals, mean=e_mu, std=e_sig)
-            logger.info(f"Energy: E = ({e_mu:.4e}) ± ({e_sig:.4f}) (N={len(e_vals)})", color='cyan')
+            logger.info(f"Energy: E = ({e_mu:.4e}) +/-  ({e_sig:.4f}) (N={len(e_vals)})", color='cyan')
             if true_en is not None:
                 rel = abs(e_mu-true_en)/abs(true_en)*100
                 logger.info(f"ref = {true_en:.4e} - rel.err = {rel:.2f} %", lvl=2)

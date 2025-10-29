@@ -37,19 +37,13 @@ from QES.Algebra.Symmetries.parity import (
     ParitySymmetry,
 )
 
-# Compatibility utilities
-from QES.Algebra.Symmetries.compatibility import (
-    check_compatibility,
-    infer_momentum_sector_from_operators,
-)
-
 # Momentum sector analysis
 from QES.Algebra.Symmetries.momentum_sectors import (
     MomentumSectorAnalyzer,
 )
 
 ####################################################################################################
-# Public API
+#! Public API
 ####################################################################################################
 
 __all__ = [
@@ -65,11 +59,11 @@ __all__ = [
     'ParitySymmetry',
     
     # Utilities
-    'build_momentum_superposition',
-    'check_compatibility',
-    'infer_momentum_sector_from_operators',
-    'get_available_symmetries',
     'choose',
+    'get_available_symmetries',
+    
+    # Translation utilities
+    'build_momentum_superposition',
     
     # Momentum analysis
     'MomentumSectorAnalyzer',
@@ -79,9 +73,9 @@ __all__ = [
 # Module metadata
 ####################################################################################################
 
-__version__ = '1.0.0'
-__author__ = 'Maksymilian Kliczkowski'
-__date__ = '2025-10-27'
+__version__     = '1.0.0'
+__author__      = 'Maksymilian Kliczkowski'
+__date__        = '2025-10-27'
 
 ####################################################################################################
 # Convenience function for getting available symmetries
@@ -90,6 +84,7 @@ __date__ = '2025-10-27'
 def get_available_symmetries():
     """
     Get list of available symmetry operators.
+    TODO: Expand as new symmetries are added.
     
     Returns
     -------
@@ -97,10 +92,14 @@ def get_available_symmetries():
         Dictionary mapping symmetry names to their classes.
     """
     return {
-        'translation': TranslationSymmetry,
-        'reflection': ReflectionSymmetry,
-        'parity': ParitySymmetry,
+        'translation'   : TranslationSymmetry,
+        'reflection'    : ReflectionSymmetry,
+        'parity'        : ParitySymmetry,
     }
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#! Binomial coefficient function
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 def choose(n, k):
     """
@@ -131,3 +130,7 @@ def choose(n, k):
         result = result * (n - i) // (i + 1)
     
     return result
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#! EOF
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

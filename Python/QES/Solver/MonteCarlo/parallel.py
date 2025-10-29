@@ -393,7 +393,7 @@ class ParallelTempering(ABC):
                 self._best_acc = curr_acc
                 self._best_acc_idx = j
         if verbose:
-            self._log(f"Best loss: {best_loss_t:.4f} ± {best_std_loss_t:.4f} (Solver {self._best_idx})", color='green')
+            self._log(f"Best loss: {best_loss_t:.4f} +/-  {best_std_loss_t:.4f} (Solver {self._best_idx})", color='green')
             self._log(f"Best accuracy: {self._best_acc:.4f} (Solver {self._best_acc_idx})", color='green')
             
     # -------------------------------------------------------------------------

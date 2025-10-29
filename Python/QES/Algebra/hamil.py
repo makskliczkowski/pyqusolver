@@ -199,6 +199,36 @@ class Hamiltonian(ABC):
         if self._hilbert_space.get_Ns() != self._ns:
             raise ValueError(f"Ns mismatch: {self._hilbert_space.get_Ns()} != {self._ns}")
         
+    def _handle_dtype(self, dtype: Optional[Union[str, np.dtype]]):
+        '''
+        Handle the dtype of the Hamiltonian.
+        
+        Parameters:
+        -----------
+            dtype (str or np.dtype, optional):
+                The dtype to use for the Hamiltonian.
+        '''
+        if dtype is not None:
+            self._dtype = dtype
+        else:
+            if self._hilbert_space is not None:
+                try:
+                    hs_dtype = getattr(self._hilbert_space, 'dtype', None)
+                    if getattr(self._hilbert_space, 'has_complex_symmetries', False):
+                        self._dtype = np.complex128
+                    else:
+                        # fall back to the Hilbert's dtype when present
+                        self._dtype = hs_dtype if hs_dtype is not None else np.float64
+                        try:
+                            if np.issubdtype(np.dtype(self._dtype), np.complexfloating):
+                                self._dtype = np.complex128
+                        except Exception:
+                            pass
+                except Exception:
+                    self._dtype = np.float64
+            else:
+                self._dtype = np.float64
+                
     # ----------------------------------------------------------------------------------------------
         
     def __init__(self,
@@ -271,7 +301,7 @@ class Hamiltonian(ABC):
         # if the Hilbert space is provided, get the number of sites
         self._lattice               = self._hilbert_space.get_lattice()
         self._nh                    = self._hilbert_space.get_Nh()                
-        if self._dtype is None:     self._dtype = self._hilbert_space.dtype
+        self._handle_dtype(dtype)
         
         #! other properties
         self._startns               = 0 # for starting hamil calculation (potential loop over sites)

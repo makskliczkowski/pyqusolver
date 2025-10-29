@@ -10,7 +10,7 @@ Version : 1.0.0
 Changes : 
     - 2025.02.01 : 1.0.0 - Initial version of the Hilbert space class. - MK
     - 2025.10.26 : 1.1.0 - Refactored symmetry group generation and added detailed logging. - MK
-    
+    - 2025.10.28 : 1.1.1 - Working on symmetry compatibility and modular symmetries. - MK
 """
 import sys
 import math
@@ -29,7 +29,7 @@ try:
     # general thingies
     from QES.general_python.common.flog import get_global_logger, Logger
     from QES.general_python.common.binary import bin_search
-    from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
+    from QES.general_python.lattices.lattice import Lattice, LatticeDirection
     
     # already imported from QES.general_python
     from QES.Algebra.Hilbert.hilbert_jit_states import get_backend, JAX_AVAILABLE, ACTIVE_INT_TYPE, maybe_jit
@@ -37,64 +37,24 @@ try:
     #################################################################################################
     if JAX_AVAILABLE:
         from QES.general_python.algebra.utils import pad_array
-    
-    #################################################################################################
-    from QES.Algebra.Operator.operator import ( Operator, LocalSpace, LocalSpaceTypes, StateTypes,      
-                                            SymmetryGenerators, GlobalSymmetries, OperatorTypeActing,
-                                            operator_identity, operator_from_local)
-    from QES.Algebra.globals import GlobalSymmetry
-    from QES.Algebra.symmetries import choose
-    from QES.Algebra.Symmetries.base import SymmetryOperator
-    from QES.Algebra.Symmetries.translation import TranslationSymmetry
-    from QES.Algebra.hilbert_config import HilbertConfig
-    
-    #################################################################################################
-    #! WRAPPER FOR JIT AND NUMBA
-    #################################################################################################
 
-    from QES.Algebra.Hilbert.hilbert_jit_methods import (
-        get_mapping, find_repr_int, find_representative_int, get_matrix_element,
-        jitted_find_repr_int, jitted_get_mapping, jitted_get_matrix_element
-    )   
+    #################################################################################################
+    from QES.Algebra.Operator.operator import ( 
+        Operator, 
+        LocalSpace, LocalSpaceTypes, 
+        StateTypes,      
+        SymmetryGenerators, GlobalSymmetries, OperatorTypeActing,
+        operator_identity, operator_from_local
+    )
+    
+    from QES.Algebra.globals                        import GlobalSymmetry
+    from QES.Algebra.Symmetries.base                import SymmetryOperator
+    from QES.Algebra.Symmetries.translation         import TranslationSymmetry
+    from QES.Algebra.hilbert_config                 import HilbertConfig
+    from QES.Algebra.Hilbert.hilbert_jit_methods    import get_mapping, find_representative_int, get_matrix_element, has_complex_symmetries
 except ImportError as e:
     # Avoid exiting the entire test process; re-raise for clearer diagnostics upstream
     raise e
- 
-#####################################################################################################
-
-if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-    
-    @jax.jit
-    def get_mapping_jax(mapping, state):
-        """
-        Get the mapping of the state.
-        
-        Args:
-            mapping (list): The mapping of the states.
-            state (int): The state to get the mapping for.
-        
-        Returns:
-            int: The mapping of the state.
-        """
-        return mapping[state] if len(mapping) > state else state
-
-#####################################################################################################
-
-
-@lru_cache(maxsize=128)
-def _enumerate_generator_index_combos(num_generators: int) -> Tuple[Tuple[int, ...], ...]:
-    """
-    Return all index combinations (including the empty tuple) for ``num_generators`` entries.
-    """
-    combos: List[Tuple[int, ...]] = [tuple()]
-    if num_generators <= 0:
-        return tuple(combos)
-    indices = tuple(range(num_generators))
-    for r in range(1, num_generators + 1):
-        combos.extend(tuple(combo) for combo in combinations(indices, r))
-    return tuple(combos)
 
 #####################################################################################################
 #! Hilbert space class
@@ -105,7 +65,6 @@ class HilbertSpace(ABC):
     A class to represent a Hilbert space either in Many-Body Quantum Mechanics or Quantum Information Theory and non-interacting systems.
     """
     
-    #################################################################################################
     
     _ERRORS = {
         "sym_gen"       : "The symmetry generators must be provided as a dictionary or list.",
@@ -254,29 +213,31 @@ class HilbertSpace(ABC):
         
         self._logger        = logger if logger is not None else get_global_logger()
         
-        # initialize the backend for the vectors and matrices
+        #! initialize the backend for the vectors and matrices
         self._backend, self._backend_str, self._state_type = self.reset_backend(backend, state_type)
         self._dtype         = dtype if dtype is not None else self._backend.float64
         self._is_many_body  = is_manybody
         self._is_quadratic  = not is_manybody
         
-        # quick check
+        #! quick check
         self._check_init_sym_errors(sym_gen, global_syms, gen_mapping)
 
-        # set locals
+        #! set locals
         # If you have a LocalSpace.default(), use it; otherwise use your default spin-1/2 factory.
         self._local_space   = local_space if local_space is not None else LocalSpace.default()  # or default_spin_half_local_space()
         if self._local_space is None:
             raise ValueError("local_space must be provided or LocalSpace.default() must return a valid LocalSpace.")
 
-        # infer the system sizes
+        #! infer the system sizes
         self._check_ns_infer(lattice=lattice, ns=ns, nh=nh)
         self._boundary_flux = boundary_flux
         if self._lattice is not None and boundary_flux is not None:
             self._lattice.flux = boundary_flux
+
+        #! State filtering - predicate to filter basis states
         self._state_filter = state_filter
 
-        # Nh: Effective dimension of the *current* representation
+        #! Nh: Effective dimension of the *current* representation
         # Initial estimate:
         if self._is_quadratic:
             # For quadratic, the "dimension" is often Ns (or 2Ns if pairing)
@@ -289,32 +250,24 @@ class HilbertSpace(ABC):
             self._nh = self._nhfull
             self._log(f"Initialized HilbertSpace in many-body mode: Ns={self._ns}, initial Nh={self._nh} (potentially reducible).", color='green', log='debug', lvl=1)
 
-        #! Initialize the symmetries (legacy and modular)
+        #! Initialize the symmetries
         self._normalization         = []                            # normalization of the states - how to return to the representative
-        self._sym_group             = []
-        self._sym_group_sec         = []
+        self._sym_group             = []                            # main symmetry group (will be populated later)
         self._global_syms           = global_syms if global_syms is not None else []
         self._particle_conserving   = part_conserv
 
-        # Modular symmetry group (new, extensible)
-        from QES.Algebra.symmetries import choose
-        self._sym_group_modular: List[SymmetryOperator] = []
-        self._sym_group_modular_map: Dict[
-            Tuple[SymmetryGenerators, Optional[Any]], SymmetryOperator
-        ] = {}
-        if sym_gen:
-            for sym in sym_gen:
-                if not isinstance(sym, tuple) or len(sym) != 2:
-                    continue
-                gen, sec = sym
-                self._register_modular_symmetry(gen, sec)
+        # Symmetry container (new unified approach)
+        self._sym_container         = None  # Will be initialized in _init_mapping
+        
+        # Cached flag indicating whether any configured symmetry eigenvalues
+        # are complex. Computed during symmetry container initialization to
+        # avoid repeated inspection at matrix-build time.
+        self._has_complex_symmetries= False
 
         # initialize the properties of the Hilbert space
         self._mapping               = None
-        self._reprmap               = None                          # mapping of the representatives (vector of tuples (state, representative value))
-        self._fullmap               = None                          # mapping of the full Hilbert space
+        # jittable arrays (repr_idx, repr_phase) are created when mapping is generated
 
-        self._getmapping_fun        = None                          # function to get the mapping of the states
         # setup the logger instance for the Hilbert space
         self._threadnum             = kwargs.get('threadnum', 1)    # number of threads to use
 
@@ -327,10 +280,11 @@ class HilbertSpace(ABC):
             # Ensure mapping attributes are None
             self._mapping       = None
             self._normalization = None
-            self._reprmap        = None
-            # Setup sym group if generators provided, but don't build map
+            # Setup sym container if generators provided, but don't build map
             if sym_gen:
-                self._gen_sym_group(sym_gen) #!TODO: How to define this?
+                self._init_sym_container(sym_gen)
+                if self._sym_container is not None:
+                    self._sym_group = list(self._sym_container.symmetry_group)
 
         # Ensure symmetry group always has at least the identity
         if not self._sym_group or len(self._sym_group) == 0:
@@ -381,17 +335,13 @@ class HilbertSpace(ABC):
     #! Momentum-sector helpers
     # --------------------------------------------------------------------------------------------------
 
-    def analyze_momentum_sectors(
-        self,
-        directions: Optional[List[LatticeDirection]] = None,
-        verbose: bool = False
-    ) -> Dict:
+    def analyze_momentum_sectors(self, directions: Optional[List[LatticeDirection]] = None, verbose: bool = False) -> Dict:
         """
         Analyze momentum sector structure for the Hilbert space.
         
         Automatically detects dimensionality and handles:
-        - 1D systems: single k quantum number
-        - 2D systems: (k_x, k_y) quantum numbers  
+        - 1D systems    : single k quantum number
+        - 2D systems    : (k_x, k_y) quantum numbers  
         - Lattices with multiple sites per unit cell
         
         Parameters
@@ -516,11 +466,24 @@ class HilbertSpace(ABC):
         Construct a momentum-resolved superposition seeded from ``base_state``.
 
         If ``momenta`` is None, momentum indices are inferred from translation
-        symmetries registered via ``sym_gen`` during initialization. 
-        Otherwise,
+        symmetries registered in the SymmetryContainer. Otherwise,
         the provided mapping must pair :class:`LatticeDirection` entries with
         the desired momentum integers (k-values).
         
+        Parameters
+        ----------
+        base_state : int
+            Seed state for the momentum superposition
+        momenta : Dict[LatticeDirection, int], optional
+            Momentum quantum numbers for each direction. If None, inferred from
+            symmetry container.
+        normalize : bool
+            Whether to normalize the resulting superposition
+        
+        Returns
+        -------
+        Dict[int, complex]
+            Mapping from basis states to coefficients in the momentum eigenstate
         """
         from QES.Algebra.Symmetries.translation import (
             TranslationSymmetry,
@@ -529,15 +492,19 @@ class HilbertSpace(ABC):
 
         if self._lattice is None:
             raise ValueError("Momentum superposition requires a lattice.")
+        
+        if self._sym_container is None:
+            raise ValueError("No symmetry container initialized. Initialize with translation symmetries.")
 
         translations: Dict[LatticeDirection, TranslationSymmetry] = {}
         inferred_momenta: Dict[LatticeDirection, int] = {}
 
-        for sym in getattr(self, '_sym_group_modular', []) or []:
-            if isinstance(sym, TranslationSymmetry):
-                translations[sym.direction] = sym
-                if sym.momentum_index is not None:
-                    inferred_momenta[sym.direction] = sym.momentum_index
+        # Extract translations from SymmetryContainer
+        for op, (gen_type, sector) in self._sym_container.generators:
+            if isinstance(op, TranslationSymmetry):
+                translations[op.direction] = op
+                if sector is not None:
+                    inferred_momenta[op.direction] = int(sector)
 
         if momenta is None:
             momenta = inferred_momenta
@@ -596,7 +563,6 @@ class HilbertSpace(ABC):
         """
         self._log("Reseting the local symmetries. Can be now recreated.", lvl = 2, log = 'debug')
         self._sym_group     = []
-        self._sym_group_sec = []
     
     # --------------------------------------------------------------------------------------------------
     
@@ -617,548 +583,101 @@ class HilbertSpace(ABC):
         msg = self._logger.colorize(msg, color)
         self._logger.say(msg, log=log, lvl=lvl)
 
-    def _register_modular_symmetry(
-        self,
-        generator: SymmetryGenerators,
-        sector: Optional[int] = None,
-    ) -> Optional[SymmetryOperator]:
-        """Ensure a single modular operator instance per symmetry generator."""
-
-        translation_generators = (
-            SymmetryGenerators.Translation_x,
-            SymmetryGenerators.Translation_y,
-            SymmetryGenerators.Translation_z,
-        )
-
-        if generator in translation_generators:
-            if self._lattice is None:
-                self._log(
-                    "Translation symmetry requested without lattice; skipping modular registration.",
-                    log="warning",
-                    lvl=1,
-                )
-                return None
-
-            direction_map = {
-                SymmetryGenerators.Translation_x: LatticeDirection.X,
-                SymmetryGenerators.Translation_y: LatticeDirection.Y,
-                SymmetryGenerators.Translation_z: LatticeDirection.Z,
-            }
-            direction = direction_map[generator]
-            key = (generator, direction)
-
-            momentum_index: Optional[int] = None
-            if isinstance(sector, (int, np.integer)):
-                momentum_index = int(sector)
-            elif isinstance(sector, float) and float(sector).is_integer():
-                momentum_index = int(sector)
-
-            existing = self._sym_group_modular_map.get(key)
-            if existing is None:
-                translator = TranslationSymmetry(
-                    self._lattice,
-                    direction=direction,
-                    momentum_index=momentum_index,
-                )
-                self._sym_group_modular.append(translator)
-                self._sym_group_modular_map[key] = translator
-                existing = translator
-            elif momentum_index is not None and existing.momentum_index is None:
-                existing.momentum_index = momentum_index
-            return existing
-
-        key = (generator, sector)
-        existing = self._sym_group_modular_map.get(key)
-        if existing is not None:
-            return existing
-
-        try:
-            operator = choose(
-                (generator, sector if sector is not None else 0),
-                lat=self._lattice,
-                ns=self._ns,
-                backend=self._backend_str,
-            )
-        except Exception as exc:  # pragma: no cover - safeguard for incomplete configs
-            self._log(
-                f"Failed to instantiate modular symmetry {generator}: {exc}",
-                log="warning",
-                lvl=1,
-            )
-            return None
-
-        self._sym_group_modular.append(operator)
-        self._sym_group_modular_map[key] = operator
-        return operator
-
     ####################################################################################################
-    #! Translation related
+    #! Unified symmetry container initialization
     ####################################################################################################
-
-    def _gen_sym_group_check_t(
-        self,
-        sym_gen: list,
-    ) -> Tuple[list, Dict[LatticeDirection, SymmetryOperator], bool]:
-        """
-        Extract translation generators, validating lattice compatibility and registering
-        their modular counterparts. Returns the filtered generator list, the mapping of
-        directions to translation operators, and whether complex translation sectors are present.
-        """
-
-        direction_map = {
-            SymmetryGenerators.Translation_x: LatticeDirection.X,
-            SymmetryGenerators.Translation_y: LatticeDirection.Y,
-            SymmetryGenerators.Translation_z: LatticeDirection.Z,
-        }
-
-        if self._lattice is None:
-            has_translation = any(
-                hasattr(gen, "has_translation") and gen.has_translation()
-                for gen, _ in (sym_gen or [])
-            )
-            if has_translation:
-                self._log("Translation requested but no Lattice; ignoring.", log="warning", lvl=1)
-            filtered = [
-                (gen, sec)
-                for gen, sec in (sym_gen or [])
-                if not (hasattr(gen, "has_translation") and gen.has_translation())
-            ]
-            return filtered, {}, False
-
-        translations: Dict[LatticeDirection, SymmetryOperator] = {}
-        has_cpx_translation = False
-        filtered: list = []
-
-        for gen, sec in sym_gen or []:
-            if not hasattr(gen, "has_translation") or not gen.has_translation():
-                filtered.append((gen, sec))
-                continue
-
-            direction = direction_map.get(gen, LatticeDirection.X)
-            if not self._lattice.is_periodic(direction):
-                self._log(
-                    f"Translation along {direction.name} requested but boundary is not periodic.",
-                    log="warning",
-                    lvl=1,
-                )
-                continue
-
-            translator = self._register_modular_symmetry(gen, sec)
-            if translator is None:
-                continue
-
-            translations[direction] = translator
-            self._sym_group_sec.append((gen, sec))
-
-            momentum_index = getattr(translator, "momentum_index", None)
-            if momentum_index not in (None, 0) and not (
-                momentum_index == self.Ns // 2 and self.Ns % 2 == 0
-            ):
-                has_cpx_translation = True
-
-        return filtered, translations, has_cpx_translation
-
-    def _gen_sym_apply_t(
-        self,
-        sym_gen_op: list,
-        translations: Dict[LatticeDirection, SymmetryOperator],
-    ) -> list:
-        """Combine modular translations with the existing symmetry tuples (multi-direction aware)."""
-
-        if not translations:
-            return sym_gen_op
-
-        sym_gen_out = list(sym_gen_op)
-
-        for direction, translator in translations.items():
-            if translator is None:
-                continue
-
-            if direction == LatticeDirection.X:
-                extent = getattr(self._lattice, 'lx', getattr(self._lattice, 'Lx', self._ns))
-            elif direction == LatticeDirection.Y:
-                extent = getattr(self._lattice, 'ly', getattr(self._lattice, 'Ly', self._ns))
-            else:
-                extent = getattr(self._lattice, 'lz', getattr(self._lattice, 'Lz', self._ns))
-
-            extent = int(extent) if extent is not None else self._ns
-            if extent <= 1:
-                continue
-
-            self._log(
-                f"Adding translation symmetry along {direction.name} (extent {extent}).",
-                lvl=2,
-                color='yellow',
-            )
-
-            base_ops = list(sym_gen_out)
-            t_powers: List[Union[SymmetryOperator, Tuple[SymmetryOperator, ...]]] = [translator]
-            for power in range(2, extent):
-                t_powers.append(tuple([translator] * power))
-
-            for t_pow in t_powers:
-                for op_tuple in base_ops:
-                    if isinstance(t_pow, tuple):
-                        combined = t_pow + op_tuple
-                    else:
-                        combined = (t_pow,) + op_tuple
-                    sym_gen_out.append(combined)
-
-        return sym_gen_out
-
-    #! Global symmetries related
     
-    def _gen_sym_group_check_u1(self) -> (bool, float):
+    def _init_sym_container(self, gen: list) -> None:
         """
-        Check if a U(1) global symmetry is present.
-        Returns (has_U1, U1_value).
-        """
-        has_u1, u1_val = self.check_u1()
-        if has_u1:
-            self._log("U(1) global symmetry is present.", lvl = 2, color = 'blue')
-        return has_u1, u1_val
-
-    #! Symmetry compatibility filtering
-
-    def _filter_incompatible_symmetries(
-        self,
-        sym_gen: list,
-        translations: Dict[LatticeDirection, SymmetryOperator],
-        has_u1: bool,
-        u1_val: float,
-    ) -> list:
-        r"""
-        Filter symmetry generators using group-theoretic commutation rules.
+        Initialize the unified SymmetryContainer (new approach).
         
-        This method automatically removes incompatible symmetries based on:
-        1. Momentum-dependent commutation: Reflection ↔ Translation only at k=0,\pi
-        2. U(1) constraints: Parity incompatible with generic filling
-        3. General compatibility rules from SymmetryOperator.commutes_with()
+        This replaces the old _gen_sym_group method with a cleaner, more modular approach.
+        The SymmetryContainer handles:
+        - Compatibility checking
+        - Automatic group construction from generators
+        - Representative finding
+        - Normalization computation
         
         Args:
-            sym_gen: List of (SymmetryGenerator, sector) tuples to filter
-            translations: Active translation operators by direction
-            has_u1: Whether U(1) global symmetry is present
-            u1_val: U(1) sector value (particle number)
-            
-        Returns:
-            Filtered list of compatible symmetry generators
+            gen (list): List of (SymmetryGenerator, sector_value) tuples
         """
-        from QES.Algebra.Symmetries.compatibility import (
-            check_compatibility,
-            infer_momentum_sector_from_operators,
-        )
-
-        # Build list of all symmetry operators (translations + locals)
-        all_operators: List[SymmetryOperator] = list(translations.values())
-        
-        # Instantiate local symmetry operators for checking (temporary, not registered)
-        local_operators: List[SymmetryOperator] = []
-        for generator, sector in sym_gen:
-            # Use choose to create operator instance WITHOUT registering it
-            op = choose(
-                (generator, sector),
-                ns=self._ns,
-                lat=self._lattice,
-                backend=self._backend_str,
-            )
-            local_operators.append(op)
-        
-        # Filter by local Hilbert space compatibility
-        # Check if each operator supports the local space type
-        filtered_local_ops = []
-        removed_local_space = []
-        for op, (gen, sec) in zip(local_operators, sym_gen):
-            if not op.is_valid_for_local_space(self._local_space.typ):
-                removed_local_space.append(f"{op.symmetry_class.name} (incompatible with {self._local_space.typ.name})")
-            else:
-                filtered_local_ops.append(op)
-        
-        # Log local space incompatibilities
-        if removed_local_space:
-            self._log(
-                f"Removed {len(removed_local_space)} symmetry/symmetries incompatible with local space {self._local_space.typ.name}: {', '.join(removed_local_space)}",
-                lvl=1,
-                color='yellow',
-            )
-        
-        # Update sym_gen to only include compatible operators
-        sym_gen_filtered = []
-        for op, (gen, sec) in zip(local_operators, sym_gen):
-            if op in filtered_local_ops:
-                sym_gen_filtered.append((gen, sec))
-        sym_gen = sym_gen_filtered
-        local_operators = filtered_local_ops
-        
-        all_operators.extend(local_operators)
-        
-        # Check compatibility with automatic filtering (infers momentum sector automatically)
-        warnings = []
-        compatible_ops, removed_names = check_compatibility(
-            all_operators,
-            warn_callback=lambda msg: warnings.append(msg)
-        )
-        
-        # Log warnings
-        for warning in warnings:
-            self._log(warning, log='warning', lvl=2, color='yellow')
-        
-        # Map back to generator list - only for compatible operators
-        compatible_generators = []
-        for op in compatible_ops:
-            # Skip translations (already registered)
-            if any(op is trans for trans in translations.values()):
-                continue
-            # Find matching generator tuple
-            for (gen, sec), local_op in zip(sym_gen, local_operators):
-                if op is local_op:
-                    compatible_generators.append((gen, sec))
-                    break
-        
-        # Apply global symmetry constraints on parity operators
-        # These constraints arise from physical filling/conservation laws
-        compatible_generators = self._apply_global_symmetry_constraints(
-            compatible_generators, has_u1, u1_val
-        )
-        
-        # Log removed symmetries
-        removed_count = len(sym_gen) - len(compatible_generators)
-        if removed_count > 0:
-            self._log(
-                f"Automatic compatibility check removed {removed_count} incompatible symmetry/symmetries.",
-                lvl=1,
-                color='yellow',
-            )
-        
-        return compatible_generators
-
-    def _apply_global_symmetry_constraints(
-        self,
-        sym_gen: list,
-        has_u1: bool,
-        u1_val: float,
-    ) -> list:
-        r"""
-        Apply physical constraints from global symmetries to local symmetry generators.
-        
-        Global Symmetry Constraints
-        ============================
-        
-        U(1) Particle Number Conservation:
-        ----------------------------------
-        - Constraint: Parity X/Y incompatible at non-half-filling
-        - Reason: Particle-hole symmetry P: c_i -> c_i^†, c_i^† -> c_i
-          Maps N -> Ns - N, so requires N = Ns/2 (half-filling)
-        - Applies to: Hubbard model, t-J model, fermion systems
-        - Action: Remove ParityX, ParityY if N ≠ Ns/2 or Ns odd
-        
-        U(1) Spin Conservation (S^z_total):
-        -----------------------------------
-        - Constraint: ParityX, ParityY break S^z conservation
-        - Reason: \sigma ^x, \sigma ^y flip spins -> change total magnetization M
-        - Only ParityZ preserves S^z (flips all -> M -> -M, but |M| same)
-        - Applies to: XXZ model, anisotropic models with S^z conservation
-        - Action: Would remove ParityX, ParityY if U1_SPIN active
-          (Not implemented yet - requires global symmetry type detection)
-        
-        Time-Reversal Symmetry:
-        ----------------------
-        - Constraint: Complex phases incompatible with real wavefunctions
-        - Applies to: Systems without magnetic field
-        - Action: Would enforce specific momentum sectors
-          (Not implemented yet - requires time-reversal operator)
-        
-        Args:
-            sym_gen: List of compatible (SymmetryGenerator, sector) tuples
-            has_u1: Whether U(1) particle number conservation is active
-            u1_val: Particle number N
-            
-        Returns:
-            Filtered list after applying global symmetry constraints
-        """
-        if not has_u1:
-            return sym_gen
-        
-        # U(1) particle number constraint: Parity X/Y only at half-filling
-        self._log(
-            "U(1) particle conservation detected. Checking parity compatibility...",
-            log='info',
-            lvl=1,
-            color='yellow'
-        )
-        
-        at_half_filling = (int(u1_val) == self._ns // 2) and (self._ns % 2 == 0)
-        
-        filtered_gens = []
-        for (gen, sec) in sym_gen:
-            if gen in (SymmetryGenerators.ParityX, SymmetryGenerators.ParityY):
-                if not at_half_filling:
-                    self._log(
-                        f"Removing {gen.name} due to U(1) constraint: "
-                        f"Requires half-filling N=Ns/2={self._ns//2} (even Ns), "
-                        f"but N={int(u1_val)}, Ns={self._ns}.",
-                        log='info',
-                        lvl=2,
-                        color='blue',
-                    )
-                    continue
-                else:
-                    self._log(
-                        f"Allowing {gen.name} at half-filling (N={int(u1_val)}, Ns/2={self._ns//2}).",
-                        log='debug',
-                        lvl=2,
-                        color='green',
-                    )
-            filtered_gens.append((gen, sec))
-        
-        return filtered_gens
-
-    #! Removers for the symmetry generators (legacy, now replaced by _filter_incompatible_symmetries)
-
-    def _gen_sym_remove_reflection(self, sym_gen : list, has_cpx_translation : bool):
-        """
-        Helper function to remove reflections from the symmetry generators if the complex translation is present.
-        
-        Args:
-            sym_gen (list)         : A list of symmetry generators.
-            has_cpx_translation (bool) : A flag for complex translation - momentum is different than 0 or pi.
-        """
-        if has_cpx_translation and sym_gen is not None and hasattr(sym_gen, "__iter__"):
-            sym_gen = [
-                entry
-                for entry in sym_gen
-                if entry[0] != SymmetryGenerators.Reflection
-            ]
-            self._log("Removed reflection symmetry from the symmetry generators.", lvl = 2, color = 'blue')
-        return sym_gen
-    
-    def _gen_sym_remove_parity(self, sym_gen : list, has_u1 : bool, has_u1_sec : float):
-        """
-        If U(1) is present but the system is not at half-filling (or has odd size),
-        remove parity generators in the X and/or Y directions.
-        """
-        if has_u1:
-            
-            self._log("U(1) symmetry detected. Checking parity generators...", log = 1, lvl = 1, color = 'yellow')
-            
-            new_sym_gen = []
-            for (gen, sec) in sym_gen:
-                if gen in (SymmetryGenerators.ParityX, SymmetryGenerators.ParityY) and \
-                   ((int(has_u1_sec) != self._ns // 2) or (self._ns % 2 != 0)):
-                    self._log(f"Removing parity {gen} due to U(1) constraint.", log = 1, lvl = 2, color = 'blue')
-                else:
-                    new_sym_gen.append((gen, sec))
-            sym_gen = new_sym_gen
-        return sym_gen
-    
-    #! Printer
-    def _gen_sym_print(
-        self,
-        translations: Optional[Dict[LatticeDirection, SymmetryOperator]] = None,
-    ) -> None:
-        """Emit a concise summary of the active local and translation symmetries."""
-
-        self._log("Using local symmetries:", lvl=1, color='green')
-        for (g, sec) in self._sym_group_sec:
-            self._log(f"{g}: {sec}", lvl=2, color='blue')
-
-        if not translations:
-            return
-
-        for direction, translator in translations.items():
-            if isinstance(translator, TranslationSymmetry):
-                info = f"Translation({direction.name})"
-                momentum = getattr(translator, 'momentum_index', None)
-                if momentum is not None:
-                    info += f" k={momentum}"
-                self._log(info, lvl=2, color='blue')
-            else:
-                eigval = getattr(translator, 'eigval', None)
-                self._log(f"{translator}: {eigval}", lvl=2, color='blue')
-        self._log("Using global symmetries:", lvl = 1, color = 'green')
-        for g in self._global_syms:
-            self._log(f"{g}: {g.get_val()}", lvl = 2, color = 'blue')
-    
-    #! Final symmetry group generation
-    
-    def _gen_sym_group(self, gen : list):
-        """
-        Generate the symmetry group of the Hilbert space. 
-        
-        This method constructs the full symmetry group by:
-        1. Checking and filtering generators based on lattice and global symmetries
-        2. Validating symmetry compatibility using group-theoretic commutation rules
-        3. Creating all combinations of compatible local symmetry generators
-        4. Combining with translation symmetry if present
-        5. Ensuring the identity element is included
-        
-        The symmetry group is stored in self._sym_group as a list of Operator objects.
-        Each operator, when called with a state, returns (new_state, eigenvalue).
-        
-        Args:
-            gen (list): A list of (SymmetryGenerator, sector_value) tuples defining the generators.
-        """
-		
         if (not gen or len(gen) == 0) and not self.check_global_symmetry():
-            self._log("No local or global symmetries provided; using identity only.", lvl = 1, log = 'debug', color = 'green')
-            # Ensure at least identity is in the group
-            self._sym_group = [operator_identity(self._backend)]
+            self._log("No symmetries provided; SymmetryContainer will use identity only.", 
+                     lvl=1, log='debug', color='green')
+            from QES.Algebra.Symmetries.symmetry_container import SymmetryContainer
+            self._sym_container = SymmetryContainer(
+                ns=self._ns,
+                lattice=self._lattice,
+                nhl=self._local_space.local_dim,
+                backend=self._backend_str
+            )
             return
         
-        # copy the generators to modify them if needed
-        sym_gen                     = gen.copy() if gen is not None and hasattr(gen, "__iter__") else []
+        # Import the factory function
+        from QES.Algebra.Symmetries.symmetry_container import create_symmetry_container_from_specs
         
-        # Reset symmetry groups.
-        self.reset_local_symmetries()
-                
-        #! globals - check the global symmetries
+        # Prepare generator specs
+        generator_specs = gen.copy() if gen is not None else []
         
-        # Check global U(1) symmetry.
-        has_u1, u1_val              = self._gen_sym_group_check_u1()
+        # Create and initialize the container
+        # The factory will handle all compatibility checking and filtering
+        self._sym_container = create_symmetry_container_from_specs(
+            ns=self._ns,
+            generator_specs=generator_specs,
+            global_syms=self._global_syms,
+            lattice=self._lattice,
+            nhl=self._local_space.local_dim,
+            backend=self._backend_str,
+            build_group=True,
+            build_repr_map=False  # Build on-demand for large systems
+        )
         
-        # process translation symmetries
-        sym_gen, translations, has_cpx_t = self._gen_sym_group_check_t(sym_gen)
-        has_t = bool(translations)
         
-        # Filter incompatible symmetries based on group-theoretic commutation rules
-        sym_gen = self._filter_incompatible_symmetries(sym_gen, translations, has_u1, u1_val)
-        
-        # save all sector values for convenience
-        for gen, sec in sym_gen:
-            self._sym_group_sec.append((gen, sec))
-        
-        # ------------------------------
-        # Generate all combinations of the local generators.
-        # For each subset of indices from sym_gen, create a list of operators to apply sequentially.
-        # Instead of composing operators into one function, we store them as tuples.
-        _size_gen = len(sym_gen)
-        
-        # Start with identity: empty tuple means no operators to apply
-        self._sym_group.append(())
-        
-        # Generate combinations for r = 1, 2, ..., _size_gen
-        if _size_gen > 0:
-            generator_ops: List[SymmetryOperator] = []
-            for generator, sector in sym_gen:
-                op = self._register_modular_symmetry(generator, sector)
-                if op is None:
-                    op = choose(
-                        (generator, sector),
-                        ns=self._ns,
-                        lat=self._lattice,
-                        backend=self._backend_str,
-                    )
-                generator_ops.append(op)
-            for combo in _enumerate_generator_index_combos(_size_gen)[1:]:
-                ops_tuple = tuple(generator_ops[idx] for idx in combo)
-                self._sym_group.append(ops_tuple)
-        
-        # apply the translation symmetry by combining with existing operators
-        if has_t:
-            self._sym_group = self._gen_sym_apply_t(self._sym_group, translations)
+        # Log symmetry info
+        num_ops     = len(self._sym_container.symmetry_group)
+        num_gens    = len(self._sym_container.generators)
+        self._log(f"SymmetryContainer initialized: {num_gens} generators → {num_ops} group elements", 
+                 lvl=1, color='green')
 
-        # Log the symmetry group information
-        self._gen_sym_print(translations)
+        # Compute and cache whether any symmetry eigenvalues/phases are complex.
+        # Conservative: on unexpected errors assume True to avoid dropping
+        # complex information.
+        try:
+            has_cpx = False
+            # Prefer the canonical group stored on the SymmetryContainer when present
+            group = getattr(self._sym_container, 'symmetry_group', None) or self._sym_group
+            if group:
+                for op in group:
+                    eig = getattr(op, 'eigval', None)
+                    if eig is None:
+                        continue
+                    try:
+                        if not np.isreal(eig):
+                            has_cpx = True
+                            break
+                    except Exception:
+                        if isinstance(eig, complex) and getattr(eig, 'imag', 0) != 0:
+                            has_cpx = True
+                            break
+
+            # secondary/group generators recorded in SymmetryContainer
+            if not has_cpx and getattr(self, '_sym_container', None) and getattr(self._sym_container, 'generators', None):
+                for op, _ in self._sym_container.generators:
+                    eig = getattr(op, 'eigval', None)
+                    if eig is None:
+                        continue
+                    try:
+                        if not np.isreal(eig):
+                            has_cpx = True
+                            break
+                    except Exception:
+                        if isinstance(eig, complex) and getattr(eig, 'imag', 0) != 0:
+                            has_cpx = True
+                            break
+
+            self._has_complex_symmetries = bool(has_cpx)
+        except Exception:
+            self._has_complex_symmetries = True
     
     # --------------------------------------------------------------------------------------------------
     
@@ -1191,7 +710,12 @@ class HilbertSpace(ABC):
         
         t0 = time.time()
         
-        self._gen_sym_group(gen)    # generate the symmetry group
+        # Use SymmetryContainer for symmetry group construction
+        self._init_sym_container(gen)
+        
+        # Convert container's group to old format for compatibility with state mapping
+        if self._sym_container is not None:
+            self._sym_group = list(self._sym_container.symmetry_group)
         
         if gen is not None and len(gen) > 0:
             self._log("Generating the mapping of the states...", lvl = 1, color = 'green')
@@ -1209,8 +733,6 @@ class HilbertSpace(ABC):
         else:
             self._log("No mapping generated.", lvl = 1, color = 'green', log = 'debug')
 
-    # --------------------------------------------------------------------------------------------------
-
     ####################################################################################################
     #! Getters and checkers for the Hilbert space
     ####################################################################################################
@@ -1223,16 +745,6 @@ class HilbertSpace(ABC):
         """
         return len(self._global_syms) > 0 if self._global_syms is not None else False
     
-    def check_u1(self):
-        """
-        Check if there is a U(1) symmetry.
-        """
-        if self._global_syms is not None:
-            for sym in self._global_syms:
-                if sym.get_name() == GlobalSymmetries.U1:
-                    return True, sym.get_val()
-        return False, None
-    
     #---------------------------------------------------------------------------------------------------
     
     def get_sym_info(self):
@@ -1243,10 +755,10 @@ class HilbertSpace(ABC):
             str: A string containing the information about all the symmetries.
         """
         tmp = ""
-        if self._sym_group_sec:
-            # start with local symmetries
-            for gen, val in self._sym_group_sec:
-                tmp += f"{gen}={val},"
+        # Use SymmetryContainer generator specs for local symmetry summary when available
+        if self._sym_container is not None and getattr(self._sym_container, 'generators', None):
+            for op, (gen_type, sector) in self._sym_container.generators:
+                tmp += f"{gen_type}={sector},"
         if self.check_global_symmetry():
             # start with global symmetries
             for g in self._global_syms:
@@ -1380,15 +892,34 @@ class HilbertSpace(ABC):
             return [wrap_ops_tuple(t) for t in self._sym_group]
         return self._sym_group
     
+    # --------------------------------------------------------------------------------------------------
+    
     @property
-    def reprmap(self):
+    def repr_idx(self):
+        """Return the precomputed representative index array (jittable).
+
+        This is an array of length Nh_full where entry j is the index of the
+        representative in the reduced basis for state j, or -1 if not present.
         """
-        Return the mapping of the representatives.
-        
-        Returns:
-            list: The mapping of the representatives.
+        return getattr(self, '_repr_idx', None)
+
+    @property
+    def repr_phase(self):
+        """Return the precomputed representative phase array (jittable).
+
+        Entry j contains the symmetry phase (complex) relating state j to its
+        representative: G_j |rep> = phase * |state_j> (phase as complex128).
         """
-        return self._reprmap
+        return getattr(self, '_repr_phase', None)
+
+    @property
+    def has_complex_symmetries(self) -> bool:
+        """
+        Return cached boolean indicating whether any configured symmetry
+        eigenvalues/phases are complex. This value is computed during
+        `_init_sym_container` and cached in `_has_complex_symmetries`.
+        """
+        return bool(getattr(self, '_has_complex_symmetries', False))
     
     @property
     def normalization(self):
@@ -1422,6 +953,10 @@ class HilbertSpace(ABC):
         """
         return self._local_space
 
+    # --------------------------------------------------------------------------------------------------
+    #! Local operator builders
+    # --------------------------------------------------------------------------------------------------
+
     def list_local_operators(self):
         """
         Return the identifiers of all onsite operators available in the local space.
@@ -1431,10 +966,10 @@ class HilbertSpace(ABC):
         return self._local_space.list_operator_keys()
 
     def build_local_operator(self,
-                             key: str,
+                             key            : str,
                              *,
-                             type_override: Optional[OperatorTypeActing] = None,
-                             name: Optional[str] = None) -> Operator:
+                             type_override  : Optional[OperatorTypeActing] = None,
+                             name           : Optional[str] = None) -> Operator:
         """
         Instantiate a registered local operator by name.
 
@@ -1577,8 +1112,6 @@ class HilbertSpace(ABC):
             float: The normalization of the state.
         """
         return self._normalization[state] if state < len(self._normalization) else 1.0
-
-    # --------------------------------------------------------------------------------------------------
     
     ####################################################################################################
     #! Representation of the Hilbert space
@@ -1602,9 +1135,11 @@ class HilbertSpace(ABC):
         gs_info     = [f"{g.get_name_str()}={g.get_val()}" for g in self._global_syms]
         if gs_info:
             info += f"Global Symmetries: {', '.join(gs_info)}\n"
-        ls_info     = [f"{g}={sec}" for g, sec in self._sym_group_sec]
-        if ls_info:
-            info += f"Local Symmetries: {', '.join(ls_info)}\n"
+        # Provide local symmetry summary from SymmetryContainer if present
+        if self._sym_container is not None and getattr(self._sym_container, 'generators', None):
+            ls_info = [f"{gen_type}={sector}" for (_, (gen_type, sector)) in self._sym_container.generators]
+            if ls_info:
+                info += f"Local Symmetries: {', '.join(ls_info)}\n"
         return info
 
     def __repr__(self):
@@ -1616,142 +1151,60 @@ class HilbertSpace(ABC):
     #! Find the representative of a state
     ####################################################################################################
     
-    def _find_sym_norm_base(self, state):
-        r"""
-        Finds the normalization for a given state (baseIdx) by summing the eigenvalues
-        over all symmetry operators that return the same state.
-        
-        Returns sqrt(sum of eigenvalues).
-        """
-        pass
-    
-    def _find_sym_norm_int(self, state):
-        r"""
-        Find the symmetry normalization of a given state.
-        
-        The normalization factor is calculated as sqrt(sum of |eigenvalues|^2) for all
-        symmetry operations that leave the state invariant (map it to itself). This ensures
-        proper normalization of symmetry-adapted basis states.
-        
-        Args:
-            state (int): The state to find the symmetry normalization for.
-        
-        Returns:
-            float: The symmetry normalization of the state, sqrt(\Sigma |\lambda _g|^2) where g leaves state invariant
-        """
-        norm = 0.0
-        for op_tuple in self._sym_group:
-            # Apply operators sequentially
-            _st = state
-            _retval = 1.0
-            
-            # Empty tuple means identity
-            if len(op_tuple) == 0:
-                _st = state
-                _retval = 1.0
-            else:
-                # Apply each operator in sequence
-                for op in op_tuple:
-                    _st, phase = op(_st)
-                    _retval *= phase
-            
-            # Only count if state is invariant
-            if _st == state:
-                # Accumulate |eigenvalue|^2 for proper complex eigenvalue handling
-                if hasattr(_retval, 'conjugate'):
-                    norm += (_retval * _retval.conjugate()).real
-                else:
-                    norm += _retval * _retval
-        return math.sqrt(norm) if norm > 0 else 0.0
-    
     def find_sym_norm(self, state) -> Union[float, complex]:
         """
-        Finds the normalization for a given state (baseIdx) by summing the eigenvalues
-        over all symmetry operators that return the same state.
+        Compute normalization factor for a state in the current symmetry sector.
         
-        Returns sqrt(sum of eigenvalues).
+        Uses character-based projection formula for momentum sectors:
+        N = sqrt(sum_{g in G} χ_k(g)^* <state|g|state>)
+        
+        Parameters
+        ----------
+        state : int or array
+            State to compute normalization for
+        
+        Returns
+        -------
+        norm : float or complex
+            Normalization factor (0 if state not in current sector)
         """
-        if isinstance(state, int):
-            return self._find_sym_norm_int(state)
-        return self._find_sym_norm_base(state)
+        if self._sym_container is None:
+            raise ValueError("No symmetry container initialized. Cannot compute normalization.")
+        return self._sym_container.compute_normalization(state)
     
     # --------------------------------------------------------------------------------------------------
-    
-    def _find_repr_base(self, state):
-        pass
-    
-    def _find_repr_int(self, state):
-        """
-        Find the representative of a given state.
-        
-        The representative is the smallest state (minimum integer value) that can be obtained
-        by applying all symmetry operations in the symmetry group. This ensures a unique
-        canonical form for each symmetry sector.
-        
-        Args:
-            state (int): The state to find the representative for.
-        
-        Returns:
-            tuple: (representative_state, symmetry_eigenvalue)
-                - representative_state: The minimum state in the symmetry orbit
-                - symmetry_eigenvalue: The phase factor from the symmetry operation
-        """
-        # Fast-path: if a full representative map exists, translate mapping index to state
-        try:
-            if self._reprmap is not None and hasattr(self._reprmap, "__len__") and len(self._reprmap) > 0:
-                idx     = self._reprmap[state, 0]
-                sym     = self._reprmap[state, 1]
-                # reprmap stores the index into self._mapping; convert to actual representative state
-                from QES.general_python.common.binary import bin_search as _bs
-                
-                if idx != _bs._BAD_BINARY_SEARCH_STATE and self._mapping is not None and 0 <= int(idx) < len(self._mapping):
-                    rep_state = int(self._mapping[int(idx)])
-                    return rep_state, sym
-        except Exception:
-            pass
-
-        # Fallback: compute by scanning symmetry group
-        return find_repr_int(state, self._sym_group, None)
     
     def find_repr(self, state):
         """
-        Find representatives of another state using various combinations of symmetry generators.
+        Find the representative (minimum state) in the orbit of a given state.
+        
+        The representative is the smallest state (minimum integer value) that can be
+        obtained by applying all symmetry operations in the symmetry group. This
+        ensures a unique canonical form for each symmetry sector.
 
-        This method computes the smallest representative possible by applying different combinations of symmetry 
-        generators. It also determines the symmetry eigenvalue associated with returning to the original state.
+        Parameters
+        ----------
+        state : int
+            The state to find the representative for.
 
-        Args:
-            state (int or state type): The state representation. If an integer is provided, an integer-based approach 
-                                    is used; otherwise, a base state representation is assumed.
-
-        Returns:
-            tuple: A pair containing the representative index and the corresponding symmetry eigenvalue.
+        Returns
+        -------
+        tuple
+            (representative_state, symmetry_eigenvalue)
+            - representative_state: The minimum state in the symmetry orbit
+            - symmetry_eigenvalue: The phase factor from the symmetry operation
         """
-        if isinstance(state, int):
-            return self._find_repr_int(state)
-        return self._find_repr_base(state)
+        if self._sym_container is None:
+            raise ValueError("No symmetry container initialized. Cannot find representative.")
+        return self._sym_container.find_representative(state, use_cache=True)
     
     # --------------------------------------------------------------------------------------------------
-    
-    def find_representative_base(self, state, normalization_beta):
-        """
-        Find the representative of a given state.
-        
-        Args:
-            state (np.ndarray): The state to find the representative for.
-            normalization_beta (float): The normalization in sector beta.
-        
-        Returns:
-            np.ndarray: The representative of the state.
-        """
-        pass
     
     def find_representative_int(self, state, normalization_beta):
         """
         Find the representative of a given state.
         """
-        return find_representative_int(state, self._mapping,
-                self._normalization, normalization_beta, self._sym_group, self._reprmap)
+        return find_representative_int(state, self._mapping, self._normalization, normalization_beta, self._sym_group)
     
     def find_representative(self, state, normalization_beta):
         """
@@ -1822,15 +1275,16 @@ class HilbertSpace(ABC):
                 continue
             
             # Find the representative of state j under local symmetries
-            rep, _ = self._find_repr_int(j)
+            rep, _ = self.find_repr(j)
             
             # Only add the state if it is its own representative
             # (this ensures each symmetry sector is represented once)
             if rep == j:
                 if self._state_filter is not None and not self._state_filter(rep):
                     continue
-                # Calculate normalization: sqrt of sum of |eigenvalues|^2 for orbit
-                n = self._find_sym_norm_int(j)
+                # Calculate normalization using character-based projection
+                # This ensures proper momentum sector filtering
+                n = self._sym_container.compute_normalization(j)
                 if abs(n) > 1e-7:  # Only add if normalization is non-zero
                     map_threaded.append(j)
                     norm_threaded.append(n)
@@ -1848,44 +1302,49 @@ class HilbertSpace(ABC):
         and store it in the mapping.
         """
         
-        # initialize the mapping and normalization if necessary
-        self._reprmap = []
-        
+        # Build jittable repr_idx and repr_phase arrays without creating
+        # the legacy object-based `reprmap`. This is memory-efficient and
+        # sufficient for numba builders.
+        repr_idx_arr    = np.full(self._nhfull, -1, dtype=np.int64)
+        repr_phase_arr  = np.zeros(self._nhfull, dtype=np.complex128)
+        mapping_size    = len(self._mapping) if self._mapping is not None else 0
+
         for j in range(self._nhfull):
             if self._state_filter is not None and not self._state_filter(j):
-                self._reprmap.append((bin_search._BAD_BINARY_SEARCH_STATE, 0.0))
                 continue
-            global_checker = True
-            
+
+            # Check global symmetries
             if self._global_syms:
+                ok = True
                 for g in self._global_syms:
-                    global_checker = global_checker and g(j)
-                    
-            # if the global symmetries are not satisfied, skip the state
-            if not global_checker:
-                self._reprmap.append((bin_search._BAD_BINARY_SEARCH_STATE, 0.0))
-                continue
-            
-            mapping_size    = len(self._mapping)
-            idx             = bin_search.binary_search(self._mapping, 0, mapping_size - 1, j)
-            if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
-                self._reprmap.append((idx, 1.0))
-                continue
-            
-            # find the representative
-            rep, sym_eig    = self.find_repr(j)
-            idx             = bin_search.binary_search(self._mapping, 0, mapping_size - 1, rep)
-            if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
-                if self._state_filter is not None and not self._state_filter(rep):
-                    self._reprmap.append((bin_search._BAD_BINARY_SEARCH_STATE, 0.0))
+                    ok = ok and g(j)
+                if not ok:
                     continue
-                sym_eigc = sym_eig.conjugate() if hasattr(sym_eig, "conjugate") else sym_eig
-                self._reprmap.append((idx, np.conj(sym_eigc)))
-            else:
-                self._reprmap.append((bin_search._BAD_BINARY_SEARCH_STATE, 0.0))
-        
-        # Convert reprmap to numpy array for efficient indexing
-        self._reprmap = self._backend.array(self._reprmap, dtype=object)
+
+            # If mapping explicitly lists this state, record trivial phase
+            if mapping_size > 0:
+                idx = bin_search.binary_search(self._mapping, 0, mapping_size - 1, j)
+                if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
+                    repr_idx_arr[j] = int(idx)
+                    repr_phase_arr[j] = 1+0j
+                    continue
+
+            # Otherwise, find representative and see if its representative is present
+            rep, sym_eig = self.find_repr(j)
+            if mapping_size > 0:
+                idx = bin_search.binary_search(self._mapping, 0, mapping_size - 1, rep)
+                if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
+                    if self._state_filter is not None and not self._state_filter(rep):
+                        continue
+                    try:
+                        repr_phase_arr[j] = complex(sym_eig)
+                    except Exception:
+                        repr_phase_arr[j] = 0+0j
+                    repr_idx_arr[j] = int(idx)
+
+        # Expose jittable arrays for builders
+        self._repr_idx = repr_idx_arr
+        self._repr_phase = repr_phase_arr
     
     # --------------------------------------------------------------------------------------------------
     
@@ -1976,8 +1435,7 @@ class HilbertSpace(ABC):
         Note:
             This function uses the find_representative function from this module to find the representative.        
         """
-        return get_matrix_element(k, new_k, kmap, h_conj, self._mapping, 
-                        self._normalization, self._sym_group, self._reprmap)
+        return get_matrix_element(k, new_k, kmap, h_conj, self._mapping, self._normalization, self._sym_group, None)
     
     ####################################################################################################
     #! Full Hilbert space generation
@@ -2007,47 +1465,6 @@ class HilbertSpace(ABC):
             return self._fullmap
         self.generate_full_map_int()
         return self._fullmap
-    
-    @maybe_jit
-    def _cast_to_full_jax(self, state, backend : str = "jax"):
-        """
-        Cast the state to the full Hilbert space.
-        
-        Args:
-            state: The state to cast to the full Hilbert space.
-        
-        Returns:
-            int: The state cast to the full Hilbert space.
-        """
-        import jax.numpy as jnp
-        # Create a full state vector of zeros.
-        f_s = jnp.zeros((self._nhfull,), dtype=self._dtype)
-        # Convert self._fullmap to a JAX array if it isn't one already.
-        fullmap = jnp.array(self._fullmap)
-        # Use the vectorized .at[].set() operation to update f_s at indices in fullmap.
-        f_s = f_s.at[fullmap].set(state)
-        return f_s
-    
-    def cast_to_full(self, state):
-        """
-        Cast the state to the full Hilbert space.
-        
-        Args:
-            state: The state to cast to the full Hilbert space.
-        
-        Returns:
-            int: The state cast to the full Hilbert space.
-        """
-        if not self.check_global_symmetry():
-            return state
-        if self._fullmap is None or len(self._fullmap) == 0:
-            self.generate_full_map_int()
-        if isinstance(state, np.ndarray):
-            final_state = self._backend.zeros(self._nhfull, dtype=self._dtype)
-            for i, idx in enumerate(self._fullmap):
-                final_state[idx] = state[i]
-            return final_state
-        return self._cast_to_full_jax(state)
     
     ####################################################################################################
     #! Operators for the Hilbert space
@@ -2109,161 +1526,6 @@ class HilbertSpace(ABC):
         return NotImplementedError("Only integer indexing is supported.")
     
     ################################################################################################
-
-####################################################################################################
-
-def set_operator_elem(operator, hilbert : HilbertSpace, k : int, val, new_k : int, conj = False):
-    """
-    Set the matrix element of the operator.
-    
-    Args:
-        operator (Operator)     : The operator to set the matrix element for.
-        hilbert (HilbertSpace)  : The Hilbert space object.
-        i                       : The index of the matrix element.
-        val                     : The value of the matrix element.
-        j                       : The index of the matrix element.
-    Returns:
-        Operator: The operator with the matrix element set.
-    """
-    (row, col), sym_eig = hilbert.get_matrix_element(k, new_k, h_conj = conj)
-    
-    # check if operator is numpy array
-    if isinstance(operator, np.ndarray):
-        operator[row, col]  += val * sym_eig
-    else:
-        operator = operator.at[row, col].add(val * sym_eig)
-    return operator # for convenience
-
-def get_operator_elem(hilbert : HilbertSpace, k : int, new_k : int, conj = False):
-    """
-    Get the matrix element of the operator.
-    
-    Args:
-        hilbert (HilbertSpace)  : The Hilbert space object.
-        k                       : The index of the matrix element.
-        new_k                   : The new index of the matrix element.
-        conj                    : Whether to take the complex conjugate (default is False).
-    Returns:
-        float: The matrix element of the operator.
-    """
-    (row, col), sym_eig = hilbert.get_matrix_element(k, new_k, h_conj = conj)
-    return (row, col), sym_eig
-
-####################################################################################################
-
-if JAX_AVAILABLE:
-    import jax.numpy as jnp
-    import jax
-    from jax import jit, lax
-    from functools import partial
-    
-    # @partial(jit, static_argnames=('funct', 'max_padding'))
-    def process_matrix_elem_jax(funct: Callable, k, k_map, params, max_padding: int):
-        """
-        Process the matrix element. It is assumed that the function is returning the [rows], [cols], [vals].
-        
-        Args:
-            funct (Callable): The function to apply.
-            k (int)         : The index of the matrix element - by default it is assumed to be the row index.
-            k_map (int)     : The mapped index of the matrix element - if the mapping is used.
-            params          : The parameters for the matrix element - for example the lattice indices.
-            max_padding (int): Maximum number of padding to apply.
-        """
-        # assume that the function is returning the [rows], [cols], [vals]
-        all_results     = jax.vmap(lambda p: funct(k, k_map, p))(params)
-        _, cols, vals   = all_results
-        
-        # Debug print to check shape and type
-        # jax.debug.print("Shape of cols: {}", cols.shape)
-        # jax.debug.print("Type of cols: {}", cols.dtype) 
-        # jax.debug.print("Shape of vals: {}", vals.shape)
-        # jax.debug.print("Type of vals: {}", vals.dtype) 
-        
-        # Flatten the results
-        cols            = cols.reshape(-1)
-        vals            = vals.reshape(-1)
-        
-        # Sort the columns and values
-        sort_idx        = jnp.argsort(cols)
-        cols_sorted     = cols[sort_idx]
-        vals_sorted     = vals[sort_idx]
-        
-        # Debug print to check shape and type
-        # jax.debug.print("Shape of cols_sorted: {}", cols_sorted.shape)
-        # jax.debug.print("Type of cols_sorted: {}", cols_sorted.dtype)  
-
-        # Find unique column indices and sum values.
-        unique_cols, inv, counts    = jnp.unique(
-            cols_sorted, return_inverse=True, return_counts=True,size=cols_sorted.shape[0]
-        )
-        summed_vals                 = jax.ops.segment_sum(vals_sorted, inv, num_segments=unique_cols.shape[0])
-
-        # Padding as before.
-        pad_width                   = max_padding - unique_cols.shape[0]
-        # jax.debug.print("Padding width: {}", pad_width)
-        # jax.debug.print("max_padding: {}", max_padding)
-        
-        # Calculate pad_width using JAX, keep it as JAX array
-        unique_cols_padded          = pad_array(unique_cols, max_padding, -1)
-        summed_vals_padded          = pad_array(summed_vals, max_padding, 0.0)
-
-        return unique_cols_padded, summed_vals_padded, unique_cols.shape[0]
-
-    @partial(jit, static_argnames=('funct', 'hilbert', 'max_padding', 'batch_start', 'batch_end'))
-    def process_matrix_batch_jax(funct: Callable, batch_start, batch_end, hilbert : HilbertSpace, params, max_padding: int):
-        '''
-        Process a batch of matrix elements using JAX.
-        
-        Args:
-            funct (Callable)    : The function to process each matrix element.
-            batch_start (int)   : The starting index of the batch.
-            batch_end (int)     : The ending index of the batch.
-            hilbert (HilbertSpace): The Hilbert space object.
-            params (Any)        : Additional parameters for processing.
-            max_padding (int)   : Maximum number of padding to apply.
-        '''
-        ks      = jnp.arange(batch_start, batch_end, dtype=ACTIVE_INT_TYPE)
-        k_maps  = jnp.array([hilbert.get_mapping(k) for k in ks], dtype=ACTIVE_INT_TYPE)
-        # Vectorize process_matrix_elem_jax over the rows in the batch.
-        cols_, vals_, counts_ = jax.vmap(
-            lambda r, k_map: process_matrix_elem_jax(funct, r, k_map, params, max_padding)
-        )(ks, k_maps)
-        return cols_, vals_, counts_
-
-def process_matrix_elem_np(funct : Callable, k, k_map, params):
-    """
-    Process the matrix element for a given set of parameters.
-    This can be for example a set of real lattice indices 
-    
-    Args:
-        k (int)     : The index of the matrix element - by default it is assumed to be the row index.
-        k_map (int) : The mapped index of the matrix element - if the mapping is used.
-        params      : The parameters for the matrix element - for example the lattice indices.
-    """
-    # assume that the function is returning the [rows], [cols], [vals]
-    rows, cols, vals    = np.vectorize(lambda p: funct(k, k_map, p))(params)
-    count               = len(rows)
-    return rows, cols, vals, count
-
-def process_matrix_batch_np(batch_start, batch_end, hilbert : HilbertSpace, funct : Callable, params):
-    """
-    Process the matrix batch. This function processes the matrix batch using the given function.
-    This is assumed to be a start of index and end of index for the batch.
-    
-    Runs the process_matrix_elem_np function for each element in the batch.
-    
-    Args:
-        batch_start (int)   : The starting index of the batch.
-        batch_end (int)     : The ending index of the batch.
-        funct (Callable)    : The function to process the matrix batch.
-    """
-    # create
-    k_maps  = [hilbert.get_mapping(k) for k in range(batch_start, batch_end)]
-    ks      = np.arange(batch_start, batch_end, dtype=np.int64)
-    # Vectorize process_row over the rows in the batch.
-    unique_cols_batch, summed_vals_batch, counts_batch  = np.vectorize(lambda k, k_map: process_matrix_elem_np(funct, k, k_map, params))(ks, k_maps)
-    total_counts                                        = np.sum(counts_batch)
-    return unique_cols_batch, summed_vals_batch, counts_batch, total_counts
 
 #####################################################################################################
 #! End of file
