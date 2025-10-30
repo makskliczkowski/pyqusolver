@@ -57,9 +57,9 @@ def fermionic_parity_int(state: int, ns: int, site: int) -> float:
     site:
         Site index (0-based) at which the operator acts.
     """
-    shift = ns - site
-    mask_bits = (1 << shift) - 1
-    parity = bit_popcount_mask(state, mask_bits) & 1
+    shift       = ns - site
+    mask_bits   = ((1 << ns) - 1) ^ ((1 << shift) - 1)
+    parity      = bit_popcount_mask(state, mask_bits) & 1
     return -1.0 if parity else 1.0
 
 

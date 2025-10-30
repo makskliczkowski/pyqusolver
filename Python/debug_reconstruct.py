@@ -28,9 +28,9 @@ def reconstruct_with_U(ns):
 
     for k_out in range(ns):
         for k_in in range(ns):
-            hil_in = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_in)], gen_mapping=True)
+            hil_in  = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_in)], gen_mapping=True)
             hil_out = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_out)], gen_mapping=True)
-            H_block = build_operator_matrix(hil_in, sigma_x_op, hilbert_space_out=hil_out, sparse=True)
+            H_block = build_operator_matrix(sigma_x_op, hilbert_space=hil_in, hilbert_space_out=hil_out, sparse=True)
 
             # build U matrices via canonical function
             U_in = get_symmetry_rotation_matrix(hil_in)

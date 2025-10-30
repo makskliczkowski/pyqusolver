@@ -421,7 +421,7 @@ def c_k_np(state       : np.ndarray,
 
     index            = 0
     for i in sites:
-        if state[i] == 0:                         # empty ⇒ no contribution
+        if state[i] == 0:                         # empty -> no contribution
             continue
 
         tmp_state     = state.copy()
@@ -500,11 +500,11 @@ def c_k_dag_np(state       : np.ndarray,
                sites       : List[int],
                k           : float,
                prefactor   : float = 1.0):
-    """
+    r"""
     Apply momentum-space creation operator c_k\dag to a NumPy occupation array.
     """
     ns               = state.shape[0]
-    # empty sites count ⇒ upper bound
+    # empty sites count -> upper bound
     non_zero         = ns
     for j in range(ns):
         non_zero    -= 1 if state[j] else 0
@@ -547,7 +547,7 @@ def n_int_np(state     : int,
     coeff_val = 1.0
     for site in sites:
         pos = ns - 1 - site
-        if _bit(state, pos) == 0:   # site unoccupied ⇒ result = 0
+        if _bit(state, pos) == 0:   # site unoccupied -> result = 0
             coeff_val = 0.0
             break
 
@@ -565,7 +565,7 @@ def n_np(state      : np.ndarray,
     coeff_val   = np.ones(1, dtype=_DEFAULT_FLOAT)
     out         = state.copy()
     for site in sites:
-        if out[site] == 0:        # unoccupied ⇒ zero immediately
+        if out[site] == 0:        # unoccupied -> zero immediately
             coeff_val = np.zeros(1, dtype=_DEFAULT_FLOAT)
             break
 
@@ -821,7 +821,7 @@ def _register_catalog_entries():
         )
 
     def _number_factory() -> LocalOpKernels:
-        ''' Number operator n_i = c\dag_i c_i factory '''
+        r''' Number operator n_i = c\dag_i c_i factory '''
         
         def _int_kernel(state, ns, sites):
             out_state, out_coeff = hardcore_number_int(state, ns, sites)

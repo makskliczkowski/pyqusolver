@@ -68,26 +68,29 @@ def build_transverse_ising_hamiltonian(ns, J=1.0, h=0.5, k=0):
         hs: HilbertSpace object
     """
     lattice = SquareLattice(1, ns)
-    hs = HilbertSpace(
-        lattice=lattice,
-        sym_gen=[(SymmetryGenerators.Translation_x, k)],
-        gen_mapping=True
-    )
+    hs      = HilbertSpace(
+                lattice         =   lattice,
+                sym_gen         =   [(SymmetryGenerators.Translation_x, k)],
+                gen_mapping     =   True
+            )
     
     print(f"   Building H for ns={ns}, k={k}")
     print(f"   Full space: 2^{ns} = {2**ns}")
     print(f"   Reduced space: {hs.dim}")
     print(f"   Reduction factor: {2**ns / hs.dim:.2f}x")
     
-    H_zz = -J * build_operator_matrix(hs, sigma_zz_operator, sparse=True)
-    H_x = -h * build_operator_matrix(hs, sigma_x_operator, sparse=True)
-    
-    H = H_zz + H_x
+    H_zz    = -J * build_operator_matrix(sigma_zz_operator, hilbert_space=hs, sparse=True)
+    H_x     = -h * build_operator_matrix(sigma_x_operator, hilbert_space=hs, sparse=True, max_local_changes=ns)
+    H       = H_zz + H_x
     
     print(f"   H shape: {H.shape}")
     print(f"   Non-zeros: {H.nnz}/{H.shape[0]**2} ({100*H.nnz/H.shape[0]**2:.1f}%)")
     
     return H, hs
+
+# -------
+# Main execution
+# -------
 
 def main():
     print("\n" + "="*70)
@@ -159,7 +162,7 @@ def main():
     
     print()
     print("="*70)
-    print("EFFICIENT HAMILTONIAN CONSTRUCTION DEMONSTRATED ✓")
+    print("EFFICIENT HAMILTONIAN CONSTRUCTION DEMONSTRATED (ok) ")
     print("="*70)
     print("\nKey advantages:")
     print("  • Automatic symmetry reduction (up to Ns-fold)")

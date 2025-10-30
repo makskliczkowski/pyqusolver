@@ -465,7 +465,7 @@ def calculate_bosonic_gaussian_amp(G        : Array,    # (ns, ns)
     m   = occ.size
     if m == 0:
         return 1.0
-    if m & 1:                              # odd # bosons ⇒ 0
+    if m & 1:                              # odd # bosons -> 0
         return 0.0
 
     sub = np.empty((m, m), dtype=G.dtype)

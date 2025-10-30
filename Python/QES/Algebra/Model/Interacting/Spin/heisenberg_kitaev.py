@@ -7,27 +7,33 @@ The Heisenberg-Kitaev model implementation with additional possible
 - anisotropy parameter \Delta       - \Delta (modifies the Heisenberg coupling),
 - \Gamma^\gamma interactions        - anisotropic off-diagonal couplings.
 
-Based on the C++ implementation. 
-
+------------------------------------------------------------------------------
 File    : Algebra/Model/Interacting/Spin/heisenberg_kitaev.py
 Author  : Maksymilian Kliczkowski
 Date    : 2025-02-17
 Version : 0.1
+------------------------------------------------------------------------------
 """
 
 import numpy as np
 from typing import List, Tuple, Union, Optional
 
 # QES package imports
-from QES.Algebra import hilbert as hilbert_module
-from QES.Algebra import hamil as hamil_module
-from QES.Algebra.Operator import operators_spin as operators_spin_module
+try:
+    import QES.Algebra.hilbert as hilbert_module
+    import QES.Algebra.hamil as hamil_module
+    import QES.Algebra.Operator.operators_spin as operators_spin_module
+except ImportError as e:
+    raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 
 ##########################################################################################
 #! IMPORTS
 ##########################################################################################
 
-from QES.general_python.lattices.lattice import Lattice, LatticeType
+try:
+    from QES.general_python.lattices.lattice import Lattice, LatticeType
+except ImportError as e:
+    raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 
 # ----------------------------------------------------------------------------------------
 #! DEFINE CONSTANTS
@@ -207,11 +213,11 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
             hamil_module.Hamiltonian.fmt("hx",      self._hx,       prec=prec) if self._hx  is not None else "",
         ]
 
-        # symmetry / boundary info from HilbertSpace object
-        hilbert_info = self.hilbert_space.get_sym_info().strip()
-        if len(hilbert_info) > 0:
-            parts.append(hilbert_info)
-        parts.append(str(self.lattice.bc))
+        # # symmetry / boundary info from HilbertSpace object
+        # hilbert_info = self.hilbert_space.get_sym_info().strip()
+        # if len(hilbert_info) > 0:
+        #     parts.append(hilbert_info)
+        # parts.append(str(self.lattice.bc))
         
         return sep.join(parts) + ")"
     

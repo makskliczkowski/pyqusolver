@@ -32,6 +32,49 @@ try:
 except ImportError:
     raise ImportError("Could not import base symmetry classes from QES.Algebra.Symmetries.base")
 
+from numba import njit
+
+
+####################################################################################################
+# JIT-compiled translation application
+####################################################################################################
+
+@njit
+def _apply_translation_jit(state: int, ns: int, perm, crossing_mask):
+    """
+    JIT-compiled core of translation application.
+    
+    Parameters
+    ----------
+    state : int
+        Integer state
+    ns : int
+        Number of sites
+    perm : array
+        Permutation array
+    crossing_mask : array
+        Crossing mask
+        
+    Returns
+    -------
+    new_state : int
+        Translated state
+    occ_cross : int
+        Number of occupied crossing sites
+    """
+    new_state = 0
+    
+    for src in range(ns):
+        if (state >> (ns - 1 - src)) & 1:
+            dest = perm[src]
+            new_state |= 1 << (ns - 1 - dest)
+    
+    occ_cross = 0
+    for src in range(ns):
+        if crossing_mask[src] and ((state >> (ns - 1 - src)) & 1):
+            occ_cross += 1
+    
+    return new_state, occ_cross
 
 ####################################################################################################
 # Translation symmetry operator class
@@ -375,26 +418,11 @@ class TranslationSymmetry(SymmetryOperator):
         phase : complex
             The phase factor acquired due to fermionic sign or boundary conditions.
         """
-        lat             = self.lattice
-        perm            = self.perm
-        crossing_mask   = self.crossing_mask
-        new_state       = 0
+        # Use JIT-compiled core function
+        new_state, occ_cross = _apply_translation_jit(state, ns, self.perm, self.crossing_mask)
         
-        # Apply permutation to the state
-        for src in range(ns):
-            if (state >> (ns - 1 - src)) & 1:
-                dest        = int(perm[src])
-                new_state  |= 1 << (ns - 1 - dest)
-                
-        # Fermionic sign or boundary phase
-        if crossing_mask.any():
-            crossing_sites  = np.nonzero(crossing_mask)[0]
-            occ_cross       = sum(1 for src in crossing_sites if (state >> (ns - 1 - src)) & 1)
-        else:
-            occ_cross       = 0
-
         # Compute boundary phase
-        phase = lat.boundary_phase(self.direction, occ_cross)
+        phase = self.lattice.boundary_phase(self.direction, occ_cross)
         return new_state, phase
     
     def apply_numpy(self, state, **kwargs):

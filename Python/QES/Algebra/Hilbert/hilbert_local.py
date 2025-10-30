@@ -152,9 +152,46 @@ class LocalSpace:
     def __repr__(self) -> str:
         return f"LocalSpace(name={self.name},nhl={self.local_dim},occ_max={self.max_occupation})"
 
+    def __getitem__(self, key: str) -> LocalOperator:
+        if isinstance(key, str):
+            return self.from_str(key)
+        elif isinstance(key, LocalSpace):
+            return key
+        else:
+            raise TypeError(f"Cannot convert type {type(key)} to LocalSpace.")
+
+    def __hash__(self) -> int:
+        return hash((
+            self.name,
+            self.typ,
+            self.local_dim,
+            self.sign_rule,
+            self.cutoff,
+            self.max_occupation,
+            tuple(sorted(self.onsite_operators.keys()))
+        ))
+
+    @classmethod
+    def from_str(cls, s: str) -> "LocalSpace":
+        return cls.default_from_string(s)
+    
     # ------------------------------------------------------------------
     # Defaults
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def default_from_string(s: str, **kwargs) -> "LocalSpace":
+        s_lower = s.lower()
+        if s_lower == LocalSpaceTypes.SPIN_1_2.value:
+            return LocalSpace.default_spin_half(**kwargs)
+        elif s_lower == LocalSpaceTypes.SPINLESS_FERMIONS.value:
+            return LocalSpace.default_fermion_spinless(**kwargs)
+        elif s_lower == LocalSpaceTypes.BOSONS.value:
+            return LocalSpace.default_boson(**kwargs)
+        elif s_lower == LocalSpaceTypes.ANYON_ABELIAN.value:
+            raise ValueError("For abelian anyons, please specify the statistics_angle parameter.")
+        else:
+            raise ValueError(f"Unknown local space type string: '{s}'.")
 
     @staticmethod
     def default_spin_half(**kwargs):

@@ -66,7 +66,7 @@ else:
     _flip_func = None
 
 # -----------------------------------------------------------------------------
-#! Sigma-X (\sigma ₓ) operator
+#! Sigma-X (sigma ₓ) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -77,8 +77,8 @@ if JAX_AVAILABLE:
                         sites,
                         spin        : bool  = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
-        Apply the Pauli-X (\sigma ₓ) operator on the given sites.
+        r"""
+        Apply the Pauli-X (sigma ₓ) operator on the given sites.
         For each site, flip the bit at position (ns-1-site) using a JAX-compatible flip function.
         
         Args:
@@ -127,8 +127,8 @@ if JAX_AVAILABLE:
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
         r"""
-        Apply the inverse of the Pauli-X (\sigma ₓ) operator on a JAX array state.
-        This is equivalent to applying the \sigma ₓ operator again.
+        Apply the inverse of the Pauli-X (sigma ₓ) operator on a JAX array state.
+        This is equivalent to applying the sigma ₓ operator again.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
         meaning that we want to find all the states s' that lead to the state s.
@@ -143,7 +143,7 @@ if JAX_AVAILABLE:
         return sigma_x_jnp(state, sites, spin, spin_value)
     
 # -----------------------------------------------------------------------------
-#! Sigma-Y (\sigma ᵧ) operator
+#! Sigma-Y (sigma _y ) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -154,8 +154,8 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
-        \sigma ᵧ on an integer state (JAX version).
+        r"""
+        sigma _y  on an integer state (JAX version).
 
         For each site, if the bit at (ns-1-site) is set then multiply the coefficient
         by (1j*spin_value), otherwise by (-1j*spin_value); then flip the bit.
@@ -197,8 +197,8 @@ if JAX_AVAILABLE:
                     sites       : Union[List[int], None],
                     spin        : bool = BACKEND_DEF_SPIN,
                     spin_value  : float = _SPIN):
-        """
-        \sigma ᵧ on a JAX array state.
+        r"""
+        sigma _y  on a JAX array state.
         Uses lax.fori_loop.
         
         Parameters:
@@ -258,8 +258,8 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
-        Apply the Pauli-Y (\sigma ᵧ) operator on a JAX array state.
+        r"""
+        Apply the Pauli-Y (\sigma _y ) operator on a JAX array state.
         Corresponds to the adjoint operation.
         """
         state, coeff = sigma_y_jnp(state, sites, spin, spin_value)
@@ -271,7 +271,7 @@ if JAX_AVAILABLE:
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
         r"""
-        Apply the inverse of the Pauli-Y (\sigma ᵧ) operator on a JAX array state.
+        Apply the inverse of the Pauli-Y (sigma _y ) operator on a JAX array state.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
         meaning that we want to find all the states s' that lead to the state s.
@@ -290,8 +290,8 @@ if JAX_AVAILABLE:
             tuple: (new_state, coeff) where new_state is the state after applying the operator
                 and coeff is the accumulated coefficient.
         """
-        # The inverse of \sigma ᵧ is \sigma ᵧ itself but with a different sign.
-        # This is because \sigma ᵧ is anti-Hermitian.
+        # The inverse of sigma _y  is sigma _y  itself but with a different sign.
+        # This is because sigma _y  is anti-Hermitian.
         return sigma_y_jnp(state, sites, spin, -spin_value)
 
 # -----------------------------------------------------------------------------
@@ -306,7 +306,7 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool      = BACKEND_DEF_SPIN,
                         spin_value  : float     = _SPIN):
-        """
+        r"""
         \sum _z on an integer state.
         For each site, if the bit at (ns-1-site) is set then multiply by spin_value; else by -spin_value.
         The state is unchanged.
@@ -357,7 +357,7 @@ if JAX_AVAILABLE:
                     sites       : Union[List[int], None],
                     spin        : bool = BACKEND_DEF_SPIN,
                     spin_value  : float = _SPIN):
-        """
+        r"""
         \sum _z on a JAX array state.
         
         Parameters:
@@ -415,7 +415,7 @@ if JAX_AVAILABLE:
         return sigma_z_jnp(state, sites, spin, spin_value)        
 
 # -----------------------------------------------------------------------------
-#! Sigma-Plus (\sigma ⁺) operator
+#! Sigma-Plus (sigma ⁺) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -426,8 +426,8 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None], 
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
-        Apply the raising operator \sigma ⁺ on an integer state (JAX version).
+        r"""
+        Apply the raising operator sigma ⁺ on an integer state (JAX version).
         """
         sites = jnp.asarray(sites)
         
@@ -458,8 +458,8 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
-        \sigma ⁺ on a JAX array state.
+        r"""
+        sigma ⁺ on a JAX array state.
         Uses lax.fori_loop.
         """
         sites_arr = jnp.asarray(sites)
@@ -487,7 +487,7 @@ if JAX_AVAILABLE:
         # return new_state, coeff
 
 # -----------------------------------------------------------------------------
-#! Sigma-Minus (\sigma ⁻) operator
+#! Sigma-Minus (sigma ^ -) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -525,8 +525,8 @@ if JAX_AVAILABLE:
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
-        \sigma ⁻ on a JAX array state.
+        r"""
+        sigma ^ - on a JAX array state.
         """
         sites_arr = jnp.asarray(sites)
         def body_fun(i, state_val):
@@ -550,12 +550,12 @@ if JAX_AVAILABLE:
         # return new_state, coeff
 
 # -----------------------------------------------------------------------------
-#! Sigma_pm (\sigma ⁺ then \sigma ⁻) operator
+#! Sigma_pm (sigma ⁺ then sigma ^ -) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
     
-    # @partial(jax.jit, static_argnums=(2,))
+    @partial(jax.jit, static_argnums=(2,))
     def sigma_pm_jnp(state, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
         coeff       = 1.0
         sites_arr   = jnp.asarray(sites)
@@ -593,8 +593,8 @@ if JAX_AVAILABLE:
 
     @partial(jax.jit, static_argnums=(2,))
     def sigma_pm_int_jnp(state, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
-        '''
-        \sigma ⁺ then \sigma ⁻ on an integer state.
+        r'''
+        \sigma ⁺ then \sigma ^ - on an integer state.
         For each site, if the bit at (ns-1-site) is set then multiply by spin_value; else by -spin_value.
         '''
         sites = jnp.asarray(sites)
@@ -629,7 +629,7 @@ if JAX_AVAILABLE:
         # return final_state, final_coeff
 
 # -----------------------------------------------------------------------------
-#! Sigma_mp (\sigma ⁻ then \sigma ⁺) operator
+#! Sigma_mp (sigma ^ - then sigma ⁺) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -666,13 +666,13 @@ if JAX_AVAILABLE:
         return ensure_operator_output_shape_jax(final_state, final_coeff)
         # return final_state, final_coeff
 
-    # @jax.jit
+    @jax.jit
     def sigma_mp_jnp(state,
                     sites   : Union[List[int], None],
                     spin    : bool = BACKEND_DEF_SPIN,
                     spin_value : float = _SPIN):
         """
-        Alternating operator (\sigma ⁻ then \sigma ⁺) on a JAX array state.
+        Alternating operator (sigma ^ - then sigma ⁺) on a JAX array state.
         """
         sites_arr = jnp.asarray(sites)
         def body_fun(i, state_val):
@@ -683,7 +683,7 @@ if JAX_AVAILABLE:
             def compute_branch(_):
                 site                = sites_arr[i]
                 def even_branch(_):
-                    # \sigma ⁻: only act if bit is set
+                    # sigma ^ -: only act if bit is set
                     coeff_new = jax.lax.cond(_binary.jaxpy.check_arr_jax(state_in, site),
                                             lambda _: coeff_in * spin_value,
                                             lambda _: 0.0,
@@ -695,7 +695,7 @@ if JAX_AVAILABLE:
                     return new_state, coeff_new
 
                 def odd_branch(_):
-                    # \sigma ⁺: only act if bit is not set
+                    # sigma ⁺: only act if bit is not set
                     coeff_new = jax.lax.cond(_binary.jaxpy.check_arr_jax(state_in, site),
                                             lambda _: 0.0,
                                             lambda _: coeff_in * spin_value,
@@ -719,7 +719,7 @@ if JAX_AVAILABLE:
         # return new_state, coeff
 
 # -----------------------------------------------------------------------------
-#! Sigma-K (\sigma _k) operator
+#! Sigma-K (sigma _k) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -747,14 +747,14 @@ if JAX_AVAILABLE:
         norm    = lax.cond(sites.shape[0] > 0, lambda _: sqrt_l, lambda _: jnp.array(1.0), operand=None)
         return state, total / norm
 
-    # @jax.jit
+    @jax.jit
     def sigma_k_jnp(state,
                     sites       : Union[List[int], None],
                     k           : float,
                     spin        : bool = BACKEND_DEF_SPIN,
                     spin_value  : float = _SPIN):
         """
-        Compute the Fourier-transformed spin operator (\sigma _k) on a JAX array state.
+        Compute the Fourier-transformed spin operator (sigma _k) on a JAX array state.
         Uses lax.fori_loop.
         Parameters:
             state (np.ndarray) :
@@ -796,7 +796,7 @@ if JAX_AVAILABLE:
                         spin_value  : float = _SPIN):
         r"""
         Apply the inverse
-        of the Fourier-transformed spin operator (\sigma _k) on a JAX array state.
+        of the Fourier-transformed spin operator (sigma _k) on a JAX array state.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
         
@@ -821,17 +821,17 @@ if JAX_AVAILABLE:
         return sigma_k_jnp(state, sites, k, spin, spin_value)
 
 # -----------------------------------------------------------------------------
-#! Sigma-Total (\sigma ₜ) operator
+#! Sigma-Total (sigma _t ) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
-    # @partial(jax.jit, static_argnums=(1, 2, 3))
+    @partial(jax.jit, static_argnums=(1, 2, 3))
     def sigma_z_total_jnp(state,
                         sites       : Union[List[int], None],
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
-        """
-        \sigma ₜ on a JAX array state.
+        r"""
+        sigma _t  on a JAX array state.
         """
         sites_arr   = jnp.asarray(sites)
         coeff       = jnp.sum(state[sites_arr]) * spin_value
@@ -841,8 +841,8 @@ if JAX_AVAILABLE:
                             sites       : Union[List[int], None],
                             spin        : bool = BACKEND_DEF_SPIN,
                             spin_value  : float = _SPIN):
-        """
-        \sigma ₜ on a JAX array state.
+        r"""
+        sigma _t  on a JAX array state.
         """
         sites_arr   = jnp.asarray(sites)
         coeff       = 0.0

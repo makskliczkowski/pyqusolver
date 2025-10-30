@@ -156,7 +156,7 @@ class HilbertSpace(ABC):
                 sym_gen         : Union[dict, None]                 = None,
                 global_syms     : Union[List[GlobalSymmetry], None] = None,
                 gen_mapping     : bool                              = False,
-                local_space     : Optional[LocalSpace]              = None,
+                local_space     : Optional[Union[LocalSpace, str]]  = None,
                 # general parameters
                 state_type      : StateTypes                        = StateTypes.INTEGER,
                 backend         : str                               = 'default',
@@ -186,8 +186,8 @@ class HilbertSpace(ABC):
                 List of global symmetry objects. Default is None.
             gen_mapping (bool, optional):
                 Whether to generate state mapping based on symmetries. Default is False.
-            local_space (Optional[LocalSpace], optional):
-                LocalSpace object defining local Hilbert space properties. Default is None.
+            local_space (Optional[Union[LocalSpace, str]], optional):
+                LocalSpace object or string defining local Hilbert space properties. Default is None.
             ---------------
             state_type (str, optional):
                 Type of state representation (e.g., "integer"). Default is "integer".
@@ -230,9 +230,12 @@ class HilbertSpace(ABC):
 
         #! set locals
         # If you have a LocalSpace.default(), use it; otherwise use your default spin-1/2 factory.
-        self._local_space   = local_space if local_space is not None else LocalSpace.default()  # or default_spin_half_local_space()
-        if self._local_space is None:
-            raise ValueError("local_space must be provided or LocalSpace.default() must return a valid LocalSpace.")
+        if isinstance(local_space, LocalSpace):
+            self._local_space = local_space
+        elif isinstance(local_space, str):
+            self._local_space = LocalSpace.from_str(local_space)
+        else:
+            self._local_space = LocalSpace.default() # or default_spin_half_local_space()
 
         #! infer the system sizes
         self._check_ns_infer(lattice=lattice, ns=ns, nh=nh)
@@ -909,6 +912,13 @@ class HilbertSpace(ABC):
             type_override=type_override,
         )
     
+    def get_operator_elem(self, col_idx: int):
+        """
+        Get the element of the local operator.
+        """
+        new_row, sym_eig = self.find_repr(col_idx)
+        return new_row, sym_eig
+    
     # --------------------------------------------------------------------------------------------------
     
     @property
@@ -926,6 +936,11 @@ class HilbertSpace(ABC):
     @property
     def Nh(self):                               return self._nh    
     def get_Nh(self):                           return self._nh
+    @property
+    def full(self):                             return self._nhfull
+    @property
+    def Nhfull(self):                           return self._nhfull
+    def get_Nh_full(self):                      return self._nhfull
     
     # --------------------------------------------------------------------------------------------------
     
@@ -972,7 +987,7 @@ class HilbertSpace(ABC):
     #! Find the representative of a state
     ####################################################################################################
 
-    def find_sym_repr(self, state) -> Tuple[int, Union[float, complex]]:
+    def find_sym_repr(self, state, nb: float = 1) -> Tuple[int, Union[float, complex]]:
         """
         Find the representative (minimum state) in the orbit of a given state
         under the current symmetry sector.
@@ -991,7 +1006,7 @@ class HilbertSpace(ABC):
         """
         if self._sym_container is None:
             return state, 1.0
-        return self._sym_container.find_representative(state)
+        return self._sym_container.find_representative(state, nb)
     
     def find_sym_norm(self, state) -> Union[float, complex]:
         """
@@ -1014,9 +1029,9 @@ class HilbertSpace(ABC):
             return 1.0
         return self._sym_container.compute_normalization(state)
             
-    def find_repr(self, state) -> Tuple[int, Union[float, complex]]:
-        return self.find_sym_repr(state)
-    
+    def find_repr(self, state, nb: float = 1) -> Tuple[int, Union[float, complex]]:
+        return self.find_sym_repr(state, nb)
+
     def find_norm(self, state):
         return self.find_sym_norm(state)
         
@@ -1055,34 +1070,47 @@ class HilbertSpace(ABC):
                     full_map.append(j)
         self.full_to_global_map = np.array(full_map, dtype=np.int64)
 
-    def cast_to_full(self, vec_reduced):
+    def expand_from_reduced_space(self, vec_reduced):
         """
-        Cast a reduced-basis vector to the full Hilbert-space vector when global
-        symmetries (a full-map) are present. If no global symmetries are
-        configured, the input is returned unchanged.
+        Expand a vector from the reduced symmetry sector back to the full Hilbert space.
+        
+        This method handles both global symmetries (via full_map) and local symmetries
+        (via symmetry group expansion). If no symmetries are present, returns the input unchanged.
         """
-
-        # Check global symmetries
-        if not self.check_global_symmetry():    
+        # Check if we have any symmetries that reduce the space
+        if not self.modifies:
             return np.asarray(vec_reduced)
         
-        # Determine full dimension (fallback to local_space.local_dim**ns if not set)
-        try:
-            nh_full = int(self._nhfull)
-        except Exception:
-            nh_full = self.local_space.local_dim ** int(self._ns)
-
-        if len(vec_reduced) == nh_full:
-            return vec_reduced
-
-        full_vec = np.zeros(nh_full, dtype=vec_reduced.dtype)
-        full_map = self.get_full_glob_map()
+        # If we have global symmetries with a full map, use that
+        if self.check_global_symmetry and self.full_to_global_map is not None:
+            vec_full = np.zeros(self._nhfull, dtype=vec_reduced.dtype)
+            for i, state in enumerate(self.full_to_global_map):
+                if i < len(vec_reduced):
+                    vec_full[state] = vec_reduced[i]
+            return vec_full
         
-        if len(full_map) != len(vec_reduced):
-            raise ValueError("The size of the reduced vector does not match the size of the full mapping.")
+        # For local symmetries, expand using the symmetry group
+        if self.representative_list is not None and self.representative_norms is not None:
+            vec_full = np.zeros(2**self._ns, dtype=vec_reduced.dtype)
+            
+            for i, rep in enumerate(self.representative_list):
+                if i >= len(vec_reduced):
+                    continue
+                    
+                coeff = vec_reduced[i] / self.representative_norms[i] if self.representative_norms[i] != 0 else vec_reduced[i]
+                
+                # Apply all symmetry operations to expand this representative
+                for g in self.sym_group:
+                    try:
+                        state, phase = g(rep)
+                        vec_full[int(state)] += coeff * np.conjugate(phase)
+                    except Exception:
+                        continue
+                        
+            return vec_full
         
-        for idx_reduced, idx_full in enumerate(full_map):
-            full_vec[idx_full] = vec_reduced[idx_reduced]
+        # Fallback: return unchanged
+        return np.asarray(vec_reduced)
 
     ####################################################################################################
     #! Operators for the Hilbert space

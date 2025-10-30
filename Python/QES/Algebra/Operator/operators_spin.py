@@ -65,21 +65,21 @@ if JAX_AVAILABLE:
     from QES.Algebra.Operator.operators_spin_jax import sigma_z_total_int_jnp, sigma_z_total_jnp
 else:
     print("JAX is not available. JAX-based implementations of spin operators will not be accessible.")
-    sigma_x_int_jnp     = sigma_x_jnp       = lambda s, v       : None
-    sigma_x_jnp         = lambda s, v       : None
-    sigma_x_inv_jnp     = lambda s, v       : None
-    sigma_y_int_jnp     = sigma_y_jnp       = lambda s, v       : None
-    sigma_y_real_jnp    = lambda s, v       : None
-    sigma_y_inv_jnp     = lambda s, v       : None
-    sigma_z_int_jnp     = sigma_z_jnp       = lambda s, v       : None
-    sigma_z_inv_jnp     = lambda s, v       : None
-    sigma_plus_int_jnp  = sigma_plus_jnp    = lambda s, v       : None
-    sigma_minus_int_jnp = sigma_minus_jnp   = lambda s, v       : None
-    sigma_pm_int_jnp    = sigma_pm_jnp      = lambda s, v       : None
-    sigma_mp_int_jnp    = sigma_mp_jnp      = lambda s, v       : None
-    sigma_k_int_jnp     = sigma_k_jnp       = lambda s, v, k    : None
-
-################################################################################
+    sigma_x_int_jnp         = sigma_x_jnp       = None
+    sigma_x_jnp             = None
+    sigma_x_inv_jnp         = None
+    sigma_y_int_jnp         = sigma_y_jnp       = None
+    sigma_y_real_jnp        = None
+    sigma_y_inv_jnp         = None
+    sigma_z_int_jnp         = sigma_z_jnp       = None
+    sigma_z_inv_jnp         = None
+    sigma_plus_int_jnp      = sigma_plus_jnp    = None
+    sigma_minus_int_jnp     = sigma_minus_jnp   = None
+    sigma_pm_int_jnp        = sigma_pm_jnp      = None
+    sigma_mp_int_jnp        = sigma_mp_jnp      = None
+    sigma_k_int_jnp         = sigma_k_jnp       = None
+    sigma_k_inv_jnp         = None
+    sigma_z_total_int_jnp   = sigma_z_total_jnp = None
 #! Standard Pauli matrices
 ################################################################################
 
@@ -141,9 +141,7 @@ def sigma_x_int(state  : int,
     Returns
     -------
     """
-    if not isinstance(state, (int, np.integer)):
-        return sigma_x_int_jnp(state, ns, sites, spin_value)
-    return sigma_x_int_np(state, ns, sites, spin_value)
+    return sigma_x_int_np(state, ns, sites, BACKEND_DEF_SPIN, spin_value)
 
 @numba.njit
 def sigma_x_np(state    : np.ndarray,
@@ -509,12 +507,22 @@ def sigma_z_total_int_np(state        : int,
     The state is unchanged.
     """
     if sites is None:
-        sites = list(range(ns))
-    values          = np.sum(sigma_z_int_np(state, ns, [site], spin, spin_value)[1] for site in sites)
+        sites_list = []
+        for i in range(ns):
+            sites_list.append(i)
+        sites = sites_list
+    else:
+        # Ensure sites is a list
+        sites = list(sites)
+    values = 0.0
+    for site in sites:
+        values += sigma_z_int_np(state, ns, [site], spin, spin_value)[1][0]
     out_state       = np.empty(1, dtype=DEFAULT_NP_INT_TYPE)
     out_state[0]    = state
+    out_coeff       = np.empty(1, dtype=DEFAULT_NP_FLOAT_TYPE)
+    out_coeff[0]    = values
     # return ensure_operator_output_shape_numba(out_state, out_coeff)
-    return out_state, values
+    return out_state, out_coeff
 
 @numba.njit
 def sigma_z_total_np(state      : np.ndarray,
@@ -558,7 +566,7 @@ def sigma_plus_int_np(state         : int,
                     spin_value      : float = _SPIN):
     r"""
     \sigma ^+ |state>  on an *integer* spin string.
-    Returns (len -1 array new_state, len -1 array coeff).  Zero coeff ⇒ annihilation.
+    Returns (len -1 array new_state, len -1 array coeff).  Zero coeff -> annihilation.
     """
     new_state = state
     coeff     = 1.0
@@ -621,7 +629,7 @@ def sigma_minus_int_np(state        : int,
                     spin            : bool  = BACKEND_DEF_SPIN,
                     spin_value      : float = _SPIN):
     r"""
-    Applies the spin lowering (\sigma ⁻) operator to the specified sites of a quantum spin state represented as an integer.
+    Applies the spin lowering (\sigma ^ -) operator to the specified sites of a quantum spin state represented as an integer.
 
     Parameters:
         state (int):
@@ -629,7 +637,7 @@ def sigma_minus_int_np(state        : int,
         ns (int):
             The total number of sites (spins) in the system.
         sites (List[int]):
-            List of site indices (0-based, leftmost is 0) where the \sigma ⁻ operator is applied.
+            List of site indices (0-based, leftmost is 0) where the \sigma ^ - operator is applied.
         spin (bool, optional):
             Indicates if the system uses spin representation. Defaults to BACKEND_DEF_SPIN.
         spin_value (float, optional):
@@ -637,7 +645,7 @@ def sigma_minus_int_np(state        : int,
 
     Returns:
         Tuple[np.ndarray, np.ndarray]: 
-            - out_state: A NumPy array containing the new state(s) as integer(s) after applying \sigma ⁻.
+            - out_state: A NumPy array containing the new state(s) as integer(s) after applying \sigma ^ -.
             - out_coeff: A NumPy array containing the corresponding coefficient(s) for the new state(s).
 
     Notes:
@@ -649,7 +657,7 @@ def sigma_minus_int_np(state        : int,
     coeff     = 1.0
     for site in sites:
         pos = ns - 1 - site
-        if _binary.check_int(new_state, pos) == 0: # trying to lower |↓> ⇒ 0
+        if _binary.check_int(new_state, pos) == 0: # trying to lower |↓> -> 0
             coeff = 0.0
             break
         new_state = _binary.flip_int(new_state, pos)  # 1 -> 0
@@ -730,8 +738,8 @@ def _sigma_pm_int_core(state        : int,
                         spin_val    : float = _SPIN):
     r"""
     Core for \sum _pm / \sum _mp alternating flips on integer states.
-    start_up = True  -> even  = \sigma ^+ , odd = \sigma ⁻
-    start_up = False -> even  = \sigma ⁻ , odd = \sigma ^+
+    start_up = True  -> even  = \sigma ^+ , odd = \sigma ^ -
+    start_up = False -> even  = \sigma ^ - , odd = \sigma ^+
     """
     new_state   = state
     coeff       = 1.0
@@ -745,7 +753,7 @@ def _sigma_pm_int_core(state        : int,
                 coeff *= 0.0
                 break
             new_state = _binary.flip_int(new_state, pos)
-        else: # \sigma ⁻
+        else: # \sigma ^ -
             if bit == 0:
                 coeff *= 0.0
                 break
@@ -760,7 +768,7 @@ def sigma_pm_int_np(state       : int,
                     spin        : bool  = BACKEND_DEF_SPIN,
                     spin_val    : float = _SPIN):
     r"""
-    Applies the spin raising or lowering operator (\sigma ^+ or \sigma ⁻) to a given quantum state represented as an integer.
+    Applies the spin raising or lowering operator (\sigma ^+ or \sigma ^ -) to a given quantum state represented as an integer.
 
     Parameters:
         state (int):
@@ -792,7 +800,7 @@ def _sigma_pm_np_core(state     : np.ndarray,
                     spin        : bool  = BACKEND_DEF_SPIN,
                     spin_val    : float = _SPIN):
     r"""
-    Applies a sequence of spin raising or lowering operators (\sigma ^+ or \sigma ⁻) to specified sites of a quantum state array.
+    Applies a sequence of spin raising or lowering operators (\sigma ^+ or \sigma ^ -) to specified sites of a quantum state array.
 
     Parameters:
         state (np.ndarray):
@@ -800,7 +808,7 @@ def _sigma_pm_np_core(state     : np.ndarray,
         sites (List[int]):
             List of site indices where the spin operators are to be applied.
         start_up (bool):
-            If True, the sequence starts with a raising operator (\sigma ^+); if False, starts with lowering (\sigma ⁻).
+            If True, the sequence starts with a raising operator (\sigma ^+); if False, starts with lowering (\sigma ^ -).
         spin_val (float):
             The coefficient to multiply for each successful spin flip.
 
@@ -832,7 +840,7 @@ def sigma_pm_np(state       : np.ndarray,
                 sites       : List[int],
                 spin        : bool  = BACKEND_DEF_SPIN,
                 spin_val    : float = _SPIN):
-    r"""\sigma ^+ \sigma ⁻ alternating on NumPy array (start \sigma ^+)."""
+    r"""\sigma ^+ \sigma ^ - alternating on NumPy array (start \sigma ^+)."""
     return _sigma_pm_np_core(state, sites, True, spin, spin_val)
 
 def sigma_pm(state,
@@ -854,7 +862,7 @@ def sigma_mp_int_np(state      : int,
                     sites      : List[int],
                     spin       : bool  = BACKEND_DEF_SPIN,
                     spin_val   : float = _SPIN):
-    r"""Alternating \sigma ⁻ \sigma ^+ starting with \sigma ⁻ on even index (integer state)."""
+    r"""Alternating \sigma ^ - \sigma ^+ starting with \sigma ^ - on even index (integer state)."""
     new_state, coeff     = _sigma_pm_int_core(state, ns, sites, False, spin, spin_val)
     out_state            = np.empty(1, dtype=DEFAULT_NP_INT_TYPE)
     out_coeff            = np.empty(1, dtype=DEFAULT_NP_FLOAT_TYPE)
@@ -868,7 +876,7 @@ def sigma_mp_np(state       : np.ndarray,
                 sites       : List[int],
                 spin        : bool  = BACKEND_DEF_SPIN,  
                 spin_val    : float = _SPIN):
-    r"""\sigma ⁻ \sigma ^+ alternating on NumPy array (start \sigma ⁻)."""
+    r"""\sigma ^ - \sigma ^+ alternating on NumPy array (start \sigma ^ -)."""
     return _sigma_pm_np_core(state, sites, False, spin, spin_val)
 
 def sigma_mp(state,
@@ -1058,17 +1066,6 @@ def sig_y( lattice     : Optional[Lattice]     = None,
     int_fun = sigma_y_int_np
     jnp_fun = sigma_y_jnp
     
-    if type_act == OperatorTypeActing.Global:
-        if sites is not None and len(sites) % 2 == 1:
-            np_fun  = sigma_y_np_real
-            int_fun = sigma_y_int_np_real
-            jnp_fun = sigma_y_real_jnp
-            
-    elif type_act == OperatorTypeActing.Correlation:
-        np_fun      = sigma_y_np_real
-        int_fun     = sigma_y_int_np_real
-        jnp_fun     = sigma_y_real_jnp
-    
     return create_operator(
         type_act    = type_act,
         op_func_int = int_fun,
@@ -1156,7 +1153,7 @@ def sig_p(  lattice     : Optional[Lattice]     = None,
     )
 
 # -----------------------------------------------------------------------------
-#! Factory function for sigma-minus (\sigma ⁻)
+#! Factory function for sigma-minus (\sigma ^ -)
 # -----------------------------------------------------------------------------
 
 def sig_m(  lattice     : Optional[Lattice]     = None,
@@ -1166,7 +1163,7 @@ def sig_m(  lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     r"""
-    Factory for the spin-lowering operator \sigma ⁻.
+    Factory for the spin-lowering operator \sigma ^ -.
     """
 
     return create_operator(
@@ -1183,7 +1180,7 @@ def sig_m(  lattice     : Optional[Lattice]     = None,
     )
 
 # -----------------------------------------------------------------------------
-#! Factory function for sigma-pm (\sigma ^+ then \sigma ⁻)
+#! Factory function for sigma-pm (\sigma ^+ then \sigma ^ -)
 # -----------------------------------------------------------------------------
 
 def sig_pm( lattice     : Optional[Lattice]     = None,
@@ -1193,7 +1190,7 @@ def sig_pm( lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     r"""
-    Factory for the alternating operator: even-indexed sites \sigma ^+, odd-indexed \sigma ⁻.
+    Factory for the alternating operator: even-indexed sites \sigma ^+, odd-indexed \sigma ^ -.
     """
 
     return create_operator(
@@ -1210,7 +1207,7 @@ def sig_pm( lattice     : Optional[Lattice]     = None,
     )
     
 # -----------------------------------------------------------------------------
-#! Factory function for sigma-mp (\sigma ⁻ then \sigma ^+)
+#! Factory function for sigma-mp (\sigma ^ - then \sigma ^+)
 # -----------------------------------------------------------------------------
 
 def sig_mp( lattice     : Optional[Lattice]     = None,
@@ -1220,7 +1217,7 @@ def sig_mp( lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     r"""
-    Factory for the alternating operator: even-indexed sites \sigma ⁻, odd-indexed \sigma ^+.
+    Factory for the alternating operator: even-indexed sites \sigma ^ -, odd-indexed \sigma ^+.
     """
 
     return create_operator(
@@ -1672,8 +1669,8 @@ class SpinOperatorTests(GeneralAlgebraicTest):
     # -------------------------------
     def test_sig_minus_global_int(self, state: Optional[int] = 0b0111, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
         r"""
-        Test Global \sigma ⁻ on an integer state.
-        For ns=4 and state=0b0111, applying \sigma ⁻ at site 2 should flip the bit if it is 1.
+        Test Global \sigma ^ - on an integer state.
+        For ns=4 and state=0b0111, applying \sigma ^ - at site 2 should flip the bit if it is 1.
         For state 0b0111, flipping bit at pos=ns-1-2 yields 0b0101 (decimal 5) with coefficient _SPIN.
         """
         if isinstance(sites, int):
@@ -1697,8 +1694,8 @@ class SpinOperatorTests(GeneralAlgebraicTest):
     # -------------------------------
     def test_sig_minus_global_np(self, state: Optional[int] = 0b0111, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
         r"""
-        Test Global \sigma ⁻ on a NumPy array state.
-        Convert an integer state to a binary array, apply \sigma ⁻, then convert back.
+        Test Global \sigma ^ - on a NumPy array state.
+        Convert an integer state to a binary array, apply \sigma ^ -, then convert back.
         For state [0,1,1,1] and site 2, expected new base is [0,1,0,1] and coefficient _SPIN.
         """
         if isinstance(sites, int):
@@ -1894,7 +1891,7 @@ def _register_catalog_entries():
         key                 =   "sigma_plus",
         factory             =   _sigma_plus_factory,
         description         =   r"Spin raising operator \sigma ^+ = (\sigma _x + i \sigma _y)/2.",
-        algebra             =   r"\sigma ^+\sigma ⁻ + \sigma ⁻\sigma ^+ = 1,   [\sigma _z, \sigma ^+] = 2\sigma ^+",
+        algebra             =   r"\sigma ^+\sigma ^ - + \sigma ^ -\sigma ^+ = 1,   [\sigma _z, \sigma ^+] = 2\sigma ^+",
         sign_convention     =   r"Acts locally without JW strings; raises \sigma _z eigenvalue by one.",
         tags                =   ("spin", "raising"),
     )
@@ -1902,8 +1899,8 @@ def _register_catalog_entries():
         LocalSpaceTypes.SPIN_1_2,
         key                 =   "sigma_minus",
         factory             =   _sigma_minus_factory,
-        description         =   r"Spin lowering operator \sigma ⁻ = (\sigma _x - i \sigma _y)/2.",
-        algebra             =   r"\sigma ^+\sigma ⁻ + \sigma ⁻\sigma ^+ = 1,   [\sigma _z, \sigma ⁻] = -2\sigma ⁻",
+        description         =   r"Spin lowering operator \sigma ^ - = (\sigma _x - i \sigma _y)/2.",
+        algebra             =   r"\sigma ^+\sigma ^ - + \sigma ^ -\sigma ^+ = 1,   [\sigma _z, \sigma ^ -] = -2\sigma ^ -",
         sign_convention     =   r"Acts locally without JW strings; lowers \sigma _z eigenvalue by one.",
         tags                =   ("spin", "lowering"),
     )

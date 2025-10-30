@@ -13,19 +13,19 @@ def sigma_x_op(state, ns):
 
 
 def contribution_for_pair(ns, k_in, k_out, i_full=0, j_full=1):
-    lattice = SquareLattice(1, ns)
-    hil_in = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_in)], gen_mapping=True)
-    hil_out = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_out)], gen_mapping=True)
+    lattice         = SquareLattice(1, ns)
+    hil_in          = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_in)], gen_mapping=True)
+    hil_out         = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_out)], gen_mapping=True)
 
-    H_block = build_operator_matrix(hil_in, sigma_x_op, hilbert_space_out=hil_out, sparse=True)
-    U_in = get_symmetry_rotation_matrix(hil_in)
-    U_out = get_symmetry_rotation_matrix(hil_out)
+    H_block         = build_operator_matrix(sigma_x_op, hilbert_space=hil_in, hilbert_space_out=hil_out, sparse=True)
+    U_in            = get_symmetry_rotation_matrix(hil_in)
+    U_out           = get_symmetry_rotation_matrix(hil_out)
 
-    U_in_arr = U_in.toarray() if hasattr(U_in, 'toarray') else np.asarray(U_in)
-    U_out_arr = U_out.toarray() if hasattr(U_out, 'toarray') else np.asarray(U_out)
+    U_in_arr        = U_in.toarray() if hasattr(U_in, 'toarray') else np.asarray(U_in)
+    U_out_arr       = U_out.toarray() if hasattr(U_out, 'toarray') else np.asarray(U_out)
 
-    H_block_dense = H_block.toarray() if hasattr(H_block, 'toarray') else np.array(H_block)
-    H_block_dense = np.asarray(H_block_dense, dtype=np.complex128)
+    H_block_dense   = H_block.toarray() if hasattr(H_block, 'toarray') else np.array(H_block)
+    H_block_dense   = np.asarray(H_block_dense, dtype=np.complex128)
 
     # compute partial contribution to element
     contrib = np.zeros((), dtype=np.complex128)

@@ -208,6 +208,12 @@ class OperatorTypeActing(Enum):
             return self.value == other
         return NotImplemented
 
+    def __repr__(self):
+        return f"{self.name}"
+    
+    def __str__(self):
+        return f"{self.name}"
+
 ####################################################################################################
 #! OperatorFunction
 ####################################################################################################
@@ -1460,21 +1466,18 @@ class Operator(ABC):
                 array, or jax.numpy array.
 
         Returns:
-            Union[tuple[list, list], Any]: 
-                - If `states` is a single state, returns the result of `_fun(states)`.
-                - If `states` is a collection, returns a tuple of two lists:
-                    - The first list contains the transformed states.
-                    - The second list contains the corresponding values.
+            tuple[list, list]: 
+                Two lists: the first contains the transformed states, the second contains the corresponding values.
         """
         if (hasattr(states, 'shape') and len(states.shape) <= 1) or isinstance(states, (int, np.integer)):
             # if the state is a single state (scalar or 0-d/1-d array), apply the function directly
             st, val = self._fun(states)
-            return st, val * self._eigval
+            return st, self._backend.asarray(val) * self._eigval
         
         # if the state is a collection of states, apply the function to each state
         results     = [self._fun(state) for state in states]
         out, val    = zip(*results) if results else ([], [])
-        return list(out), list(val * self._eigval)
+        return (self._backend.stack(list(out)), self._backend.stack([v * self._eigval for v in val])) if list(out) else (self._backend.array([]), self._backend.array([]))
     
     def _apply_local(self, states, i):
         """
@@ -1484,18 +1487,15 @@ class Operator(ABC):
                 Can be a single integer, a list of integers, or a NumPy/JAX array.
             i (int): The index or parameter used by the local operation.
         Returns:
-            tuple: A tuple containing two lists:
-                - The first list contains the resulting states after applying the operation.
-                - The second list contains the corresponding values or results of the operation.
-                If the input is a single state, the result is returned as a single state and value.
+            tuple[list, list]: Two lists: the resulting states and the corresponding values.
         """
         if (hasattr(states, 'shape') and len(states.shape) <= 1) or isinstance(states, (int, np.integer)):
             # if the state is a single state (scalar or 0-d/1-d array), apply the function directly
             st, val = self._fun(states, i)
-            return st, val * self._eigval
+            return st, self._backend.asarray(val) * self._eigval
         results     = [self._fun(state, i) for state in states]
         out, val    = zip(*results) if results else ([], [])
-        return list(out), list(val * self._eigval)
+        return (self._backend.stack(list(out)), self._backend.stack([v * self._eigval for v in val])) if list(out) else (self._backend.array([]), self._backend.array([]))
     
     def _apply_correlation(self, states, i, j):
         """
@@ -1506,21 +1506,16 @@ class Operator(ABC):
             i (int): The first index parameter for the correlation function.
             j (int): The second index parameter for the correlation function.
         Returns:
-            tuple: If `states` is a single state, returns a tuple `(out, val)` where:
-                - `out` is the output state after applying the correlation function.
-                - `val` is the value associated with the correlation function.
-            If `states` is a collection of states, returns a tuple of lists `(out_list, val_list)` where:
-                - `out_list` contains the output states for each input state.
-                - `val_list` contains the corresponding values for each input state.
+            tuple[list, list]: Two lists: the output states and the corresponding values.
         """
         if (hasattr(states, 'shape') and len(states.shape) == 1) or isinstance(states, (int, np.int8, np.int16, np.int32, np.int64)):
             # if the state is a single state, apply the function directly
             st, val = self._fun(states, i, j)
-            return st, val * self._eigval
+            return st, self._backend.asarray(val) * self._eigval
         
         results     = [self._fun(state, i, j) for state in states]
         out, val    = zip(*results) if results else ([], [])
-        return list(out), list(val * self._eigval)
+        return (self._backend.stack(list(out)), self._backend.stack([v * self._eigval for v in val])) if list(out) else (self._backend.array([]), self._backend.array([]))
         
     def apply(self, states : list | Array, *args):
         """
@@ -1596,7 +1591,7 @@ class Operator(ABC):
         """
         # create a dummy Hilbert space for convenience
         from QES.Algebra.hilbert import HilbertSpace
-        from QES.Algebra.Operator.operator_matrix import operator_create_np
+        from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
         
         dummy_hilbert   = HilbertSpace(nh = dim, backend = self._backend)
         if verbose:
@@ -1604,13 +1599,11 @@ class Operator(ABC):
 
         # calculate the time to create the matrix
         t1              = time.time()
-        matrix          = operator_create_np(ns                 = None, 
-                                            hilbert_space       = dummy_hilbert,
-                                            local_fun           = wrapped_funct,
-                                            max_local_changes   = max_loc_upd,
-                                            is_sparse           = is_sparse,
-                                            start               = None,
-                                            dtype               = dtype)
+        matrix          = build_operator_matrix(hilbert_space       = dummy_hilbert,
+                                                operator_func       = wrapped_funct,
+                                                sparse              = is_sparse,
+                                                max_local_changes   = max_loc_upd,
+                                                dtype               = dtype)
         time_taken      = time.time() - t1
         if verbose:
             dummy_hilbert.log(f"Time taken to create the matrix {self._name}: {time_taken:.2e} seconds", lvl=2)
@@ -1915,7 +1908,6 @@ def create_operator(type_act        : int | OperatorTypeActing,
     else:
         raise ValueError("Invalid OperatorTypeActing")
 
-
 def operator_from_local(local_op: LocalOperator,
                         *,
                         lattice: Optional[Lattice] = None,
@@ -1996,7 +1988,6 @@ def create_add_operator(operator: Operator, multiplier: Union[float, int, comple
         Tuple[Operator, List[Any], Union[float, int, complex]]:
             A tuple containing the operator, the adjusted list of sites, and the multiplier.
     """
-
     
     # if the operator is of Global type, we don't want to add the states to the argument, pass empty list
     
@@ -2326,7 +2317,7 @@ def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
                     verbose = not just_time)
 
     # ------------------------------------------------------------------
-    with Timer(verbose=True, precision='us', name="Operator action"):
+    with Timer(verbose=True, name="Operator action"):
         for cur_op, lab in zip(ops, labels):
             if not just_time:
                 display(Math(fr"\text{{Operator: }} {lab}, \text{{typeacting}}: {op_acting}"))

@@ -22,9 +22,9 @@ from abc import ABC
 import time
 
 ###################################################################################################
-from QES.Algebra.hilbert import HilbertSpace, HilbertConfig, set_operator_elem, Logger, Lattice
+from QES.Algebra.hilbert import HilbertSpace, HilbertConfig, Logger, Lattice
 from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_add_operator
-from QES.Algebra.Operator.operator_matrix import operator_create_np
+from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
 from QES.Algebra.Hamil.hamil_types import *
 from QES.Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wrap
 import QES.Algebra.Hamil.hamil_jit_methods as hjm
@@ -49,7 +49,6 @@ if JAX_AVAILABLE:
     import jax.numpy as jnp
     from jax.experimental.sparse import BCOO, CSR
     from QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
-    from QES.Algebra.hilbert import process_matrix_elem_jax, process_matrix_batch_jax
 else:
     jax                     = None
     jnp                     = None
@@ -57,8 +56,6 @@ else:
     BCOO                    = None
     CSR                     = None
     local_energy_jax_wrap   = None
-    process_matrix_elem_jax = None
-    process_matrix_batch_jax= None
 
 ####################################################################################################
 #! Hamiltonian class - abstract class
@@ -296,12 +293,20 @@ class Hamiltonian(ABC):
         self._dtype                 = dtype
         self._hilbert_space         = hilbert_space         # Hilbert space of the system, if any
         self._logger                = self._hilbert_space.logger if logger is None and self._hilbert_space is not None else logger
+        
+        #! general Hamiltonian info
+        self._name                  = "Hamiltonian"
+        
         self._handle_system(ns, hilbert_space, lattice, logger, **kwargs)        
                 
         # if the Hilbert space is provided, get the number of sites
         self._lattice               = self._hilbert_space.get_lattice()
         self._nh                    = self._hilbert_space.get_Nh()                
         self._handle_dtype(dtype)
+        if self._lattice is not None:
+            self._local_nei         = self.lattice.cardinality
+        else:
+            self._local_nei         = ns # assume fully connected if no lattice provided
         
         #! other properties
         self._startns               = 0 # for starting hamil calculation (potential loop over sites)
@@ -327,7 +332,6 @@ class Hamiltonian(ABC):
         self._eig_vec               : np.ndarray = None
         self._eig_val               : np.ndarray = None
         self._krylov                : np.ndarray = None
-        self._name                  = "Hamiltonian"
         self._max_local_ch          = 1                             # maximum number of local changes - through the loc_energy function
         self._max_local_ch_o        = self._max_local_ch            # maximum number of local changes - through the operator
 
@@ -369,8 +373,8 @@ class Hamiltonian(ABC):
             log (str) : The logging level. Default is 'info'.
             lvl (int) : The level of the message.
         """
-        msg = f"[{self._name}] {msg}"
-        self._hilbert_space.log(msg, log = log, lvl = lvl, color = color)
+        msg = f"[{self.name}] {msg}"
+        self._hilbert_space._log(msg, log = log, lvl = lvl, color = color)
     
     def __str__(self):
         '''
@@ -444,7 +448,6 @@ class Hamiltonian(ABC):
     
     @property
     def dtype(self):                    return self._dtype
-    
     @property
     def dtypeint(self):                 return self._dtypeint
     @property
@@ -468,6 +471,12 @@ class Hamiltonian(ABC):
 
     @property
     def max_local_changes(self):        return self._max_local_ch if self._is_manybody else 2
+    @property
+    def max_local(self):                return self.max_local_changes
+    @property
+    def max_operator_changes(self):     return self._max_local_ch_o if self._is_manybody else 2
+    @property
+    def max_operator(self):             return self.max_operator_changes
 
     # quadratic Hamiltonian properties
     
@@ -491,7 +500,8 @@ class Hamiltonian(ABC):
     def ns(self):                       return self._ns
     @property
     def sites(self):                    return self.ns
-    
+    @property
+    def cardinality(self):              return self._local_nei
     @property
     def lattice(self):                  return self._lattice
     
@@ -517,6 +527,18 @@ class Hamiltonian(ABC):
     def hamil(self):                    return self._hamil
     @hamil.setter
     def hamil(self, hamil):             self._hamil = hamil
+
+    @property
+    def matrix(self):
+        '''
+        Returns the Hamiltonian matrix, building it if necessary.
+        
+        This property automatically calls build() if the matrix has not been
+        constructed yet, providing a convenient way to access the matrix.
+        '''
+        if self._hamil is None:
+            self.build()
+        return self._hamil
 
     @property
     def diag(self):
@@ -1131,8 +1153,7 @@ class Hamiltonian(ABC):
                 else:
                     # do not initialize the Hamiltonian matrix
                     self._hamil     = None
-        self._log(f"Hamiltonian matrix initialized and it's {'many-body' if self._is_manybody else 'quadratic'}",
-                    lvl = 3, color = "green", log = "debug")
+        self._log(f"Hamiltonian matrix initialized and it's {'many-body' if self._is_manybody else 'quadratic'}", lvl = 3, color = "green", log = "debug")
     
     # ----------------------------------------------------------------------------------------------
     #! Many body Hamiltonian matrix
@@ -1348,7 +1369,7 @@ class Hamiltonian(ABC):
     # ! Hamiltonian matrix calculation
     # ----------------------------------------------------------------------------------------------
 
-    def _hamiltonian(self, use_numpy : bool = False):
+    def _hamiltonian(self, use_numpy : bool = False, sparse : Optional[bool] = None):
         '''
         Generates the Hamiltonian matrix. The diagonal elements are straightforward to calculate,
         while the off-diagonal elements are more complex and depend on the specific Hamiltonian.
@@ -1366,6 +1387,9 @@ class Hamiltonian(ABC):
         if self._loc_energy_int_fun is None and (use_numpy or self._is_numpy):
             raise RuntimeError("MB build requires local energy functions (_loc_energy_int_fun).")
         
+        if sparse is not None:
+            self._is_sparse = sparse
+        
         # -----------------------------------------------------------------------------------------
         matrix_type = "sparse" if self.sparse else "dense"
         self._log(f"Calculating the {matrix_type} Hamiltonian matrix...", lvl=1, color="blue", log = 'debug')
@@ -1378,14 +1402,12 @@ class Hamiltonian(ABC):
         if not jax_maybe_av or use_numpy:
             self._log("Calculating the Hamiltonian matrix using NumPy...", lvl=2, log = 'info')
             
-            # Calculate the Hamiltonian matrix using the NumPy implementation.
-            self._hamil = operator_create_np(
-                ns                  =   self._ns,
+            # Calculate the Hamiltonian matrix using the optimized matrix builder
+            self._hamil = build_operator_matrix(
                 hilbert_space       =   self._hilbert_space,
-                local_fun           =   self._loc_energy_int_fun,
-                max_local_changes   =   self._max_local_ch,
-                is_sparse           =   self._is_sparse,
-                start               =   self._startns,
+                operator_func       =   self._loc_energy_int_fun,
+                sparse              =   self._is_sparse,
+                max_local_changes   =   self._max_local_ch_o,
                 dtype               =   self._dtype
             )
         else:
@@ -1578,13 +1600,26 @@ class Hamiltonian(ABC):
         # Extract parameters
         if True:
             method          = kwargs.get("method", self._diag_method)
+            if method in kwargs: kwargs.pop("method")
+            
             backend_str     = kwargs.get("backend", None)
+            if backend_str in kwargs: kwargs.pop("backend")
+            
             use_scipy       = kwargs.get("use_scipy", True)
+            if use_scipy in kwargs: kwargs.pop("use_scipy")
+
             store_basis     = kwargs.get("store_basis", True)
+            if store_basis in kwargs: kwargs.pop("store_basis")
+
             k               = kwargs.get("k", None)
+            if k in kwargs: kwargs.pop("k")
+            
             which           = kwargs.get("which", "smallest")
+            if which in kwargs: kwargs.pop("which")
+            
             hermitian       = kwargs.get("hermitian", True)
-        
+            if hermitian in kwargs: kwargs.pop("hermitian")
+
         # Determine backend
         if backend_str is None:
             # Infer from current Hamiltonian backend
@@ -1615,7 +1650,7 @@ class Hamiltonian(ABC):
         
         # Prepare solver kwargs (remove our custom parameters)
         solver_kwargs   = {key: val for key, val in kwargs.items() 
-                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian']}
+                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which']}
         
         matrix_to_diag  = self._hamil
 
@@ -1689,7 +1724,7 @@ class Hamiltonian(ABC):
             val     : The value to set.
             newk    : The column index.
             
-        We acted on the k'th state with the Hamiltonian which in turn gave us the newk'th state.
+        We acted on the k'th state with the Hamiltonian which in turn gave us the newk'th state
         First, we need to check the mapping of the k'th state as it may be the same as the newk'th state
         through the symmetries...
         
@@ -1702,11 +1737,12 @@ class Hamiltonian(ABC):
         element of the Hamiltonian matrix. This is also used with the norm of a given state k as we need to 
         check in how many ways we can get to the newk'th state.
         '''
-        
-        try:
-            set_operator_elem(self._hamil, self._hilbert_space, k, val, newk)
-        except Exception as e:
-            print(f"Error in _set_hamil_elem: Failed to set element at <newk(idx)|H|k>, newk={newk},k={k},value: {val}. Please verify that the indices and value are correct. Exception details: {e}")
+        pass
+        #TODO: Re-implement this method
+        # try:
+            # set_operator_elem(self._hamil, self._hilbert_space, k, val, newk)
+        # except Exception as e:
+            # print(f"Error in _set_hamil_elem: Failed to set element at <newk(idx)|H|k>, newk={newk},k={k},value: {val}. Please verify that the indices and value are correct. Exception details: {e}")
 
     # ----------------------------------------------------------------------------------------------
     #! Energy related methods
@@ -1723,7 +1759,6 @@ class Hamiltonian(ABC):
         self._loc_energy_int_fun    = None
         self._loc_energy_np_fun     = None
         self._loc_energy_jax_fun    = None
-        self._max_local_ch          = self._max_local_ch_o
     
     def add(self, operator: Operator, multiplier: Union[float, complex, int], modifies: bool = False, sites = None):
         """
@@ -1756,10 +1791,10 @@ class Hamiltonian(ABC):
             
         --- 
         Example:
-        >> operator    = sig_z
+        >> operator    = sig_x
         >> sites       = [0, 1]
         >> hamiltonian.add(operator, sites, multiplier=1.0, is_local=True)
-        >> This would add the operator 'sig_z' to the local operator list at site 0 with a multiplier of 1.0.
+        >> This would add the operator 'sig_x' to the local operator list at site 0 with a multiplier of 1.0.
         """
         
         # if isinstance(operator, Callable):
@@ -1836,12 +1871,11 @@ class Hamiltonian(ABC):
             operators_nmod_int          =  [[(op.int, sites, vals) for (op, sites, vals) in self._ops_nmod_sites[i]] for i in range(self.ns)]
             operators_nmod_int_nsites   =  [[(op.int, sites, vals) for (op, sites, vals) in self._ops_nmod_nosites[i]] for i in range(self.ns)]
             self._loc_energy_int_fun    = local_energy_int_wrap(self.ns,
-                                                    _op_mod_sites       = operators_mod_int,
-                                                    _op_mod_nosites     = operators_mod_int_nsites,
-                                                    _op_nmod_sites      = operators_nmod_int,
-                                                    _op_nmod_nosites    = operators_nmod_int_nsites,
-                                                    dtype               = self._dtype)
-        
+                                                    _op_mod_sites                   = operators_mod_int,
+                                                    _op_mod_nosites                 = operators_mod_int_nsites,
+                                                    _op_nmod_sites                  = operators_nmod_int,
+                                                    _op_nmod_nosites                = operators_nmod_int_nsites,
+                                                    dtype                           = self._dtype)
         except Exception as e:
             self._log(f"Failed to set integer local energy functions: {e}", lvl=3, color="red", log='error')
             self._loc_energy_int_fun = None
@@ -1854,11 +1888,12 @@ class Hamiltonian(ABC):
             operators_nmod_np       = [[(op.npy, sites, vals) for (op, sites, vals) in self._ops_nmod_sites[i]] for i in range(self.ns)]
             operators_nmod_np_nsites= [[(op.npy, [], vals) for (op, _, vals) in self._ops_nmod_nosites[i]] for i in range(self.ns)]
             self._loc_energy_np_fun = local_energy_np_wrap(self.ns,
-                                                    operator_terms_list=operators_mod_np,
-                                                    operator_terms_list_ns=operators_mod_np_nsites,
-                                                    operator_terms_list_nmod=operators_nmod_np,
-                                                    operator_terms_list_nmod_ns=operators_nmod_np_nsites,
-                                                    n_max=self._max_local_ch, dtype=self._dtype)
+                                                    operator_terms_list             = operators_mod_np,
+                                                    operator_terms_list_ns          = operators_mod_np_nsites,
+                                                    operator_terms_list_nmod        = operators_nmod_np,
+                                                    operator_terms_list_nmod_ns     = operators_nmod_np_nsites,
+                                                    n_max                           = self._max_local_ch,
+                                                    dtype                           = self._dtype)
         except Exception as e:
             self._log(f"Failed to set NumPy local energy functions: {e}", lvl=3, color="red", log='error')
             self._loc_energy_np_fun = None
@@ -1885,11 +1920,11 @@ class Hamiltonian(ABC):
 
         # log success
         
-        self._max_local_ch              = max(self._max_local_ch_o, max(len(op) for op in self._ops_mod_sites)    + \
-                                                                    max(len(op) for op in self._ops_mod_nosites)  + \
-                                                                    max(len(op) for op in self._ops_nmod_sites)   + \
-                                                                    max(len(op) for op in self._ops_nmod_nosites))
-        self._log(f"Max local changes set to {self._max_local_ch}", lvl=2, color="green", log='debug')
+        self._max_local_ch_o              = max(self._max_local_ch_o,   max(len(op) for op in self._ops_mod_sites)      + \
+                                                                        max(len(op) for op in self._ops_mod_nosites)    + \
+                                                                        max(len(op) for op in self._ops_nmod_sites)     + \
+                                                                        max(len(op) for op in self._ops_nmod_nosites))
+        self._log(f"Max local changes set to {self._max_local_ch_o}", lvl=2, color="green", log='debug')
         self._log("Successfully set local energy functions...", lvl=2, log ='debug')
 
     def _local_energy_test(self, k_map = 0, i = 0):

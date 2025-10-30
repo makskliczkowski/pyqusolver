@@ -14,10 +14,10 @@ def sigma_x_op(state, ns):
 
 
 def build_full_sigma_x(ns):
-    nh = 2 ** ns
-    row = []
-    col = []
-    data = []
+    nh      = 2 ** ns
+    row     = []
+    col     = []
+    data    = []
     for state in range(nh):
         for i in range(ns):
             new_state = state ^ (1 << i)
@@ -28,19 +28,19 @@ def build_full_sigma_x(ns):
 
 
 def trace_one_element(ns=6, k_in=0, k_out=0, i_full=0, j_full=1):
-    lattice = SquareLattice(1, ns)
-    hil_in = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_in)], gen_mapping=True)
-    hil_out = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_out)], gen_mapping=True)
+    lattice         = SquareLattice(1, ns)
+    hil_in          = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_in)], gen_mapping=True)
+    hil_out         = HilbertSpace(lattice=lattice, sym_gen=[(SymmetryGenerators.Translation_x, k_out)], gen_mapping=True)
 
-    H_block = build_operator_matrix(hil_in, sigma_x_op, hilbert_space_out=hil_out, sparse=True)
-    U_in = get_symmetry_rotation_matrix(hil_in)
-    U_out = get_symmetry_rotation_matrix(hil_out)
+    H_block         = build_operator_matrix(sigma_x_op, hilbert_space=hil_in, hilbert_space_out=hil_out, sparse=True)
+    U_in            = get_symmetry_rotation_matrix(hil_in)
+    U_out           = get_symmetry_rotation_matrix(hil_out)
 
-    U_in_arr = U_in.toarray() if hasattr(U_in, 'toarray') else np.asarray(U_in)
-    U_out_arr = U_out.toarray() if hasattr(U_out, 'toarray') else np.asarray(U_out)
+    U_in_arr        = U_in.toarray() if hasattr(U_in, 'toarray') else np.asarray(U_in)
+    U_out_arr       = U_out.toarray() if hasattr(U_out, 'toarray') else np.asarray(U_out)
 
-    H_block_dense = H_block.toarray() if hasattr(H_block, 'toarray') else np.array(H_block)
-    H_block_dense = np.asarray(H_block_dense, dtype=np.complex128)
+    H_block_dense   = H_block.toarray() if hasattr(H_block, 'toarray') else np.array(H_block)
+    H_block_dense   = np.asarray(H_block_dense, dtype=np.complex128)
 
     print('U_in nonzeros (idx: val):')
     nz_in = np.nonzero(np.abs(U_in_arr) > 1e-14)
