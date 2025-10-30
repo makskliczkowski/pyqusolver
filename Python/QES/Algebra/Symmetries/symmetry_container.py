@@ -29,11 +29,43 @@ Version : 1.2.0
 
 from __future__ import annotations
 
+import time
+import numba
 import numpy as np
 from typing import List, Tuple, Dict, Optional, Callable, Union, Set
 from dataclasses import dataclass, field
 from itertools import combinations
 from functools import lru_cache
+
+# --------------------------------------------------------------------------
+#! Private helper functions
+# --------------------------------------------------------------------------
+
+@numba.njit(cache=True, fastmath=True)
+def _binary_search_mapping(mapping, state):
+    """
+    Binary search to find index of state in sorted mapping array.
+    Memory efficient - O(1) space, O(log Nh) time.
+    
+    Args:
+        mapping: Sorted array of representative states
+        state: State to find
+        
+    Returns:
+        Index in mapping if found, -1 otherwise
+    """
+    left = 0
+    right = len(mapping) - 1
+    
+    while left <= right:
+        mid = (left + right) // 2
+        if mapping[mid] == state:
+            return mid
+        elif mapping[mid] < state:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return numba.int64(-1)
 
 # --------------------------------------------------------------------------
 
@@ -407,11 +439,14 @@ class SymmetryContainer:
     generators          : List[Tuple[SymmetryOperator, SymmetrySpec]]   = field(default_factory=list)
     global_symmetries   : List[GlobalSymmetry]                          = field(default_factory=list)
     symmetry_group      : List[GroupElement]                            = field(default_factory=list)
-
+    _repr_list          : Optional[np.ndarray]                          = None      # representatives list -> state
+    _repr_norms         : Optional[np.ndarray]                          = None      # representatives normalization factors
+    _repr_get_norm      : Callable[[StateInt], complex]                 = lambda x  : 1.0 # function to get normalization for a state
+    _repr_active        : Optional[bool]                                = False     # if one adds new element, it stops being valid
     # Cached data
-    _repr_map           : Optional[np.ndarray]                          = None
-    _compatibility      : Optional[SymmetryCompatibility]               = None
-    logger              : Optional[Callable[[str], None]]               = None
+    _repr_map           : Optional[np.ndarray]                          = None      # Optional - if stored it means that representatives have been precomputed
+    _compatibility      : Optional[SymmetryCompatibility]               = None      # Compatibility checker instance
+    logger              : Optional[Callable[[str], None]]               = None      # Logger function
     
     # -----------------------------------------------------
     #! Initialization
@@ -421,6 +456,40 @@ class SymmetryContainer:
         """Initialize compatibility checker and logger."""
         self._compatibility = SymmetryCompatibility(self.ns, self.nhl, self.lattice)
         self.logger         = get_global_logger() if self.logger is None else self.logger
+
+    def set_repr_info(self, repr_list: np.ndarray, repr_norms: np.ndarray) -> None:
+        """Set the representatives and their normalization factors."""
+        self._repr_list     = repr_list
+        self._repr_norms    = repr_norms
+        self._repr_get_norm = lambda x: self._repr_norms[x]
+        self._repr_active   = True
+
+    def set_repr_map(self, repr_map: np.ndarray) -> None:
+        """Set the representatives mapping array."""
+        self._repr_map      = repr_map
+        
+    # -----------------------------------------------------
+
+    @property
+    def repr_list(self) -> Optional[np.ndarray]:        return self._repr_list
+    @repr_list.setter
+    def repr_list(self, value: np.ndarray) -> None:     self._repr_list = value; self._repr_active = True
+    
+    @property
+    def repr_norms(self) -> Optional[np.ndarray]:       return self._repr_norms
+    @repr_norms.setter
+    def repr_norms(self, value: np.ndarray) -> None:    self._repr_norms = value; self._repr_get_norm = lambda x: self._repr_norms[x]
+
+    @property
+    def repr_active(self) -> bool:                      return self._repr_active
+    @property
+    def repr_map(self) -> Optional[np.ndarray]:         return self._repr_map
+    @repr_map.setter
+    def repr_map(self, value: np.ndarray) -> None:      self._repr_map = value
+    @property
+    def repr_map_states(self) -> Optional[np.ndarray]:  return self._repr_map[:,0]
+    @property
+    def repr_map_eigs(self) -> Optional[np.ndarray]:    return self._repr_map[:,1]
 
     # -----------------------------------------------------
     #! Generator Management
@@ -448,7 +517,7 @@ class SymmetryContainer:
         added : bool
             Whether the generator was successfully added
         """
-        spec = (gen_type, sector)
+        spec                = (gen_type, sector)
         
         # Check boundary conditions first
         bc_valid, bc_reason = self._compatibility.check_boundary_conditions(operator)
@@ -458,13 +527,16 @@ class SymmetryContainer:
         
         # Check compatibility with existing generators
         for existing_op, existing_spec in self.generators:
-            compat, reason = self._compatibility.check_pair_compatibility(operator, existing_op, spec, existing_spec)
+            compat, reason  = self._compatibility.check_pair_compatibility(operator, existing_op, spec, existing_spec)
             if not compat:
                 self.logger.warning(f"Cannot add {gen_type.name}: {reason}")
                 return False
         
         self.generators.append((operator, spec))
+        
+        # Log addition
         self.logger.info(f"Added symmetry generator: {gen_type.name} = {sector}")
+        self._repr_active = False
         return True
     
     # -----------------------------------------------------
@@ -475,6 +547,7 @@ class SymmetryContainer:
         """Add a global symmetry (filtering constraint)."""
         self.global_symmetries.append(global_sym)
         self.logger.info(f"Added global symmetry: {global_sym.name}")
+        self._repr_active = False
     
     # -----------------------------------------------------
     #! Compatibility Filtering - built-in function
@@ -486,15 +559,18 @@ class SymmetryContainer:
         
         Algorithm
         ---------
-        1. Separate translations from other generators
+        1. Separate cyclic groups from other generators
         2. For non-translation generators, create all combinations
         3. Build translation group (product of cyclic groups for multi-D)
-        4. Combine: full_group = non_translation_combos × translation_group
+        4. Combine: full_group = non_translation_combos x translation_group
         
         For 2D with Tx and Ty:
-            - Non-translation: {E, P, R, PR, ...}
-            - Translation: {Tx^i Ty^j : i=0..Nx-1, j=0..Ny-1}
-            - Full: each non-translation combo × each translation combo
+            - Non-translation:
+                - {E, P, R, PR, ...}
+            - Translation: 
+                - {Tx^i Ty^j : i=0..Nx-1, j=0..Ny-1}
+            - Full: 
+                - each non-translation combo x each translation combo
         """
         if not self.generators:
             self.logger.info("No symmetry generators - empty group")
@@ -502,7 +578,7 @@ class SymmetryContainer:
             return
         
         # Separate translations from other generators
-        translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]] = {}  # direction -> (op, spec)
+        translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]] = {} # direction -> (op, spec)
         other_generators = []
         
         for op, spec in self.generators:
@@ -548,18 +624,18 @@ class SymmetryContainer:
         
         self.symmetry_group = full_group
         self.logger.info(f"Built symmetry group with {len(self.symmetry_group)} elements "
-                        f"({len(translation_elements)} translation × {len(base_elements)} base)")
+                        f"({len(translation_elements)} translation x {len(base_elements)} base)")
     
-    def _build_translation_group(
-        self, 
-        translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]]
-    ) -> List[GroupElement]:
+    def _build_translation_group(self, translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]]) -> List[GroupElement]:
         """
         Build the translation subgroup as a product of cyclic groups.
         
-        For 1D (only Tx): {E, Tx, Tx^2, ..., Tx^(Nx-1)}
-        For 2D (Tx, Ty): {Tx^i Ty^j : i=0..Nx-1, j=0..Ny-1}
-        For 3D (Tx, Ty, Tz): {Tx^i Ty^j Tz^k : i,j,k over ranges}
+        For 1D (only Tx):
+        - {E, Tx, Tx^2, ..., Tx^(Nx-1)}
+        For 2D (Tx, Ty):
+        - {Tx^i Ty^j : i=0..Nx-1, j=0..Ny-1}
+        For 3D (Tx, Ty, Tz):
+        - {Tx^i Ty^j Tz^k : i,j,k over ranges}
         
         Parameters
         ----------
@@ -600,13 +676,14 @@ class SymmetryContainer:
         # Generate all combinations using itertools.product
         from itertools import product as cartesian_product
         
+        # Build each group element
         for powers in cartesian_product(*ranges):
             # Build tuple of operators: Tx repeated i times, Ty repeated j times, etc.
             ops_tuple = ()
             for direction, power in zip(directions, powers):
-                t_op, t_spec = translations[direction]
+                t_op, t_spec    = translations[direction]
+                ops_tuple      += tuple([t_op] * power)
                 # Add this translation operator 'power' times
-                ops_tuple += tuple([t_op] * power)
             
             translation_group.append(ops_tuple)
         
@@ -635,8 +712,7 @@ class SymmetryContainer:
             Accumulated phase from symmetry eigenvalues
         """
         if len(element) == 0:
-            # Identity element
-            return state, 1.0
+            return state, 1.0 # Identity element        
         
         current_state       = state
         accumulated_phase   = 1.0
@@ -648,7 +724,42 @@ class SymmetryContainer:
         
         return current_state, accumulated_phase
 
-    def find_representative(self, state: StateInt, use_cache: bool = True) -> Tuple[StateInt, complex]:
+    # -----------------------------------------------------
+    #! Representative Finding
+    # -----------------------------------------------------
+
+    def _find_representative(self, state: StateInt) -> StateInt:
+        """
+        Internal method to find representative state without phase.
+        
+        Parameters
+        ----------
+        state : StateInt
+            State to find representative for
+        
+        Returns
+        -------
+        representative : StateInt, complex
+            Minimal state in the orbit of the given state
+            and the associated symmetry eigenvalue
+        """
+        min_state   = _INT_HUGE
+        value       = 1.0
+        
+        # Try all group elements
+        for element in self.symmetry_group:
+            new_state, new_value = self.apply_group_element(element, state)
+            
+            if new_state < min_state:
+                min_state = new_state
+                value     = new_value
+
+        return min_state, value
+
+    def find_representative(self, 
+                            state           : StateInt, 
+                            normalization_b : Union[float, complex] = 1.0,
+                            use_cache       : bool                  = True) -> Tuple[StateInt, complex]:
         """
         Find the representative (minimal state) in the orbit of a given state.
         
@@ -661,13 +772,15 @@ class SymmetryContainer:
             State to find representative for
         use_cache : bool
             Whether to use cached representative map if available
-        
+        nb : Union[float, complex]
+            Normalization of the other Hilbert space (needed for phase consistency)
+
         Returns
         -------
         representative : StateInt
             Minimal state in the orbit
         symmetry_eigenvalue : complex
-            Phase accumulated when transforming state → representative
+            Phase accumulated when transforming state -> representative
         
         Algorithm
         ---------
@@ -676,39 +789,41 @@ class SymmetryContainer:
         3. Find the transformation that gives minimal state
         4. Return (min_state, phase_to_reach_it)
         """
+
+        # No symmetries - state is its own representative
+        if not self._repr_active or (self._repr_list is None) or len(self.symmetry_group) == 0:
+            return state, 1.0 # No mapping - return state itself
+
         # Check cache
         if use_cache and self._repr_map is not None and state < len(self._repr_map):
             idx     = self._repr_map[state, 0]
             sym_eig = self._repr_map[state, 1]
-            
             if idx != _INT_HUGE:
-                return int(idx), sym_eig
-        
-        # No symmetries - state is its own representative
-        if len(self.symmetry_group) == 0:
-            return state, 1.0
-        
-        min_state = _INT_HUGE
-        min_phase = 1.0
-        
-        # Try all group elements
-        for element in self.symmetry_group:
-            new_state, phase = self.apply_group_element(element, state)
-            
-            if new_state < min_state:
-                min_state = new_state
-                min_phase = phase
-        
-        min_phase = phase
-        
-        return min_state, min_phase
+                return int(idx), self._repr_get_norm(idx) * np.conjugate(sym_eig) / normalization_b # return to the original state's phase
+
+        # Check if state is already a representative
+        state_in_mapping = _binary_search_mapping(self._repr_list, state)
+        if state_in_mapping < len(self._repr_list):
+            return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) / normalization_b # State is already a representative
+
+        # Otherwise, find representative by applying group elements
+        min_state, min_phase = self._find_representative(state)
+        state_in_mapping = _binary_search_mapping(self._repr_list, min_state)
+        if state_in_mapping < len(self._repr_list):
+            return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) * np.conjugate(min_phase) / normalization_b
+
+        return 0, 0.0  # Should not reach here if mapping is correct
+    
+    # -----------------------------------------------------
+    #! Character and Normalization Computation
+    # -----------------------------------------------------
     
     def get_character(self, element: GroupElement) -> complex:
         """
         Compute the character (representation eigenvalue) for a group element.
         
-        For translation T^n in momentum sector k: χ_k(T^n) = exp(2πi * k * n / L)
-        For other symmetries: χ(g) = sector_value (usually ±1)
+        For translation T^n in momentum sector k: chi _k(T^n) = exp(2pi i * k * n / L)
+        For other symmetries: chi (g) = sector_value (usually +/- 1)
         
         Parameters
         ----------
@@ -720,6 +835,8 @@ class SymmetryContainer:
         character : complex
             Character value for this element in the current representation
         """
+        #TODO: is this general enough for all symmetries?
+        
         if len(element) == 0:
             return 1.0  # Identity element
         
@@ -742,8 +859,9 @@ class SymmetryContainer:
             if sector_value is None:
                 continue
             
-            # For translation: character is exp(2πi * k * power / L)
+            # For translation: character is exp(2pi i * k * power / L)
             if hasattr(op, 'symmetry_class') and op.symmetry_class == SymmetryClass.TRANSLATION:
+                
                 # Get the period (lattice size in this direction)
                 period = self.ns  # Default
                 if self.lattice is not None:
@@ -761,7 +879,8 @@ class SymmetryContainer:
             
             # For discrete symmetries (reflection, parity): character is sector_value^count
             else:
-                # Usually sector is ±1, so character is (±1)^count
+                # Usually sector is +/- 1, so character is (+/- 1)^count
+                # anyway, we raise to power count
                 character *= sector_value ** count
         
         return character
@@ -771,12 +890,12 @@ class SymmetryContainer:
         Compute normalization factor for a representative state in the current sector.
         
         The normalization is computed using the projection formula:
-        N = sqrt(sum_{g in G} χ_k(g)^* <state|g|state>)
+        N = sqrt(sum_{g in G} chi _k(g)^* <state|g|state>)
         
-        where χ_k(g) is the character of element g in irrep k.
+        where chi _k(g) is the character of element g in irrep k.
         
         For a state to belong to momentum sector k, it must satisfy:
-        |state_k> = (1/√N) sum_{g in G} χ_k(g)^* g|rep>
+        |state_k> = (1/sqrt N) sum_{g in G} chi _k(g)^* g|rep>
         
         Parameters
         ----------
@@ -805,22 +924,32 @@ class SymmetryContainer:
         projection_sum = 0.0
         
         for element in self.symmetry_group:
-            new_state, intrinsic_phase = self.apply_group_element(element, state)
+            new_state, intrinsic_phase  = self.apply_group_element(element, state)
             
             # Only states in the orbit contribute
             # For momentum sectors, we need the character even if state changes
-            character = self.get_character(element)
+            character                   = self.get_character(element)
             
-            # The projection operator is P_k = (1/|G|) sum_g χ_k(g)^* g
-            # We compute <state|P_k|state> = (1/|G|) sum_g χ_k(g)^* <state|g|state>
-            # The overlap <state|g|state> = phase * δ_{state, g(state)}
+            # The projection operator is P_k = (1/|G|) sum_g chi _k(g)^* g
+            # We compute <state|P_k|state> = (1/|G|) sum_g chi _k(g)^* <state|g|state>
+            # The overlap <state|g|state> = phase * delta _{state, g(state)}
             
             if new_state == state:
                 # State is invariant under this group element
-                # Contribution: χ_k(g)^* * phase
-                projection_sum += np.conj(character) * intrinsic_phase
+                # Contribution: chi _k(g)^* * phase
+                projection_sum         += np.conj(character) * intrinsic_phase
         
-        # Normalization is sqrt of the projection sum
+        # The projection operator includes a 1/|G| prefactor. Apply it
+        # before taking the square root to compute the proper normalization
+        # N = sqrt( (1/|G|) * sum_g chi _k(g)^* <state|g|state> ).
+        try:
+            gsize = len(self.symmetry_group)
+            if gsize > 0:
+                projection_sum = projection_sum / float(gsize)
+        except Exception:
+            pass
+
+        # Normalization is sqrt of the (possibly scaled) projection sum
         norm = np.sqrt(abs(projection_sum))
         
         # Check if normalization is non-zero (state allowed in this sector)
@@ -848,6 +977,35 @@ class SymmetryContainer:
                 return False
         return True
 
+    # -----------------------------------------------------
+    #! Full Mapping Management
+    # -----------------------------------------------------
+    
+    def build_representative_map(self, nh_full: int) -> None:
+        """
+        Build the full representative mapping for all states in the Hilbert space.
+        
+        Parameters
+        ----------
+        nh_full : int
+            Full Hilbert space dimension (nhl ** ns)
+        
+        Algorithm
+        ---------
+        1. Initialize mapping array of size nh_full
+        2. For each state, find its representative and normalization
+        3. Store in mapping: (representative, symmetry_eigenvalue)
+        """
+        t0      = time.time()
+        mapping = np.full((nh_full, 2), _INT_HUGE, dtype=object) # (representative, symmetry_eigenvalue)
+        
+        for state in numba.prange(nh_full):
+            rep, sym_eig        = self.find_representative(state, use_cache=False)
+            mapping[state, 0]   = rep
+            mapping[state, 1]   = sym_eig
+
+        self._repr_map          = mapping
+        self.logger.info(f"Built full representative map for {nh_full} states in {time.time() - t0:.2f} seconds")
 
 ####################################################################################################
 #! Utility Functions
