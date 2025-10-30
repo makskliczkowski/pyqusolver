@@ -288,7 +288,7 @@ def _alloc_bin_info(uniform_bins: bool, uniform_log_bins: bool, bins: Optional[n
 @numba.njit(fastmath=True, cache=True)
 def _normalize_by_bin_width(sums: np.ndarray, bins: np.ndarray) -> None:
     """
-    In-place divide by Δ\Omega; counts- or typical-normalization can be done elsewhere.
+    In-place divide by delta \Omega; counts- or typical-normalization can be done elsewhere.
     """
     nbins = bins.shape[0] - 1
     for i in range(nbins):

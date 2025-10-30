@@ -42,7 +42,7 @@ from functools import lru_cache
 # --------------------------------------------------------------------------
 
 @numba.njit(cache=True, fastmath=True)
-def _binary_search_mapping(mapping, state):
+def _binary_search_representative_list(mapping, state):
     """
     Binary search to find index of state in sorted mapping array.
     Memory efficient - O(1) space, O(log Nh) time.
@@ -716,12 +716,22 @@ class SymmetryContainer:
         
         current_state       = state
         accumulated_phase   = 1.0
-
-        # Apply operators left to right
-        for op in element:
-            current_state, phase = op.apply_int(current_state, self.ns, nhl=self.nhl)
-            accumulated_phase   *= phase
         
+        if isinstance(current_state, int):
+            for op in element:
+                current_state, phase = op.apply_int(current_state, self.ns, nhl=self.nhl)
+                accumulated_phase   *= phase
+        elif isinstance(current_state, np.ndarray):
+            for op in element:
+                current_state, phase = op.apply_numpy(current_state, ns=self.ns, nhl=self.nhl)
+                accumulated_phase   *= phase
+        elif JAX_AVAILABLE and isinstance(current_state, jnp.ndarray):
+            for op in element:
+                current_state, phase = op.apply_jax(current_state, ns=self.ns, nhl=self.nhl)
+                accumulated_phase   *= phase
+        else:
+            raise TypeError("Unsupported state type for symmetry application.")
+
         return current_state, accumulated_phase
 
     # -----------------------------------------------------
@@ -799,17 +809,19 @@ class SymmetryContainer:
             idx     = self._repr_map[state, 0]
             sym_eig = self._repr_map[state, 1]
             if idx != _INT_HUGE:
-                return int(idx), self._repr_get_norm(idx) * np.conjugate(sym_eig) / normalization_b # return to the original state's phase
+                return int(self._repr_list[idx]), self._repr_get_norm(idx) * np.conjugate(sym_eig) / normalization_b # return to the original state's phase
 
+        from QES.general_python.common.embedded import binary_search as bin_search
+        
         # Check if state is already a representative
-        state_in_mapping = _binary_search_mapping(self._repr_list, state)
-        if state_in_mapping < len(self._repr_list):
+        state_in_mapping        = bin_search.binary_search(self._repr_list, 0, len(self._repr_list) - 1, state)
+        if state_in_mapping != bin_search._BAD_BINARY_SEARCH_STATE and state_in_mapping < len(self._repr_list):
             return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) / normalization_b # State is already a representative
 
         # Otherwise, find representative by applying group elements
-        min_state, min_phase = self._find_representative(state)
-        state_in_mapping = _binary_search_mapping(self._repr_list, min_state)
-        if state_in_mapping < len(self._repr_list):
+        min_state, min_phase    = self._find_representative(state)
+        state_in_mapping        = bin_search.binary_search(self._repr_list, 0, len(self._repr_list) - 1, min_state)
+        if state_in_mapping != bin_search._BAD_BINARY_SEARCH_STATE and state_in_mapping < len(self._repr_list):
             return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) * np.conjugate(min_phase) / normalization_b
 
         return 0, 0.0  # Should not reach here if mapping is correct

@@ -100,7 +100,7 @@ def _register_catalog_entries():
         key="n",
         factory=_number_factory,
         description=r"Occupation operator for hard-core abelian anyons (diagonal).",
-        algebra=r"[n_i, a_j\dag] = δ_{ij} a_j\dag,  [n_i, a_j] = -δ_{ij} a_j",
+        algebra=r"[n_i, a_j\dag] = delta _{ij} a_j\dag,  [n_i, a_j] = -delta _{ij} a_j",
         sign_convention=r"No phase; diagonal in occupation basis.",
         tags=("anyon", "number"),
     )

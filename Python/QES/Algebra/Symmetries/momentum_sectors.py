@@ -149,7 +149,8 @@ class MomentumSectorAnalyzer:
             Mapping from momentum index k to list of (representative, info) pairs.
         """
         extent          = self.get_extent(direction)
-        translator      = TranslationSymmetry(self.lattice, direction=direction)
+    # TranslationSymmetry now requires sector and ns; use neutral sector=0 for orbit analysis
+        translator      = TranslationSymmetry(self.lattice, sector=0, ns=self.ns, direction=direction)
         representatives = {}
         visited         = set()
         
@@ -170,7 +171,8 @@ class MomentumSectorAnalyzer:
             while current not in seen:
                 orbit.append(current)
                 seen.add(current)
-                current, _ = translator.apply(current)
+                # Use callable translator which dispatches to apply_int
+                current, _ = translator(current)
             
             period          = len(orbit)
             representative  = min(orbit)
@@ -232,8 +234,9 @@ class MomentumSectorAnalyzer:
         extent_x        = self.get_extent(dir_x)
         extent_y        = self.get_extent(dir_y)
 
-        translator_x    = TranslationSymmetry(self.lattice, direction=dir_x)
-        translator_y    = TranslationSymmetry(self.lattice, direction=dir_y)
+        # Use neutral sector for orbit generation; specify ns
+        translator_x    = TranslationSymmetry(self.lattice, sector=0, ns=self.ns, direction=dir_x)
+        translator_y    = TranslationSymmetry(self.lattice, sector=0, ns=self.ns, direction=dir_y)
 
         representatives = {}
         visited         = set()
@@ -251,7 +254,7 @@ class MomentumSectorAnalyzer:
             while current not in seen_x:
                 orbit_x.append(current)
                 seen_x.add(current)
-                current, _ = translator_x.apply(current)
+                current, _ = translator_x(current)
             
             period_x    = len(orbit_x)
             
@@ -263,7 +266,7 @@ class MomentumSectorAnalyzer:
             while current not in seen_y:
                 orbit_y.append(current)
                 seen_y.add(current)
-                current, _ = translator_y.apply(current)
+                current, _ = translator_y(current)
             
             period_y = len(orbit_y)
             
@@ -393,11 +396,11 @@ def build_momentum_basis(lattice: 'Lattice', momentum_indices: Dict[LatticeDirec
     analyzer = MomentumSectorAnalyzer(lattice)
     representatives = analyzer.get_sector_representatives(momentum_indices)
     
-    # Build translators for each active direction
+    # Build translators for each active direction (provide sector and ns)
     translators = {}
     for direction in analyzer.active_directions:
         k = momentum_indices.get(direction, 0)
-        translators[direction] = TranslationSymmetry(lattice, direction=direction, momentum_index=k)
+        translators[direction] = TranslationSymmetry(lattice, sector=int(k), ns=analyzer.ns, direction=direction)
     
     momentum_basis = {}
     
@@ -411,9 +414,16 @@ def build_momentum_basis(lattice: 'Lattice', momentum_indices: Dict[LatticeDirec
             new_superposition = defaultdict(complex)
             
             for state, amp in superposition.items():
-                orbit = translator.orbit(state)
+                # Build orbit under translation using the translator callable
+                orbit = []
+                seen = set()
+                cur = state
+                while cur not in seen:
+                    orbit.append(cur)
+                    seen.add(cur)
+                    cur, _ = translator(cur)
                 period = len(orbit)
-                
+
                 for idx, orb_state in enumerate(orbit):
                     phase = np.exp(-1j * 2 * np.pi * k * idx / period)
                     new_superposition[orb_state] += amp * phase

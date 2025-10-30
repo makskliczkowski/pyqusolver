@@ -76,11 +76,11 @@ class TDVPStepInfo:
 @dataclass
 class TDVPLowerPenalty:
     # most important
-    excited_on_lower        : Array         # (n_j,) complex; ratios Ψ_{W}(\sum _j)
-    lower_on_excited        : Array         # (n_j,) complex; ratios Ψ_{W_j}(\sigma )
+    excited_on_lower        : Array         # (n_j,) complex; ratios Psi_{W}(\sum _j)
+    lower_on_excited        : Array         # (n_j,) complex; ratios Psi_{W_j}(\sigma )
     # parameters of the lower state
-    lower_on_lower          : Array         # (n_j,) complex; ratios Ψ_{W_j}(\sum _j)
-    excited_on_excited      : Array         # (n_j,) complex; ratios Ψ_{W}(\sigma )
+    lower_on_lower          : Array         # (n_j,) complex; ratios Psi_{W_j}(\sum _j)
+    excited_on_excited      : Array         # (n_j,) complex; ratios Psi_{W}(\sigma )
     # samples drawn from pi(.; params_j)
     params_j                : Any
     configs_j               : Array         # (n_j, ...)
@@ -90,8 +90,8 @@ class TDVPLowerPenalty:
     # penalty parameter
     beta_j                  : float = 0.0
     # optional, kept for symmetry
-    r_le                    : np.array = None  # (n_j,) complex; ratios Ψ_{W}(\sigma )/Ψ_{W_j}(\sigma ) on configs_j
-    r_el                    : np.array = None  # (n_j,) complex; ratios E_loc^{W}(\sigma )Ψ_{W}(\sigma )/Ψ_{W_j}(\sigma ) on configs
+    r_le                    : np.array = None  # (n_j,) complex; ratios Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs_j
+    r_el                    : np.array = None  # (n_j,) complex; ratios E_loc^{W}(\sigma )Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs
     # backend
     backend_np              : Any = jnp if JAX_AVAILABLE else np
     

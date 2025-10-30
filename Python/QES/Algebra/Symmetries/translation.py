@@ -142,10 +142,21 @@ class TranslationSymmetry(SymmetryOperator):
         if lattice is None:
             raise ValueError("TranslationSymmetry requires a lattice instance.")
         
-        # Map string direction to LatticeDirection enum
-        direction_map = {'x': LatticeDirection.X, 'y': LatticeDirection.Y, 'z': LatticeDirection.Z}
+        # Map string direction to LatticeDirection enum. Support an optional
+        # sign prefix on the string to indicate translation direction.
+        # Examples: 'x' -> +1 shift along X, '-x' -> -1 shift along X.
+        direction_map   = {'x': LatticeDirection.X, 'y': LatticeDirection.Y, 'z': LatticeDirection.Z}
+        self.shift      = 1
+        
         if isinstance(direction, str):
-            direction = direction_map.get(direction.lower(), LatticeDirection.X)
+            # allow an optional leading '+' or '-' to indicate direction
+            dir_str = direction.strip()
+            
+            if dir_str.startswith(('+', '-')) and len(dir_str) > 1:
+                self.shift  = -1 if dir_str[0] == '-' else 1
+                dir_str     = dir_str[1:]
+                
+            direction = direction_map.get(dir_str.lower(), LatticeDirection.X)
         
         self.lattice                    = lattice
         self.dimension                  = lattice.dim
@@ -208,6 +219,10 @@ class TranslationSymmetry(SymmetryOperator):
         """
         Pre-compute permutation and crossing mask for translation in the given direction.
         Returns (perm, crossing_mask)
+        
+        This helps optimize the application of the translation operator
+        to integer states by precomputing how each site maps under translation
+        
         -----------------------------------------
         perm : np.ndarray
             Array mapping each site to its translated site index.
@@ -235,14 +250,17 @@ class TranslationSymmetry(SymmetryOperator):
             while len(coord) < 3:
                 coord.append(0)
                 
-            # Compute new coordinates after translation
+            # Compute new coordinates after translation using self.shift
             new_coord           = coord.copy()
-            new_coord[axis]    += 1
+            new_coord[axis]    += int(getattr(self, 'shift', 1))
             wrap                = False
-            
-            # Apply periodic boundary conditions
+
+            # Apply periodic boundary conditions depending on shift sign
             if new_coord[axis] >= size_axis:
                 new_coord[axis] -= size_axis
+                wrap             = True
+            elif new_coord[axis] < 0:
+                new_coord[axis] += size_axis
                 wrap             = True
             
             # Get the destination site index
@@ -308,7 +326,7 @@ class TranslationSymmetry(SymmetryOperator):
     
     # -----------------------------------------------------
     
-    def commutes_with(self, other: 'SymmetryOperator', momentum_sector: Optional[MomentumSector] = None) -> bool:
+    def commutes_with(self, other: 'SymmetryOperator', momentum_sector: Optional[MomentumSector] = None, **kwargs) -> bool:
         """
         Determine if this translation symmetry commutes with another symmetry operator.
         
@@ -326,8 +344,8 @@ class TranslationSymmetry(SymmetryOperator):
         """
         base_check = super().commutes_with(other, momentum_sector=momentum_sector)
         
-        if not base_check:
-            return False
+        if base_check:
+            return True
 
         # Check momentum-dependent compatibility
         if momentum_sector is not None and momentum_sector in self.momentum_dependent:
@@ -336,8 +354,11 @@ class TranslationSymmetry(SymmetryOperator):
         
         # Otherwise, they do not commute
         return False
+    
     # -----------------------------------------------------
-
+    #! Apply translation
+    # -----------------------------------------------------
+    
     def apply_int(self, state: int, ns: int, **kwargs) -> Tuple[int, complex]:
         """
         Apply translation to integer state, return (new_state, phase)
@@ -381,6 +402,7 @@ class TranslationSymmetry(SymmetryOperator):
         import numpy as np
         if not isinstance(state, np.ndarray):
             state = np.array(state)
+        #TODO: Handle multi-dimensional numpy arrays if needed
         # For numpy arrays, delegate to integer operations
         new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
         return np.array(new_state), phase
@@ -392,6 +414,7 @@ class TranslationSymmetry(SymmetryOperator):
         except ImportError:
             raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
         # For jax arrays, delegate to integer operations
+        #TODO: Handle multi-dimensional jax arrays if needed
         new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
         return jnp.array(new_state), phase
 
@@ -401,7 +424,6 @@ class TranslationSymmetry(SymmetryOperator):
 
     @staticmethod
     def momentum_phase(k: int, L: int) -> complex:
-        # e^{i 2pi k / L}
         return np.exp(1j * 2 * np.pi * k / L)
 
     def momentum_projector(self, state: int, k: Optional[int] = None) -> Dict[int, complex]:
@@ -510,6 +532,8 @@ class TranslationSymmetry(SymmetryOperator):
         phases = np.exp(-1j * 2 * np.pi * k * np.arange(m) / m) / np.sqrt(m)
         return orb, phases
     
+# -----------------------------------------------------
+#! Multi-dimensional momentum superposition builder
 # -----------------------------------------------------
 
 def build_momentum_superposition(

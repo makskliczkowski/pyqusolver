@@ -158,7 +158,7 @@ HilbertSpace (hilbert.py)
    - Check global symmetries (filter)
    - Find representative using container
    - Compute normalization
-   - Store mapping: state_idx → (representative_idx, norm)
+   - Store mapping: state_idx -> (representative_idx, norm)
 
 4. **Matrix Element Computation**:
    - Operator acts: $|r\rangle \to |m\rangle$
@@ -511,7 +511,7 @@ class RotationSymmetry(SymmetryOperator):
         # Reconstruct state
         new_state = sum(occ << i for i, occ in enumerate(new_occupations))
         
-        # Phase: e^{2πi * sector / n_fold}
+        # Phase: e^{2pi i * sector / n_fold}
         phase = np.exp(2j * np.pi * self.sector / self.n_fold)
         
         return new_state, phase

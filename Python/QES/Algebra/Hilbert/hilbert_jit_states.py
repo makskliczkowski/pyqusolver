@@ -1,11 +1,18 @@
 '''
+Support for JIT-compiled Hilbert space state amplitude calculations.
+This module provides efficient routines for computing amplitudes of
+various quantum many-body states, including Slater determinants
+and Bogoliubov vacua, using Numba for JIT compilation.
+
+----------------------------------------------------
 file    : Algebra/Hilbert/hilbert_jit_states.py
 author  : Maksymilian Kliczkowski
 email   : maksymilian.kliczkowski@pwr.edu.pl
+version : 1.0.0
+----------------------------------------------------
 '''
 
-
-from QES.Algebra.Hilbert.hilbert_jit_methods import *  # noqa: F401,F403 re-export JIT helpers
+import numba
 import numpy as np
 from numba import njit, prange
 from numba.typed import List
@@ -13,9 +20,13 @@ from typing import Union, Optional, Callable, Tuple
 
 #! jax
 from QES.Algebra.Hilbert import hilbert_jit_states_jax as jnp
-from QES.general_python.algebra.utilities import pfaffian as pfaffian
-from QES.general_python.algebra.utilities import hafnian as hafnian
-from QES.general_python.common.binary import int2binstr, check_int_l
+try:
+    from QES.general_python.algebra.utilities import pfaffian as pfaffian
+    from QES.general_python.algebra.utilities import hafnian as hafnian
+    from QES.general_python.common.binary import int2binstr, check_int_l
+    from QES.general_python.algebra.utils import Array
+except ImportError as e:
+    raise ImportError(f"Failed to import required modules in hilbert_jit_states.py: {e}") from e
 
 # Signature: pfaff(A, n)    (antisymmetric, even n)
 PfFunc              = Callable[[Array, int], Union[float, complex]]
@@ -299,7 +310,7 @@ def pairing_matrix(u_mat: Array, v_mat: Array) -> Array:
     return np.linalg.solve(u_mat.T, v_mat.T).T
 
 # ---------------------------------------------------------------------------
-# b)  Fermions :  Ψ(x) = Pf[ F_{ij} ] (x has an *even* length)
+# b)  Fermions :  Psi(x) = Pf[ F_{ij} ] (x has an *even* length)
 # ---------------------------------------------------------------------------
 
 @njit(cache=True)
@@ -416,7 +427,7 @@ def calculate_bogoliubov_amp_exc(F      : Array,     # (ns, ns)
     return pfaff(M, dim)
 
 # ---------------------------------------------------------------------------
-# c)  Bosons :  Ψ(x) = Hf[ G_{ij} ] (x has an *even* length)
+# c)  Bosons :  Psi(x) = Hf[ G_{ij} ] (x has an *even* length)
 # ---------------------------------------------------------------------------
 
 @njit(cache=True)

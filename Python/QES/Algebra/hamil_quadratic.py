@@ -1189,7 +1189,7 @@ class QuadraticHamiltonian(Hamiltonian):
                         many_body_hs      : Optional[HilbertSpace]              = None,
                         resulting_state   : Optional[np.ndarray]                = None):
         """
-        Return the coefficient vector `|Ψ〉` in the *computational* basis.
+        Return the coefficient vector `|Psi〉` in the *computational* basis.
 
         Parameters
         ----------
