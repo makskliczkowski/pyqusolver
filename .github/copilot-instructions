@@ -1,0 +1,18 @@
+# ===============================================
+# CODING STYLE
+# ===============================================
+# Follow the existing repository style:
+#   - Clean indentation with spaces/tabs aligned before and after '='.
+#   - Compact docstrings with minimal but informative comments.
+#   - Mathematical notation in comments using ASCII only (no Greek letters).
+#   - No extraneous decorations or “cute” variable names.
+#   - Code must be fast, clear, and deterministic.
+
+# ===============================================
+# PERFORMANCE EXPECTATIONS
+# ===============================================
+# - Numerical paths should JIT-compile cleanly when asked and possible!
+# - Avoid slow loops etc.
+# - Use np.ndarray or jnp.ndarray consistently where relevant.
+# - Preserve deterministic memory layout and minimal allocations.
+# - Provide an optional logger argument for profiling or debugging where appropriate.

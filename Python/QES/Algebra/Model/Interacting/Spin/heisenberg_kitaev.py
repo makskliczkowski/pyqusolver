@@ -223,10 +223,15 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
     
     def __str__(self): return self.__repr__()
 
+    @property
+    def bonds(self):
+        return { HEI_KIT_X_BOND_NEI: 'x', HEI_KIT_Y_BOND_NEI: 'y', HEI_KIT_Z_BOND_NEI: 'z',
+            'x': HEI_KIT_X_BOND_NEI, 'y': HEI_KIT_Y_BOND_NEI, 'z': HEI_KIT_Z_BOND_NEI }
+
     # ----------------------------------------------------------------------------------------------
     #! INIT
     # ----------------------------------------------------------------------------------------------
-    
+     
     def set_couplings(self,
                         hx      : Union[List[float], None, float]       = None,
                         hz      : Union[List[float], None, float]       = None,

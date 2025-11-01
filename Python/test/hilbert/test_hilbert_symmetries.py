@@ -910,7 +910,7 @@ class TestMatrixConstruction:
         assert np.allclose(H_sz_dense, H_sz_dense.T.conj())
 
         print(f"{INDENT}σ_x matrix: {H_x.shape}, nnz={H_x.nnz}")
-        print(f"{INDENT}Σσ_z matrix: {H_sz_total.shape}, nnz={H_sz_total.nnz}")
+        print(f"{INDENT}Sumσ_z matrix: {H_sz_total.shape}, nnz={H_sz_total.nnz}")
         print(f"{INDENT}(ok) Operator matrix construction validated")
 
     def test_symmetry_sector_vs_full_space_hamiltonian(self):
@@ -992,7 +992,7 @@ class TestMatrixConstruction:
         hopping_terms = []
         for i in range(ns):
             j = (i + 1) % ns
-            hopping_terms.append((i, j, -1.0))  # -t c†_i c_j
+            hopping_terms.append((i, j, -1.0))  # -t cdagger _i c_j
 
         onsite_terms = [(i, 0.0) for i in range(ns)]  # No onsite potential
 

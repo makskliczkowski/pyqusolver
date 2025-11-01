@@ -140,7 +140,7 @@ class DiagonalizationEngine:
         self.backend        = backend
         self.use_scipy      = use_scipy
         self.verbose        = verbose
-        self.logger         = logger if logger is not None else logging.getLogger(__name__).info
+        self.logger         = logger if logger is not None else logging.getLogger(__name__)
         
         # Storage for diagonalization results and basis information
         self._result        : Optional[EigenResult] = None

@@ -157,7 +157,7 @@ class TestFermionicOperators:
 
         assert out_state[0] == 0b110, f"Expected state 0b110, got {out_state[0]:0b}"
         assert np.allclose(coeff[0], expected_coeff), f"Expected {expected_coeff}, got {coeff[0]}"
-        print(f"(ok)  Semion phase correct: coefficient = {coeff[0]} ≈ exp(iπ/2) = {expected_coeff}")
+        print(f"(ok)  Semion phase correct: coefficient = {coeff[0]} ≈ exp(ipi/2) = {expected_coeff}")
 
 
 class TestOperatorCombinations:
@@ -311,7 +311,7 @@ class TestMomentumSpaceOperators:
     def test_spin_momentum_operators(self, lattice):
         """Test momentum space spin operators."""
         # Test sigma_k
-        k = np.pi  # k=π
+        k = np.pi  # k=pi
         sigma_k_op = op_spin.sig_k(k=k, lattice=lattice, type_act=OperatorTypeActing.Local)
 
         # Test on numpy state
@@ -320,7 +320,7 @@ class TestMomentumSpaceOperators:
         result = sigma_k_op(state, 0)  # site 0 (k is already set in operator)
         assert len(result) == 2, "Should return (states, coeffs) tuple"
         assert isinstance(result[1], np.ndarray) and result[1].dtype in [np.complex64, np.complex128], "Should return complex coefficient array"
-        print(f"(ok)  Spin momentum operator at k=π: coefficient = {result[1]}")
+        print(f"(ok)  Spin momentum operator at k=pi: coefficient = {result[1]}")
 
 
 class TestBackendCompatibility:
@@ -421,42 +421,42 @@ class TestTranslationSymmetry:
             print(f"(ok)  2D k=(0,0): state {state} → combined phase {total_phase}")
 
     def test_translation_real_coefficients_pi_sector(self, lattice_1d, lattice_2d):
-        """Test that translation operators return real coefficients at k=π."""
+        """Test that translation operators return real coefficients at k=pi."""
         from QES.Algebra.Symmetries.translation import TranslationSymmetry
 
-        # Test 1D k=π sector (sector = L/2 = 2 for L=4)
+        # Test 1D k=pi sector (sector = L/2 = 2 for L=4)
         trans_1d = TranslationSymmetry(lattice_1d, sector=2, ns=lattice_1d.Ns, direction='x')
         assert trans_1d.get_momentum_sector().name == 'PI'
 
         # Test several states
         for state in [0b0000, 0b0001, 0b0101, 0b1111]:
             new_state, phase = trans_1d.apply_int(state, lattice_1d.Ns)
-            assert np.isreal(phase), f"Phase {phase} is not real for state {state:04b} at k=π"
-            assert phase.imag == 0.0, f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=π"
-            print(f"(ok)  1D k=π: state {state:04b} → phase {phase}")
+            assert np.isreal(phase), f"Phase {phase} is not real for state {state:04b} at k=pi"
+            assert phase.imag == 0.0, f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=pi"
+            print(f"(ok)  1D k=pi: state {state:04b} → phase {phase}")
 
-        # Test 2D k=(π,0) and k=(0,π) sectors
-        trans_2d_x_pi = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='x')  # k_x = π
-        trans_2d_y_pi = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='y')  # k_y = π
+        # Test 2D k=(pi,0) and k=(0,pi) sectors
+        trans_2d_x_pi = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='x')  # k_x = pi
+        trans_2d_y_pi = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='y')  # k_y = pi
 
         for state in [0, 1, 15]:  # Some test states
             # Test individual directions
             _, phase_x = trans_2d_x_pi.apply_int(state, lattice_2d.Ns)
             _, phase_y = trans_2d_y_pi.apply_int(state, lattice_2d.Ns)
 
-            assert np.isreal(phase_x), f"X-direction phase {phase_x} is not real for state {state} at k=(π,0)"
-            assert np.isreal(phase_y), f"Y-direction phase {phase_y} is not real for state {state} at k=(0,π)"
-            assert phase_x.imag == 0.0, f"X-direction phase {phase_x} has non-zero imaginary part for state {state} at k=(π,0)"
-            assert phase_y.imag == 0.0, f"Y-direction phase {phase_y} has non-zero imaginary part for state {state} at k=(0,π)"
+            assert np.isreal(phase_x), f"X-direction phase {phase_x} is not real for state {state} at k=(pi,0)"
+            assert np.isreal(phase_y), f"Y-direction phase {phase_y} is not real for state {state} at k=(0,pi)"
+            assert phase_x.imag == 0.0, f"X-direction phase {phase_x} has non-zero imaginary part for state {state} at k=(pi,0)"
+            assert phase_y.imag == 0.0, f"Y-direction phase {phase_y} has non-zero imaginary part for state {state} at k=(0,pi)"
 
-            print(f"(ok)  2D k=(π,0): state {state} → phase {phase_x}")
-            print(f"(ok)  2D k=(0,π): state {state} → phase {phase_y}")
+            print(f"(ok)  2D k=(pi,0): state {state} → phase {phase_x}")
+            print(f"(ok)  2D k=(0,pi): state {state} → phase {phase_y}")
 
     def test_translation_generic_sector_complex(self, lattice_1d):
         """Test that translation operators can return complex coefficients at generic k."""
         from QES.Algebra.Symmetries.translation import TranslationSymmetry
 
-        # Test 1D generic k sector (sector = 1 for L=4, k=π/2)
+        # Test 1D generic k sector (sector = 1 for L=4, k=pi/2)
         trans_1d = TranslationSymmetry(lattice_1d, sector=1, ns=lattice_1d.Ns, direction='x')
         assert trans_1d.get_momentum_sector().name == 'GENERIC'
 
@@ -465,7 +465,7 @@ class TestTranslationSymmetry:
         new_state, phase = trans_1d.apply_int(state, lattice_1d.Ns)
 
         # Phase can be complex for generic k
-        print(f"(ok)  1D k=π/2: state {state:04b} → phase {phase} (can be complex)")
+        print(f"(ok)  1D k=pi/2: state {state:04b} → phase {phase} (can be complex)")
 
     def test_momentum_sector_detection(self, lattice_1d, lattice_2d):
         """Test that momentum sectors are correctly identified."""

@@ -1,9 +1,12 @@
 """
 Analytic translational-invariant free-fermion model
+
+-----------------------------------------------------
 file    : QES/Algebra/Model/Noninteracting/Conserving/free_fermions.py
 author  : Maksymilian Kliczkowski
 email   : maksymilian.kliczkowski@pwr.edu.pl
 date    : 2025-05-01
+-----------------------------------------------------
 """
 
 import numpy as np
@@ -220,4 +223,6 @@ class FreeFermions(QuadraticHamiltonian):
     def __str__(self):
         return self.__repr__()
     
+# ---------------------------------------------------------------------
+#! End of file
 # ---------------------------------------------------------------------

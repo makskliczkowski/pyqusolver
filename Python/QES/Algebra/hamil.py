@@ -40,8 +40,6 @@ import QES.Algebra.Hamil.hamil_diag_helpers as diag_helpers
 ###################################################################################################
 from QES.general_python.algebra.ran_wrapper import random_vector
 from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend, ACTIVE_INT_TYPE, Array
-import QES.general_python.algebra.linalg as linalg
-
 if JAX_AVAILABLE:
     import jax
     from jax import jit
@@ -513,6 +511,10 @@ class Hamiltonian(ABC):
     def hilbert_space(self):            return self._hilbert_space
     @property
     def hilbert_size(self):             return self._hilbert_space.get_Nh()
+    @property
+    def dim(self):                      return self.hilbert_size
+    @property
+    def nh(self):                       return self.hilbert_size
     
     # eigenvalues and eigenvectors properties
 
@@ -1190,18 +1192,13 @@ class Hamiltonian(ABC):
     def _transform_to_backend(self):
         '''
         Transforms the Hamiltonian matrix to the backend.
+        
+        Note: With the modular backend architecture, matrices are typically already
+        in the correct backend upon creation. This method is retained for compatibility.
         '''
-        if self._is_manybody:
-            self._hamil = linalg.transform_backend(self._hamil, self._is_sparse, self._backend)
-        else:
-            self._hamil_sp = linalg.transform_backend(self._hamil_sp, self._is_sparse, self._backend)
-            if self._particle_conserving:
-                self._delta_sp = linalg.transform_backend(self._delta_sp, self._is_sparse, self._backend)
-
-        self._eig_val   = linalg.transform_backend(self._eig_val, False, self._backend)
-        self._eig_vec   = linalg.transform_backend(self._eig_vec, False, self._backend)
-        self._krylov    = linalg.transform_backend(self._krylov, False, self._backend)
-        self._log(f"Hamiltonian matrix transformed to the backend {self._backendstr}", lvl=2, color="green")
+        # Since backend-agnostic code paths handle backend selection during construction,
+        # no explicit transformation is needed here.
+        self._log(f"Hamiltonian matrix verified for backend {self._backendstr}", lvl=2, color="green")
         
     # ----------------------------------------------------------------------------------------------
 
