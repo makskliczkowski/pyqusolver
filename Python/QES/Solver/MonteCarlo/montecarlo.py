@@ -35,8 +35,11 @@ if JAX_AVAILABLE:
     from jax import vmap
 
 ###################################
-from Solver.solver import Solver
-from Solver.MonteCarlo.sampler import Sampler, get_sampler, SolverInitState
+try:
+    from QES.Solver.solver import Solver
+    from QES.Solver.MonteCarlo.sampler import Sampler, get_sampler, SolverInitState
+except ImportError as e:
+    raise ImportError("Failed to import Solver modules. Ensure QES package is correctly installed.") from e
 ###################################
 
 @dataclass

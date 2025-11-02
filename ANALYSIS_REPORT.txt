@@ -1,0 +1,108 @@
+ANALYSIS REPORT
+================================================================================
+
+1. FILE STATISTICS
+--------------------------------------------------------------------------------
+
+nqs.py:
+  Total lines: 2122
+  Code lines: 1594
+  Classes: 3
+  Functions: 80
+  Functions >100 LOC: 2
+  Undocumented functions: 14
+  Dead code lines: 0
+
+nqs_backend.py:
+  Total lines: 333
+  Code lines: 208
+  Classes: 4
+  Functions: 18
+  Functions >100 LOC: 0
+  Undocumented functions: 10
+  Dead code lines: 1
+
+nqs_networks.py:
+  Total lines: 68
+  Code lines: 47
+  Classes: 0
+  Functions: 1
+  Functions >100 LOC: 0
+  Undocumented functions: 0
+  Dead code lines: 0
+
+nqs_physics.py:
+  Total lines: 143
+  Code lines: 91
+  Classes: 5
+  Functions: 14
+  Functions >100 LOC: 0
+  Undocumented functions: 10
+  Dead code lines: 0
+
+Total code lines: 1940
+Total functions: 113
+
+2. EVALUATION FUNCTIONS (Energy/Loss Computation)
+--------------------------------------------------------------------------------
+
+In nqs.py:
+  - __init__ (line 89, 166 LOC)
+  - _apply_fun_jax (line 494, 39 LOC)
+  - apply (line 670, 79 LOC)
+  - wrap_single_step_jax (line 1024, 50 LOC)
+  - wrapped (line 1070, 3 LOC)
+  - _single_step_groundstate (line 1077, 67 LOC)
+  - step (line 1146, 60 LOC)
+  - train (line 1210, 37 LOC)
+  - local_energy (line 1686, 4 LOC)
+  - eval_observables (line 1729, 173 LOC)
+  - compute_local_penalty_energies (line 2079, 21 LOC)
+
+In nqs_backend.py:
+  - local_energy (line 98, 2 LOC)
+  - local_energy (line 146, 1 LOC)
+  - local_energy (line 198, 1 LOC)
+
+In nqs_physics.py:
+  - loss (line 30, 2 LOC)
+  - setup (line 46, 35 LOC)
+  - loss (line 83, 1 LOC)
+  - loss (line 94, 1 LOC)
+  - loss (line 105, 3 LOC)
+
+Total evaluation functions found: 19
+ACTION: Review for consolidation and duplication
+
+3. CODE QUALITY METRICS
+--------------------------------------------------------------------------------
+Average function length: 17 LOC
+Average undocumented ratio: 850.0%
+
+Recommendations:
+  ⚠ Many undocumented functions - add docstrings
+
+4. IMPORT ANALYSIS
+--------------------------------------------------------------------------------
+Total unique imports: 48
+Top imports:
+  - QES.Algebra.Operator.operator.Operator
+  - QES.Algebra.Operator.operator.OperatorFunction
+  - QES.Algebra.hamil.Hamiltonian
+  - QES.Algebra.hilbert.HilbertSpace
+  - QES.Solver.MonteCarlo.montecarlo.MonteCarloSolver
+  - QES.Solver.MonteCarlo.montecarlo.Sampler
+  - QES.general_python.algebra.utils.Array
+  - QES.general_python.common.directories.Directories
+  - QES.general_python.common.flog.Logger
+  - QES.general_python.common.plot.Plotter
+  - QES.general_python.common.timer.timeit
+  - QES.general_python.ml.net_impl.interface_net_flax
+  - QES.general_python.ml.net_impl.net_general
+  - QES.general_python.ml.net_impl.utils.net_utils
+  - QES.general_python.ml.networks
+  - abc.ABC
+  - abc.abstractmethod
+  - dataclasses.dataclass
+  - enum.Enum
+  - flax

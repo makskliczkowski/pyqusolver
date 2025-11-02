@@ -8,11 +8,15 @@ The Heisenberg-Kitaev model implementation with additional possible
 - \Gamma^\gamma interactions        - anisotropic off-diagonal couplings.
 
 ------------------------------------------------------------------------------
-File    : Algebra/Model/Interacting/Spin/heisenberg_kitaev.py
-Author  : Maksymilian Kliczkowski
-Date    : 2025-02-17
-Version : 0.1
+File        : Algebra/Model/Interacting/Spin/heisenberg_kitaev.py
+Author      : Maksymilian Kliczkowski
+Date        : 2025-02-17
+Version     : 1.0
 ------------------------------------------------------------------------------
+Changelog   :
+- 2025-02-17 1.0: Initial version.
+- 2025-06-10 1.1: Added impurities support and improved documentation.
+- 2025-11-01 1.2: Refactored code for performance improvements.
 """
 
 import numpy as np

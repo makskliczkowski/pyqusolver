@@ -1395,7 +1395,7 @@ class MCSampler(Sampler):
                         accept_config_fun   : Callable,
                         net_callable_fun    : Callable,
                         ):
-        """
+        r"""
         NumPy version of sweeping a single chain.
         
         This function carries a tuple:

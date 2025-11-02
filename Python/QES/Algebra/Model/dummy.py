@@ -101,7 +101,7 @@ class DummyHamiltonian(Hamiltonian):
     def _set_local_energy_operators(self):
         ''' Set local energy operators for the Hamiltonian '''
         
-        if self._hilbert_space.Nhl == 2:
+        if self._hilbert_space.local_space.local_dim == 2:
             self._log('Using spin operators', log = 'info', lvl = 1, color = 'green')
             
             for i in range(self.ns):
