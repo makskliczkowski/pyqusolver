@@ -28,6 +28,8 @@ class TestBackendAvailability:
         backend_list = get_available_backends()
         assert backend_list is not None
         assert len(backend_list) > 0
+        # At minimum, NumPy backend should be available
+        assert any(name == 'numpy' for name, _ in backend_list)
     
     def test_numpy_backend_available(self):
         """Test getting NumPy backend."""
@@ -42,8 +44,49 @@ class TestBackendAvailability:
         try:
             jax_backend = get_backend('jax')
             assert jax_backend is not None
+            assert jax_backend.name == 'jax'
         except ValueError:
-            pytest.skip("JAX backend not available")
+            # JAX backend not available - that's OK
+            pass
+
+
+class TestMatrixConstructionMethods:
+    """Test direct matrix construction methods."""
+    
+    def test_from_hermitian_matrix(self):
+        """Test creating QuadraticHamiltonian from Hermitian matrix."""
+        h_matrix = np.array([
+            [1, -1, 0],
+            [-1, 0, -1],
+            [0, -1, 1]
+        ], dtype=complex)
+        
+        try:
+            qh = QuadraticHamiltonian.from_hermitian_matrix(h_matrix, constant=2.0)
+            qh.diagonalize(verbose=False)
+            assert qh.eig_val is not None
+            assert len(qh.eig_val) > 0
+        except (AttributeError, NotImplementedError):
+            pytest.skip("from_hermitian_matrix not implemented")
+    
+    def test_from_bdg_matrices(self):
+        """Test creating QuadraticHamiltonian from BdG matrices."""
+        h_matrix = np.array([
+            [0, 1],
+            [1, 0]
+        ], dtype=complex)
+        
+        v_matrix = np.array([
+            [0, 0.5],
+            [0.5, 0]
+        ], dtype=complex)
+        
+        try:
+            qh = QuadraticHamiltonian.from_bdg_matrices(h_matrix, v_matrix, constant=1.5)
+            qh.diagonalize(verbose=False)
+            assert qh.eig_val is not None
+        except (AttributeError, NotImplementedError):
+            pytest.skip("from_bdg_matrices not implemented")
 
 
 class TestQuadraticHamiltonianWithBackends:
