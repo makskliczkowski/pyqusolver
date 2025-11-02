@@ -103,7 +103,7 @@ Date        : 2025-10-30
 
 import numpy as np
 import numba
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Dict, Tuple
 
 # import the quadratic base
 try:
@@ -136,14 +136,27 @@ HEI_KIT_Z_BOND_NEI = 0
 # -----------------------------------------------------
 
 class KitaevGammaMajorana(QuadraticHamiltonian):
-    '''Kitaev model with Majorana fermions on a honeycomb lattice.'''
+    r"""
+    Kitaev-Gamma Majorana model:
+
+      H = (i/4) Σ_<ij>_\gamma [ K_\gamma u_ij  + (Γ_\gamma/2) g_ij ] c_i c_j
+        + (i/4) Σ_<<jk>> t^{(2)}_{jk} c_j c_k,
+
+    with fields supplied externally:
+    - u_ij              \in {+1,-1}     (Z2 link / flux sector, Kitaev),
+    - g_ij              \in {+1,0,-1}   (\Gamma mean-field bond variable),
+    - t^{(2)}_{jk}      (NNN; by default \lambda u_jl u_lk from a chosen path).
+    """
     
     def __init__(self, 
                 lattice     : HoneycombLattice,
                 gamma_z     : Union[float, np.ndarray]              = 1.0,
                 gamma_y     : Optional[Union[float, np.ndarray]]    = None,
                 gamma_x     : Optional[Union[float, np.ndarray]]    = None,
+                # next-nearest parameters
+                t2          : float                                 = 0.0,
                 *args,
+                # -----------
                 k_z         : Optional[Union[float, np.ndarray]]    = None,
                 k_y         : Optional[Union[float, np.ndarray]]    = None,
                 k_x         : Optional[Union[float, np.ndarray]]    = None,
@@ -152,12 +165,14 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                 h_y         : Optional[float]                       = None,
                 h_z         : Optional[float]                       = None,
                 # -----------
+                is_sparse   : bool                                  = True,
                 logger      : Optional[object]                      = None,
+                dtype       : Optional[np.dtype]                    = complex,
                 **kwargs):
         
         super().__init__(lattice                =   lattice,
                         particle_conserving     =   True,
-                        dtype                   =   np.dtype(np.complex128), # the model is complex by construction
+                        dtype                   =   dtype,
                         backend                 =   "numpy",
                         constant_offset         =   0.0,
                         particles               =   "fermions",
@@ -167,99 +182,251 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                         **kwargs)
         
         # setups already for random couplings - can be as well constant
-        self.gamma_z    = self._set_some_coupling(gamma_z).astype(self._dtype)
-        self.gamma_y    = self._set_some_coupling(gamma_y).astype(self._dtype) if gamma_y is not None else self.gamma_z
-        self.gamma_x    = self._set_some_coupling(gamma_x).astype(self._dtype) if gamma_x is not None else self.gamma_z
-        self.k_z        = self._set_some_coupling(k_z).astype(self._dtype) if k_z is not None else None
-        self.k_y        = self._set_some_coupling(k_y).astype(self._dtype) if k_y is not None else None
-        self.k_x        = self._set_some_coupling(k_x).astype(self._dtype) if k_x is not None else None
-        
+        self.gamma_z    = self._set_some_coupling(gamma_z).astype(float)
+        self.gamma_y    = self._set_some_coupling(gamma_y).astype(float) if gamma_y is not None else self.gamma_z
+        self.gamma_x    = self._set_some_coupling(gamma_x).astype(float) if gamma_x is not None else self.gamma_z
+        self.k_z        = self._set_some_coupling(k_z).astype(float) if k_z is not None else None
+        self.k_y        = self._set_some_coupling(k_y).astype(float) if k_y is not None else None
+        self.k_x        = self._set_some_coupling(k_x).astype(float) if k_x is not None else None
+
         # will be treated in 3rd order perturbation theory
         self.h_x        = (float(h_x))**3 if h_x is not None else None
         self.h_y        = (float(h_y))**3 if h_y is not None else None
         self.h_z        = (float(h_z))**3 if h_z is not None else None
+        
+        self.u_nn       : Optional[Dict[Tuple[int, int], int]]      = None    # -1/+1
+        self.g_nn       : Optional[Dict[Tuple[int, int], int]]      = None    # −1/0/+1
+        # NNN field: dictionary keyed by (j,k) on same sublattice
+        self.t2_nnn     : Optional[Dict[Tuple[int, int], float]]    = None
+
+    # ---------------------------------------------------------------------
+
+    def set_nn_fields(self,
+                      u_field: Optional[Dict[Tuple[int, int], int]] = None,
+                      g_field: Optional[Dict[Tuple[int, int], int]] = None):
+        """Install NN fields (no sampling here). Keys are directed bonds (i,j)."""
+        self.u_nn = u_field
+        self.g_nn = g_field
+
+    def set_nnn_field(self, t2_field: Optional[Dict[Tuple[int, int], float]]):
+        """Install NNN amplitudes t^{(2)}_{jk}. Keys are directed same-sublattice pairs (j,k)."""
+        self.t2_nnn = t2_field
 
     # ---------------------------------------------------------------------
     
     def _hamiltonian_quadratic(self, use_numpy: bool = False):
+        r"""
+        Build iA with A real antisymmetric:
+          A_ij =  [ K_\gamma u_ij + (Γ_\gamma/2) g_ij ]     for NN
+          A_jk =  t^{(2)}_{jk}                              for NNN
+          
+        Returns
+        -------
+        H : np.ndarray or scipy.sparse.csr_matrix
+            The quadratic Majorana Hamiltonian matrix.
+        """
         
-        dtype               = self._dtype
-
-        rows: List[int]     = []
-        cols: List[int]     = []
-        data: List[float]   = []
-        Ns                  = self.ns
+        Ns = self.ns
         
-        for site in range(Ns):
-            num_nei = self.lattice.get_nn_num(site)
-            
-            # construct the single-particle Hamiltonian - nearest neighbor hopping
-            for nei_idx in range(num_nei):
-                nei_site    = self.lattice.get_nn(site, nei_idx)
-                bond_type   = self._get_bond_type(nei_idx)
-                
-                if bond_type == 'x':
-                    k_val   = self.k_x[site] if isinstance(self.k_x, np.ndarray) else self.k_x
-                    g_val   = self.gamma_x[nei_site] if isinstance(self.gamma_x, np.ndarray) else self.gamma_x
-                elif bond_type == 'y':
-                    k_val   = self.k_y[site] if isinstance(self.k_y, np.ndarray) else self.k_y
-                    g_val   = self.gamma_y[nei_site] if isinstance(self.gamma_y, np.ndarray) else self.gamma_y
-                elif bond_type == 'z':
-                    k_val   = self.k_z[site] if isinstance(self.k_z, np.ndarray) else self.k_z
-                    g_val   = self.gamma_z[nei_site] if isinstance(self.gamma_z, np.ndarray) else self.gamma_z
-                
-                gamma_mean_field    = -1.0j * (g_val / 2.0)                             # we renormalize the gamma by 2 for mean field  
-                k_mean_field        = 1.0j * (k_val) if k_val is not None else 0.0      # we renormalize the k-value by 
-                
-                rows.append(site)
-                cols.append(nei_site)
-                data.append(gamma_mean_field + k_mean_field)
-            
-            # TODO: add next nearest neighbor hopping from magnetic field in 3rd order perturbation theory    
-            if self.h_x is not None or self.h_y is not None or self.h_z is not None:
-                # get next nearest neighbors
-                nn_neis = self.lattice.get_next_nn(site)
-                for nn_nei_site in nn_neis:
-                    # determine the bond types involved
-                    bond_types = self.lattice.get_bond_types_between(site, nn_nei_site)
-                    if len(bond_types) != 2:
-                        continue  # skip if not exactly two bonds
-                    
-                    # calculate the effective hopping amplitude
-                    h_eff = 0.0
-                    for bond_type in bond_types:
-                        if bond_type == 'x' and self.h_x is not None:
-                            h_eff += self.h_x
-                        elif bond_type == 'y' and self.h_y is not None:
-                            h_eff += self.h_y
-                        elif bond_type == 'z' and self.h_z is not None:
-                            h_eff += self.h_z
-                    
-                    # add the next nearest neighbor hopping term
-                    rows.append(site)
-                    cols.append(nn_nei_site)
-                    data.append(-1.0j * h_eff)  # imaginary hopping for Majorana fermions
-            
-            
-        # Assemble & symmetrize
-        if _HAS_SCIPY and not use_numpy and self._is_sparse:
-            H               = coo_matrix((np.asarray(data, dtype=dtype), (np.asarray(rows, dtype=np.int64), np.asarray(cols, dtype=np.int64))), shape=(Ns, Ns)).tocsr()
-            H               = 0.5 * (H + H.T.conjugate())
-            self._hamil_sp  = H.astype(dtype, copy=False)
+        # We'll build A (real antisymmetric), then H = 1j * A.
+        if _HAS_SCIPY and self._is_sparse and not use_numpy:
+            rows    : List[int]     = []
+            cols    : List[int]     = []
+            vals    : List[float]   = []
+            add                     = lambda r, c, a: (rows.append(r), cols.append(c), vals.append(a))
         else:
-            H               = np.zeros((Ns, Ns), dtype=dtype)
-            for r, c, v in zip(rows, cols, data):
-                H[r, c] += v
-            H               = 0.5 * (H + H.T.conjugate())
-            self._hamil_sp  = H.astype(dtype, copy=False)
+            A                       = np.zeros((Ns, Ns), dtype=float)
+            def add(r, c, a):
+                A[r, c]            += float(a)
 
-        self._log("AA Hamiltonian built.", lvl=2, color='green')
+        # -------------------------
+        #! NN contributions
+        # -------------------------
+        
+        for i in range(Ns):
+            for idx in range(self.lattice.get_nn_num(i)):
+                
+                j = self.lattice.get_nn(i, idx)
+                if j == i:
+                    continue
+                
+                bond = self._get_bond_type(idx)
+                
+                # pick couplings
+                if bond == 'x':
+                    Kg  = self.k_x[i] if self.k_x is not None else None
+                    Gg  = self.gamma_x[i] if self.gamma_x is not None else None
+                elif bond == 'y':
+                    Kg  = self.k_y[i] if self.k_y is not None else None
+                    Gg  = self.gamma_y[i] if self.gamma_y is not None else None
+                else:
+                    Kg  = self.k_z[i] if self.k_z is not None else None
+                    Gg  = self.gamma_z[i] if self.gamma_z is not None else None
+                
+                if Kg is None: Kg = 0.0
+                if Gg is None: Gg = 0.0
+                
+                u_ij    = self.u_nn[(i, j)] if self.u_nn is not None else 1     # default u mean-field if not supplied
+                g_ij    = self.g_nn[(i, j)] if self.g_nn is not None else 0     # default no Γ mean-field if not supplied
+                a_ij    = (Kg * u_ij) + (0.5 * Gg * g_ij)                       # real
+                self._log(f"Adding NN bond ({i},{j}) type {bond}: "
+                          f"K={Kg}, Γ={Gg}, u={u_ij}, g={g_ij} => A_ij={a_ij}", lvl=3)
+                if abs(a_ij) > 0:
+                    add(i, j, +a_ij)
+                    add(j, i, -a_ij)   # antisymmetry
+
+        # -------------------------
+        #! NNN contributions
+        # -------------------------
+        
+        if self.t2_nnn is not None:
+            
+            for (j, k), t2jk in self.t2_nnn.items():
+                
+                if j == k:
+                    continue
+                
+                # assume field already antisymmetric: t2[(k,j)] = −t2[(j,k)]
+                if (k, j) in self.t2_nnn and j > k:
+                    # avoid double add if both directions present
+                    pass
+                add(j, k, +t2jk)
+                add(k, j, -t2jk)
+
+        # -------------------------
+        # finalize H = i A
+        # ------------------------
+        
+        if _HAS_SCIPY and self._is_sparse and not use_numpy:
+            A_sp = coo_matrix((np.asarray(vals, dtype=float),
+                               (np.asarray(rows, dtype=np.int64),
+                                np.asarray(cols, dtype=np.int64))),
+                              shape=(Ns, Ns)).tocsr()
+            # enforce antisymmetry numerically
+            A_sp    = 0.5 * (A_sp - A_sp.T)
+            H       = (1j * A_sp).astype(self._dtype, copy=False)
+        else:
+            A       = 0.5 * (A - A.T)
+            H       = (1j * A).astype(self._dtype, copy=False)
+
+        self._hamil_sp = H
+        self._log("Majorana quadratic Hamiltonian built (iA with A real antisymmetric).", lvl=2, color='green')
+        return self._hamil_sp
             
     # ---------------------------------------------------------------------
+    #! STATIC METHODS TO BUILD RANDOM FIELDS
+    # ---------------------------------------------------------------------
     
-    def solvable(self, **kwargs) -> np.ndarray:
-        pass
-    
+    @staticmethod
+    def build_binary_u_field(lattice    : HoneycombLattice,
+                            p_flip      : float = 0.0,
+                            rng         : Optional[np.random.Generator] = None) -> Dict[Tuple[int, int], int]:
+        r"""
+        Build u_{ij} \in \{+1,-1\} on NN bonds with flip probability p_flip (flux density proxy).
+        Returns oriented dictionary: u[(i,j)] = -u[(j,i)] with u[(i,j)] = sign on i->j.
+        
+        Parameters
+        ----------
+        lattice : HoneycombLattice
+            The honeycomb lattice on which to build the u field.
+        p_flip : float, optional
+            Probability of flipping the sign of u on each bond, by default 0.0.
+        rng : np.random.Generator, optional
+            Random number generator to use, by default None (will create a new one).
+        """
+        
+        rng     = rng or np.random.default_rng()
+        u       = {}
+        Ns      = lattice.ns
+        for i in range(Ns):
+            for idx in range(lattice.get_nn_num(i)):
+                
+                j = lattice.get_nn(i, idx)
+                if (j, i) in u:  # enforce antisymmetry once
+                    continue
+                s           = -1 if rng.random() < p_flip else 1
+                u[(i, j)]   = s
+                u[(j, i)]   = -s  # antisymmetric link convention
+        return u
+
+    @staticmethod
+    def build_ternary_g_field(lattice   : HoneycombLattice,
+                              p_plus    : float = 1.0,
+                              p_zero    : float = 0.0,
+                              rng       : Optional[np.random.Generator] = None) -> Dict[Tuple[int, int], int]:
+        r"""
+        Build g_{ij} \in \{+1,0,-1\} on NN bonds with given probabilities.
+        Returns antisymmetric directed dictionary g[(i,j)] = -g[(j,i)].
+        
+        Parameters
+        ----------
+        lattice : HoneycombLattice
+            The honeycomb lattice on which to build the g field.
+        p_plus : float, optional
+            Probability of g_{ij} = +1, by default 1.0.
+        p_zero : float, optional
+            Probability of g_{ij} = 0, by default 0.0.
+        rng : np.random.Generator, optional
+            Random number generator to use, by default None (will create a new one).
+        """
+        rng     = rng or np.random.default_rng()
+        p_minus = 1.0 - p_plus - p_zero
+        if p_minus < -1e-12:
+            raise ValueError("Probabilities must sum to ≤ 1.")
+        g       = {}
+        Ns      = lattice.ns
+        for i in range(Ns):
+            for idx in range(lattice.get_nn_num(i)):
+                
+                j = lattice.get_nn(i, idx)
+                if (j, i) in g:
+                    continue
+                r = rng.random()
+                if r < p_minus:
+                    s = -1
+                elif r < p_minus + p_zero:
+                    s = 0
+                else:
+                    s = +1
+                g[(i, j)] = s
+                g[(j, i)] = -s
+        return g
+
+    @staticmethod
+    def build_t2_from_u(lattice         : HoneycombLattice,
+                        u_field         : Dict[Tuple[int, int], int],
+                        lam             : float,
+                        use_gaugeprod   : bool = True) -> Dict[Tuple[int, int], float]:
+        """
+        Gauge-covariant NNN builder:  t^{(2)}_{jk} = λ * u_{j l} * u_{l k}
+        where l is the intermediate site along the chosen inside-hexagon path.
+        If `use_gauge_product=False`, returns uniform chirality t^{(2)}_{jk} = λ * ν_{jk}.
+        Assumes lattice provides: get_nnn_paths(j,k) -> list of candidate l (pick e.g. anticlockwise).
+        """
+        t2 = {}
+        Ns = lattice.ns
+        
+        for j in range(Ns):
+            for idx in range(lattice.get_nnn_num(j)):
+                
+                k = lattice.get_nnn(j, idx)
+                if (k, j) in t2:
+                    continue
+                
+                if use_gaugeprod:
+                    # pick one path j-l-k inside the hexagon with fixed orientation (e.g., anticlockwise)
+                    mids: List[int] = lattice.get_nnn_middle_sites(j, k, orientation="anticlockwise")
+                    if not mids:
+                        continue
+                    l = mids[0]
+                    val = lam * u_field[(j, l)] * u_field[(l, k)]
+                else:
+                    nu  = lattice.get_chirality_sign(j, k)  # +/ 1 from orientation
+                    val = lam * nu
+                t2[(j, k)] = val
+                t2[(k, j)] = -val  # antisymmetric convention for directed pair
+        return t2
+                
     # ---------------------------------------------------------------------
     
     def __repr__(self) -> str:

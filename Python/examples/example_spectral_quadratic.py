@@ -188,7 +188,7 @@ print(f"""
   
 (ok) All operators preserve Hermiticity and spectral sum rules
 (ok) Eigenvalues appear as peaks in spectral functions
-(ok) Spectral functions are real-valued (no complex→real casting issues)
+(ok) Spectral functions are real-valued (no complex->real casting issues)
 
 Key features:
 - Spectral function from Green's function: A(omega) = -(1/pi) Im[G(omega)]

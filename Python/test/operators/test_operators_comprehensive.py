@@ -121,7 +121,7 @@ class TestFermionicOperators:
 
         assert out_state[0] == 0b110, f"Expected state 0b110, got {out_state[0]:0b}"
         assert coeff[0] == -1.0, f"Expected coefficient -1.0, got {coeff[0]}"
-        print("(ok)  Fermionic creation sign correct: |100⟩ → |110⟩ with coeff -1")
+        print("(ok)  Fermionic creation sign correct: |100⟩ -> |110⟩ with coeff -1")
 
         # Test: attempt to create on already occupied site gives zero
         out_state, coeff = creation.fun_int(0b100, 3, [0])
@@ -139,7 +139,7 @@ class TestFermionicOperators:
 
         assert out_state[0] == 0b100, f"Expected state 0b100, got {out_state[0]:0b}"
         assert coeff[0] == -1.0, f"Expected coefficient -1.0, got {coeff[0]}"
-        print("(ok)  Fermionic annihilation sign correct: |110⟩ → |100⟩ with coeff -1")
+        print("(ok)  Fermionic annihilation sign correct: |110⟩ -> |100⟩ with coeff -1")
 
         # Test: annihilate empty site gives zero
         out_state, coeff = annihilation.fun_int(0b100, 3, [1])
@@ -253,21 +253,21 @@ class TestFermionOperators:
         result = c_dag(state, 0)
         assert result[0][0] == 0b100, f"Expected 0b100, got {result[0][0]:0b}"
         assert result[1][0] == 1.0, f"Expected 1.0, got {result[1][0]}"
-        print("(ok)  Creation on empty site: |000⟩ → |100⟩")
+        print("(ok)  Creation on empty site: |000⟩ -> |100⟩")
 
         # Test annihilation on occupied site
         state = 0b100
         result = c(state, 0)
         assert result[0][0] == 0b000, f"Expected 0b000, got {result[0][0]:0b}"
         assert result[1][0] == 1.0, f"Expected 1.0, got {result[1][0]}"
-        print("(ok)  Annihilation on occupied site: |100⟩ → |000⟩")
+        print("(ok)  Annihilation on occupied site: |100⟩ -> |000⟩")
 
         # Test fermionic sign
         state = 0b100  # site 0 occupied
         result = c_dag(state, 1)
         assert result[0][0] == 0b110, f"Expected 0b110, got {result[0][0]:0b}"
         assert result[1][0] == -1.0, f"Expected -1.0, got {result[1][0]}"
-        print("(ok)  Fermionic sign: |100⟩ → |110⟩ with coefficient -1")
+        print("(ok)  Fermionic sign: |100⟩ -> |110⟩ with coefficient -1")
 
     def test_fermion_operators_numpy(self, lattice):
         """Test fermion operators on NumPy arrays."""
@@ -279,7 +279,7 @@ class TestFermionOperators:
         expected_state = np.array([1.0, 0.0, 0.0])
         assert np.allclose(result[0], expected_state), f"State mismatch: expected {expected_state}, got {result[0]}"
         assert result[1][0] == 1.0, f"Expected coefficient 1.0, got {result[1][0]}"
-        print("(ok)  Creation on NumPy empty state: [0,0,0] → [1,0,0]")
+        print("(ok)  Creation on NumPy empty state: [0,0,0] -> [1,0,0]")
 
 
 class TestHilbertIntegration:
@@ -403,7 +403,7 @@ class TestTranslationSymmetry:
             new_state, phase = trans_1d.apply_int(state, lattice_1d.Ns)
             assert np.isreal(phase), f"Phase {phase} is not real for state {state:04b} at k=0"
             assert phase.imag == 0.0, f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=0"
-            print(f"(ok)  1D k=0: state {state:04b} → phase {phase}")
+            print(f"(ok)  1D k=0: state {state:04b} -> phase {phase}")
 
         # Test 2D k=(0,0) sector
         trans_2d_x = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction='x')
@@ -418,7 +418,7 @@ class TestTranslationSymmetry:
 
             assert np.isreal(total_phase), f"Combined phase {total_phase} is not real for state {state} at k=(0,0)"
             assert total_phase.imag == 0.0, f"Combined phase {total_phase} has non-zero imaginary part for state {state} at k=(0,0)"
-            print(f"(ok)  2D k=(0,0): state {state} → combined phase {total_phase}")
+            print(f"(ok)  2D k=(0,0): state {state} -> combined phase {total_phase}")
 
     def test_translation_real_coefficients_pi_sector(self, lattice_1d, lattice_2d):
         """Test that translation operators return real coefficients at k=pi."""
@@ -433,7 +433,7 @@ class TestTranslationSymmetry:
             new_state, phase = trans_1d.apply_int(state, lattice_1d.Ns)
             assert np.isreal(phase), f"Phase {phase} is not real for state {state:04b} at k=pi"
             assert phase.imag == 0.0, f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=pi"
-            print(f"(ok)  1D k=pi: state {state:04b} → phase {phase}")
+            print(f"(ok)  1D k=pi: state {state:04b} -> phase {phase}")
 
         # Test 2D k=(pi,0) and k=(0,pi) sectors
         trans_2d_x_pi = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='x')  # k_x = pi
@@ -449,8 +449,8 @@ class TestTranslationSymmetry:
             assert phase_x.imag == 0.0, f"X-direction phase {phase_x} has non-zero imaginary part for state {state} at k=(pi,0)"
             assert phase_y.imag == 0.0, f"Y-direction phase {phase_y} has non-zero imaginary part for state {state} at k=(0,pi)"
 
-            print(f"(ok)  2D k=(pi,0): state {state} → phase {phase_x}")
-            print(f"(ok)  2D k=(0,pi): state {state} → phase {phase_y}")
+            print(f"(ok)  2D k=(pi,0): state {state} -> phase {phase_x}")
+            print(f"(ok)  2D k=(0,pi): state {state} -> phase {phase_y}")
 
     def test_translation_generic_sector_complex(self, lattice_1d):
         """Test that translation operators can return complex coefficients at generic k."""
@@ -465,7 +465,7 @@ class TestTranslationSymmetry:
         new_state, phase = trans_1d.apply_int(state, lattice_1d.Ns)
 
         # Phase can be complex for generic k
-        print(f"(ok)  1D k=pi/2: state {state:04b} → phase {phase} (can be complex)")
+        print(f"(ok)  1D k=pi/2: state {state:04b} -> phase {phase} (can be complex)")
 
     def test_momentum_sector_detection(self, lattice_1d, lattice_2d):
         """Test that momentum sectors are correctly identified."""

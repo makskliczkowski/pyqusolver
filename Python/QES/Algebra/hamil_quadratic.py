@@ -575,7 +575,7 @@ class QuadraticHamiltonian(Hamiltonian):
     """
     
     def __init__(self,
-                ns                      : int, # Ns is mandatory
+                ns                      : Optional[int]         = None,  # Ns is mandatory
                 particle_conserving     : bool                  = True,
                 dtype                   : Optional[np.dtype]    = None,
                 backend                 : str                   = 'default',
@@ -638,9 +638,6 @@ class QuadraticHamiltonian(Hamiltonian):
         if self._hilbert_space is not None and getattr(self._hilbert_space, 'particle_conserving', None) is not None and self._hilbert_space.particle_conserving != particle_conserving:
             # Hilbert space indicates different particle-conserving mode; warn and continue.
             self._log("Hilbert space particle_conserving flag differs from requested mode; continuing and trusting matrices.", lvl=1, log='warning')
-
-        if self._is_sparse:
-            raise NotImplementedError("Sparse matrix support not implemented yet. TODO: implement sparse matrix handling.")
         
         # Determine single-particle dimension and allocate storage.
         # Prefer an explicit dtype if given, otherwise inherit from Hilbert space
@@ -657,9 +654,8 @@ class QuadraticHamiltonian(Hamiltonian):
         self._hamil_sp_shape        = (self._hamil_sp_size, self._hamil_sp_size)
         self._dtypeint              = self._backend.int32 if self.ns < 2**32 - 1 else self._backend.int64
 
-        xp                          = self._backend
-        self._hamil_sp              = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
-        self._delta_sp              = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        self._hamil_sp              = None
+        self._delta_sp              = None
         if not particle_conserving:
             self._log('Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.', lvl=2, log='info')
 

@@ -1550,7 +1550,7 @@ class TestReflectionParity:
     """
     Comprehensive tests for reflection and parity symmetries.
     
-    Reflection symmetry corresponds to spatial inversion (x → -x), while
+    Reflection symmetry corresponds to spatial inversion (x -> -x), while
     parity symmetries include spin operations like flipping all spins.
     These symmetries are important for systems with inversion symmetry
     or particle-hole symmetry.
@@ -1560,7 +1560,7 @@ class TestReflectionParity:
         """
         Test reflection symmetry on 1D chain.
         
-        Reflection symmetry inverts the spatial coordinate x → L-x.
+        Reflection symmetry inverts the spatial coordinate x -> L-x.
         For a 1D chain with PBC, this creates even and odd parity sectors
         under reflection.
         """
@@ -1578,7 +1578,7 @@ class TestReflectionParity:
         """
         Test Parity Z (spin flip) symmetry.
         
-        Parity Z flips all spins in the system (σ → -σ). This symmetry
+        Parity Z flips all spins in the system (σ -> -σ). This symmetry
         is relevant for systems with antiferromagnetic order or particle-hole
         symmetry. States are divided into even and odd parity sectors.
         """

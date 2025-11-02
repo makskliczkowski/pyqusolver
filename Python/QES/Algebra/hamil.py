@@ -140,11 +140,14 @@ class Hamiltonian(ABC):
     ################################################################################################
 
     def _handle_system(self, ns : Optional[int], hilbert_space : Optional[HilbertSpace], lattice : Optional[Lattice], logger : Optional[Logger], **kwargs):
+        ''' Handle the system configuration. '''
         
+        # ----------------------------------------------------------------------------------------------
+                
         if ns is not None:  # if the number of sites is provided, set it
             self._ns        = ns
             self._lattice   = lattice
-            if self._logger: 
+            if self._logger and self._hilbert_space is not None:
                 self._log(f"Inferred number of sites ns={self._ns} from provided ns argument.", lvl = 3, color = 'green')
                 
         elif hilbert_space is not None:
@@ -153,19 +156,19 @@ class Hamiltonian(ABC):
             self._lattice   = hilbert_space.get_lattice()
             if self._dtype is None:
                 self._dtype = hilbert_space.dtype
-            if self._logger: 
+            if self._logger and self._hilbert_space is not None:
                 self._log(f"Inferred number of sites ns={self._ns} from provided Hilbert space.", lvl = 3, color = 'green')
                 
         elif lattice is not None:
             self._ns        = lattice.ns
             self._lattice   = lattice
             
-            if self._logger: 
+            if self._logger and self._hilbert_space is not None:
                 self._log(f"Inferred number of sites ns={self._ns} from provided lattice.", lvl = 3, color = 'green')
         else:
             # if the number of sites is not provided, raise an error
             raise ValueError(Hamiltonian._ERR_NS_NOT_PROVIDED)
-        
+    
         if self._hilbert_space is None:
             # try to infer from lattice or number of sites
             if self._lattice is None:
@@ -179,7 +182,7 @@ class Hamiltonian(ABC):
                                             dtype       = self._dtype,
                                             backend     = self._backendstr,
                                             logger      = logger,
-                                            **kwargs)
+                                            **kwargs)    
         else:
             # otherwise proceed 
             if self._is_manybody:
@@ -189,8 +192,8 @@ class Hamiltonian(ABC):
             else:
                 if not self._hilbert_space._is_quadratic:
                     raise ValueError(Hamiltonian._ERR_MODE_MISMATCH)
-                self._hamil = None
-        
+                self._hamil = None    
+    
         if self._hilbert_space.get_Ns() != self._ns:
             raise ValueError(f"Ns mismatch: {self._hilbert_space.get_Ns()} != {self._ns}")
         
