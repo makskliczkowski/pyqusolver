@@ -27,18 +27,42 @@ class TestParticleConservingSystemsBasic:
     
     def test_ring_lattice(self):
         """Test 1D ring lattice with hopping."""
-        pytest.skip("QuadraticHamiltonian initialization issue - _hamil_sp is None")
         qh = QuadraticHamiltonian(ns=4, particle_conserving=True)
+        # Add hopping terms forming a ring
+        qh.add_hopping(0, 1, 1.0)
+        qh.add_hopping(1, 2, 1.0)
+        qh.add_hopping(2, 3, 1.0)
+        qh.add_hopping(3, 0, 1.0)  # Closes the ring
+        assert qh is not None
+        # Verify matrix is non-zero
+        mat = qh.build_single_particle_matrix()
+        assert np.any(np.abs(mat) > 0)
     
     def test_chain_lattice(self):
         """Test 1D chain with onsite and hopping."""
-        pytest.skip("QuadraticHamiltonian initialization issue - _hamil_sp is None")
         qh = QuadraticHamiltonian(ns=6, particle_conserving=True)
+        # Add onsite terms
+        for i in range(6):
+            qh.add_onsite(i, 0.5)
+        # Add hopping terms
+        for i in range(5):
+            qh.add_hopping(i, i+1, -1.0)
+        assert qh is not None
+        mat = qh.build_single_particle_matrix()
+        assert np.any(np.abs(mat) > 0)
     
     def test_slater_state_calculation(self):
         """Test Slater determinant calculation."""
-        pytest.skip("QuadraticHamiltonian initialization issue - _hamil_sp is None")
         qh = QuadraticHamiltonian(ns=4, particle_conserving=True)
+        qh.add_onsite(0, 0.1)
+        qh.add_onsite(1, -0.1)
+        qh.add_hopping(0, 1, 0.5)
+        qh.add_hopping(1, 2, 0.5)
+        
+        # Diagonalize to get ground state
+        qh.diagonalize(verbose=False)
+        assert qh.eig_val is not None
+        assert len(qh.eig_val) == 4
 
 
 class TestBdGSystems:
@@ -46,13 +70,28 @@ class TestBdGSystems:
     
     def test_bdg_simple(self):
         """Test simple BdG system."""
-        pytest.skip("QuadraticHamiltonian initialization issue - _hamil_sp is None")
         qh = QuadraticHamiltonian(ns=2, particle_conserving=False)
+        qh.add_hopping(0, 1, 1.0)
+        qh.add_pairing(0, 1, 0.5)
+        assert qh is not None
+        # Verify BdG matrix has both components
+        assert qh._hamil_sp is not None
+        assert qh._delta_sp is not None
     
     def test_bdg_superconductor(self):
         """Test BdG superconductor with gap."""
-        pytest.skip("QuadraticHamiltonian initialization issue - _hamil_sp is None")
         qh = QuadraticHamiltonian(ns=4, particle_conserving=False)
+        # Kinetic terms
+        for i in range(4):
+            qh.add_onsite(i, 0.0)
+        for i in range(3):
+            qh.add_hopping(i, i+1, -1.0)
+        # Pairing terms (superconducting gap)
+        for i in range(0, 4, 2):
+            qh.add_pairing(i, i+1, 0.3)
+        assert qh is not None
+        mat = qh.build_single_particle_matrix()
+        assert np.any(np.abs(mat) > 0)
 
 
 class TestMatrixConstructionMethods:

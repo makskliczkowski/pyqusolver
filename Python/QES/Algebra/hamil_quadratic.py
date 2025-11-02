@@ -654,8 +654,10 @@ class QuadraticHamiltonian(Hamiltonian):
         self._hamil_sp_shape        = (self._hamil_sp_size, self._hamil_sp_size)
         self._dtypeint              = self._backend.int32 if self.ns < 2**32 - 1 else self._backend.int64
 
-        self._hamil_sp              = None
-        self._delta_sp              = None
+        # Initialize matrices as zero arrays instead of None for immediate usability
+        xp                          = self._backend
+        self._hamil_sp              = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        self._delta_sp              = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
         if not particle_conserving:
             self._log('Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.', lvl=2, log='info')
 

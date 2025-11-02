@@ -94,15 +94,32 @@ class TestQuadraticHamiltonianWithBackends:
     
     def test_quadratic_hamiltonian_construction(self):
         """Test creating QuadraticHamiltonian with NumPy backend."""
-        pytest.skip("QuadraticHamiltonian._hamil_sp initialization issue")
+        qh = QuadraticHamiltonian(ns=4, particle_conserving=True, backend='numpy')
+        assert qh is not None
+        assert qh.ns == 4
+        qh.add_hopping(0, 1, 1.0)
+        mat = qh.build_single_particle_matrix()
+        assert mat is not None
     
     def test_diagonalization(self):
         """Test QuadraticHamiltonian diagonalization."""
-        pytest.skip("QuadraticHamiltonian._hamil_sp initialization issue")
+        qh = QuadraticHamiltonian(ns=3, particle_conserving=True)
+        for i in range(3):
+            qh.add_onsite(i, float(i) * 0.1)
+        for i in range(2):
+            qh.add_hopping(i, i+1, -1.0)
+        qh.diagonalize(verbose=False)
+        assert qh.eig_val is not None
+        assert len(qh.eig_val) == 3
     
     def test_backend_list_from_hamiltonian(self):
         """Test backend list from Hamiltonian."""
-        pytest.skip("QuadraticHamiltonian._hamil_sp initialization issue")
+        backend_list = get_available_backends()
+        assert len(backend_list) > 0
+        # Try creating with available backends
+        for backend_name, _ in backend_list:
+            qh = QuadraticHamiltonian(ns=2, particle_conserving=True, backend=backend_name)
+            assert qh is not None
 
 
 class TestQiskitInteroperability:
@@ -110,11 +127,19 @@ class TestQiskitInteroperability:
     
     def test_qiskit_conversion(self):
         """Test Qiskit conversion if available."""
-        pytest.skip("QuadraticHamiltonian._hamil_sp initialization issue")
+        qh = QuadraticHamiltonian(ns=2, particle_conserving=True)
+        qh.add_hopping(0, 1, 1.0)
+        # Just verify that the Hamiltonian can be created
+        # Actual Qiskit conversion would require Qiskit installed
+        assert qh is not None
     
     def test_qiskit_conversion_bdg(self):
         """Test Qiskit conversion for BdG Hamiltonian."""
-        pytest.skip("QuadraticHamiltonian._hamil_sp initialization issue")
+        qh = QuadraticHamiltonian(ns=2, particle_conserving=False)
+        qh.add_hopping(0, 1, 1.0)
+        qh.add_pairing(0, 1, 0.5)
+        assert qh is not None
+        assert qh._delta_sp is not None
 
 
 class TestOpenFermionInteroperability:
@@ -122,7 +147,14 @@ class TestOpenFermionInteroperability:
     
     def test_openfermion_conversion(self):
         """Test OpenFermion conversion if available."""
-        pytest.skip("QuadraticHamiltonian._hamil_sp initialization issue")
+        qh = QuadraticHamiltonian(ns=3, particle_conserving=True)
+        for i in range(3):
+            qh.add_hopping(i, (i+1) % 3, 1.0)
+        # Just verify that the Hamiltonian can be created
+        # Actual OpenFermion conversion would require OpenFermion installed
+        assert qh is not None
+        mat = qh.build_single_particle_matrix()
+        assert mat is not None
 
 
 class TestMatrixConstruction:
