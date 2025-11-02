@@ -19,7 +19,8 @@ from . import (
     heisenberg_kitaev,
     qsm,
     transverse_ising,
-    ultrametric
+    ultrametric,
+    gamma_only
 )
 
-__all__ = ['heisenberg_kitaev', 'qsm', 'transverse_ising', 'ultrametric']
+__all__ = ['heisenberg_kitaev', 'qsm', 'transverse_ising', 'ultrametric', 'gamma_only']
