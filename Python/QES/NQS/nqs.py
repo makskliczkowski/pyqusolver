@@ -400,61 +400,29 @@ class NQS(MonteCarloSolver):
     #! EVALUATION OF THE ANSATZ BATCHED (\psi(s))
     #####################################
     
-    def _eval_jax(self, states, batch_size = None, params = None):
-        """
-        Evaluates the neural network (log ansatz) for the given quantum states using JAX.
-        This method applies the network function to the provided quantum states, using
-        JAX for computation. The evaluation can be performed in batches for memory efficiency.
-        Parameters
-        ----------
-        states : array_like
-            The quantum states for which to evaluate the network.
-        states : array_like
-            The quantum states (configurations) to evaluate the network on.
-        batch_size : int, optional
-            The size of batches to use for the evaluation. If None, uses the default batch size
-            stored in self._batch_size.
-        params : dict, optional
-            The parameters (weights) to use for the network evaluation. If None, uses the
-            current parameters stored in network._params.
-        Returns
-        -------
-        array_like
-            The output of the neural network for the given states, representing the log of the 
-            wavefunction amplitudes.
-        """
-        # evaluate the network (log ansatz) using JAX
-        return net_utils.jaxpy.eval_batched_jax(batch_size, self._ansatz_func, params, states)
-    
-    def _eval_np(self, states, batch_size = None, params = None):
-        """
-        Evaluates the neural network (log ansatz) for the given quantum states using NumPy.
-        This method applies the network function to the provided quantum states, using
-        NumPy for computation. The evaluation can be performed in batches for memory efficiency.
-        Parameters
-        ----------
-        states : array_like
-            The quantum states for which to evaluate the network.
-        batch_size : int, optional
-            The size of batches to use for the evaluation. If None, uses the default batch size
-            stored in self._batch_size.
-        params : dict, optional
-            The parameters (weights) to use for the network evaluation. If None, uses the
-            current parameters stored in self._params.
-        Returns
-        -------
-        array_like
-            The output of the neural network for the given states, representing the log of the 
-            wavefunction amplitudes.
-        """
-
-        # evaluate the network (log ansatz) using NumPy
-        return net_utils.numpy.eval_batched_np(batch_size, self._ansatz_func, params, states)
-    
-    def ansatz(self, states, batch_size = None, params = None):
+    def evaluate(self, states, batch_size=None, params=None):
         '''
-        Evaluate the network using the provided state. This
-        will return the log ansatz of the state coefficient.
+        Evaluate the neural network (log ansatz) for the given quantum states.
+        
+        This uses the unified evaluation engine for efficient computation with both
+        JAX and NumPy backends, and automatic batching for memory efficiency.
+        
+        Parameters:
+            states      : The state configurations to evaluate.
+            batch_size  : The size of batches to use for the evaluation.
+            params      : The parameters (weights) to use for the network evaluation.
+        Returns:
+            The evaluated network output (log ansatz values).
+        '''
+        result = self._eval_engine.evaluate_ansatz(states, params, batch_size)
+        return result.values
+    
+    def ansatz(self, states, batch_size=None, params=None):
+        '''
+        Deprecated: Use evaluate() instead.
+        
+        Evaluate the network using the provided state. This will return the log ansatz 
+        of the state coefficient. Wrapper around evaluate() for backwards compatibility.
         
         Parameters:
             states      : The state vector.
@@ -463,16 +431,7 @@ class NQS(MonteCarloSolver):
         Returns:
             The evaluated network output.
         '''
-        
-        if params is None:
-            params = self.get_params()
-            
-        if batch_size is None:
-            batch_size = self._batch_size
-        
-        if self._isjax:
-            return self._eval_jax(states, batch_size=batch_size, params=params)
-        return self._eval_np(states, batch_size=batch_size, params=params)
+        return self.evaluate(states, batch_size, params)
     
     def __call__(self, states, **kwargs):
         '''
@@ -796,32 +755,10 @@ class NQS(MonteCarloSolver):
     #! UNIFIED EVALUATION INTERFACE
     #####################################
     
-    def evaluate_ansatz_unified(self, states, batch_size=None, params=None):
+    def compute_energy(self, states, ham_action_func, params=None, 
+                      probabilities=None, batch_size=None):
         """
-        Evaluate the NQS ansatz using the unified evaluation engine.
-        
-        This is a wrapper around ComputeLocalEnergy.evaluate_ansatz() that provides
-        access to the new unified evaluation interface while maintaining backwards
-        compatibility with the existing API.
-        
-        Parameters:
-            states: Array of state configurations
-            batch_size: Optional batch size override
-            params: Optional network parameters
-            
-        Returns:
-            EvaluationResult with ansatz values and statistics
-        """
-        return self._eval_engine.evaluate_ansatz(states, params, batch_size)
-    
-    def evaluate_local_energy_unified(self, states, ham_action_func, params=None, 
-                                     probabilities=None, batch_size=None):
-        """
-        Compute local energies using the unified evaluation engine.
-        
-        This is a wrapper around ComputeLocalEnergy.compute_local_energy() that provides
-        access to the new unified evaluation interface while maintaining backwards
-        compatibility.
+        Compute local energies using the evaluation engine.
         
         Parameters:
             states: Array of state configurations
@@ -837,13 +774,10 @@ class NQS(MonteCarloSolver):
             states, ham_action_func, params, probabilities, batch_size
         )
     
-    def evaluate_observable_unified(self, observable_func, states, observable_name="Observable",
-                                   params=None, compute_expectation=False, batch_size=None):
+    def compute_observable(self, observable_func, states, observable_name="Observable",
+                          params=None, compute_expectation=False, batch_size=None):
         """
-        Evaluate an observable using the unified evaluation engine.
-        
-        This is a wrapper around ComputeLocalEnergy.compute_observable() that provides
-        access to the new unified evaluation interface.
+        Evaluate an observable using the evaluation engine.
         
         Parameters:
             observable_func: Function computing observable values
@@ -861,13 +795,10 @@ class NQS(MonteCarloSolver):
             compute_expectation, batch_size
         )
     
-    def evaluate_function_unified(self, func, states, params=None, 
-                                 probabilities=None, batch_size=None):
+    def evaluate_function(self, func, states, params=None, 
+                         probabilities=None, batch_size=None):
         """
-        Evaluate a function using the unified evaluation engine.
-        
-        This is a wrapper around ComputeLocalEnergy.evaluate_function() that provides
-        general-purpose function evaluation.
+        Evaluate a function using the evaluation engine.
         
         Parameters:
             func: Function to evaluate
@@ -885,8 +816,29 @@ class NQS(MonteCarloSolver):
     
     @property
     def eval_engine(self):
-        """Get the unified evaluation engine for advanced use cases."""
+        """Get the evaluation engine for advanced use cases."""
         return self._eval_engine
+    
+    # Deprecated method names for backwards compatibility
+    def evaluate_ansatz_unified(self, states, batch_size=None, params=None):
+        """Deprecated: Use evaluate() instead."""
+        return self.evaluate(states, batch_size, params)
+    
+    def evaluate_local_energy_unified(self, states, ham_action_func, params=None, 
+                                     probabilities=None, batch_size=None):
+        """Deprecated: Use compute_energy() instead."""
+        return self.compute_energy(states, ham_action_func, params, probabilities, batch_size)
+    
+    def evaluate_observable_unified(self, observable_func, states, observable_name="Observable",
+                                   params=None, compute_expectation=False, batch_size=None):
+        """Deprecated: Use compute_observable() instead."""
+        return self.compute_observable(observable_func, states, observable_name, params,
+                                      compute_expectation, batch_size)
+    
+    def evaluate_function_unified(self, func, states, params=None, 
+                                 probabilities=None, batch_size=None):
+        """Deprecated: Use evaluate_function() instead."""
+        return self.evaluate_function(func, states, params, probabilities, batch_size)
     
     #####################################
     #! SAMPLE
