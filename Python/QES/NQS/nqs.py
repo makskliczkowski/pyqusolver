@@ -43,6 +43,7 @@ except ImportError as e:
 try:
     from .src.nqs_physics import *
     from .src.nqs_networks import *
+    from .src.compute_local_energy import ComputeLocalEnergy
 except ImportError as e:
     raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
 
@@ -238,6 +239,11 @@ class NQS(MonteCarloSolver):
         self._nqsproblem.setup(self._model, self._net)
         # For wavefunction problem we keep the same attribute name you used:
         self._local_en_func         = getattr(self._nqsproblem, "local_energy_fn", None)
+
+        # --------------------------------------------------
+        #! Initialize unified evaluation engine
+        # --------------------------------------------------
+        self._eval_engine = ComputeLocalEnergy(self, backend='auto', batch_size=batch_size)
 
         #######################################
         #! directory to save the results
@@ -785,6 +791,102 @@ class NQS(MonteCarloSolver):
             Callable: The apply function.
         '''
         return self._apply_fun_jax if self._isjax else self._apply_fun_np
+    
+    #####################################
+    #! UNIFIED EVALUATION INTERFACE
+    #####################################
+    
+    def evaluate_ansatz_unified(self, states, batch_size=None, params=None):
+        """
+        Evaluate the NQS ansatz using the unified evaluation engine.
+        
+        This is a wrapper around ComputeLocalEnergy.evaluate_ansatz() that provides
+        access to the new unified evaluation interface while maintaining backwards
+        compatibility with the existing API.
+        
+        Parameters:
+            states: Array of state configurations
+            batch_size: Optional batch size override
+            params: Optional network parameters
+            
+        Returns:
+            EvaluationResult with ansatz values and statistics
+        """
+        return self._eval_engine.evaluate_ansatz(states, params, batch_size)
+    
+    def evaluate_local_energy_unified(self, states, ham_action_func, params=None, 
+                                     probabilities=None, batch_size=None):
+        """
+        Compute local energies using the unified evaluation engine.
+        
+        This is a wrapper around ComputeLocalEnergy.compute_local_energy() that provides
+        access to the new unified evaluation interface while maintaining backwards
+        compatibility.
+        
+        Parameters:
+            states: Array of state configurations
+            ham_action_func: Function computing local energy
+            params: Optional network parameters
+            probabilities: Optional probability weights
+            batch_size: Optional batch size override
+            
+        Returns:
+            EnergyStatistics object with energy values and statistics
+        """
+        return self._eval_engine.compute_local_energy(
+            states, ham_action_func, params, probabilities, batch_size
+        )
+    
+    def evaluate_observable_unified(self, observable_func, states, observable_name="Observable",
+                                   params=None, compute_expectation=False, batch_size=None):
+        """
+        Evaluate an observable using the unified evaluation engine.
+        
+        This is a wrapper around ComputeLocalEnergy.compute_observable() that provides
+        access to the new unified evaluation interface.
+        
+        Parameters:
+            observable_func: Function computing observable values
+            states: Array of state configurations
+            observable_name: Name of the observable
+            params: Optional network parameters
+            compute_expectation: Whether to compute expectation value
+            batch_size: Optional batch size override
+            
+        Returns:
+            ObservableResult with local values and statistics
+        """
+        return self._eval_engine.compute_observable(
+            observable_func, states, observable_name, params,
+            compute_expectation, batch_size
+        )
+    
+    def evaluate_function_unified(self, func, states, params=None, 
+                                 probabilities=None, batch_size=None):
+        """
+        Evaluate a function using the unified evaluation engine.
+        
+        This is a wrapper around ComputeLocalEnergy.evaluate_function() that provides
+        general-purpose function evaluation.
+        
+        Parameters:
+            func: Function to evaluate
+            states: Array of state configurations
+            params: Optional network parameters
+            probabilities: Optional probability weights
+            batch_size: Optional batch size override
+            
+        Returns:
+            EvaluationResult with computed values and statistics
+        """
+        return self._eval_engine.evaluate_function(
+            func, states, params, probabilities, batch_size
+        )
+    
+    @property
+    def eval_engine(self):
+        """Get the unified evaluation engine for advanced use cases."""
+        return self._eval_engine
     
     #####################################
     #! SAMPLE
