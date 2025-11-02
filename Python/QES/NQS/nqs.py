@@ -43,12 +43,8 @@ except ImportError as e:
 try:
     from .src.nqs_physics import *
     from .src.nqs_networks import *
-    from .src.learning_phases import (
-        LearningPhase, LearningPhaseScheduler, PhaseType,
-        create_learning_phases, DEFAULT_PRE_TRAINING, DEFAULT_MAIN, DEFAULT_REFINEMENT
-    )
 except ImportError as e:
-    raise ImportError("Failed to import nqs_physics, nqs_networks, or learning_phases module. Ensure QES.NQS is correctly installed.") from e
+    raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
 
 # ----------------------------------------------------------
 
@@ -122,8 +118,6 @@ class NQS(MonteCarloSolver):
                 directory   : Optional[str]                             = MonteCarloSolver.defdir,
                 backend     : str                                       = 'default',
                 problem     : Optional[Union[str, PhysicsInterface]]    = 'wavefunction',
-                # learning phases
-                learning_phases : Optional[Union[str, List[LearningPhase]]] = 'default',
                 **kwargs):
         '''
         Initialize the NQS solver.
@@ -269,18 +263,6 @@ class NQS(MonteCarloSolver):
                 max_to_keep     = self._orbax_max_to_keep)
         else:
             self._ckpt_manager = None
-        
-        #! Learning phases
-        if isinstance(learning_phases, str):
-            self._learning_phases   = create_learning_phases(learning_phases)
-        elif isinstance(learning_phases, list):
-            self._learning_phases   = learning_phases
-        else:
-            self._learning_phases   = create_learning_phases('default')
-        
-        # Create phase scheduler with reference to logger
-        self._phase_scheduler       = LearningPhaseScheduler(self._learning_phases, logger=self.log)
-        self.log(f"Initialized with {len(self._learning_phases)} learning phases", log='info', lvl=1, color='blue')
     
     #####################################
     #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
@@ -1234,182 +1216,22 @@ class NQS(MonteCarloSolver):
             raise ValueError("Unknown problem type.")
     
     #####################################
+    #! TRAINING NOTE
+    #####################################
     
-    def train(self,
-            nsteps              : int = 1,
-            verbose             : bool = False,
-            use_sr              : bool = True,
-            use_learning_phases : bool = True,
-            **kwargs) -> list:
-        """
-        Train the NQS solver for a specified number of steps.
-        
-        Supports both traditional single-call training and multi-phase training.
-
-        Parameters:
-            nsteps (int): Number of training steps. Ignored if use_learning_phases=True.
-            verbose (bool): Whether to print progress.
-            use_sr (bool): Whether to use stochastic reconfiguration.
-            use_learning_phases (bool): If True, use the learning phase scheduler.
-                                       If False, use traditional nsteps-based training.
-            **kwargs: Additional arguments (lr, reg, etc.)
-
-        Returns:
-            list: List of mean energies for each step.
-        """
-        if use_learning_phases:
-            return self._train_with_phases(verbose=verbose, use_sr=use_sr, **kwargs)
-        else:
-            return self._train_traditional(nsteps=nsteps, verbose=verbose, use_sr=use_sr, **kwargs)
-    
-    def _train_traditional(self,
-                          nsteps  : int = 1,
-                          verbose : bool = False,
-                          use_sr  : bool = True,
-                          **kwargs) -> list:
-        """
-        Traditional training method (backwards compatible).
-        
-        Parameters:
-            nsteps: Number of training steps.
-            verbose: Whether to print progress.
-            use_sr: Whether to use stochastic reconfiguration.
-            **kwargs: Additional hyperparameters
-        
-        Returns:
-            List of mean energies for each step.
-        """
-        energies = []
-        for step in range(nsteps):
-            if self._isjax:
-                pass
-                # self._state, mean_energy, std_energy, _ = self.single_step_jax(
-                #         params      = self._net.get_params(),
-                #         configs     = 
-            else:
-                self._params, mean_energy, std_energy, _ = self.train_step_np(
-                    params=self._params,
-                    sampler=self._sampler,
-                    hamiltonian=self._model,
-                    batch_size=self._batch_size,
-                    use_sr=use_sr,
-                    reg=kwargs.get('reg', 1e-7),
-                    lr=kwargs.get('lr', 1e-2))
-
-            energies.append(mean_energy)
-            if verbose:
-                print(f"Step {step + 1}/{nsteps}: Mean Energy = {mean_energy}, Std Energy = {std_energy}")
-
-        return energies
-    
-    def _train_with_phases(self,
-                          verbose : bool = False,
-                          use_sr  : bool = True,
-                          **kwargs) -> Dict[str, Any]:
-        """
-        Train using the learning phase scheduler.
-        
-        This method executes training across all learning phases with phase-specific
-        hyperparameters and callbacks.
-        
-        Parameters:
-            verbose (bool): Whether to print progress
-            use_sr (bool): Whether to use stochastic reconfiguration
-            **kwargs: Additional hyperparameters
-        
-        Returns:
-            Dict containing training history and phase information
-        """
-        from tqdm import trange
-        
-        # Initialize history
-        history = {
-            'phase_energies': [],
-            'phase_stds': [],
-            'learning_rates': [],
-            'regularizations': [],
-            'global_epochs': [],
-            'phase_transitions': []
-        }
-        
-        self.log("Starting multi-phase training", log='info', lvl=1, color='green')
-        self._phase_scheduler.on_phase_start()
-        
-        # Train through all phases
-        while not self._phase_scheduler.is_finished:
-            phase = self._phase_scheduler.current_phase
-            phase_epochs = phase.epochs
-            
-            # Training loop for this phase
-            pbar = trange(phase_epochs, desc=f"Phase '{phase.name}'", leave=True)
-            
-            for phase_epoch in pbar:
-                self._phase_scheduler.on_epoch_start(phase_epoch)
-                
-                # Get hyperparameters for this epoch
-                hyperparams = self._phase_scheduler.get_current_hyperparameters(phase_epoch)
-                lr = hyperparams['learning_rate']
-                reg = hyperparams['regularization']
-                
-                # Apply beta penalty if set
-                if phase.beta_penalty > 0:
-                    self._beta_penalty = phase.beta_penalty
-                
-                # Perform training step
-                if self._isjax:
-                    # JAX backend implementation
-                    pass
-                else:
-                    # NumPy backend
-                    self._params, mean_energy, std_energy, _ = self.train_step_np(
-                        params=self._params,
-                        sampler=self._sampler,
-                        hamiltonian=self._model,
-                        batch_size=self._batch_size,
-                        use_sr=use_sr,
-                        reg=reg,
-                        lr=lr)
-                
-                # Record history
-                history['phase_energies'].append(mean_energy)
-                history['phase_stds'].append(std_energy)
-                history['learning_rates'].append(lr)
-                history['regularizations'].append(reg)
-                history['global_epochs'].append(self._phase_scheduler.global_epoch)
-                
-                # Callbacks and logging
-                self._phase_scheduler.on_epoch_end(phase_epoch, mean_energy)
-                
-                # Update progress bar
-                pbar.set_postfix({
-                    'E': f'{mean_energy:.4e}',
-                    'std': f'{std_energy:.4e}',
-                    'lr': f'{lr:.2e}',
-                    'reg': f'{reg:.2e}'
-                })
-                
-                if verbose:
-                    self.log(f"Phase '{phase.name}' Epoch {phase_epoch + 1}/{phase_epochs}: "
-                            f"E={mean_energy:.6f} ± {std_energy:.6f} (lr={lr:.2e})",
-                            log='info', lvl=2)
-                
-                # Advance phase scheduler
-                if not self._phase_scheduler.advance_epoch():
-                    break
-            
-            history['phase_transitions'].append({
-                'phase_name': phase.name,
-                'end_epoch': self._phase_scheduler.global_epoch,
-                'final_energy': history['phase_energies'][-1] if history['phase_energies'] else None
-            })
-        
-        # Add phase summary
-        summary = self._phase_scheduler.get_progress_summary()
-        history['summary'] = summary
-        
-        self.log("Multi-phase training completed", log='info', lvl=1, color='green')
-        
-        return history
+    # NOTE: Training logic has been moved to NQSTrainer class for better separation of concerns.
+    # NQS.step() provides single-step computations (sampling + gradient + energy).
+    # NQSTrainer orchestrates the full training loop with learning phases, TDVP, and optimizers.
+    #
+    # To train an NQS:
+    # 1. Create NQSTrainer with learning phase schedulers:
+    #    from QES.NQS.src.learning_phases_scheduler_wrapper import create_learning_phase_schedulers
+    #    lr_sched, reg_sched = create_learning_phase_schedulers('default')
+    #    trainer = NQSTrainer(..., lr_scheduler=lr_sched, reg_scheduler=reg_sched, ...)
+    #
+    # 2. Call trainer.train() for multi-phase optimization
+    #
+    # For custom training loops, use NQS.step() directly with NQS.sample()
     
     #####################################
     #! LOG_PROBABILITY_RATIO
