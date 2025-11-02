@@ -3,10 +3,6 @@
 QES.NQS.nqs
 ===========
 
-Author: Maks Kliczkowski
-Email: maxgrom97@gmail.com
-Date: 01.10.25
-
 Neural Quantum State (NQS) Solver.
 
 Implements a Monte Carlo-based training method for optimizing NQS models.
@@ -20,6 +16,12 @@ Import and use the NQS solver:
     nqs = NQS(...)
 
 See the documentation and examples for details.
+----------------------------------------------------------
+Author          : Maks Kliczkowski
+Email           : maxgrom97@gmail.com
+Date            : 01.10.25
+Description     : Neural Quantum State (NQS) Solver implementation.
+----------------------------------------------------------
 """
 
 import json
@@ -32,11 +34,23 @@ from pathlib import Path
 from dataclasses import dataclass
 
 # Import timeit utility for timing code blocks
-from QES.general_python.common.timer import timeit
+try:
+    from QES.general_python.common.timer import timeit
+except ImportError as e:
+    raise ImportError("Failed to import timer module. Ensure QES.general_python is correctly installed.") from e
 
 # import physical problems
-from .src.nqs_physics import *
-from .src.nqs_networks import *
+try:
+    from .src.nqs_physics import *
+    from .src.nqs_networks import *
+    from .src.learning_phases import (
+        LearningPhase, LearningPhaseScheduler, PhaseType,
+        create_learning_phases, DEFAULT_PRE_TRAINING, DEFAULT_MAIN, DEFAULT_REFINEMENT
+    )
+except ImportError as e:
+    raise ImportError("Failed to import nqs_physics, nqs_networks, or learning_phases module. Ensure QES.NQS is correctly installed.") from e
+
+# ----------------------------------------------------------
 
 # from QES.general_python imports
 try:
@@ -108,6 +122,8 @@ class NQS(MonteCarloSolver):
                 directory   : Optional[str]                             = MonteCarloSolver.defdir,
                 backend     : str                                       = 'default',
                 problem     : Optional[Union[str, PhysicsInterface]]    = 'wavefunction',
+                # learning phases
+                learning_phases : Optional[Union[str, List[LearningPhase]]] = 'default',
                 **kwargs):
         '''
         Initialize the NQS solver.
@@ -253,6 +269,18 @@ class NQS(MonteCarloSolver):
                 max_to_keep     = self._orbax_max_to_keep)
         else:
             self._ckpt_manager = None
+        
+        #! Learning phases
+        if isinstance(learning_phases, str):
+            self._learning_phases   = create_learning_phases(learning_phases)
+        elif isinstance(learning_phases, list):
+            self._learning_phases   = learning_phases
+        else:
+            self._learning_phases   = create_learning_phases('default')
+        
+        # Create phase scheduler with reference to logger
+        self._phase_scheduler       = LearningPhaseScheduler(self._learning_phases, logger=self.log)
+        self.log(f"Initialized with {len(self._learning_phases)} learning phases", log='info', lvl=1, color='blue')
     
     #####################################
     #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
@@ -1208,18 +1236,46 @@ class NQS(MonteCarloSolver):
     #####################################
     
     def train(self,
-            nsteps  : int = 1,
-            verbose : bool = False,
-            use_sr  : bool = True,
+            nsteps              : int = 1,
+            verbose             : bool = False,
+            use_sr              : bool = True,
+            use_learning_phases : bool = True,
             **kwargs) -> list:
         """
         Train the NQS solver for a specified number of steps.
+        
+        Supports both traditional single-call training and multi-phase training.
 
+        Parameters:
+            nsteps (int): Number of training steps. Ignored if use_learning_phases=True.
+            verbose (bool): Whether to print progress.
+            use_sr (bool): Whether to use stochastic reconfiguration.
+            use_learning_phases (bool): If True, use the learning phase scheduler.
+                                       If False, use traditional nsteps-based training.
+            **kwargs: Additional arguments (lr, reg, etc.)
+
+        Returns:
+            list: List of mean energies for each step.
+        """
+        if use_learning_phases:
+            return self._train_with_phases(verbose=verbose, use_sr=use_sr, **kwargs)
+        else:
+            return self._train_traditional(nsteps=nsteps, verbose=verbose, use_sr=use_sr, **kwargs)
+    
+    def _train_traditional(self,
+                          nsteps  : int = 1,
+                          verbose : bool = False,
+                          use_sr  : bool = True,
+                          **kwargs) -> list:
+        """
+        Traditional training method (backwards compatible).
+        
         Parameters:
             nsteps: Number of training steps.
             verbose: Whether to print progress.
             use_sr: Whether to use stochastic reconfiguration.
-
+            **kwargs: Additional hyperparameters
+        
         Returns:
             List of mean energies for each step.
         """
@@ -1245,6 +1301,115 @@ class NQS(MonteCarloSolver):
                 print(f"Step {step + 1}/{nsteps}: Mean Energy = {mean_energy}, Std Energy = {std_energy}")
 
         return energies
+    
+    def _train_with_phases(self,
+                          verbose : bool = False,
+                          use_sr  : bool = True,
+                          **kwargs) -> Dict[str, Any]:
+        """
+        Train using the learning phase scheduler.
+        
+        This method executes training across all learning phases with phase-specific
+        hyperparameters and callbacks.
+        
+        Parameters:
+            verbose (bool): Whether to print progress
+            use_sr (bool): Whether to use stochastic reconfiguration
+            **kwargs: Additional hyperparameters
+        
+        Returns:
+            Dict containing training history and phase information
+        """
+        from tqdm import trange
+        
+        # Initialize history
+        history = {
+            'phase_energies': [],
+            'phase_stds': [],
+            'learning_rates': [],
+            'regularizations': [],
+            'global_epochs': [],
+            'phase_transitions': []
+        }
+        
+        self.log("Starting multi-phase training", log='info', lvl=1, color='green')
+        self._phase_scheduler.on_phase_start()
+        
+        # Train through all phases
+        while not self._phase_scheduler.is_finished:
+            phase = self._phase_scheduler.current_phase
+            phase_epochs = phase.epochs
+            
+            # Training loop for this phase
+            pbar = trange(phase_epochs, desc=f"Phase '{phase.name}'", leave=True)
+            
+            for phase_epoch in pbar:
+                self._phase_scheduler.on_epoch_start(phase_epoch)
+                
+                # Get hyperparameters for this epoch
+                hyperparams = self._phase_scheduler.get_current_hyperparameters(phase_epoch)
+                lr = hyperparams['learning_rate']
+                reg = hyperparams['regularization']
+                
+                # Apply beta penalty if set
+                if phase.beta_penalty > 0:
+                    self._beta_penalty = phase.beta_penalty
+                
+                # Perform training step
+                if self._isjax:
+                    # JAX backend implementation
+                    pass
+                else:
+                    # NumPy backend
+                    self._params, mean_energy, std_energy, _ = self.train_step_np(
+                        params=self._params,
+                        sampler=self._sampler,
+                        hamiltonian=self._model,
+                        batch_size=self._batch_size,
+                        use_sr=use_sr,
+                        reg=reg,
+                        lr=lr)
+                
+                # Record history
+                history['phase_energies'].append(mean_energy)
+                history['phase_stds'].append(std_energy)
+                history['learning_rates'].append(lr)
+                history['regularizations'].append(reg)
+                history['global_epochs'].append(self._phase_scheduler.global_epoch)
+                
+                # Callbacks and logging
+                self._phase_scheduler.on_epoch_end(phase_epoch, mean_energy)
+                
+                # Update progress bar
+                pbar.set_postfix({
+                    'E': f'{mean_energy:.4e}',
+                    'std': f'{std_energy:.4e}',
+                    'lr': f'{lr:.2e}',
+                    'reg': f'{reg:.2e}'
+                })
+                
+                if verbose:
+                    self.log(f"Phase '{phase.name}' Epoch {phase_epoch + 1}/{phase_epochs}: "
+                            f"E={mean_energy:.6f} ± {std_energy:.6f} (lr={lr:.2e})",
+                            log='info', lvl=2)
+                
+                # Advance phase scheduler
+                if not self._phase_scheduler.advance_epoch():
+                    break
+            
+            history['phase_transitions'].append({
+                'phase_name': phase.name,
+                'end_epoch': self._phase_scheduler.global_epoch,
+                'final_energy': history['phase_energies'][-1] if history['phase_energies'] else None
+            })
+        
+        # Add phase summary
+        summary = self._phase_scheduler.get_progress_summary()
+        history['summary'] = summary
+        
+        self.log("Multi-phase training completed", log='info', lvl=1, color='green')
+        
+        return history
     
     #####################################
     #! LOG_PROBABILITY_RATIO
@@ -1787,7 +1952,7 @@ class NQS(MonteCarloSolver):
             timings[f"obs_{i}"]     = timings_op
             results[op]             = dict(raw=vals, mean=mu, std=sig)
             color                   = ["red","blue","green","orange","purple","brown"][i%6]
-            logger.info(f"{op}: <O> = ({mu:.4f}) \pm ({sig:.4f})  (N={len(vals)})", color=color)
+            logger.info(rf"{op}: <O> = ({mu:.4f}) \pm ({sig:.4f})  (N={len(vals)})", color=color)
 
             #! compare to true value
             if true_values is not None and true_values[i] is not None:
@@ -1902,202 +2067,6 @@ class NQS(MonteCarloSolver):
         return results, energy, timings
 
     #####################################
-
-#########################################
-#! NQS Lower States
-#########################################
-
-class NQSLower:
-    def __init__(self,
-                lower_nqs_instances     : List[NQS],                # List of NQS objects for lower states
-                lower_betas             : List[float],              # Penalty terms beta_i
-                parent_nqs              : NQS):
-
-        if len(lower_nqs_instances) != len(lower_betas):
-            raise ValueError("Number of lower NQS instances must match number of betas.")
-        
-        self._backend               = parent_nqs.backend
-        self._isjax                 = parent_nqs.isjax
-        
-        # assert that all are the same backend
-        if not all([nqs.backend == parent_nqs.backend for nqs in lower_nqs_instances]):
-            raise ValueError("All lower NQS instances must have the same backend as the parent NQS.")
-        
-        self._parent_nqs                    = parent_nqs
-        self._parent_apply_fn               = parent_nqs.ansatz
-        self._parent_params                 = parent_nqs.get_params()                               # will likely be updated during training
-        self._parent_evaluate               = parent_nqs.apply_f
-        self._log_p_ratio_fn                = parent_nqs.log_prob_ratio        
-        
-        #! handle the lower states
-        self._lower_nqs             = lower_nqs_instances
-        self._lower_betas           = self._backend.array(lower_betas)
-        self._num_lower_states      = len(lower_nqs_instances)
-        self._is_set                = self._num_lower_states > 0
-
-        if not self._is_set:
-            return
-
-        # Store apply functions and parameters for each lower state
-        self._lower_apply_fns       = [nqs.ansatz for nqs in self._lower_nqs]               # this is static as it is not updated during training
-        self._lower_params          = [nqs.get_params() for nqs in self._lower_nqs]         # this is static as it is not updated during training
-        if self._isjax:
-            self._lower_evaluate    = [nqs.apply_f for nqs in self._lower_nqs]     # this is static as it is not updated during training
-        else:
-            self._lower_evaluate    = [nqs.apply_f for nqs in self._lower_nqs]
-
-        #! Placeholder for ratios - these would be computed during the excited state's MC sampling
-        # Shape: (num_lower_states, num_samples_excited_state)
-        self._ratios_psi_exc_div_psi_lower = None       # Psi_W / Psi_W_j (current excited / lower_j)
-        self._ratios_psi_lower_div_psi_exc = None       # Psi_W_j / Psi_W (lower_j / current excited)
-
-        # The C++ code has `train_lower_` for MC parameters for sampling *within* lower states.
-        # For the JAX implementation, this might translate to parameters for sampling
-        # from each P(s) ~ |psi_lower_j(s)|^2 if needed for <Psi_W / Psi_W_j>_j terms.
-        # This part is complex as it implies separate MC runs or combined sampling.
-
-    def get_p_ratio_wrapper(self, lower_idx: int):
-        """
-        Wrapper to compute log(Psi_1 / Psi_2) for a given lower state.
-        """
-        
-        if 0 <= lower_idx < self._num_lower_states:
-            # compute log(Psi_exc / Psi_lower_j)
-            ansatz_top = self._parent_apply_fn
-            params_top = self._parent_nqs.get_params()          # not static - will be updated during training
-            
-            ansatz_low = self._lower_apply_fns[lower_idx]
-            params_low = self._lower_params[lower_idx]
-        else:
-            # reverse order - compute log(Psi_lower_j / Psi_exc)
-            ansatz_top = self._lower_apply_fns[lower_idx]
-            params_top = self._lower_params[lower_idx]
-
-            ansatz_low = self._parent_apply_fn
-            params_low = self._parent_nqs.get_params()          # not static - will be updated during training
-
-        @jax.jit
-        def wrapme(states):
-            log_ratio = self._log_p_ratio_fn(ansatz_top, params_top, ansatz_low, params_low, states)
-            return jnp.exp(log_ratio)
-        return wrapme
-
-    ######################################
-    #! Properties and Getters
-    ######################################
-    
-    @property
-    def is_set(self) -> bool:
-        return self._is_set
-
-    @property
-    def num_lower_states(self) -> int:
-        return self._num_lower_states
-
-    @property
-    def lower_betas(self) -> jnp.ndarray:
-        return self._lower_betas
-
-    ######################################
-    #! Getters
-    ######################################
-
-    def get_lower_state_ansatz_val(self, lower_idx: int, states: jnp.ndarray) -> jnp.ndarray:
-        """
-        Computes log(psi_lower_j(s)) for a given lower state j and batch of states s.
-        
-        lower_idx:
-            index of the lower state.
-        states: 
-            batch of sampled configurations.
-        Returns:
-            log(psi_lower_j(s)) for all samples s.
-        """
-        if not self._is_set or lower_idx >= self._num_lower_states:
-            raise IndexError("Lower state index out of bounds.")
-        apply_fn    = self._lower_apply_fns[lower_idx]
-        params      = self._lower_params[lower_idx]
-        return apply_fn(params, states)
-
-    # --- Methods to compute quantities needed for excited state ---
-
-    @partial(jax.jit, static_argnums=(0,))
-    def _compute_log_psi_ratios_for_single_lower_state(self,
-                                                       lower_idx: int,
-                                                       excited_log_psi_s: jnp.ndarray,
-                                                       states_s: jnp.ndarray) -> jnp.ndarray:
-        """
-        Computes log( Psi_excited(s) / Psi_lower_j(s) ) for all samples s.
-        excited_log_psi_s: log amplitudes of the current excited state for the samples.
-        states_s: the sampled configurations.
-        """
-        log_psi_lower_j_s = self.get_lower_state_ansatz_val(lower_idx, states_s)
-        return excited_log_psi_s - log_psi_lower_j_s # log(A/B) = logA - logB
-
-    def compute_all_log_psi_ratios(self,
-                                   excited_log_psi_s: jnp.ndarray, # log psi_exc(s_i) for N_samples
-                                   states_s: jnp.ndarray           # configurations s_i (N_samples, n_visible)
-                                   ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        """
-        Computes log_ratio_exc_div_lower = log(Psi_exc(s) / Psi_lower_j(s)) and
-                 log_ratio_lower_div_exc = log(Psi_lower_j(s) / Psi_exc(s))
-        for all lower states j and all samples s.
-
-        Returns:
-            Tuple of JAX arrays:
-            - log_ratios_exc_div_lower (num_lower_states, num_samples)
-            - log_ratios_lower_div_exc (num_lower_states, num_samples)
-        """
-        if not self.is_set:
-            return jnp.array([]), jnp.array([])
-
-        all_log_ratios_exc_div_lower = []
-        for j in range(self.num_lower_states):
-            log_ratios_j = self._compute_log_psi_ratios_for_single_lower_state(j, excited_log_psi_s, states_s)
-            all_log_ratios_exc_div_lower.append(log_ratios_j)
-
-        log_ratios_exc_div_lower_arr = jnp.stack(all_log_ratios_exc_div_lower, axis=0)
-        log_ratios_lower_div_exc_arr = -log_ratios_exc_div_lower_arr # log(B/A) = -log(A/B)
-
-        return log_ratios_exc_div_lower_arr, log_ratios_lower_div_exc_arr
-
-    # The C++ `collectLowerEnergy` seems to sample from P_j(s) = |psi_j(s)|^2
-    # and then computes < P_exc(s) >_j where P_exc is |psi_exc(s')/psi_exc(s)|^2 * <s|H_proj|s'>.
-    # This is intricate. For JAX, we'll likely compute everything using samples from P_exc(s).
-    # The energy penalty term H_i = beta_i * |f_i><f_i| / <f_i|f_i> becomes
-    # E_penalty_i(s) = beta_i * sum_s' <s| |f_i><f_i| |s'> / <f_i|f_i> * (psi_exc(s')/psi_exc(s))
-    #                = beta_i * |<s|f_i>|^2 / <f_i|f_i> * (psi_exc(f_i)/psi_exc(s))
-    # If f_i is a single configuration, <s|f_i> = delta_s,f_i.
-    # More generally, if f_i is a known wavefunction psi_lower_i:
-    # E_penalty_i(s) = beta_i * |psi_lower_i(s)|^2 / <|psi_lower_i|^2> * (sum_s' psi_lower_i(s')^* psi_exc(s') / (psi_lower_i(s)^* psi_exc(s)))
-    # This simplifies to: beta_i * |psi_lower_i(s) / psi_exc(s)|^2. (Assuming <|psi_lower_i|^2> = 1 after normalization)
-    # This is the local energy contribution from the penalty term for state i.
-    # E_penalty_local(s) = sum_i beta_i * |psi_lower_i(s) / psi_exc(s)|^2
-    #                  = sum_i beta_i * exp(2 * Re[log(psi_lower_i(s)) - log(psi_exc(s))])
-
-    @partial(jax.jit, static_argnums=(0,))
-    def compute_local_penalty_energies(self,
-                                       log_psi_exc_s: jnp.ndarray, # (N_samples,)
-                                       states_s: jnp.ndarray       # (N_samples, n_visible)
-                                       ) -> jnp.ndarray:           # (N_samples,)
-        """
-        Computes the local energy contribution from all penalty terms for each sample.
-        E_penalty_local(s) = sum_i beta_i * |psi_lower_i(s) / psi_exc(s)|^2
-        """
-        if not self.is_set:
-            return jnp.zeros_like(log_psi_exc_s)
-
-        _, log_ratios_lower_div_exc = self.compute_all_log_psi_ratios(log_psi_exc_s, states_s)
-        # log_ratios_lower_div_exc has shape (num_lower_states, N_samples)
-
-        # |psi_lower_i(s) / psi_exc(s)|^2 = exp(2 * Re[log_ratios_lower_div_exc_i(s)])
-        abs_sq_ratios = jnp.exp(2 * jnp.real(log_ratios_lower_div_exc)) # (num_lower_states, N_samples)
-
-        # Multiply by betas and sum over lower states
-        # betas shape (num_lower_states,), need to reshape for broadcasting
-        penalties_per_lower_state = self._lower_betas[:, None] * abs_sq_ratios # (num_lower_states, N_samples)
-        total_local_penalty = jnp.sum(penalties_per_lower_state, axis=0) # (N_samples,)
-        return total_local_penalty
 
 #########################################
 #! TESTS
