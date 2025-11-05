@@ -7,16 +7,20 @@ This single, comprehensive example demonstrates the key concepts for using
 neural network architectures with the Neural Quantum State solver.
 
 Key Features:
-1. RBM (Restricted Boltzmann Machine) - General purpose networks
-2. CNN (Convolutional Neural Network) - Lattice systems
-3. NetworkFactory - Unified network creation
-4. Configuration Classes - Clean parameter management
+1. RBM (Restricted Boltzmann Machine)   - General purpose networks
+2. CNN (Convolutional Neural Network)   - Lattice systems
+3. NetworkFactory                       - Unified network creation
+4. Configuration Classes                - Clean parameter management
 
 This example uses a structured approach with preparation functions,
 following the best practices for network initialization and evaluation.
 
-Author: Development Team
-Date: November 1, 2025
+------------------------------------------------------------------------------
+File            : NQS/examples/example_network_showcase.py
+Author          : Maksymilian Kliczkowski
+Date            : 2025-11-01
+License         : MIT
+------------------------------------------------------------------------------
 """
 
 import numpy as np
@@ -40,7 +44,6 @@ except ImportError as e:
     print(f"Error importing modules: {e}")
     sys.exit(1)
 
-
 # =============================================================================
 #! Configuration Classes
 # =============================================================================
@@ -48,13 +51,13 @@ except ImportError as e:
 @dataclass
 class NetworkConfig:
     """Configuration for network preparation."""
-    network_type: str                               # 'rbm', 'cnn', 'ar', etc.
-    n_sites: int                                    # Number of qubits/sites
-    n_hidden: int                   = 16            # For RBM
-    features: List[int]             = field(default_factory=lambda: [16, 32])  # For CNN
-    kernel_sizes: List[int]         = field(default_factory=lambda: [3, 3])    # For CNN
-    strides: List[int]              = field(default_factory=lambda: [1, 1])    # For CNN
-    reshape_dims: Optional[Tuple]   = None          # For CNN (computed if None)
+    network_type: str                                                           # 'rbm', 'cnn', 'ar', etc.
+    n_sites: int                                                                # Number of qubits/sites
+    n_hidden: int                   = 16                                        # For RBM
+    features: List[int]             = field(default_factory=lambda: [16, 32])   # For CNN
+    kernel_sizes: List[int]         = field(default_factory=lambda: [3, 3])     # For CNN
+    strides: List[int]              = field(default_factory=lambda: [1, 1])     # For CNN
+    reshape_dims: Optional[Tuple]   = None                                      # For CNN (computed if None)
     seed: int                       = 42
     dtype: Any                      = np.float32
 
@@ -62,11 +65,11 @@ class NetworkConfig:
 @dataclass
 class SimulationConfig:
     """Configuration for the entire simulation."""
-    n_sites: int                = 8
-    batch_size: int             = 4
-    num_test_states: int        = 5
-    network_types: List[str]    = field(default_factory=lambda: ['rbm', 'cnn'])
-    seed: int                   = 42
+    n_sites: int                    = 8
+    batch_size: int                 = 4
+    num_test_states: int            = 5
+    network_types: List[str]        = field(default_factory=lambda: ['rbm', 'cnn'])
+    seed: int                       = 42
 
 
 # =============================================================================
@@ -79,18 +82,15 @@ def print_section(title: str, width: int = 70):
     print(f"  {title}")
     print("="*width)
 
-
 def print_subsection(title: str):
     """Print a formatted subsection header."""
     print(f"\n{title}:")
 
-
 def print_result(item: str, success: bool, message: str = ""):
     """Print formatted result."""
-    status = "✓" if success else "❌"
+    status = "(ok)" if success else "(error)"
     msg_part = f" {message}" if message else ""
     print(f"  {status} {item:<45}{msg_part}")
-
 
 def print_network_info(net_type: str, network: Any, test_states: np.ndarray):
     """Print detailed information about a network."""
@@ -110,17 +110,15 @@ def print_network_info(net_type: str, network: Any, test_states: np.ndarray):
         print(f"  {net_type.upper()}: Error - {e}")
         return False
 
-
 # =============================================================================
 #! Preparation Functions
 # =============================================================================
 
 def prepare_hilbert_space(n_sites: int) -> Tuple[HilbertSpace, int]:
     """Prepare the Hilbert space."""
-    hilbert = HilbertSpace(n_sites)
-    n_visible = 2**hilbert.Ns
+    hilbert     = HilbertSpace(n_sites)
+    n_visible   = 2**hilbert.Ns
     return hilbert, n_visible
-
 
 def prepare_network_config(config: NetworkConfig, n_visible: int) -> NetworkConfig:
     """Prepare and validate network configuration."""
@@ -132,27 +130,25 @@ def prepare_network_config(config: NetworkConfig, n_visible: int) -> NetworkConf
             config.reshape_dims = (n_visible,)
     return config
 
-
 def prepare_rbm_network(config: NetworkConfig, n_visible: int) -> Any:
     """Prepare RBM network."""
     try:
         from QES.general_python.ml.net_impl.networks.net_rbm import RBM
         input_shape = (n_visible,)
         rbm = RBM(
-            input_shape=input_shape,
-            n_hidden=config.n_hidden,
-            dtype=config.dtype,
-            param_dtype=config.dtype,
-            seed=config.seed,
-            visible_bias=True,
-            bias=True
+            input_shape     = input_shape,
+            n_hidden        = config.n_hidden,
+            dtype           = config.dtype,
+            param_dtype     = config.dtype,
+            seed            = config.seed,
+            visible_bias    = True,
+            bias            = True
         )
         return rbm
     except ImportError:
         raise ImportError("RBM not available. JAX is required.")
     except Exception as e:
         raise RuntimeError(f"Failed to create RBM network: {e}")
-
 
 def prepare_cnn_network(config: NetworkConfig, n_visible: int) -> Any:
     """Prepare CNN network."""
@@ -169,24 +165,23 @@ def prepare_cnn_network(config: NetworkConfig, n_visible: int) -> Any:
         
         input_shape = (n_visible,)
         cnn = CNN(
-            input_shape=input_shape,
-            reshape_dims=config.reshape_dims,
-            features=config.features,
-            kernel_sizes=config.kernel_sizes,
-            strides=config.strides,
-            activations=[elu_jnp] * len(config.features),
-            dtype=config.dtype,
-            param_dtype=config.dtype,
-            final_activation=elu_jnp,
-            seed=config.seed,
-            output_shape=(1,)
+            input_shape         = input_shape,
+            reshape_dims        = config.reshape_dims,
+            features            = config.features,
+            kernel_sizes        = config.kernel_sizes,
+            strides             = config.strides,
+            activations         = [elu_jnp] * len(config.features),
+            dtype               = config.dtype,
+            param_dtype         = config.dtype,
+            final_activation    = elu_jnp,
+            seed                = config.seed,
+            output_shape        = (1,)
         )
         return cnn
     except ImportError:
         raise ImportError("CNN not available. JAX is required.")
     except Exception as e:
         raise RuntimeError(f"Failed to create CNN network: {e}")
-
 
 def prepare_network(network_type: str, config: NetworkConfig, n_visible: int) -> Any:
     """Prepare neural network based on type."""
@@ -196,7 +191,6 @@ def prepare_network(network_type: str, config: NetworkConfig, n_visible: int) ->
         return prepare_cnn_network(config, n_visible)
     else:
         raise ValueError(f"Unknown network type: {network_type}")
-
 
 def generate_test_states(n_sites: int, num_states: int) -> np.ndarray:
     """Generate diverse test states for network evaluation."""
@@ -214,7 +208,6 @@ def generate_test_states(n_sites: int, num_states: int) -> np.ndarray:
             states[i] = np.random.randint(0, 2, n_sites, dtype=np.float32)
     
     return states
-
 
 # =============================================================================
 #! Main Example - Comprehensive Network Showcase
@@ -238,11 +231,11 @@ def main():
     
     # Create simulation configuration
     sim_config = SimulationConfig(
-        n_sites=8,
-        batch_size=4,
-        num_test_states=5,
-        network_types=['rbm', 'cnn'],
-        seed=42
+        n_sites         = 8,
+        batch_size      = 4,
+        num_test_states = 5,
+        network_types   = ['rbm', 'cnn'],
+        seed            = 42
     )
     print_result("Simulation Config", True, f"{sim_config.n_sites} sites, {len(sim_config.network_types)} networks")
     
@@ -260,10 +253,7 @@ def main():
     print_section("STEP 2: Generate Test States")
     
     try:
-        test_states = generate_test_states(
-            n_sites=sim_config.n_sites,
-            num_states=sim_config.num_test_states
-        )
+        test_states = generate_test_states(n_sites=sim_config.n_sites, num_states=sim_config.num_test_states)
         print_result("Test States", True, f"{test_states.shape} - diverse quantum states")
         print(f"\n  State examples:")
         for i, state in enumerate(test_states[:3]):
@@ -283,12 +273,12 @@ def main():
     print_subsection("Creating RBM Network")
     try:
         rbm_config = NetworkConfig(
-            network_type='rbm',
-            n_sites=sim_config.n_sites,
-            n_hidden=16
+            network_type    =   'rbm',
+            n_sites         =   sim_config.n_sites,
+            n_hidden        =   16
         )
-        rbm_config = prepare_network_config(rbm_config, n_visible)
-        rbm_network = prepare_rbm_network(rbm_config, n_visible)
+        rbm_config              = prepare_network_config(rbm_config, n_visible)
+        rbm_network             = prepare_rbm_network(rbm_config, n_visible)
         networks_created['rbm'] = rbm_network
         print_network_info('rbm', rbm_network, test_states)
         print_result("RBM Creation", True, "Success")
@@ -300,14 +290,14 @@ def main():
     print_subsection("Creating CNN Network")
     try:
         cnn_config = NetworkConfig(
-            network_type='cnn',
-            n_sites=sim_config.n_sites,
-            features=[16, 32],
-            kernel_sizes=[3, 3],
-            strides=[1, 1]
+            network_type    =   'cnn',
+            n_sites         =   sim_config.n_sites,
+            features        =   [16, 32],
+            kernel_sizes    =   [3, 3],
+            strides         =   [1, 1]
         )
-        cnn_config = prepare_network_config(cnn_config, n_visible)
-        cnn_network = prepare_cnn_network(cnn_config, n_visible)
+        cnn_config              = prepare_network_config(cnn_config, n_visible)
+        cnn_network             = prepare_cnn_network(cnn_config, n_visible)
         networks_created['cnn'] = cnn_network
         print_network_info('cnn', cnn_network, test_states)
         print_result("CNN Creation", True, "Success")
@@ -344,10 +334,10 @@ def main():
     
     print_subsection("Smart Network Selection")
     try:
-        small_rec = NetworkSelector.get_recommendations(8, 'general')
-        medium_rec = NetworkSelector.get_recommendations(16, 'lattice_2d')
-        large_rec = NetworkSelector.get_recommendations(100, 'large_system')
-        
+        small_rec   = NetworkSelector.get_recommendations(8, 'general')
+        medium_rec  = NetworkSelector.get_recommendations(16, 'lattice_2d')
+        large_rec   = NetworkSelector.get_recommendations(100, 'large_system')
+
         print_result("Small system (8 qubits)", True, str(small_rec))
         print_result("Medium system (16 qubits, 2D)", True, str(medium_rec))
         print_result("Large system (100 qubits)", True, str(large_rec))
@@ -373,14 +363,14 @@ def main():
     # =========================================================================
     print_section("SUMMARY")
     
-    print("\n✓ Key Takeaways:")
+    print("\n(ok) Key Takeaways:")
     print("  1. Configuration classes provide clean parameter management")
     print("  2. Preparation functions make code modular and reusable")
     print("  3. NetworkFactory provides unified interface for different networks")
     print("  4. All networks share same evaluation interface")
     print("  5. Type hints and docstrings improve code maintainability")
     
-    print(f"\n✓ Networks created: {len(networks_created)}")
+    print(f"\n(ok) Networks created: {len(networks_created)}")
     if networks_created:
         print("  Available networks:", ", ".join(networks_created.keys()))
     
@@ -390,6 +380,11 @@ def main():
     print("  • network_integration.py - NetworkFactory and NetworkSelector implementation")
     print("="*80 + "\n")
 
+# =============================================================================
 
 if __name__ == '__main__':
     main()
+
+# =============================================================================
+#! End of File
+# =============================================================================

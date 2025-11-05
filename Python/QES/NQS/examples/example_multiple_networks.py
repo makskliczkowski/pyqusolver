@@ -13,14 +13,17 @@ Networks covered:
 This example uses a structured approach with dedicated preparation functions
 for each component (network, backend, sampler, etc.).
 
-Author: Development Team
-Date: November 1, 2025
+--------------------------------------------------------------
+File        : examples/example_multiple_networks.py
+author      : Maksymilian Kliczkowski
+email       : maksymilian.kliczkowski@pwr.edu.pl
+date        : 2025-11-01
+--------------------------------------------------------------
 """
 
 import numpy as np
 import sys
 import os
-import math
 from dataclasses import dataclass, field
 from typing import Any, Optional, List, Dict
 
@@ -37,7 +40,6 @@ except ImportError as e:
     print(f"Error importing modules: {e}")
     sys.exit(1)
 
-
 # =============================================================================
 #! Configuration and Parameter Classes
 # =============================================================================
@@ -45,25 +47,24 @@ except ImportError as e:
 @dataclass
 class NetworkConfig:
     """Configuration for network preparation."""
-    network_type: str           # 'rbm' or 'cnn'
-    n_sites: int                # Number of qubits/sites
-    n_hidden: int               = 16            # For RBM
-    features: List[int]         = field(default_factory=lambda: [16, 32])  # For CNN
-    kernel_sizes: List[int]     = field(default_factory=lambda: [3, 3])    # For CNN
-    strides: List[int]          = field(default_factory=lambda: [1, 1])    # For CNN
-    reshape_dims: Optional[tuple] = None        # For CNN
-    seed: int                   = 42
-    dtype: Any                  = np.float32
+    network_type        : str               # 'rbm' or 'cnn'
+    n_sites             : int               # Number of qubits/sites
+    n_hidden            : int               = 16
+    features            : List[int]         = field(default_factory=lambda: [16, 32])  # For CNN
+    kernel_sizes        : List[int]         = field(default_factory=lambda: [3, 3])    # For CNN
+    strides             : List[int]         = field(default_factory=lambda: [1, 1])    # For CNN
+    reshape_dims        : Optional[tuple]   = None        # For CNN
+    seed                : int               = 42
+    dtype               : Any               = np.float32
 
 @dataclass
 class SimulationConfig:
     """Configuration for the entire simulation."""
-    n_sites: int                = 8
-    batch_size: int             = 4
-    num_test_states: int        = 3
-    network_types: List[str]    = field(default_factory=lambda: ['rbm', 'cnn'])
-    seed: int                   = 42
-
+    n_sites             : int               = 8
+    batch_size          : int               = 4
+    num_test_states     : int               = 3
+    network_types       : List[str]         = field(default_factory=lambda: ['rbm', 'cnn'])
+    seed                : int               = 42
 
 # =============================================================================
 #! Utility Functions
@@ -75,26 +76,25 @@ def print_section(title: str):
     print(f"  {title}")
     print("="*70)
 
-
-
-
 # =============================================================================
 #! Example Functions
 # =============================================================================
 
 def test_rbm_network():
+    
     """Example 1: Using RBM (Restricted Boltzmann Machine)."""
     print_section("EXAMPLE 1: RBM Network")
     
     try:
         # Create Hilbert space (8 qubits)
-        hilbert = HilbertSpace(8)
-        n_visible = 2**hilbert.Ns
-        print(f"✓ Hilbert space: {n_visible} states")
+        ns                  = 8
+        hilbert             = HilbertSpace(ns=ns)
+        n_visible           = ns
+        print(f"Hilbert space: {n_visible} states")
         
         # Create RBM network
         print("\nRBM Configuration:")
-        num_hidden = 16
+        num_hidden          = 16
         print(f"  - Visible units: {n_visible}")
         print(f"  - Hidden units: {num_hidden}")
         
@@ -102,36 +102,39 @@ def test_rbm_network():
             from QES.general_python.ml.net_impl.networks.net_rbm import RBM
             
             # input_shape must be a tuple of (n_visible,)
-            input_shape = (n_visible,)
-            rbm = RBM(input_shape=input_shape, n_hidden=num_hidden)
-            print(f"✓ RBM network created")
+            input_shape     = (n_visible,)
+            rbm             = RBM(input_shape=input_shape, n_hidden=num_hidden)
+            print(f"RBM network created")
             
             # Get network info
-            params = rbm.get_params()
-            print(f"\n✓ Network parameters: {len(params)} parameters")
+            params          = rbm.get_params()
+            print(f"\n(ok) Network parameters: {len(params)} parameters")
             
             # Test evaluation
-            test_states = np.array([[1, 0, 1, 0, 1, 0, 1, 0],
-                                    [0, 1, 0, 1, 0, 1, 0, 1],
-                                    [1, 1, 0, 0, 1, 1, 0, 0]], dtype=np.float32)
+            test_states     = np.array([[1, 0, 1, 0, 1, 0, 1, 0],
+                                        [0, 1, 0, 1, 0, 1, 0, 1],
+                                        [1, 1, 0, 0, 1, 1, 0, 0]], dtype=np.float32)
             
             print(f"\nTest evaluation on {len(test_states)} states:")
-            result = rbm(test_states)
+            result  = rbm(test_states)
             print(f"  - Output shape: {result.shape}")
             print(f"  - First 3 values: {result[:3]}")
             
             return rbm, True
             
         except ImportError:
-            print("⚠ RBM not available (JAX required)")
+            print("(warning) RBM not available (JAX required)")
             return None, False
             
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"(error) Error: {e}")
         import traceback
         traceback.print_exc()
         return None, False
 
+# -----------------------------------------------------------------------------
+#! Example Functions Continued
+# -----------------------------------------------------------------------------
 
 def test_cnn_network():
     """Example 2: Using CNN (Convolutional Neural Network)."""
@@ -139,15 +142,16 @@ def test_cnn_network():
     
     try:
         # Create Hilbert space (1D chain: 8 sites for CNN)
-        hilbert = HilbertSpace(8)
-        n_visible = 2**hilbert.Ns
-        print(f"✓ Hilbert space: {n_visible} states (8 sites)")
+        ns              = 8
+        hilbert         = HilbertSpace(ns=ns)
+        n_visible       = ns
+        print(f"(ok) Hilbert space: {n_visible} states (8 sites)")
         
         # Create CNN network
         print("\nCNN Configuration:")
-        features = [16, 32]
-        kernel_sizes = [3, 3]
-        strides = [1, 1]
+        features        = [16, 32]
+        kernel_sizes    = [3, 3]
+        strides         = [1, 1]
         
         print(f"  - Features: {features}")
         print(f"  - Kernel sizes: {kernel_sizes}")
@@ -157,28 +161,28 @@ def test_cnn_network():
             from QES.general_python.ml.net_impl.networks.net_cnn import CNN
             
             # input_shape must be a tuple, reshape_dims specifies spatial layout (8,) for 1D
-            input_shape = (n_visible,)
-            reshape_dims = (8,)  # 1D chain
+            input_shape     = (n_visible,)
+            reshape_dims    = (1, n_visible)        # 1D chain
             
             cnn = CNN(
-                input_shape=input_shape,
-                reshape_dims=reshape_dims,
-                features=features,
-                kernel_sizes=kernel_sizes,
-                strides=strides
+                input_shape     =   input_shape,
+                reshape_dims    =   reshape_dims,
+                features        =   features,
+                kernel_sizes    =   kernel_sizes,
+                strides         =   strides
             )
-            print(f"✓ CNN network created")
+            print(f"(ok) CNN network created")
             
             # Get network info
-            params = cnn.get_params()
-            print(f"\n✓ Network parameters: {len(params)} parameters")
+            params              = cnn.get_params()
+            print(f"\n(ok) Network parameters: {len(params)} parameters")
             
             # Test evaluation
-            test_states = np.zeros((3, 8), dtype=np.float32)
-            test_states[0, :] = 1  # All ones
+            test_states         = np.zeros((3, ns), dtype=np.float32)
+            test_states[0, :]   = 1  # All ones
             test_states[1, ::2] = 1  # Checkerboard
-            test_states[2, :4] = 1  # Half filled
-            
+            test_states[2, :4]  = 1  # Half filled
+
             print(f"\nTest evaluation on {len(test_states)} states:")
             result = cnn(test_states)
             print(f"  - Output shape: {result.shape}")
@@ -187,15 +191,16 @@ def test_cnn_network():
             return cnn, True
             
         except ImportError:
-            print("⚠ CNN not available (JAX required)")
+            print("(warning) CNN not available (JAX required)")
             return None, False
             
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"(error) Error: {e}")
         import traceback
         traceback.print_exc()
         return None, False
 
+# -----------------------------------------------------------------------------
 
 def test_network_factory():
     """Example 3: Using NetworkFactory for easy network creation."""
@@ -207,14 +212,14 @@ def test_network_factory():
         print(f"Available networks: {available}")
         
         if not available:
-            print("⚠ No networks available (JAX required)")
+            print("(warning) No networks available (JAX required)")
             return False
         
         # Get recommendations
         print("\nNetwork recommendations:")
-        print(f"  - 8-qubit system: {NetworkSelector.get_recommendations(8, 'general')}")
-        print(f"  - 16-qubit 2D lattice: {NetworkSelector.get_recommendations(16, 'lattice_2d')}")
-        print(f"  - 100-qubit system: {NetworkSelector.get_recommendations(100, 'large_system')}")
+        print(f"  - 8-qubit system:         {NetworkSelector.get_recommendations(8, 'general')}")
+        print(f"  - 16-qubit 2D lattice:    {NetworkSelector.get_recommendations(16, 'lattice_2d')}")
+        print(f"  - 100-qubit system:       {NetworkSelector.get_recommendations(100, 'large_system')}")
         
         # Create networks using factory
         hilbert = HilbertSpace(8)
@@ -225,9 +230,9 @@ def test_network_factory():
             try:
                 net = NetworkFactory.create(net_type, hilbert)
                 networks[net_type] = net
-                print(f"  ✓ {net_type.upper()}: {net.__class__.__name__}")
+                print(f"  (ok) {net_type.upper()}: {net.__class__.__name__}")
             except Exception as e:
-                print(f"  ❌ {net_type.upper()}: {e}")
+                print(f"  (error) {net_type.upper()}: {e}")
         
         # Create NQS with each network
         print(f"\nCreating NQS solvers:")
@@ -237,29 +242,30 @@ def test_network_factory():
             try:
                 params = net.get_params()
                 solvers[net_type] = net
-                print(f"  ✓ {net_type.upper()}: Network with {len(params)} parameters")
+                print(f"  (ok) {net_type.upper()}: Network with {len(params)} parameters")
             except Exception as e:
-                print(f"  ❌ {net_type.upper()}: {e}")
+                print(f"  (error) {net_type.upper()}: {e}")
         
         return len(solvers) > 0
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"(error) Error: {e}")
         import traceback
         traceback.print_exc()
         return False
 
+# -----------------------------------------------------------------------------
 
 def test_unified_evaluation():
     """Example 4: Using unified evaluation engine with different networks."""
     print_section("EXAMPLE 4: Unified Evaluation Engine with Different Networks")
     
     try:
-        hilbert = HilbertSpace(8)
-        available = NetworkFactory.list_available()
-        
+        hilbert     = HilbertSpace(8)
+        available   = NetworkFactory.list_available()
+
         if not available:
-            print("⚠ No networks available")
+            print("(warning) No networks available")
             return False
         
         # Test states
@@ -286,16 +292,19 @@ def test_unified_evaluation():
                 print(f"  - Std: {np.std(result):.6f}")
                 
             except Exception as e:
-                print(f"\n{net_type.upper()}: ❌ {e}")
+                print(f"\n{net_type.upper()}: (error) {e}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"(error) Error: {e}")
         import traceback
         traceback.print_exc()
         return False
 
+# -----------------------------------------------------------------------------
+#! Main Execution
+# -----------------------------------------------------------------------------
 
 def main():
     """Run all examples."""
@@ -329,7 +338,7 @@ def main():
     print("\nResults:")
     passed = 0
     for name, ok in results:
-        status = "✓ PASS" if ok else "⚠ SKIP/FAIL"
+        status = "(ok) PASS" if ok else "(warning) SKIP/FAIL"
         print(f"  {name:.<50} {status}")
         if ok:
             passed += 1
@@ -337,12 +346,15 @@ def main():
     print(f"\nTotal: {passed}/{len(results)} examples completed successfully")
     
     if passed == len(results):
-        print("\n🎉 All examples completed successfully!")
+        print("\n(weee) All examples completed successfully!")
     else:
-        print("\n⚠ Some examples skipped (JAX dependencies may not be available)")
+        print("\n(warning) Some examples skipped (JAX dependencies may not be available)")
     
     print("\n" + "="*70)
 
-
 if __name__ == '__main__':
     main()
+
+# =============================================================================
+#! End of File
+# =============================================================================

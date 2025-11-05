@@ -80,7 +80,7 @@ def print_test_header(test_name: str, description: str = "") -> None:
 
 def print_test_result(success: bool, message: str = "") -> None:
     """Print test result with clear success/failure indication."""
-    status = "✅ PASSED" if success else "❌ FAILED"
+    status = "✅ PASSED" if success else "(error) FAILED"
     print(f"\n{status}: {message}")
     print(SEPARATOR_SHORT)
 
@@ -241,7 +241,7 @@ def validate_mapping(hilbert: HilbertSpace, verbose: bool = False) -> bool:
     """
     # Handle identity mapping case
     if hilbert.mapping is None or len(hilbert.mapping) == 0:
-        print(f"{INDENT}⚠️  No mapping to validate (identity mapping)")
+        print(f"{INDENT}(warning)️  No mapping to validate (identity mapping)")
         return True
     
     print_section_header(f"Validating mapping: {len(hilbert.mapping)} states", 
@@ -888,8 +888,8 @@ class TestMatrixConstruction:
         print_subsection(f"Operator matrix construction (ns={ns}, k=0)")
 
         # Use existing operators
-        sx_op = sig_x(ns=ns, sites=list(range(ns)))  # Sum of σ_x over all sites
-        sz_total_op = sig_z_total(ns=ns, sites=list(range(ns)))  # Total σ_z
+        sx_op = sig_x(ns=ns, sites=list(range(ns)))  # Sum of \sigma_x over all sites
+        sz_total_op = sig_z_total(ns=ns, sites=list(range(ns)))  # Total \sigma_z
 
         # Build matrices in symmetry sector
         H_x = build_operator_matrix(sx_op, hilbert_space=hilbert, sparse=True)
@@ -901,16 +901,16 @@ class TestMatrixConstruction:
         assert H_x.nnz > 0
         assert H_sz_total.nnz > 0
 
-        # σ_x should be non-Hermitian in general (but its matrix should be)
+        # \sigma_x should be non-Hermitian in general (but its matrix should be)
         H_x_dense = H_x.toarray()
         assert np.allclose(H_x_dense, H_x_dense.T.conj())
 
-        # Total σ_z should be Hermitian and diagonal in the full space
+        # Total \sigma_z should be Hermitian and diagonal in the full space
         H_sz_dense = H_sz_total.toarray()
         assert np.allclose(H_sz_dense, H_sz_dense.T.conj())
 
-        print(f"{INDENT}σ_x matrix: {H_x.shape}, nnz={H_x.nnz}")
-        print(f"{INDENT}Sumσ_z matrix: {H_sz_total.shape}, nnz={H_sz_total.nnz}")
+        print(f"{INDENT}\sigma_x matrix: {H_x.shape}, nnz={H_x.nnz}")
+        print(f"{INDENT}Sum\sigma_z matrix: {H_sz_total.shape}, nnz={H_sz_total.nnz}")
         print(f"{INDENT}(ok) Operator matrix construction validated")
 
     def test_symmetry_sector_vs_full_space_hamiltonian(self):
@@ -1053,12 +1053,12 @@ class TestMatrixConstruction:
         assert np.allclose(H_z_dense, H_z_dense.T.conj())
         assert np.allclose(H_x_dense, H_x_dense.T.conj())
 
-        print(f"{INDENT}σ_z matrix: {H_z.shape}, nnz={H_z.nnz}")
-        print(f"{INDENT}σ_x matrix: {H_x.shape}, nnz={H_x.nnz}")
+        print(f"{INDENT}\sigma_z matrix: {H_z.shape}, nnz={H_z.nnz}")
+        print(f"{INDENT}\sigma_x matrix: {H_x.shape}, nnz={H_x.nnz}")
         print(f"{INDENT}Both Hermitian: {np.allclose(H_z_dense, H_z_dense.T.conj()) and np.allclose(H_x_dense, H_x_dense.T.conj())}")
 
-        assert np.allclose(H_z_dense, H_z_dense.T.conj()), "σ_z operator should be Hermitian"
-        assert np.allclose(H_x_dense, H_x_dense.T.conj()), "σ_x operator should be Hermitian"
+        assert np.allclose(H_z_dense, H_z_dense.T.conj()), "\sigma_z operator should be Hermitian"
+        assert np.allclose(H_x_dense, H_x_dense.T.conj()), "\sigma_x operator should be Hermitian"
         print(f"{INDENT}(ok) Operator matrix properties validated")
 
 class TestNormalization:
@@ -1578,7 +1578,7 @@ class TestReflectionParity:
         """
         Test Parity Z (spin flip) symmetry.
         
-        Parity Z flips all spins in the system (σ -> -σ). This symmetry
+        Parity Z flips all spins in the system (\sigma -> -\sigma). This symmetry
         is relevant for systems with antiferromagnetic order or particle-hole
         symmetry. States are divided into even and odd parity sectors.
         """
@@ -1596,7 +1596,7 @@ class TestReflectionParity:
         """
         Test Parity X at half-filling (required for U(1) compatibility).
         
-        Parity X (σ^x on all sites) is compatible with U(1) symmetry only
+        Parity X (\sigma^x on all sites) is compatible with U(1) symmetry only
         at half-filling (N = Ns/2) due to the particle-hole transformation.
         This test verifies the combination works correctly.
         """

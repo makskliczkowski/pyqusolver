@@ -78,7 +78,7 @@ def train_function_enhanced(params,
         )
         pbar.set_postfix({
             "E": f"{step_info_mean:.4e}",
-            "σE": f"{step_info_std:.4e}",
+            "\sigmaE": f"{step_info_std:.4e}",
             "lr": f"{current_lr:.3e}",
             "reg": f"{hparams['regularization']:.3e}"
         })

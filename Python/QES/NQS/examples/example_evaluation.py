@@ -2,28 +2,38 @@
 Examples: Unified Evaluation Interface for NQS
 
 This file demonstrates the new unified evaluation interface with ComputeLocalEnergy
-and UnifiedEvaluationEngine. It shows how the new architecture consolidates 19+ scattered
-methods into a clean, maintainable API.
+and UnifiedEvaluationEngine.
 
-All examples are fully functional and tested. Run this file directly to see output.
-
-Session 5, Task 5.5
+-----------------------------------------------------------------------------
+File        : NQS/examples/example_unified_evaluation.py
+Author      : Maksymilian Kliczkowski
+Email       : maxgrom97@gmail.com
+Description : Shows how the new architecture consolidates.
+-----------------------------------------------------------------------------
 """
 
 import numpy as np
 from typing import Callable, Dict, Optional
 
-# Note: In actual use, import from QES.NQS
-from QES.NQS.src.compute_local_energy import (
+# In actual use, import from QES.NQS
+from QES.NQS.src.nqs_engine import (
     create_compute_local_energy, 
     EnergyStatistics, 
     ObservableResult
 )
-from QES.NQS.src.unified_evaluation_engine import (
+from QES.NQS.src.nqs_general_engine import (
     create_evaluation_engine,
     EvaluationConfig,
     EvaluationResult,
 )
+
+# Create mock NQS
+class MockNQS:
+    def __init__(self):
+        self._params        = {'weights': np.array([0.1, 0.2, 0.3])}
+        self._ansatz_func   = lambda p, s: np.dot(p['weights'], s)
+    def get_params(self):
+        return self._params
 
 #####################################################################################################
 #! EXAMPLE 1: Basic Ansatz Evaluation
@@ -44,30 +54,22 @@ def example_1_basic_ansatz_evaluation():
     print("EXAMPLE 1: Basic Ansatz Evaluation")
     print("="*70)
     
-    # Create mock NQS
-    class MockNQS:
-        def __init__(self):
-            self._params = {'weights': np.array([0.1, 0.2, 0.3])}
-            self._ansatz_func = lambda p, s: np.dot(p['weights'], s)
-        def get_params(self):
-            return self._params
-    
-    nqs = MockNQS()
+    nqs         = MockNQS()
     
     # Create evaluation computer
-    computer = create_compute_local_energy(nqs, backend='auto', batch_size=None)
+    computer    = create_compute_local_energy(nqs, backend='auto', batch_size=None)
     
     # Generate test states
-    states = np.array([
-        [1, 0, 0],
-        [0, 1, 0],
-        [0, 0, 1],
-        [1, 1, 0],
-        [1, 0, 1],
-    ])
+    states      = np.array([
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1],
+                    [1, 1, 0],
+                    [1, 0, 1],
+                ])
     
     # Evaluate ansatz
-    result = computer.evaluate_ansatz(states)
+    result      = computer.evaluate_ansatz(states)
     
     print(f"\nInput states shape: {states.shape}")
     print(f"Ansatz values shape: {result.values.shape}")
@@ -75,8 +77,7 @@ def example_1_basic_ansatz_evaluation():
     print(f"Mean: {result.mean:.6f}")
     print(f"Std: {result.std:.6f}")
     print(f"Backend used: {result.backend_used}")
-    print("✓ Example 1 complete")
-
+    print("(ok) Example 1 complete")
 
 #####################################################################################################
 #! EXAMPLE 2: Local Energy Computation
@@ -98,23 +99,14 @@ def example_2_local_energy_computation():
     print("EXAMPLE 2: Local Energy Computation")
     print("="*70)
     
-    # Create mock NQS
-    class MockNQS:
-        def __init__(self):
-            # Simple quadratic ansatz: ψ(s) ∝ exp(-|s|²)
-            self._params = {'beta': 0.5}
-            self._ansatz_func = lambda p, s: -p['beta'] * np.sum(s**2)
-        def get_params(self):
-            return self._params
-    
-    nqs = MockNQS()
     
     # Create evaluation computer
-    computer = create_compute_local_energy(nqs, backend='auto', batch_size=2)
+    nqs         = MockNQS()
+    computer    = create_compute_local_energy(nqs, backend='auto', batch_size=2)
     
     # Define a mock Hamiltonian that computes local energy
     def hamiltonian_action(s):
-        """Mock Hamiltonian: H = Σ_i (σ_x_i + σ_z_i σ_z_{i+1})"""
+        r"""Mock Hamiltonian: H = Σ_i (\sigma_x_i + \sigma_z_i \sigma_z_{i+1})"""
         # For simplicity, just return energy based on configuration
         return np.sum(s) + 0.1 * np.sum(s[:-1] * s[1:])
     
@@ -134,8 +126,7 @@ def example_2_local_energy_computation():
     print(f"  Min: {energy_stats.min_energy:.6f}")
     print(f"  Max: {energy_stats.max_energy:.6f}")
     print(f"  Variance: {energy_stats.variance:.6f}")
-    print("✓ Example 2 complete")
-
+    print("(ok) Example 2 complete")
 
 #####################################################################################################
 #! EXAMPLE 3: Observable Evaluation
@@ -158,19 +149,11 @@ def example_3_observable_evaluation():
     print("EXAMPLE 3: Observable Evaluation")
     print("="*70)
     
-    # Create mock NQS
-    class MockNQS:
-        def __init__(self):
-            self._params = {'alpha': 0.5}
-            self._ansatz_func = lambda p, s: p['alpha'] * np.sum(s)
-        def get_params(self):
-            return self._params
-    
-    nqs = MockNQS()
-    computer = create_compute_local_energy(nqs, backend='auto', batch_size=3)
+    nqs         = MockNQS()
+    computer    = create_compute_local_energy(nqs, backend='auto', batch_size=3)
     
     # Generate test states
-    states = np.array([
+    states      = np.array([
         [0, 0, 1, 1],
         [1, 0, 1, 0],
         [1, 1, 0, 0],
@@ -192,10 +175,10 @@ def example_3_observable_evaluation():
         return np.sum((-1)**s)
     
     # Define observable dictionary
-    observables = {
-        'ParticleNumber': particle_number,
-        'Correlation': correlation,
-        'Magnetization': magnetization,
+    observables     = {
+        'ParticleNumber'    : particle_number,
+        'Correlation'       : correlation,
+        'Magnetization'     : magnetization,
     }
     
     # Single observable
@@ -214,8 +197,7 @@ def example_3_observable_evaluation():
     for name, obs_result in results.items():
         print(f"  {name:20s}: <O> = {obs_result.mean_local_value:8.4f} ± {obs_result.std_local_value:.4f}")
     
-    print("✓ Example 3 complete")
-
+    print("(ok) Example 3 complete")
 
 #####################################################################################################
 #! EXAMPLE 4: Batch Processing with Different Backends
@@ -234,22 +216,13 @@ def example_4_batch_processing():
     print("\n" + "="*70)
     print("EXAMPLE 4: Batch Processing with Backend Selection")
     print("="*70)
-    
-    # Create mock NQS
-    class MockNQS:
-        def __init__(self):
-            self._params = {'w': np.ones(5) * 0.1}
-            self._ansatz_func = lambda p, s: np.dot(p['w'], s)
-        def get_params(self):
-            return self._params
-    
-    nqs = MockNQS()
-    
+        
+    nqs         = MockNQS()
     # Large state set for batching
-    n_states = 100
-    state_dim = 5
-    states = np.random.randint(0, 2, size=(n_states, state_dim))
-    
+    n_states    = 100
+    state_dim   = 5
+    states      = np.random.randint(0, 2, size=(n_states, state_dim))
+
     # Test with different batch sizes
     batch_sizes = [None, 10, 25, 50]
     
@@ -257,12 +230,11 @@ def example_4_batch_processing():
     print("\nBatch size comparison:")
     
     for batch_size in batch_sizes:
-        computer = create_compute_local_energy(nqs, backend='auto', batch_size=batch_size)
-        result = computer.evaluate_ansatz(states)
+        computer    = create_compute_local_energy(nqs, backend='auto', batch_size=batch_size)
+        result      = computer.evaluate_ansatz(states)
         print(f"  Batch size {str(batch_size):>5s}: mean={result.mean:8.4f}, std={result.std:.4f}")
     
-    print("\n✓ Example 4 complete")
-
+    print("\n(ok) Example 4 complete")
 
 #####################################################################################################
 #! EXAMPLE 5: Comparison of Backends
@@ -281,22 +253,12 @@ def example_5_backend_comparison():
     print("EXAMPLE 5: Backend Comparison (NumPy vs JAX)")
     print("="*70)
     
-    # Create mock NQS
-    class MockNQS:
-        def __init__(self):
-            self._params = {'coeff': 0.5}
-            self._ansatz_func = lambda p, s: p['coeff'] * np.sum(s**2)
-        def get_params(self):
-            return self._params
-    
-    nqs = MockNQS()
-    
-    # Test states
-    states = np.random.randn(20, 3).astype(np.float32)
-    
+    nqs         = MockNQS()
+    states      = np.random.randn(20, 3).astype(np.float32)
+
     print("\nTesting with NumPy backend:")
-    computer = create_compute_local_energy(nqs, backend='numpy')
-    result_np = computer.evaluate_ansatz(states)
+    computer    = create_compute_local_energy(nqs, backend='numpy')
+    result_np   = computer.evaluate_ansatz(states)
     print(f"  Backend: {result_np.backend_used}")
     print(f"  Mean: {result_np.mean:.6f}")
     print(f"  Config: {computer.get_config()}")
@@ -311,9 +273,8 @@ def example_5_backend_comparison():
     diff = np.abs(result_np.values - result_auto.values).max()
     print(f"\nMax difference between backends: {diff:.2e}")
     assert diff < 1e-6, "Backend results differ!"
-    print("✓ Backend results consistent")
-    print("✓ Example 5 complete")
-
+    print("(ok) Backend results consistent")
+    print("(ok) Example 5 complete")
 
 #####################################################################################################
 #! EXAMPLE 6: Advanced - Custom Function Evaluation
@@ -330,18 +291,10 @@ def example_6_custom_function_evaluation():
     print("\n" + "="*70)
     print("EXAMPLE 6: Custom Function Evaluation")
     print("="*70)
-    
-    # Create mock NQS
-    class MockNQS:
-        def __init__(self):
-            self._params = {}
-            self._ansatz_func = lambda p, s: 0.0  # Irrelevant for this example
-        def get_params(self):
-            return self._params
-    
-    nqs = MockNQS()
-    computer = create_compute_local_energy(nqs, backend='auto', batch_size=5)
-    
+
+    nqs         = MockNQS()
+    computer    = create_compute_local_energy(nqs, backend='auto', batch_size=5)
+
     # Custom functions to evaluate
     def entropy(s):
         """Shannon entropy of configuration"""
@@ -385,8 +338,7 @@ def example_6_custom_function_evaluation():
     print(f"    Values: {result_structure.values[:3]}")
     print(f"    Mean: {result_structure.mean:.6f}")
     
-    print("✓ Example 6 complete")
-
+    print("(ok) Example 6 complete")
 
 #####################################################################################################
 #! MAIN: RUN ALL EXAMPLES
@@ -412,7 +364,7 @@ def main():
         example_6_custom_function_evaluation()
         
         print("\n" + "="*70)
-        print("✓ ALL EXAMPLES COMPLETED SUCCESSFULLY")
+        print("(ok) ALL EXAMPLES COMPLETED SUCCESSFULLY")
         print("="*70)
         print("\nKey takeaways:")
         print("  1. UnifiedEvaluationEngine eliminates backend dispatch duplication")
@@ -430,7 +382,12 @@ def main():
     
     return True
 
+# ----------------------------------------------------------------------
 
 if __name__ == '__main__':
     success = main()
     exit(0 if success else 1)
+    
+# ----------------------------------------------------------------------
+#! END OF FILE
+# ----------------------------------------------------------------------

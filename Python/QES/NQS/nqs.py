@@ -43,7 +43,7 @@ except ImportError as e:
 try:
     from .src.nqs_physics import *
     from .src.nqs_networks import *
-    from .src.compute_local_energy import ComputeLocalEnergy
+    from .src.nqs_engine import NQSEvalEngine
 except ImportError as e:
     raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
 
@@ -171,22 +171,22 @@ class NQS(MonteCarloSolver):
                         backend     =   backend)
         
         # --------------------------------------------------
-        self._batch_size        = batch_size        
-        self._initialized       = False
+        self._batch_size            = batch_size        
+        self._initialized           = False
         
-        self._modifier          = None #! State modifier (for later), for quench dynamics, etc.
-        self._modifier_func     = None
+        self._modifier              = None #! State modifier (for later), for quench dynamics, etc.
+        self._modifier_func         = None
 
         #######################################
         #! collect the Hilbert space information
         #######################################
         
-        self._nh                = self._hilbert.Nh if self._hilbert is not None else None
-        self._nparticles        = nparticles if nparticles is not None else self._size
-        self._nvisible          = self._size
-        self._nparticles2       = self._nparticles**2
-        self._nvisible2         = self._nvisible**2
-        self._beta_penalty      = kwargs.get('beta_penalty', 0.0)
+        self._nh                    = self._hilbert.Nh if self._hilbert is not None else None
+        self._nparticles            = nparticles if nparticles is not None else self._size
+        self._nvisible              = self._size
+        self._nparticles2           = self._nparticles**2
+        self._nvisible2             = self._nvisible**2
+        self._beta_penalty          = kwargs.get('beta_penalty', 0.0)
         
         # --------------------------------------------------
         #! Backend
@@ -216,15 +216,15 @@ class NQS(MonteCarloSolver):
         #! Handle gradients
         # --------------------------------------------------
         self._grad_info             = self._nqsbackend.prepare_gradients(self._net)    
-        self._flat_grad_func        = self._grad_info["flat_grad_func"]
-        self._dict_grad_type        = self._grad_info["dict_grad_type"]
-        self._params_slice_metadata = self._grad_info["slice_metadata"]
-        self._params_leaf_info      = self._grad_info["leaf_info"]
-        self._params_tree_def       = self._grad_info["tree_def"]
-        self._params_shapes         = self._grad_info["shapes"]
-        self._params_sizes          = self._grad_info["sizes"]
-        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]
-        self._params_total_size     = self._grad_info["total_size"]
+        self._flat_grad_func        = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
+        self._dict_grad_type        = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
+        self._params_slice_metadata = self._grad_info["slice_metadata"]         # Metadata for slicing parameters
+        self._params_leaf_info      = self._grad_info["leaf_info"]              # Leaf information
+        self._params_tree_def       = self._grad_info["tree_def"]               # Tree definition
+        self._params_shapes         = self._grad_info["shapes"]                 # Shapes of parameters
+        self._params_sizes          = self._grad_info["sizes"]                  # Sizes of parameters
+        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]    # Whether each parameter is complex
+        self._params_total_size     = self._grad_info["total_size"]             # Total size of parameters -> cost for training
         
         # --------------------------------------------------
         #! Compile functions
@@ -235,7 +235,7 @@ class NQS(MonteCarloSolver):
         #! Model and physics setup
         # --------------------------------------------------
 
-        self._model = model
+        self._model                 = model
         self._nqsproblem.setup(self._model, self._net)
         # For wavefunction problem we keep the same attribute name you used:
         self._local_en_func         = getattr(self._nqsproblem, "local_energy_fn", None)
@@ -243,7 +243,7 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         #! Initialize unified evaluation engine
         # --------------------------------------------------
-        self._eval_engine = ComputeLocalEnergy(self, backend='auto', batch_size=batch_size)
+        self._eval_engine           = NQSEvalEngine(self, backend='auto', batch_size=batch_size)
 
         #######################################
         #! directory to save the results
@@ -253,8 +253,8 @@ class NQS(MonteCarloSolver):
         self._dir_detailed.mkdir()
         
         #! Orbax checkpoint manager
-        self._use_orbax         = kwargs.get('use_orbax', True)
-        self._orbax_max_to_keep = kwargs.get('orbax_max_to_keep', 3)
+        self._use_orbax             = kwargs.get('use_orbax', True)
+        self._orbax_max_to_keep     = kwargs.get('orbax_max_to_keep', 3)
 
         if (self._isjax and self._use_orbax and hasattr(self._net, 'net_module') and isinstance(self._net.net_module, nn.Module)):
 
@@ -264,9 +264,9 @@ class NQS(MonteCarloSolver):
             
             handler   = PyTreeCheckpointHandler()
             self._ckpt_manager = CheckpointManager(
-                directory       = str(ckpt_base),
-                checkpoint_type = handler,
-                max_to_keep     = self._orbax_max_to_keep)
+                directory           = str(ckpt_base),
+                checkpoint_type     = handler,
+                max_to_keep         = self._orbax_max_to_keep)
         else:
             self._ckpt_manager = None
     
@@ -417,20 +417,8 @@ class NQS(MonteCarloSolver):
         result = self._eval_engine.evaluate_ansatz(states, params, batch_size)
         return result.values
     
-    def ansatz(self, states, batch_size=None, params=None):
-        '''
-        Deprecated: Use evaluate() instead.
-        
-        Evaluate the network using the provided state. This will return the log ansatz 
-        of the state coefficient. Wrapper around evaluate() for backwards compatibility.
-        
-        Parameters:
-            states      : The state vector.
-            batch_size  : The size of batches to use for the evaluation.
-            params      : The parameters (weights) to use for the network evaluation.
-        Returns:
-            The evaluated network output.
-        '''
+    def ansatz(self, states, batch_size=None, params=None): 
+        ''' Alias for the log ansatz evaluation '''
         return self.evaluate(states, batch_size, params)
     
     def __call__(self, states, **kwargs):
@@ -643,11 +631,11 @@ class NQS(MonteCarloSolver):
         return (states, ansatze), probabilities, evaluated_results
     
     def apply(self,
-                functions       : Optional[Union[List, Callable]]                                                   = None,
-                states_and_psi  : Optional[Tuple[Union[np.ndarray, jnp.ndarray], Union[np.ndarray, jnp.ndarray]]]   = None,
-                probabilities   : Optional[Union[np.ndarray, jnp.ndarray]]                                          = None,
-                batch_size      : Optional[int]                                                                     = None,
-                **kwargs):
+            functions       : Optional[Union[List, Callable]]                                                   = None,
+            states_and_psi  : Optional[Tuple[Union[np.ndarray, jnp.ndarray], Union[np.ndarray, jnp.ndarray]]]   = None,
+            probabilities   : Optional[Union[np.ndarray, jnp.ndarray]]                                          = None,
+            batch_size      : Optional[int]                                                                     = None,
+            **kwargs):
         """
         Evaluate a set of functions based on the provided states, wavefunction, and probabilities.
         This method computes the output of one or more functions using the provided states, 
@@ -752,93 +740,82 @@ class NQS(MonteCarloSolver):
         return self._apply_fun_jax if self._isjax else self._apply_fun_np
     
     #####################################
-    #! UNIFIED EVALUATION INTERFACE
+    #! UNIFIED EVALUATION INTERFACE USING EVALUATION ENGINE
     #####################################
-    
-    def compute_energy(self, states, ham_action_func, params=None, 
-                      probabilities=None, batch_size=None):
+
+    def compute_energy(self, states, ham_action_func=None, params=None, probabilities=None, batch_size=None):
         """
         Compute local energies using the evaluation engine.
         
         Parameters:
-            states: Array of state configurations
-            ham_action_func: Function computing local energy
-            params: Optional network parameters
-            probabilities: Optional probability weights
-            batch_size: Optional batch size override
-            
+        -----------
+            states: 
+                Array of state configurations
+            ham_action_func: 
+                Function computing local energy
+            params: 
+                Optional network parameters
+            probabilities: 
+                Optional probability weights
+            batch_size: 
+                Optional batch size override
+
         Returns:
             EnergyStatistics object with energy values and statistics
         """
-        return self._eval_engine.compute_local_energy(
-            states, ham_action_func, params, probabilities, batch_size
-        )
+        if ham_action_func is None:
+            ham_action_func = self._local_en_func
+        return self._eval_engine.compute_local_energy(states, ham_action_func, params, probabilities, batch_size)
     
-    def compute_observable(self, observable_func, states, observable_name="Observable",
-                          params=None, compute_expectation=False, batch_size=None):
+    def compute_observable(self, observable_func, states, observable_name="Observable", params=None, compute_expectation=False, batch_size=None):
         """
         Evaluate an observable using the evaluation engine.
         
         Parameters:
-            observable_func: Function computing observable values
-            states: Array of state configurations
-            observable_name: Name of the observable
-            params: Optional network parameters
-            compute_expectation: Whether to compute expectation value
-            batch_size: Optional batch size override
-            
+        -----------
+            observable_func: 
+                Function computing observable values
+            states: 
+                Array of state configurations
+            observable_name: 
+                Name of the observable
+            params: 
+                Optional network parameters. If not provided, uses current network parameters.
+            compute_expectation: 
+                Whether to compute expectation value
+            batch_size: 
+                Optional batch size override
+
         Returns:
             ObservableResult with local values and statistics
         """
-        return self._eval_engine.compute_observable(
-            observable_func, states, observable_name, params,
-            compute_expectation, batch_size
-        )
+        return self._eval_engine.compute_observable(observable_func, states, observable_name, params, compute_expectation, batch_size)
     
-    def evaluate_function(self, func, states, params=None, 
-                         probabilities=None, batch_size=None):
+    def evaluate_function(self, func, states, params=None, probabilities=None, batch_size=None):
         """
         Evaluate a function using the evaluation engine.
         
         Parameters:
-            func: Function to evaluate
-            states: Array of state configurations
-            params: Optional network parameters
-            probabilities: Optional probability weights
-            batch_size: Optional batch size override
-            
+            func: 
+                Function to evaluate
+            states: 
+                Array of state configurations
+            params: 
+                Optional network parameters. If not provided, uses current network parameters.
+            probabilities: 
+                Optional probability weights
+            batch_size: 
+                Optional batch size override
+
         Returns:
             EvaluationResult with computed values and statistics
         """
-        return self._eval_engine.evaluate_function(
-            func, states, params, probabilities, batch_size
-        )
+        return self._eval_engine.evaluate_function(func, states, params, probabilities, batch_size)
     
     @property
     def eval_engine(self):
         """Get the evaluation engine for advanced use cases."""
         return self._eval_engine
-    
-    # Deprecated method names for backwards compatibility
-    def evaluate_ansatz_unified(self, states, batch_size=None, params=None):
-        """Deprecated: Use evaluate() instead."""
-        return self.evaluate(states, batch_size, params)
-    
-    def evaluate_local_energy_unified(self, states, ham_action_func, params=None, 
-                                     probabilities=None, batch_size=None):
-        """Deprecated: Use compute_energy() instead."""
-        return self.compute_energy(states, ham_action_func, params, probabilities, batch_size)
-    
-    def evaluate_observable_unified(self, observable_func, states, observable_name="Observable",
-                                   params=None, compute_expectation=False, batch_size=None):
-        """Deprecated: Use compute_observable() instead."""
-        return self.compute_observable(observable_func, states, observable_name, params,
-                                      compute_expectation, batch_size)
-    
-    def evaluate_function_unified(self, func, states, params=None, 
-                                 probabilities=None, batch_size=None):
-        """Deprecated: Use evaluate_function() instead."""
-        return self.evaluate_function(func, states, params, probabilities, batch_size)
     
     #####################################
     #! SAMPLE
@@ -1286,20 +1263,6 @@ class NQS(MonteCarloSolver):
     # 2. Call trainer.train() for multi-phase optimization
     #
     # For custom training loops, use NQS.step() directly with NQS.sample()
-    
-    #####################################
-    #! LOG_PROBABILITY_RATIO
-    #####################################
-    
-    @staticmethod
-    def log_prob_ratio( top_log_ansatz   :   Callable,
-                        top_params,
-                        bot_log_ansatz   :   Callable,
-                        bot_params,
-                        states           :   jnp.ndarray):
-        top_log = top_log_ansatz(top_params, states)
-        bot_log = bot_log_ansatz(bot_params, states)
-        return top_log - bot_log
     
     #####################################
     #! STATE MODIFIER
@@ -1964,4 +1927,6 @@ def test_net_ansatz(nqs: NQS, nsamples = 10):
     ansatz      = ansatz.reshape(-1, 1)
     return ansatz, ansatz.shape
 
+#########################################
+#! EOF
 #########################################

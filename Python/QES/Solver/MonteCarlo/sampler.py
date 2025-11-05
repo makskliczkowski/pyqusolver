@@ -1,19 +1,17 @@
 """
-file    : Solver/MonteCarlo/sampler.py
-author  : Maksymilian Kliczkowski
-date    : 2025-02-01
-
 Monte Carlo samplers for quantum state space.
 This module provides samplers for efficiently exploring the Hilbert space 
 of quantum systems using Monte Carlo techniques. The main component is the 
 MCSampler class which implements Markov Chain Monte Carlo sampling for quantum
 wavefunctions.
+
 The module supports:
 - Sampling from quantum state space according to Born distribution or modified distributions
 - Multiple concurrent Markov chains
 - Different initial state configurations (random, ferromagnetic, antiferromagnetic)
 - Customizable state update proposals
 - Both NumPy and JAX backends
+
 Classes:
     SamplerErrors   : Error messages related to sampler operations
     SolverInitState : Enum for different types of initial states
@@ -22,6 +20,12 @@ Classes:
     SamplerType     : Enum for different sampler types
 Functions:
     get_sampler     : Factory function for creating samplers
+    
+---------------------------------------------------------------------------
+file    : Solver/MonteCarlo/sampler.py
+author  : Maksymilian Kliczkowski
+date    : 2025-02-01
+---------------------------------------------------------------------------
 """
 
 import numpy as np

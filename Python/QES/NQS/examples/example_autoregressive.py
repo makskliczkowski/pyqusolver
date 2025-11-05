@@ -60,7 +60,7 @@ def print_subsection(title: str):
 
 def print_result(item: str, success: bool, message: str = ""):
     """Print formatted result."""
-    status = "✓" if success else "❌"
+    status = "(ok)" if success else "(error)"
     msg_part = f" {message}" if message else ""
     print(f"  {status} {item:<45}{msg_part}")
 
@@ -241,8 +241,8 @@ def main():
   └─ Continue until all qubits evaluated
   
   This sequential nature:
-  ✓ Allows tractable generation of samples
-  ✓ Enables exact computation of likelihoods
+  (ok) Allows tractable generation of samples
+  (ok) Enables exact computation of likelihoods
   ✗ Makes inference slower than parallel models (RBM, CNN)
         """)
         
@@ -312,20 +312,20 @@ def main():
     # =========================================================================
     print_section("SUMMARY")
     
-    print("\n✓ Key Takeaways:")
+    print("\n(ok) Key Takeaways:")
     print("  1. Autoregressive models factorize: ψ = ∏ᵢ p(sᵢ|s₁...sᵢ₋₁)")
     print("  2. Each conditional probability is computed by a neural network")
     print("  3. Sequential evaluation allows exact likelihood computation")
     print("  4. Parameter efficient: scales as O(N × hidden_layers)")
     print("  5. Best for large systems and parameter-constrained scenarios")
     
-    print("\n✓ Comparison Summary:")
+    print("\n(ok) Comparison Summary:")
     print("  ├─ RBM: Expressive, parallel, for small-medium systems")
     print("  ├─ CNN: Structured, efficient, for lattice systems")
     print("  └─ AR:  Scalable, flexible, for large systems")
     
     if networks:
-        print(f"\n✓ Networks created: {len(networks)}")
+        print(f"\n(ok) Networks created: {len(networks)}")
         print("  Available networks:", ", ".join(networks.keys()))
     
     print("\n" + "="*80)

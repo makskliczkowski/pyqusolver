@@ -2,18 +2,17 @@
 Unified Evaluation Engine for Neural Quantum States
 
 This module provides a unified interface for evaluating NQS quantities with automatic
-backend dispatch (JAX/NumPy). It consolidates 19+ scattered evaluation methods from nqs.py
-into a cohesive, maintainable framework.
+backend dispatch (JAX/NumPy).
 
 Architecture:
     EvaluationBackend (abstract)
-        ├── JAXBackend (JIT-compiled vectorized evaluation)
-        ├── NumpyBackend (efficient batch processing)
-        └── AutoBackend (dispatch based on input type)
-        
-    BatchProcessor (handles batching logic uniformly)
-    EvaluationConfig (configuration dataclass)
-    EvaluationResult (result dataclass)
+        ├── JAXBackend      (JIT-compiled vectorized evaluation)
+        ├── NumpyBackend    (efficient batch processing)
+        └── AutoBackend     (dispatch based on input type)
+
+    BatchProcessor       (handles batching logic uniformly)
+    EvaluationConfig     (configuration dataclass)
+    EvaluationResult     (result dataclass)
 
 Key Features:
     - Unified dispatcher eliminates duplicated backend logic
@@ -22,8 +21,11 @@ Key Features:
     - Error handling and validation
     - Backwards compatible with existing NQS interface
 
-Author: Automated Session 5 Task 5.2
-Date: November 2025
+-------------------------------------------------------------
+Author      : Maksymilian Kliczkowski
+Email       : maxgrom97@gmail.com
+Date        : 2025-11-01
+-------------------------------------------------------------
 """
 
 from abc import ABC, abstractmethod
@@ -31,14 +33,25 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, List, Tuple, Any, Dict
 from functools import partial
 
+import os
 import numpy as np
-import jax
-import jax.numpy as jnp
-from jax import jit, vmap, grad
-from jax.tree_util import tree_flatten, tree_unflatten
 
-# type alias for array-like objects
-Array = Union[np.ndarray, jnp.ndarray]
+# ---- JAX imports ----
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
+except ImportError:
+    JAX_AVAILABLE = False
+
+if JAX_AVAILABLE:
+    try:
+        import jax
+        import jax.numpy as jnp
+        from jax import jit, vmap, grad
+        from jax.tree_util import tree_flatten, tree_unflatten
+    except ImportError as e:
+        pass
+else:
+    raise ImportError("JAX is not available but required for JAXBackend.")
 
 __all__ = [
     'EvaluationBackend',
@@ -59,12 +72,12 @@ __all__ = [
 class EvaluationConfig:
     """Configuration for evaluation operations."""
     
-    backend: str = 'auto'  # 'jax', 'numpy', or 'auto'
-    batch_size: Optional[int] = None
-    jit_compile: bool = True
-    return_stats: bool = True
-    validate_inputs: bool = True
-    verbose: bool = False
+    backend         : str = 'auto'              # 'jax', 'numpy', or 'auto'
+    batch_size      : Optional[int] = None      # None means no batching
+    jit_compile     : bool = True               # JIT compile for JAX backend
+    return_stats    : bool = True               # Whether to compute and return statistics
+    validate_inputs : bool = True               # Validate input states
+    verbose         : bool = False              # Verbose logging
     
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -73,30 +86,31 @@ class EvaluationConfig:
         if self.batch_size is not None and self.batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {self.batch_size}")
 
+# ----------------------------------------------------------------
 
 @dataclass
 class EvaluationResult:
     """Result of an evaluation operation."""
     
-    values: Array
-    mean: Optional[float] = None
-    std: Optional[float] = None
-    min_val: Optional[float] = None
-    max_val: Optional[float] = None
-    n_samples: int = 0
-    backend_used: str = 'unknown'
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
+    values          : Array                     # Computed values array
+    mean            : Optional[float] = None    # Mean of values
+    std             : Optional[float] = None    # Standard deviation of values
+    min_val         : Optional[float] = None    # Minimum value
+    max_val         : Optional[float] = None    # Maximum value
+    n_samples       : int = 0                   # Number of samples evaluated
+    backend_used    : str = 'unknown'           # Backend used for evaluation
+    metadata        : Dict[str, Any] = field(default_factory=dict)
+
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the evaluation results."""
         return {
-            'values_shape': self.values.shape,
-            'n_samples': self.n_samples,
-            'mean': self.mean,
-            'std': self.std,
-            'min': self.min_val,
-            'max': self.max_val,
-            'backend': self.backend_used,
+            'values_shape'  : self.values.shape,
+            'n_samples'     : self.n_samples,
+            'mean'          : self.mean,
+            'std'           : self.std,
+            'min'           : self.min_val,
+            'max'           : self.max_val,
+            'backend'       : self.backend_used,
         }
 
 #####################################################################################################
@@ -127,11 +141,11 @@ class BatchProcessor:
         if batch_size is None or len(data) <= batch_size:
             return [data]
         
-        n_batches = (len(data) + batch_size - 1) // batch_size
-        batches = []
+        n_batches   = (len(data) + batch_size - 1) // batch_size
+        batches     = []
         for i in range(n_batches):
-            start = i * batch_size
-            end = min((i + 1) * batch_size, len(data))
+            start   = i * batch_size
+            end     = min((i + 1) * batch_size, len(data))
             batches.append(data[start:end])
         return batches
     
@@ -165,10 +179,10 @@ class BatchProcessor:
         if not return_stats:
             return None, None, None, None
         
-        mean = float(np.mean(values))
-        std = float(np.std(values))
-        min_val = float(np.min(values))
-        max_val = float(np.max(values))
+        mean        = float(np.mean(values))
+        std         = float(np.std(values))
+        min_val     = float(np.min(values))
+        max_val     = float(np.max(values))
         return mean, std, min_val, max_val
 
 #####################################################################################################
@@ -185,63 +199,74 @@ class EvaluationBackend(ABC):
         
     @abstractmethod
     def evaluate_ansatz(self,
-                       ansatz_func: Callable,
-                       states: Array,
-                       params: Any,
-                       batch_size: Optional[int] = None) -> Array:
+                       ansatz_func  : Callable,
+                       states       : Array,
+                       params       : Any,
+                       batch_size   : Optional[int] = None) -> Array:
         """
         Evaluate log-ansatz on states.
         
         Parameters:
-            ansatz_func: Function (params, states) -> log_ansatz
-            states: Array of shape (N, ...)
-            params: Network parameters
-            batch_size: Optional batch size
-            
+        ----------
+            ansatz_func: 
+                Function (params, states) -> log_ansatz
+            states: 
+                Array of shape (N, ...)
+            params: 
+                Network parameters
+            batch_size: 
+                Optional batch size
+
         Returns:
             Array of shape (N,) with log-ansatz values
         """
         
     @abstractmethod
     def apply_function(self,
-                      func: Callable,
-                      states: Array,
-                      ansatz_func: Callable,
-                      params: Any,
-                      probabilities: Optional[Array] = None,
-                      batch_size: Optional[int] = None) -> Array:
+                      func          : Callable,
+                      states        : Array,
+                      ansatz_func   : Callable,
+                      params        : Any,
+                      probabilities : Optional[Array] = None,
+                      batch_size    : Optional[int] = None) -> Array:
         """
         Apply a function to states with optional probability weighting.
         
         Parameters:
-            func: Function to apply (s) -> value(s)
-            states: Array of shape (N, ...)
-            ansatz_func: Function (params, s) -> log_ansatz (for gradients/normalization)
-            params: Network parameters
-            probabilities: Optional probability weights shape (N,)
-            batch_size: Optional batch size
+        ----------
+            func: 
+                Function to apply (s) -> value(s)
+            states: 
+                Array of shape (N, ...)
+            ansatz_func: 
+                Function (params, s) -> log_ansatz (for gradients/normalization)
+            params: 
+                Network parameters
+            probabilities: 
+                Optional probability weights shape (N,)
+            batch_size: 
+                Optional batch size
             
         Returns:
             Array of computed function values
         """
 
-
 class JAXBackend(EvaluationBackend):
     """JAX-based evaluation backend with JIT compilation."""
     
     def __init__(self, jit_compile: bool = True):
-        self.jit_compile = jit_compile
-        self._cached_funcs = {}  # Cache for JIT-compiled functions
+        self.jit_compile    = jit_compile
+        self._cached_funcs  = {}  # Cache for JIT-compiled functions
     
     @property
     def name(self) -> str:
         return 'jax'
     
     def evaluate_ansatz(self,
-                       ansatz_func: Callable,
-                       states: Array,
-                       params: Any,
-                       batch_size: Optional[int] = None) -> Array:
+                       ansatz_func  : Callable,
+                       states       : Array,
+                       params       : Any,
+                       batch_size   : Optional[int] = None) -> Array:
         """Evaluate log-ansatz using JAX with optional batching."""
         
         # Define the vectorized evaluation
@@ -264,12 +289,12 @@ class JAXBackend(EvaluationBackend):
             return jnp.concatenate(results, axis=0)
     
     def apply_function(self,
-                      func: Callable,
-                      states: Array,
-                      ansatz_func: Callable,
-                      params: Any,
-                      probabilities: Optional[Array] = None,
-                      batch_size: Optional[int] = None) -> Array:
+                      func          : Callable,
+                      states        : Array,
+                      ansatz_func   : Callable,
+                      params        : Any,
+                      probabilities : Optional[Array] = None,
+                      batch_size    : Optional[int] = None) -> Array:
         """Apply function to states using JAX."""
         
         # Define vectorized function application
@@ -283,18 +308,17 @@ class JAXBackend(EvaluationBackend):
         
         # Handle batching
         if batch_size is None or len(states) <= batch_size:
-            result = vmapped_apply(states)
+            result  = vmapped_apply(states)
         else:
             batches = BatchProcessor.create_batches(states, batch_size)
             results = [vmapped_apply(batch) for batch in batches]
-            result = jnp.concatenate(results, axis=0)
+            result  = jnp.concatenate(results, axis=0)
         
         # Apply probability weighting if provided
         if probabilities is not None:
             result = result * probabilities
         
         return result
-
 
 class NumpyBackend(EvaluationBackend):
     """NumPy-based evaluation backend for CPU-only use."""
@@ -303,11 +327,13 @@ class NumpyBackend(EvaluationBackend):
     def name(self) -> str:
         return 'numpy'
     
+    # ----------------------------------------
+    
     def evaluate_ansatz(self,
-                       ansatz_func: Callable,
-                       states: Array,
-                       params: Any,
-                       batch_size: Optional[int] = None) -> Array:
+                       ansatz_func  : Callable,
+                       states       : Array,
+                       params       : Any,
+                       batch_size   : Optional[int] = None) -> Array:
         """Evaluate log-ansatz using NumPy."""
         
         # Convert states to NumPy if needed
@@ -327,12 +353,12 @@ class NumpyBackend(EvaluationBackend):
             return np.concatenate(results, axis=0)
     
     def apply_function(self,
-                      func: Callable,
-                      states: Array,
-                      ansatz_func: Callable,
-                      params: Any,
-                      probabilities: Optional[Array] = None,
-                      batch_size: Optional[int] = None) -> Array:
+                      func              : Callable,
+                      states            : Array,
+                      ansatz_func       : Callable,
+                      params            : Any,
+                      probabilities     : Optional[Array] = None,
+                      batch_size        : Optional[int] = None) -> Array:
         """Apply function to states using NumPy."""
         
         states_np = np.asarray(states)
@@ -354,19 +380,18 @@ class NumpyBackend(EvaluationBackend):
         
         return result
 
-
 class AutoBackend(EvaluationBackend):
     """
     Automatic backend dispatcher that selects based on input type.
     
     Strategy:
-    - JAX arrays -> JAXBackend
-    - NumPy arrays -> NumpyBackend
-    - Python lists -> NumpyBackend
+    - JAX arrays    -> JAXBackend
+    - NumPy arrays  -> NumpyBackend
+    - Python lists  -> NumpyBackend
     """
     
     def __init__(self):
-        self.jax_backend = JAXBackend()
+        self.jax_backend   = JAXBackend()
         self.numpy_backend = NumpyBackend()
     
     @property
@@ -381,21 +406,21 @@ class AutoBackend(EvaluationBackend):
             return self.numpy_backend
     
     def evaluate_ansatz(self,
-                       ansatz_func: Callable,
-                       states: Array,
-                       params: Any,
-                       batch_size: Optional[int] = None) -> Array:
+                       ansatz_func  : Callable,
+                       states       : Array,
+                       params       : Any,
+                       batch_size   : Optional[int] = None) -> Array:
         """Dispatch to appropriate backend."""
         backend = self._select_backend(states)
         return backend.evaluate_ansatz(ansatz_func, states, params, batch_size)
     
     def apply_function(self,
-                      func: Callable,
-                      states: Array,
-                      ansatz_func: Callable,
-                      params: Any,
-                      probabilities: Optional[Array] = None,
-                      batch_size: Optional[int] = None) -> Array:
+                      func          : Callable,
+                      states        : Array,
+                      ansatz_func   : Callable,
+                      params        : Any,
+                      probabilities : Optional[Array] = None,
+                      batch_size    : Optional[int] = None) -> Array:
         """Dispatch to appropriate backend."""
         backend = self._select_backend(states)
         return backend.apply_function(func, states, ansatz_func, params, probabilities, batch_size)
@@ -441,17 +466,25 @@ class UnifiedEvaluationEngine:
         else:  # 'auto'
             self.backend = AutoBackend()
     
+    # -----------------------
+    
     def evaluate_ansatz(self,
-                       ansatz_func: Callable,
-                       states: Array,
-                       params: Any) -> EvaluationResult:
+                       ansatz_func  : Callable,
+                       states       : Array,
+                       params       : Any,
+                       *,
+                       return_stats : bool = True
+                       ) -> Union[Array, EvaluationResult]:
         """
         Evaluate log-ansatz log|ψ(s)| on states.
         
         Parameters:
-            ansatz_func: Function (params, state) -> log_ansatz value
-            states: Array of shape (N, ...)
-            params: Network parameters (pytree)
+            ansatz_func: 
+                Function (params, state) -> log_ansatz value
+            states: 
+                Array of shape (N, ...)
+            params: 
+                Network parameters (pytree)
             
         Returns:
             EvaluationResult with log-ansatz values
@@ -462,42 +495,48 @@ class UnifiedEvaluationEngine:
                 raise ValueError("Cannot evaluate on empty state array")
         
         # Compute ansatz values
-        values = self.backend.evaluate_ansatz(
-            ansatz_func, states, params, 
-            batch_size=self.config.batch_size
-        )
+        values = self.backend.evaluate_ansatz(ansatz_func, states, params, batch_size=self.config.batch_size)
         
         # Compute statistics
-        mean, std, min_val, max_val = BatchProcessor.compute_statistics(
-            values, return_stats=self.config.return_stats
-        )
+        mean, std, min_val, max_val = BatchProcessor.compute_statistics(values, return_stats=self.config.return_stats)
+        
+        if not return_stats:
+            return values
         
         return EvaluationResult(
-            values=values,
-            mean=mean,
-            std=std,
-            min_val=min_val,
-            max_val=max_val,
-            n_samples=len(states),
-            backend_used=self.backend.name,
-            metadata={'type': 'ansatz_evaluation'}
+            values          =   values,
+            mean            =   mean,
+            std             =   std,
+            min_val         =   min_val,
+            max_val         =   max_val,
+            n_samples       =   len(states),
+            backend_used    =   self.backend.name,
+            metadata        =   {'type': 'ansatz_evaluation'}
         )
     
     def evaluate_function(self,
-                         func: Callable,
-                         states: Array,
-                         ansatz_func: Callable,
-                         params: Any,
-                         probabilities: Optional[Array] = None) -> EvaluationResult:
+                        func           : Callable,
+                        states         : Array,
+                        ansatz_func    : Callable,
+                        params         : Any,
+                        probabilities  : Optional[Array] = None,
+                        *,
+                        return_stats   : bool = True
+                        ) -> Union[Array, EvaluationResult]:
         """
         Evaluate a function on states.
         
         Parameters:
-            func: Function (state) -> value(s)
-            states: Array of shape (N, ...)
-            ansatz_func: Ansatz function (for reference/context)
-            params: Network parameters
-            probabilities: Optional probability weights shape (N,)
+            func: 
+                Function (state) -> value(s)
+            states: 
+                Array of shape (N, ...)
+            ansatz_func: 
+                Ansatz function (for reference/context)
+            params: 
+                Network parameters
+            probabilities: 
+                Optional probability weights shape (N,)
             
         Returns:
             EvaluationResult with function values
@@ -508,26 +547,23 @@ class UnifiedEvaluationEngine:
                 raise ValueError("Cannot evaluate on empty state array")
         
         # Apply function
-        values = self.backend.apply_function(
-            func, states, ansatz_func, params, probabilities,
-            batch_size=self.config.batch_size
-        )
+        values = self.backend.apply_function(func, states, ansatz_func, params, probabilities, batch_size=self.config.batch_size)
         
         # Compute statistics
-        mean, std, min_val, max_val = BatchProcessor.compute_statistics(
-            values, return_stats=self.config.return_stats
-        )
+        mean, std, min_val, max_val = BatchProcessor.compute_statistics(values, return_stats=self.config.return_stats)
         
         return EvaluationResult(
-            values=values,
-            mean=mean,
-            std=std,
-            min_val=min_val,
-            max_val=max_val,
-            n_samples=len(states),
-            backend_used=self.backend.name,
-            metadata={'type': 'function_evaluation', 'func': func.__name__ if hasattr(func, '__name__') else 'lambda'}
+            values          =   values,
+            mean            =   mean,
+            std             =   std,
+            min_val         =   min_val,
+            max_val         =   max_val,
+            n_samples       =   len(states),
+            backend_used    =   self.backend.name,
+            metadata        =   {'type': 'function_evaluation', 'func': func.__name__ if hasattr(func, '__name__') else 'lambda'}
         )
+    
+    # ----------------------------------
     
     def set_backend(self, backend: str):
         """
@@ -555,28 +591,32 @@ class UnifiedEvaluationEngine:
         """Get name of currently active backend."""
         return self.backend.name
 
-
 #####################################################################################################
 #! FACTORY FUNCTIONS
 #####################################################################################################
 
-def create_evaluation_engine(backend: str = 'auto',
-                            batch_size: Optional[int] = None,
-                            jit_compile: bool = True) -> UnifiedEvaluationEngine:
+def create_evaluation_engine(backend        : str = 'auto',
+                            batch_size      : Optional[int] = None,
+                            jit_compile     : bool = True) -> UnifiedEvaluationEngine:
     """
     Factory function to create a configured evaluation engine.
     
     Parameters:
-        backend: 'jax', 'numpy', or 'auto'
-        batch_size: Optional batch size for processing
-        jit_compile: Whether to JIT compile (only for JAX backend)
+        backend: 
+            'jax', 'numpy', or 'auto'
+        batch_size: 
+            Optional batch size for processing
+        jit_compile: 
+            Whether to JIT compile (only for JAX backend)
         
     Returns:
         Configured UnifiedEvaluationEngine instance
     """
     config = EvaluationConfig(
-        backend=backend,
-        batch_size=batch_size,
-        jit_compile=jit_compile
+        backend        = backend,
+        batch_size     = batch_size,
+        jit_compile    = jit_compile
     )
     return UnifiedEvaluationEngine(config)
+
+# ---------------------------------------------------------------------------------------------------

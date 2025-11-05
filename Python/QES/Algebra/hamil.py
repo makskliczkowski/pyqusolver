@@ -529,9 +529,11 @@ class Hamiltonian(ABC):
     def krylov(self):                   return self._krylov
 
     @property
-    def hamil(self):                    return self._hamil
+    def hamil(self) -> Union[np.ndarray, jnp.ndarray, sp.sparse.spmatrix]: 
+        return self._hamil
     @hamil.setter
-    def hamil(self, hamil):             self._hamil = hamil
+    def hamil(self, hamil):
+        self._hamil = hamil
 
     @property
     def matrix(self):
@@ -1480,7 +1482,7 @@ class Hamiltonian(ABC):
                     if self._isfermions:
                         self._hamil = backend.block([   [ self._hamil_sp, self._delta_sp ],
                                                         [-self._delta_sp.conj(), -self._hamil_sp.conj().T ]])
-            else:  # bosons - use \Sigma H to make it Hermitian
+            else: # bosons - use \Sigma H to make it Hermitian
                 sigma = backend.block([ [backend.eye(self.ns), backend.zeros_like(self._hamil)  ],
                                         [backend.zeros_like(self._hamil), -backend.eye(self.ns) ]])
                 self._hamil = sigma @ backend.block([[ self._hamil_sp,  self._delta_sp          ],
@@ -1587,12 +1589,6 @@ class Hamiltonian(ABC):
             to_krylov_basis : Transform vector from original to Krylov basis
             has_krylov_basis : Check if Krylov basis is available
         """
-        
-        # Validate Hamiltonian matrix
-        if self._hamil is None:
-            raise ValueError(
-                "Hamiltonian matrix not available. Call build() or init() first."
-            )
         
         # Start timing
         diag_start      = time.perf_counter()

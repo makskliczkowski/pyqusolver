@@ -1,8 +1,4 @@
 """
-file        : NQS/src/learning_phases_scheduler_wrapper.py
-author      : Maksymilian Kliczkowski
-date        : November 1, 2025
-
 Wrapper adapter to make LearningPhaseScheduler compatible with NQSTrainer.
 
 This module provides adapters that make LearningPhaseScheduler work as a
@@ -11,11 +7,22 @@ in the NQSTrainer class, without requiring any changes to NQSTrainer code.
 
 The wrapper converts LearningPhaseScheduler into callable schedulers that
 follow the standard signature: scheduler(epoch, loss) -> float
+
+----------------------------------------------------------
+file        : NQS/src/learning_phases_scheduler_wrapper.py
+author      : Maksymilian Kliczkowski
+date        : 2025-11-01
+----------------------------------------------------------
 """
 
 from typing import Optional, Callable, List, Dict, Any
-from .learning_phases import LearningPhaseScheduler, LearningPhase, create_learning_phases
 
+try:
+    from .learning_phases import LearningPhaseScheduler, LearningPhase, create_learning_phases
+except ImportError as e:
+    raise ImportError("Failed to import LearningPhaseScheduler or related classes. Ensure QES package is correctly installed.") from e
+
+# --------------------------------------------------------
 
 class LearningPhaseParameterScheduler:
     """
@@ -28,32 +35,32 @@ class LearningPhaseParameterScheduler:
     Usage with NQSTrainer:
     ```python
     # Create learning phases
-    phases = create_learning_phases('default')
+    phases          = create_learning_phases('default')
     
     # Wrap for learning rate
-    lr_scheduler = LearningPhaseParameterScheduler(phases, param_type='learning_rate')
+    lr_scheduler    = LearningPhaseParameterScheduler(phases, param_type='learning_rate')
     
     # Wrap for regularization
-    reg_scheduler = LearningPhaseParameterScheduler(phases, param_type='regularization')
+    reg_scheduler   = LearningPhaseParameterScheduler(phases, param_type='regularization')
     
     # Use in NQSTrainer (no changes to NQSTrainer code needed!)
     nqs_train = NQSTrainer(
-        nqs=nqs,
-        ode_solver=params.ode_solver,
-        tdvp=params.tdvp,
-        n_batch=params.numbatch,
-        lr_scheduler=lr_scheduler,
-        reg_scheduler=reg_scheduler,
-        early_stopper=early_stopper,
-        logger=logger
-    )
+                nqs             = nqs,
+                ode_solver      = params.ode_solver,
+                tdvp            = params.tdvp,
+                n_batch         = params.numbatch,
+                lr_scheduler    = lr_scheduler,
+                reg_scheduler   = reg_scheduler,
+                early_stopper   = early_stopper,
+                logger          = logger
+            )
     ```
     
     Attributes:
-        scheduler (LearningPhaseScheduler): Underlying phase scheduler
-        param_type (str): Either 'learning_rate' or 'regularization'
-        logger (Optional[Callable]): Optional logging function
-        history (List[float]): History of returned values (for compatibility)
+        scheduler (LearningPhaseScheduler)  : Underlying phase scheduler
+        param_type (str)                    : Either 'learning_rate' or 'regularization'
+        logger (Optional[Callable])         : Optional logging function
+        history (List[float])               : History of returned values (for compatibility)
     """
     
     def __init__(self, 
@@ -64,23 +71,26 @@ class LearningPhaseParameterScheduler:
         Initialize the parameter scheduler wrapper.
         
         Parameters:
-            phases (List[LearningPhase]): List of learning phases
-            param_type (str): Parameter to extract: 'learning_rate' or 'regularization'
-            logger (Optional[Callable]): Optional logging function
+            phases (List[LearningPhase])        : List of learning phases
+            param_type (str)                    : Parameter to extract: 'learning_rate' or 'regularization'
+            logger (Optional[Callable])         : Optional logging function
         """
         if param_type not in ['learning_rate', 'regularization']:
             raise ValueError(f"param_type must be 'learning_rate' or 'regularization', got '{param_type}'")
-        
-        self.scheduler = LearningPhaseScheduler(phases, logger=logger)
-        self.param_type = param_type
-        self.logger = logger if logger is not None else lambda msg, **kw: None
-        self.history: List[float] = []
-        
+
+        self.scheduler                  = LearningPhaseScheduler(phases, logger=logger)
+        self.param_type                 = param_type
+        self.logger                     = logger if logger is not None else lambda msg, **kw: None
+        self.history: List[float]       = []
         self.log(f"Initialized {self.__class__.__name__} for extracting '{param_type}'", color='blue')
+    
+    # ---------------------------------------
     
     def log(self, msg: str, **kwargs):
         """Log a message using the logger."""
         self.logger(msg, **kwargs)
+    
+    # ---------------------------------------
     
     def __call__(self, epoch: int, loss: Optional[float] = None) -> float:
         """
@@ -100,12 +110,13 @@ class LearningPhaseParameterScheduler:
         # Map global epoch to phase-specific parameters
         phase_epoch = self._get_phase_epoch(epoch)
         hyperparams = self.scheduler.get_current_hyperparameters(phase_epoch)
-        
-        value = hyperparams[self.param_type]
+        value       = hyperparams[self.param_type]
         self.history.append(value)
         
         return value
-    
+
+    # ---------------------------------------
+
     def _get_phase_epoch(self, global_epoch: int) -> int:
         """
         Convert global epoch to phase-specific epoch.
@@ -117,34 +128,34 @@ class LearningPhaseParameterScheduler:
             int: Epoch within the current phase
         """
         # Calculate epochs completed in previous phases
-        completed_epochs = sum(
-            p.epochs for p in self.scheduler.phases[:self.scheduler.current_phase_idx]
-        )
+        completed_epochs    = sum(p.epochs for p in self.scheduler.phases[:self.scheduler.current_phase_idx])
         
         # Phase-specific epoch is relative to current phase start
-        phase_epoch = global_epoch - completed_epochs
+        phase_epoch         = global_epoch - completed_epochs
         
         # Check if we need to advance to next phase
-        current_phase = self.scheduler.current_phase
+        current_phase       = self.scheduler.current_phase
+        
+        
         while phase_epoch >= current_phase.epochs and not self.scheduler.is_finished:
             self.scheduler.on_phase_end()
             self.scheduler.current_phase_idx += 1
             
             if not self.scheduler.is_finished:
                 self.scheduler.on_phase_start()
-                completed_epochs = sum(
-                    p.epochs for p in self.scheduler.phases[:self.scheduler.current_phase_idx]
-                )
-                phase_epoch = global_epoch - completed_epochs
+                completed_epochs    = sum(p.epochs for p in self.scheduler.phases[:self.scheduler.current_phase_idx])
+                phase_epoch         = global_epoch - completed_epochs
             else:
-                phase_epoch = current_phase.epochs - 1
+                phase_epoch         = current_phase.epochs - 1
         
         return max(0, min(phase_epoch, current_phase.epochs - 1))
-    
+
+    # ---------------------------------------
+
     def reset(self):
         """Reset the scheduler state and history."""
-        self.scheduler = LearningPhaseScheduler(self.scheduler.phases, logger=self.logger)
-        self.history = []
+        self.scheduler  = LearningPhaseScheduler(self.scheduler.phases, logger=self.logger)
+        self.history    = []
         self.log(f"Reset {self.__class__.__name__}", color='blue')
     
     def get_schedule_description(self) -> Dict[str, Any]:
@@ -154,29 +165,31 @@ class LearningPhaseParameterScheduler:
         Returns:
             Dict containing schedule metadata
         """
-        phases_info = []
-        total_epochs = 0
-        
+        phases_info     = []
+        total_epochs    = 0
+
         for phase in self.scheduler.phases:
             total_epochs += phase.epochs
             phases_info.append({
-                'name': phase.name,
-                'epochs': phase.epochs,
-                'type': phase.phase_type.name,
-                f'{self.param_type}': phase.learning_rate if self.param_type == 'learning_rate' else phase.regularization,
-                f'{self.param_type}_schedule': (
-                    phase.lr_decay if self.param_type == 'learning_rate' 
-                    else phase.reg_schedule
-                )
+                'name'                          : phase.name,
+                'epochs'                        : phase.epochs,
+                'type'                          : phase.phase_type.name,
+                f'{self.param_type}'            : phase.learning_rate if self.param_type == 'learning_rate' else phase.regularization,
+                f'{self.param_type}_schedule'   : (
+                                                    phase.lr_decay if self.param_type == 'learning_rate' 
+                                                    else phase.reg_schedule
+                                                )
             })
         
         return {
-            'param_type': self.param_type,
-            'total_epochs': total_epochs,
-            'num_phases': len(self.scheduler.phases),
-            'phases': phases_info,
-            'history_length': len(self.history)
+            'param_type'        : self.param_type,
+            'total_epochs'      : total_epochs,
+            'num_phases'        : len(self.scheduler.phases),
+            'phases'            : phases_info,
+            'history_length'    : len(self.history)
         }
+    
+    # ---------------------------------------
     
     def __repr__(self) -> str:
         """String representation."""
@@ -185,11 +198,14 @@ class LearningPhaseParameterScheduler:
                 f"phases={len(self.scheduler.phases)}, "
                 f"total_epochs={sum(p.epochs for p in self.scheduler.phases)})")
 
+# --------------------------------------------------------
+#! Factory function to create learning phase schedulers
+# --------------------------------------------------------
+
 
 def create_learning_phase_schedulers(
-        preset: str = 'default',
-        logger: Optional[Callable] = None
-) -> tuple[LearningPhaseParameterScheduler, LearningPhaseParameterScheduler]:
+        preset      : str = 'default',
+        logger      : Optional[Callable] = None) -> tuple[LearningPhaseParameterScheduler, LearningPhaseParameterScheduler]:
     """
     Factory function to create both learning rate and regularization schedulers
     from a single learning phases preset.
@@ -219,23 +235,20 @@ def create_learning_phase_schedulers(
         )
         ```
     """
-    phases = create_learning_phases(preset)
+    phases          = create_learning_phases(preset)
     
-    lr_scheduler = LearningPhaseParameterScheduler(
+    lr_scheduler    = LearningPhaseParameterScheduler(
         phases, 
-        param_type='learning_rate',
-        logger=logger
+        param_type  = 'learning_rate',
+        logger      = logger
     )
-    
-    reg_scheduler = LearningPhaseParameterScheduler(
+
+    reg_scheduler   = LearningPhaseParameterScheduler(
         phases,
-        param_type='regularization',
-        logger=logger
+        param_type  = 'regularization',
+        logger      = logger
     )
     
     return lr_scheduler, reg_scheduler
 
-
-# Backwards compatibility: alias for common usage
-LearningPhaseSchedulerLR = LearningPhaseParameterScheduler
-LearningPhaseSchedulerReg = LearningPhaseParameterScheduler
+# --------------------------------------------------------

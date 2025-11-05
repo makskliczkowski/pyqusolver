@@ -650,7 +650,7 @@ class QuadraticHamiltonian(Hamiltonian):
                     self._dtype = self._backend.complex128
             else:
                 self._dtype = self._backend.complex128
-        self._hamil_sp_size         = ns
+        self._hamil_sp_size         = self.ns
         self._hamil_sp_shape        = (self._hamil_sp_size, self._hamil_sp_size)
         self._dtypeint              = self._backend.int32 if self.ns < 2**32 - 1 else self._backend.int64
 
@@ -2163,14 +2163,45 @@ class QuadraticHamiltonian(Hamiltonian):
 # can instantiate it via `HamiltonianConfig(kind="quadratic", ...)`.
 
 def _build_quadratic_hamiltonian(config: HamiltonianConfig, params: Dict[str, Any]) -> Hamiltonian:
+    '''
+    Builder function for QuadraticHamiltonian from HamiltonianConfig.
+    Parameters
+    ----------
+    config : HamiltonianConfig
+        Configuration object with Hilbert space and other settings.
+    params : dict
+        Additional parameters for QuadraticHamiltonian.
+    Returns
+    -------
+    Hamiltonian
+        Instance of QuadraticHamiltonian.
+        
+    Options in params
+    -----------------
+    ns : int
+        Number of single-particle sites/modes.
+    hilbert_space : HilbertSpace
+        Hilbert space object defining the system.
+    particle_conserving : bool
+        If True:
+            treat as particle-conserving (Ns x Ns).
+        If False:
+            treat as BdG / Nambu (2Ns x 2Ns).
+    particles : str
+        'fermions' or 'bosons'.
+    other options...
+        See QuadraticHamiltonian documentation for more details.
+    '''
+    
+    
     hilbert = config.resolve_hilbert()
     
     if hilbert is not None:
-        params.setdefault('hilbert_space', hilbert)
         params.setdefault('ns', hilbert.get_Ns())
+        params.setdefault('hilbert_space', hilbert)
         params.setdefault('particle_conserving', hilbert.particle_conserving)
         
-    ns = params.get('ns')
+    ns = params.get('ns', hilbert.get_Ns() if hilbert is not None else None)
     if ns is None:
         raise ValueError("Quadratic Hamiltonian requires 'ns' or a Hilbert space.")
     

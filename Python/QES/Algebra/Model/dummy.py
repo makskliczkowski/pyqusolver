@@ -1,9 +1,4 @@
 '''
-file:   : Model/dummy.py
-author: : Maksymilian Kliczkowski
-email:  : maksymilian.kliczkowski@pwr.edu.pl
-This file defines a dummy Hamiltonian class for testing purposes. 
-
 Description:
         This module implements a dummy Hamiltonian class for testing and development purposes.
         It provides a simplified implementation of quantum Hamiltonian mechanics with integer
@@ -13,6 +8,12 @@ Description:
         The DummyHamiltonian class inherits from the Hamiltonian base class and implements
         a simple parametric Hamiltonian with diagonal and off-diagonal elements for 
         benchmarking and testing matrix operations within the QES framework.
+--------------------------------------------------------------------------------
+file:       : Algebra/Model/dummy.py
+author:     : Maksymilian Kliczkowski
+email:      : maksymilian.kliczkowski@pwr.edu.pl
+Description : This file defines a dummy Hamiltonian class for testing purposes. 
+--------------------------------------------------------------------------------
 '''
 
 import numpy as np

@@ -113,7 +113,7 @@ except ImportError:
                       "Please ensure that QES.Algebra.hamil_quadratic module is available.")
 
 try:
-    from QES.general_python.lattices.honeycomb import HoneycombLattice
+    from QES.general_python.lattices.honeycomb import HoneycombLattice, X_BOND_NEI, Y_BOND_NEI, Z_BOND_NEI
 except ImportError:
     raise ImportError("Could not import HoneycombLattice. "
                       "Please ensure that QES.general_python.lattices.honeycomb module is available.")
@@ -129,9 +129,9 @@ except ImportError:
 #! DEFINE CONSTANTS
 # -----------------------------------------------------
 
-HEI_KIT_X_BOND_NEI = 2
-HEI_KIT_Y_BOND_NEI = 1
-HEI_KIT_Z_BOND_NEI = 0
+HEI_KIT_X_BOND_NEI = X_BOND_NEI
+HEI_KIT_Y_BOND_NEI = Y_BOND_NEI
+HEI_KIT_Z_BOND_NEI = Z_BOND_NEI
 
 # -----------------------------------------------------
 
@@ -165,6 +165,10 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                 h_y         : Optional[float]                       = None,
                 h_z         : Optional[float]                       = None,
                 # -----------
+                p_flip      : Optional[float]                       = None,
+                p_zero      : Optional[float]                       = None,
+                p_plus      : Optional[float]                       = None,
+                # -----------
                 is_sparse   : bool                                  = True,
                 logger      : Optional[object]                      = None,
                 dtype       : Optional[np.dtype]                    = complex,
@@ -182,7 +186,7 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                         **kwargs)
         
         # setups already for random couplings - can be as well constant
-        self.gamma_z    = self._set_some_coupling(gamma_z).astype(float)
+        self.gamma_z    = self._set_some_coupling(gamma_z).astype(float) if gamma_z is not None else None
         self.gamma_y    = self._set_some_coupling(gamma_y).astype(float) if gamma_y is not None else self.gamma_z
         self.gamma_x    = self._set_some_coupling(gamma_x).astype(float) if gamma_x is not None else self.gamma_z
         self.k_z        = self._set_some_coupling(k_z).astype(float) if k_z is not None else None
@@ -190,27 +194,48 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         self.k_x        = self._set_some_coupling(k_x).astype(float) if k_x is not None else None
 
         # will be treated in 3rd order perturbation theory
-        self.h_x        = (float(h_x))**3 if h_x is not None else None
-        self.h_y        = (float(h_y))**3 if h_y is not None else None
-        self.h_z        = (float(h_z))**3 if h_z is not None else None
+        h_all_none     = (h_x is None) and (h_y is None) and (h_z is None)
+        h_x            = h_x if h_x is not None else 1.0
+        h_y            = h_y if h_y is not None else 1.0
+        h_z            = h_z if h_z is not None else 1.0
+        self.lambda_   = (h_x * h_y * h_z) if h_all_none else 0.0
         
         self.u_nn       : Optional[Dict[Tuple[int, int], int]]      = None    # -1/+1
         self.g_nn       : Optional[Dict[Tuple[int, int], int]]      = None    # −1/0/+1
         # NNN field: dictionary keyed by (j,k) on same sublattice
-        self.t2_nnn     : Optional[Dict[Tuple[int, int], float]]    = None
+        self.t2_nnn     : Optional[Dict[Tuple[int, int], float]]    = None    # t^{(2)}_{jk}
+        
+        # set fields if probabilities supplied
+        self.set_nn_fields(p_flip=p_flip, p_zero=p_zero, p_plus=p_plus)
+        
 
     # ---------------------------------------------------------------------
 
     def set_nn_fields(self,
-                      u_field: Optional[Dict[Tuple[int, int], int]] = None,
-                      g_field: Optional[Dict[Tuple[int, int], int]] = None):
+                        u_field : Optional[Dict[Tuple[int, int], int]] = None,
+                        g_field : Optional[Dict[Tuple[int, int], int]] = None,
+                        *,
+                        # for u_field
+                        p_flip  : Optional[float] = None,
+                        # for g_field
+                        p_zero  : Optional[float] = None,
+                        p_plus  : Optional[float] = None
+                    ):
         """Install NN fields (no sampling here). Keys are directed bonds (i,j)."""
+        if u_field is None:
+            if p_flip is not None:
+                u_field = self.build_binary_u_field(self.lattice, p_flip=p_flip)
         self.u_nn = u_field
+        
+        if g_field is None:
+            if (p_zero is not None) and (p_plus is not None):
+                g_field = self.build_ternary_g_field(self.lattice, p_plus=p_plus, p_zero=p_zero)
+                
         self.g_nn = g_field
 
     def set_nnn_field(self, t2_field: Optional[Dict[Tuple[int, int], float]]):
         """Install NNN amplitudes t^{(2)}_{jk}. Keys are directed same-sublattice pairs (j,k)."""
-        self.t2_nnn = t2_field
+        self.t2_nnn = { k : v * self.lambda_ for k, v in t2_field.items() } if t2_field is not None else None
 
     # ---------------------------------------------------------------------
     
@@ -239,15 +264,21 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
             def add(r, c, a):
                 A[r, c]            += float(a)
 
+        def add_mat(r, c, a):
+            """Add antisymmetric entry to A (A[j,i] = -A[i,j])."""
+            add(r, c, +a)
+            add(c, r, -a)
+        
         # -------------------------
         #! NN contributions
         # -------------------------
         
         for i in range(Ns):
             for idx in range(self.lattice.get_nn_num(i)):
-                
+
                 j = self.lattice.get_nn(i, idx)
-                if j == i:
+                
+                if self.lattice.wrong_nei(j) or j < i:
                     continue
                 
                 bond = self._get_bond_type(idx)
@@ -268,46 +299,46 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                 
                 u_ij    = self.u_nn[(i, j)] if self.u_nn is not None else 1     # default u mean-field if not supplied
                 g_ij    = self.g_nn[(i, j)] if self.g_nn is not None else 0     # default no Γ mean-field if not supplied
-                a_ij    = (Kg * u_ij) + (0.5 * Gg * g_ij)                       # real
-                self._log(f"Adding NN bond ({i},{j}) type {bond}: "
-                          f"K={Kg}, Γ={Gg}, u={u_ij}, g={g_ij} => A_ij={a_ij}", lvl=3)
+                # Canonical normalization:
+                #   H = (i/4) * sum A_ij c_i c_j
+                #   A_ij^NN = 4 * [ K_gamma * u_ij + (Gamma_gamma/2) * g_ij ]
+                # so that the NN contribution in H is i * [K_gamma u_ij + (Gamma_gamma/2) g_ij].
+                a_ij    = 4.0 * (Kg * u_ij + 0.5 * Gg * g_ij)                   # real
+                
+                self._log(f"Adding NN bond ({i},{j}) type {bond}: K={Kg}, Γ={Gg}, u={u_ij}, g={g_ij} => A_ij={a_ij}", lvl=3, color='blue')
+                
                 if abs(a_ij) > 0:
-                    add(i, j, +a_ij)
-                    add(j, i, -a_ij)   # antisymmetry
+                    add_mat(i, j, a_ij)
 
         # -------------------------
         #! NNN contributions
         # -------------------------
         
         if self.t2_nnn is not None:
-            
             for (j, k), t2jk in self.t2_nnn.items():
-                
-                if j == k:
+                if j == k or (k, j) in self.t2_nnn or j >= k:
                     continue
-                
-                # assume field already antisymmetric: t2[(k,j)] = −t2[(j,k)]
-                if (k, j) in self.t2_nnn and j > k:
-                    # avoid double add if both directions present
-                    pass
-                add(j, k, +t2jk)
-                add(k, j, -t2jk)
+                add_mat(j, k, float(t2jk))
 
         # -------------------------
-        # finalize H = i A
+        #! Finalize H = i A
         # ------------------------
         
+        prefactor   = (1.0j / 2.0)
         if _HAS_SCIPY and self._is_sparse and not use_numpy:
-            A_sp = coo_matrix((np.asarray(vals, dtype=float),
-                               (np.asarray(rows, dtype=np.int64),
-                                np.asarray(cols, dtype=np.int64))),
-                              shape=(Ns, Ns)).tocsr()
-            # enforce antisymmetry numerically
-            A_sp    = 0.5 * (A_sp - A_sp.T)
-            H       = (1j * A_sp).astype(self._dtype, copy=False)
+            A_sp = coo_matrix((
+                            np.asarray(vals, dtype=float),
+                                (
+                                    np.asarray(rows, dtype=np.int64),
+                                    np.asarray(cols, dtype=np.int64)
+                                )
+                            ),
+                            shape=(Ns, Ns)).tocsr()
+            A_sp    = 0.5 * (A_sp - A_sp.T)  # enforce antisymmetry once
+            H       = (prefactor * A_sp).astype(self._dtype, copy=False)
         else:
-            A       = 0.5 * (A - A.T)
-            H       = (1j * A).astype(self._dtype, copy=False)
+            A       = 0.5 * (A - A.T)        # enforce antisymmetry once
+            H       = (prefactor * A).astype(self._dtype, copy=False)
 
         self._hamil_sp = H
         self._log("Majorana quadratic Hamiltonian built (iA with A real antisymmetric).", lvl=2, color='green')
@@ -323,7 +354,7 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                             rng         : Optional[np.random.Generator] = None) -> Dict[Tuple[int, int], int]:
         r"""
         Build u_{ij} \in \{+1,-1\} on NN bonds with flip probability p_flip (flux density proxy).
-        Returns oriented dictionary: u[(i,j)] = -u[(j,i)] with u[(i,j)] = sign on i->j.
+        Returns oriented dictionary: u[(i,j)] = sign on i->j; only one orientation is stored.
         
         Parameters
         ----------
@@ -340,13 +371,15 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         Ns      = lattice.ns
         for i in range(Ns):
             for idx in range(lattice.get_nn_num(i)):
-                
+
                 j = lattice.get_nn(i, idx)
-                if (j, i) in u:  # enforce antisymmetry once
+                
+                if lattice.wrong_nei(j) or (j, i) in u:
                     continue
+                                
                 s           = -1 if rng.random() < p_flip else 1
+                # Store a single orientation; the matrix builder enforces A[j,i] = -A[i,j].
                 u[(i, j)]   = s
-                u[(j, i)]   = -s  # antisymmetric link convention
         return u
 
     @staticmethod
@@ -395,13 +428,23 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
     @staticmethod
     def build_t2_from_u(lattice         : HoneycombLattice,
                         u_field         : Dict[Tuple[int, int], int],
-                        lam             : float,
                         use_gaugeprod   : bool = True) -> Dict[Tuple[int, int], float]:
         """
-        Gauge-covariant NNN builder:  t^{(2)}_{jk} = λ * u_{j l} * u_{l k}
+        Gauge-covariant NNN builder:  
+            t^{(2)}_{jk} = λ * u_{j l} * u_{l k}
         where l is the intermediate site along the chosen inside-hexagon path.
-        If `use_gauge_product=False`, returns uniform chirality t^{(2)}_{jk} = λ * ν_{jk}.
-        Assumes lattice provides: get_nnn_paths(j,k) -> list of candidate l (pick e.g. anticlockwise).
+        
+        If `use_gauge_product=False`, 
+            returns uniform chirality t^{(2)}_{jk} = λ * ν_{jk}.
+            
+        Parameters
+        ----------
+        lattice : HoneycombLattice
+            The honeycomb lattice on which to build the t2 field.
+        u_field : Dict[Tuple[int, int], int]
+            The NN u field to use for gauge-covariant construction.
+        use_gaugeprod : bool, optional
+            Whether to use gauge-covariant construction, by default True.
         """
         t2 = {}
         Ns = lattice.ns
@@ -419,10 +462,10 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                     if not mids:
                         continue
                     l = mids[0]
-                    val = lam * u_field[(j, l)] * u_field[(l, k)]
+                    val = u_field[(j, l)] * u_field[(l, k)]
                 else:
                     nu  = lattice.get_chirality_sign(j, k)  # +/ 1 from orientation
-                    val = lam * nu
+                    val = nu
                 t2[(j, k)] = val
                 t2[(k, j)] = -val  # antisymmetric convention for directed pair
         return t2
@@ -452,6 +495,41 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
     def bonds(self):
         return { HEI_KIT_X_BOND_NEI: 'x', HEI_KIT_Y_BOND_NEI: 'y', HEI_KIT_Z_BOND_NEI: 'z',
             'x': HEI_KIT_X_BOND_NEI, 'y': HEI_KIT_Y_BOND_NEI, 'z': HEI_KIT_Z_BOND_NEI }
+    
+    # ---------------------------------------------------------------------
+    #! Exact solutions
+    # ---------------------------------------------------------------------
+    
+    def kitaev_energy(self, qx: int, qy: int, qz: int = 0) -> tuple[float, float]:
+        """
+        Pure Kitaev-model dispersion:
+            E_pm(k) = +-2 * |f(k)|
+            f(k) = Kx * exp(i k·dx) + Ky * exp(i k·dy) + Kz * exp(i k·dz)
+        """
+        # bond displacements (A -> B)
+        dx = np.array([0.0, 1.0, 0.0])
+        dy = np.array([-np.sqrt(3)/2, -0.5, 0.0])
+        dz = np.array([ np.sqrt(3)/2, -0.5, 0.0])
+
+        # use the lattice's reciprocal vectors
+        b1, b2, b3 = self.lattice.k1, self.lattice.k2, self.lattice.k3
+
+        # momentum in the first Brillouin zone
+        k_vec = (qx / self.lattice.lx) * b1 + (qy / self.lattice.ly) * b2 + (qz / self.lattice.lz) * b3
+
+        # structure factor
+        Kx = self.k_x[0] if self.k_x is not None else 1.0
+        Ky = self.k_y[0] if self.k_y is not None else 1.0
+        Kz = self.k_z[0] if self.k_z is not None else 1.0
+
+        f_k = (
+            Kx * np.exp(1j * np.dot(k_vec, dx))
+        + Ky * np.exp(1j * np.dot(k_vec, dy))
+        + Kz * np.exp(1j * np.dot(k_vec, dz))
+        )
+
+        Ek = 2.0 * np.abs(f_k)
+        return +Ek, -Ek
     
 # -------------------------------------------------------------------------
 #! End of file

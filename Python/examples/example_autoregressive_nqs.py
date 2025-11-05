@@ -34,7 +34,7 @@ def create_simple_hamiltonian(hilbert_space: HilbertSpace) -> Hamiltonian:
     """
     Create a simple transverse-field Ising model Hamiltonian.
     
-    H = -Σᵢ σᵢˣ + 0.5 Σᵢⱼ σᵢᶻ σⱼᶻ
+    H = -Σᵢ \sigmaᵢˣ + 0.5 Σᵢⱼ \sigmaᵢᶻ \sigmaⱼᶻ
     
     Parameters:
     -----------
@@ -49,11 +49,11 @@ def create_simple_hamiltonian(hilbert_space: HilbertSpace) -> Hamiltonian:
     # Create empty Hamiltonian
     H = Hamiltonian(hilbert_space)
     
-    # Add transverse field terms: -Σᵢ σᵢˣ
+    # Add transverse field terms: -Σᵢ \sigmaᵢˣ
     for i in range(hilbert_space.Ns):
         H.add_operator(f"sx_{i}", "sx", [i], -1.0)
     
-    # Add coupling terms (simplified): 0.5 Σᵢ σᵢᶻ σᵢ₊₁ᶻ
+    # Add coupling terms (simplified): 0.5 Σᵢ \sigmaᵢᶻ \sigmaᵢ₊₁ᶻ
     for i in range(hilbert_space.Ns - 1):
         H.add_operator(f"zz_{i}_{i+1}", "zz", [i, i+1], 0.5)
     
@@ -77,12 +77,12 @@ def demonstrate_autoregressive_network():
     # Create a small system for demonstration (2 spins = 4-dimensional Hilbert space)
     hilbert = HilbertSpace(2)
     n_visible = 2**hilbert.Ns
-    print(f"✓ Hilbert space created:")
+    print(f"(ok) Hilbert space created:")
     print(f"  - Number of spins: {hilbert.Ns}")
     print(f"  - Hilbert space dimension: {n_visible}")
     
     # Create the autoregressive network
-    print(f"\n✓ Creating Autoregressive network:")
+    print(f"\n(ok) Creating Autoregressive network:")
     ar_network = NetworkFactory.create(
         network_type='ar',
         hilbert_space=hilbert,
@@ -112,14 +112,14 @@ def demonstrate_autoregressive_network():
         [1, 0, 1, 0],  # Alternating (phase shifted)
     ], dtype=jnp.float32)
     
-    print(f"✓ Test states: shape={test_states.shape}")
+    print(f"(ok) Test states: shape={test_states.shape}")
     print(f"  Sample states:")
     for i, state in enumerate(test_states):
         print(f"    State {i}: {state}")
     
     # Evaluate network on test states
     log_probs = ar_network(test_states)
-    print(f"\n✓ Network output:")
+    print(f"\n(ok) Network output:")
     print(f"  - Shape: {log_probs.shape}")
     print(f"  - Data type: {log_probs.dtype}")
     print(f"  - Log probabilities: {log_probs}")
@@ -133,7 +133,7 @@ def demonstrate_autoregressive_network():
     n_samples = 10
     samples = ar_network.sample(n_samples=n_samples)
     
-    print(f"✓ Generated {n_samples} samples:")
+    print(f"(ok) Generated {n_samples} samples:")
     print(f"  - Shape: {samples.shape}")
     print(f"  - Data type: {samples.dtype}")
     print(f"  - Sample values:")
@@ -142,7 +142,7 @@ def demonstrate_autoregressive_network():
     
     # Compute statistics
     mean_occupancy = jnp.mean(samples, axis=0)
-    print(f"\n✓ Sample statistics:")
+    print(f"\n(ok) Sample statistics:")
     print(f"  - Mean occupancy per site: {mean_occupancy}")
     print(f"  - Total 1s: {jnp.sum(samples)}/{n_samples*len(samples[0])}")
     
@@ -162,7 +162,7 @@ def demonstrate_autoregressive_network():
     # Compute gradients
     grads = jax.grad(loss_fn)(params, test_states)
     
-    print(f"✓ Gradient computation successful")
+    print(f"(ok) Gradient computation successful")
     print(f"  - Loss value: {loss_fn(params, test_states):.6f}")
     
     # Analyze gradient structure
@@ -190,7 +190,7 @@ def demonstrate_autoregressive_network():
     ]
     
     for title, description in advantages:
-        print(f"  ✓ {title:20} → {description}")
+        print(f"  (ok) {title:20} → {description}")
     
     # =====================================================================
     # SUMMARY
