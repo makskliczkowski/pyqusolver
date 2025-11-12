@@ -14,7 +14,7 @@ Key Features:
 
 The autoregressive ansatz factorizes the wavefunction as:
 
-    ψ(s₁, s₂, ..., sₙ) = p(s₁) × p(s₂|s₁) × p(s₃|s₁,s₂) × ... 
+    ψ(s₁, s₂, ..., sₙ) = p(s₁) times  p(s₂|s₁) times  p(s₃|s₁,s₂) times  ... 
 
 where each conditional probability is computed by a neural network.
 
@@ -123,7 +123,7 @@ def main():
     print("\nKey Concepts:")
     print("  • Factorization: ψ(s) = ∏ᵢ p(sᵢ | s₁...sᵢ₋₁)")
     print("  • Conditioning: Each factor depends on previous qubits")
-    print("  • Efficiency: Parameter count ≈ N × (hidden_layers)")
+    print("  • Efficiency: Parameter count ≈ N times  (hidden_layers)")
     print("  • Applications: Large systems, state generation, density estimation")
     
     # =========================================================================
@@ -249,7 +249,7 @@ def main():
         print_subsection("Parameter Efficiency")
         ar_params = len(ar_network.get_params())
         print(f"\n  Autoregressive Parameters: {ar_params}")
-        print(f"  Scale: O(N_qubits × hidden_size²)")
+        print(f"  Scale: O(N_qubits times  hidden_size²)")
         print(f"\n  For N={n_sites} qubits with hidden_layers=(32,32):")
         print(f"    ├─ Qubit 1 network: 0 → 32 → 1")
         print(f"    ├─ Qubit 2 network: 1 → 32 → 1")
@@ -276,7 +276,7 @@ def main():
   RBM (Restricted Boltzmann Machine):
   ├─ Best for: Small to medium systems (< 50 qubits)
   ├─ Advantages: Expressive, well-studied, parallel evaluation
-  ├─ Disadvantages: O(N_visible × N_hidden) parameters
+  ├─ Disadvantages: O(N_visible times  N_hidden) parameters
   └─ Use: When you need expressivity and speed
   
   CNN (Convolutional Neural Network):
@@ -316,7 +316,7 @@ def main():
     print("  1. Autoregressive models factorize: ψ = ∏ᵢ p(sᵢ|s₁...sᵢ₋₁)")
     print("  2. Each conditional probability is computed by a neural network")
     print("  3. Sequential evaluation allows exact likelihood computation")
-    print("  4. Parameter efficient: scales as O(N × hidden_layers)")
+    print("  4. Parameter efficient: scales as O(N times  hidden_layers)")
     print("  5. Best for large systems and parameter-constrained scenarios")
     
     print("\n(ok) Comparison Summary:")

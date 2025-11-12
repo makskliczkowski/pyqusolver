@@ -27,6 +27,7 @@ try:
     import QES.Algebra.hilbert as hilbert_module
     import QES.Algebra.hamil as hamil_module
     import QES.Algebra.Operator.operators_spin as operators_spin_module
+    from QES.general_python.lattices.honeycomb import HoneycombLattice, X_BOND_NEI, Y_BOND_NEI, Z_BOND_NEI
 except ImportError as e:
     raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 
@@ -43,9 +44,15 @@ except ImportError as e:
 #! DEFINE CONSTANTS
 # ----------------------------------------------------------------------------------------
 
-HEI_KIT_X_BOND_NEI = 2
-HEI_KIT_Y_BOND_NEI = 1
-HEI_KIT_Z_BOND_NEI = 0
+HEI_KIT_X_BOND_NEI  = X_BOND_NEI
+HEI_KIT_Y_BOND_NEI  = Y_BOND_NEI
+HEI_KIT_Z_BOND_NEI  = Z_BOND_NEI
+
+# Pauli matrix scaling factors for HeisenbergKitaev (Pauli σ convention)
+# SINGLE_TERM_MULT    = 1.0   # Single-spin terms (σ has eigenvalues ±1)
+SINGLE_TERM_MULT    = 2.0   # Single-spin terms (σ has eigenvalues ±1)
+# CORR_TERM_MULT      = 1.0   # Two-spin correlation terms (σ_i σ_j has eigenvalues ±1)
+CORR_TERM_MULT      = 4.0   # Two-spin correlation terms (σ_i σ_j has eigenvalues ±1)
 
 ##########################################################################################
 #! HAMILTONIAN CLASS
@@ -322,29 +329,33 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         op_sx_sz_c      =   op_sx_l * op_sz_l
         op_sy_sx_c      =   op_sy_l * op_sx_l
 
-        nn_nums         =   [lattice.get_nn_num(i) for i in range(self.ns)] if self._use_forward else \
-                            [lattice.get_nn_forward_num(i) for i in range(self.ns)]
-        
+        nn_nums         =   [lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else \
+                            [lattice.get_nn_num(i) for i in range(self.ns)]
+
         #! iterate over all the sites
+        elems           = 0   
         for i in range(self.ns):
             self._log(f"Starting i: {i}", lvl = 1, log = 'debug')
             
-            #? z-field
+            #? z-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if self._hz is not None and not np.isclose(self._hz[i], 0.0, rtol=1e-10):
-                self.add(op_sz_l, multiplier = self._hz[i], modifies = False, sites = [i])
-                self._log(f"Adding local Sz at {i} with value {self._hz[i]:.2f}", lvl = 2, log = 'debug')
+                z_field = SINGLE_TERM_MULT * self._hz[i]
+                self.add(op_sz_l, multiplier = z_field, modifies = False, sites = [i])
+                self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
 
-            #? x-field
+            #? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if self._hx is not None and not np.isclose(self._hx[i], 0.0, rtol=1e-10):
-                self.add(op_sx_l, multiplier = self._hx[i], modifies = True, sites = [i])
-                self._log(f"Adding local Sx at {i} with value {self._hx[i]:.2f}", lvl = 2, log = 'debug')
+                x_field = SINGLE_TERM_MULT * self._hx[i]
+                self.add(op_sx_l, multiplier = x_field, modifies = True, sites = [i])
+                self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = 'debug')
             
             #? impurities
             for (imp_site, imp_strength) in self._impurities:
                 if imp_site == i:
-                    self.add(op_sz_l, multiplier = imp_strength, modifies = False, sites = [i])
-                    self._log(f"Adding impurity Sz at {i} with value {imp_strength:.2f}", lvl = 2, log = 'debug')
-            
+                    imp_field = SINGLE_TERM_MULT * imp_strength
+                    self.add(op_sz_l, multiplier = imp_field, modifies = False, sites = [i])
+                    self._log(f"Adding impurity Sz at {i} with value {imp_field:.2f}", lvl = 2, log = 'debug')
+
             #? now check the correlation operators
             nn_num = nn_nums[i]
             
@@ -361,31 +372,31 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 
                 #! Heisenberg - value of SzSz, SxSx, SySy (multipliers)
                 if True:
-                    sz_sz   = self._j[i] * self._dlt[i] if self._j is not None else 0.0  # Heisenberg - value of SzSz (multiplier)
-                    sx_sx   = self._j[i]                if self._j is not None else 0.0  # Heisenberg - value of SxSx (multiplier)
-                    sy_sy   = self._j[i]                if self._j is not None else 0.0  # Heisenberg - value of SySy (multiplier)
+                    sz_sz   = phase * CORR_TERM_MULT * self._j[i] * self._dlt[i] if self._j is not None else 0.0  # Heisenberg - value of SzSz (multiplier)
+                    sx_sx   = phase * CORR_TERM_MULT * self._j[i]                if self._j is not None else 0.0  # Heisenberg - value of SxSx (multiplier)
+                    sy_sy   = phase * CORR_TERM_MULT * self._j[i]                if self._j is not None else 0.0  # Heisenberg - value of SySy (multiplier)
 
                 #! check the directional bond contributions - Kitaev
                 if True:
                     if nn == HEI_KIT_Z_BOND_NEI:
-                        sz_sz  += self._kz
+                        sz_sz  += phase * CORR_TERM_MULT * self._kz if self._kz is not None else 0.0
                     elif nn == HEI_KIT_Y_BOND_NEI:
-                        sy_sy  += self._ky
-                    else:
-                        sx_sx  += self._kx
+                        sy_sy  += phase * CORR_TERM_MULT * self._ky if self._ky is not None else 0.0
+                    elif nn == HEI_KIT_X_BOND_NEI:
+                        sx_sx  += phase * CORR_TERM_MULT * self._kx if self._kx is not None else 0.0
+                        
                 if True:
-                    #? SzSz
                     if not np.isclose(sz_sz, 0.0, rtol=1e-10):
-                        self.add(op_sz_sz_c, sites = [i, nei], multiplier = sz_sz * phase, modifies = False)
+                        self.add(op_sz_sz_c, sites = [i, nei], multiplier = sz_sz, modifies = False)
                         self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
-                    #? SxSx
                     if not np.isclose(sx_sx, 0.0, rtol=1e-10):
-                        self.add(op_sx_sx_c, sites = [i, nei], multiplier = sx_sx * phase, modifies = True)
+                        self.add(op_sx_sx_c, sites = [i, nei], multiplier = sx_sx, modifies = True)
                         self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
-                    #? SySy
                     if not np.isclose(sy_sy, 0.0, rtol=1e-10):
-                        self.add(op_sy_sy_c, sites = [i, nei], multiplier = sy_sy * phase, modifies = True)
+                        self.add(op_sy_sy_c, sites = [i, nei], multiplier = sy_sy, modifies = True)
                         self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
+                
+                elems += 1
                 
                 #! Gamma terms
                 # if True:
@@ -409,7 +420,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
 
                 #! Finalize the operator addition for this neighbor
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
-    
+        self._log(f"Total NN elements added: {elems}", color='red')
         self._log("Successfully set local energy operators...", lvl=1, log='info')
 
     # ----------------------------------------------------------------------------------------------

@@ -78,6 +78,10 @@ class HilbertSpace(ABC):
     @staticmethod
     def _raise(s: str): raise ValueError(s)
 
+    # --------------------------------------------------------------------------------------------------
+    #! Internal checks and inferences
+    # --------------------------------------------------------------------------------------------------
+
     def _check_init_sym_errors(self, sym_gen, global_syms, gen_mapping):
         ''' Check for initialization symmetry errors '''
         if sym_gen is not None and not isinstance(sym_gen, (dict, list)):
@@ -161,6 +165,7 @@ class HilbertSpace(ABC):
                 state_type      : StateTypes                        = StateTypes.INTEGER,
                 backend         : str                               = 'default',
                 dtype           : np.dtype                          = np.float64,
+                basis           : Optional[str]                     = None,
                 boundary_flux   : Optional[Union[float, Dict[LatticeDirection, float]]] = None,
                 state_filter    : Optional[Callable[[int], bool]]   = None,
                 logger          : Optional[Logger]                  = None,
@@ -196,6 +201,9 @@ class HilbertSpace(ABC):
                 Backend to use for vectors and matrices. Default is 'default'.
             dtype (optional):
                 Data type for Hilbert space arrays. Default is np.float64.
+            basis (Optional[str], optional):
+                Initial basis representation ("real", "k-space", "fock", "sublattice", "symmetry").
+                If not provided, basis is inferred from system properties. Default is None.
             ---------------
             boundary_flux (Optional[float or dict]):
                 Optional Peierls phase specification applied to lattice boundary
@@ -246,6 +254,12 @@ class HilbertSpace(ABC):
         #! State filtering - predicate to filter basis states
         self._state_filter = state_filter
 
+        #! =====================================================================
+        #! BASIS REPRESENTATION TRACKING (infer from system properties)
+        #! =====================================================================
+        # Infer natural basis representation based on system properties, or use provided one
+        self._infer_and_set_default_basis(explicit_basis=basis)
+        
         #! Nh: Effective dimension of the *current* representation
         # Initial estimate:
         if self._is_quadratic:
@@ -731,6 +745,63 @@ class HilbertSpace(ABC):
         pass
     
     ####################################################################################################
+    #! BASIS REPRESENTATION MANAGEMENT
+    ####################################################################################################
+    
+    def _infer_and_set_default_basis(self, explicit_basis: Optional[str] = None):
+        """
+        Infer and set the default basis for this Hilbert space based on system properties.
+        
+        If explicit_basis is provided, use that instead of inferring.
+        
+        Logic (for inference):
+        - Quadratic systems with lattice        : REAL (position/momentum basis)
+        - Quadratic systems without lattice     : FOCK (single-particle occupation basis)
+        - Many-body systems with lattice        : REAL (position space on lattice sites)
+        - Many-body systems without lattice     : COMPUTATIONAL (integer/Fock basis)
+
+        Parameters
+        ----------
+        explicit_basis : Optional[str]
+            If provided, use this basis type instead of inferring.
+            Valid values: "real", "k-space", "fock", "sublattice", "symmetry"
+        
+        This is called during initialization to establish the natural basis.
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        if explicit_basis is not None:
+            # Use provided basis
+            if isinstance(explicit_basis, str):
+                self._basis_type = HilbertBasisType.from_string(explicit_basis)
+            else:
+                self._basis_type = explicit_basis
+            self._log(f"HilbertSpace basis explicitly set to: {self._basis_type}", lvl=2, color="cyan")
+            return
+        
+        # Infer basis from system properties
+        if self._is_quadratic:
+            # Quadratic system: choose based on lattice availability
+            if self._lattice is not None:
+                default_basis = HilbertBasisType.REAL
+                basis_reason = "quadratic-lattice"
+            else:
+                default_basis = HilbertBasisType.FOCK
+                basis_reason = "quadratic-fock"
+        else:
+            # Many-body system: choose based on lattice availability
+            if self._lattice is not None:
+                default_basis = HilbertBasisType.REAL
+                basis_reason = "many-body-lattice"
+            else:
+                default_basis = HilbertBasisType.FOCK
+                basis_reason = "many-body-computational"
+
+        # Set the basis type
+        self._basis_type = default_basis
+        self._log(f"HilbertSpace default basis inferred: {default_basis} ({basis_reason})", lvl=2, color="cyan")
+    
+    ####################################################################################################
     #! Getters and checkers for the Hilbert space
     ####################################################################################################
         
@@ -774,6 +845,40 @@ class HilbertSpace(ABC):
     @property
     def lattice(self) -> Optional[Lattice]:     return self._lattice
     def get_lattice(self) -> Optional[Lattice]: return self._lattice
+    
+    def get_basis(self):
+        """
+        Get the current basis representation type.
+        
+        Returns
+        -------
+        HilbertBasisType
+            Current basis type (default: REAL)
+        """
+        return getattr(self, '_basis_type', self._get_default_basis())
+    
+    def set_basis(self, basis_type: str):
+        """
+        Set the basis representation type.
+        
+        Parameters
+        ----------
+        basis_type : str or HilbertBasisType
+            Target basis ("real", "k-space", "fock", "sublattice", "symmetry")
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        if isinstance(basis_type, str):
+            self._basis_type = HilbertBasisType.from_string(basis_type)
+        else:
+            self._basis_type = basis_type
+        
+        self._log(f"Hilbert space basis type set to: {self._basis_type}", log='debug', lvl=2, color='blue')
+    
+    def _get_default_basis(self):
+        """Get default basis type."""
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        return HilbertBasisType.REAL
     
     @property
     def sites(self):                            return self._ns

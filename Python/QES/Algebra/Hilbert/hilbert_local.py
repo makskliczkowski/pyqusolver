@@ -67,6 +67,42 @@ class LocalSpaceTypes(Enum):
     BOSONS              = "bosons"
 
 # ------------------------------------------------------------------
+#! Hilbert Basis Types
+# ------------------------------------------------------------------
+
+class HilbertBasisType(Enum):
+    """
+    Enumeration of basis representations for Hilbert spaces.
+    
+    Used to specify and transform between different coordinate representations:
+    - REAL              : Position/site basis (default, most natural for lattice problems)
+    - KSPACE            : Momentum/Bloch basis (momentum-space, useful for band structure)
+    - FOCK              : Fock space (particle number basis, most general)
+    - SUBLATTICE        : Sublattice-resolved (multipartite systems)
+    - SYMMETRY_ADAPTED  : Symmetry-adapted basis (irrep-labelled states)
+    
+    """
+    FOCK              = "fock"                      # Fock/occupation basis (most general)
+    REAL              = "real"                      # Position/site basis
+    KSPACE            = "k-space"                   # Momentum basis (Bloch representation)
+    SUBLATTICE        = "sublattice"                # Sublattice-resolved (multipartite)
+    SYMMETRY_ADAPTED  = "symmetry"                  # Symmetry-adapted basis
+
+    def __str__(self):
+        return self.value
+    
+    def __repr__(self):
+        return f"HilbertBasisType.{self.name}"
+    
+    @classmethod
+    def from_string(cls, s: str) -> 'HilbertBasisType':
+        """Convert string to HilbertBasisType."""
+        for member in cls:
+            if member.value == s.lower():
+                return member
+        raise ValueError(f"Unknown basis type: {s}. Valid types: {[m.value for m in cls]}")
+
+# ------------------------------------------------------------------
 #! Helper functions
 # ------------------------------------------------------------------
 

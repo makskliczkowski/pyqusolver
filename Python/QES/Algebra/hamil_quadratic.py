@@ -172,6 +172,79 @@ except ImportError:
 
 ##############################################################################
 
+@dataclass(frozen=True)
+class QuadraticBlockDiagonalInfo:
+    """
+    Information for a single k-space block (or cell) of a quadratic Hamiltonian.
+    
+    Stores the diagonalized eigenvalues and eigenvectors for a small block
+    (typically Nbtimes Nb for particle-conserving or 2Nbtimes 2Nb for BdG), along with
+    the k-point coordinate. Useful for band structure analysis and 
+    sector-specific computations.
+    
+    Attributes
+    ----------
+    point : np.ndarray
+        The k-vector or cell index for this block. Shape (3,).
+        For k-space: physical k-vector in reciprocal space.
+        For real-space blocks: cell coordinates or index.
+    frac_point : Optional[np.ndarray]
+        The fractional k-vector (e.g., [kx/2pi, ky/2pi, kz/2pi]). Shape (3,).
+    en : np.ndarray
+        Eigenvalues of this block, sorted in ascending order. Shape (M,) where
+        M is the block dimension (Nb for particle-conserving, 2Nb for BdG).
+    ev : np.ndarray
+        Eigenvectors of this block as columns. Shape (M, M) where ev[:, i] is
+        the eigenvector for eigenvalue en[i].
+    block_index : Optional[Tuple[int, int, int]]
+        Index (ix, iy, iz) in the lattice momentum grid. Useful for indexing
+        back into the original Bloch blocks. None if not from k-space.
+    is_bdg : bool
+        True if this is a BdG block (2Nb x 2Nb), False if particle-conserving (Nb x Nb).
+    label : Optional[str]
+        Optional label for this block (e.g., "Gamma", "M", "X" for special k-points).
+    
+    Examples
+    --------
+    >>> # From band structure calculation
+    >>> info = QuadraticBlockDiagonalInfo(
+    ...     point=np.array([0.0, 0.0, 0.0]),
+    ...     en=np.array([-1.0, 0.0, 1.0]),
+    ...     ev=np.eye(3),
+    ...     block_index=(0, 0, 0),
+    ...     is_bdg=False,
+    ...     label="Gamma"
+    ... )
+    """
+    point           : np.ndarray
+    frac_point      : Optional[np.ndarray]              # Fractional k-point vector
+    en              : np.ndarray
+    ev              : np.ndarray
+    block_index     : Optional[Tuple[int, int, int]]    = None
+    is_bdg          : bool                              = False
+    label           : Optional[str]                     = None
+    
+    def __post_init__(self):
+        """Validate dimensions."""
+        if self.point.shape != (3,):
+            raise ValueError(f"point must have shape (3,), got {self.point.shape}")
+        
+        if len(self.en) != self.ev.shape[0] or self.ev.shape[0] != self.ev.shape[1]:
+            raise ValueError(f"ev shape {self.ev.shape} inconsistent with en shape {self.en.shape}")
+    
+    def __str__(self) -> str:
+        """String representation."""
+        block_type  = "BdG" if self.is_bdg else "PC"
+        idx_str     = f" (idx={self.block_index})" if self.block_index else ""
+        label_str   = f" [{self.label}]" if self.label else ""
+        frac_str    = f" (frac={self.frac_point})" if self.frac_point is not None else ""
+        return (f"QuadraticBlockDiagonalInfo({block_type}){label_str}{idx_str}{frac_str}\n"
+                f"  q-point: {self.point}\n"
+                f"  eigenvalues: {self.en}\n"
+                f"  eigenvector shape: {self.ev.shape}")
+
+##############################################################################
+
 class QuadraticSelection:
     '''Orbital selection utilities.'''
     def all_orbitals_size(n, k):
@@ -928,6 +1001,186 @@ class QuadraticHamiltonian(Hamiltonian):
             "constant_offset"       : self._constant_offset,
         }
 
+    # ########################################################################
+    #! Basis Transformation
+    # ########################################################################
+
+    def to_basis(self, basis_type: str, enforce: bool = False, sublattice_positions: Optional[np.ndarray] = None, **kwargs):
+        r"""
+        Transform QuadraticHamiltonian to a different basis representation.
+        
+        For periodic lattice systems, this efficiently transforms the real-space Hamiltonian to 
+        momentum-space Bloch blocks via Fast Fourier Transform, exploiting periodicity to achieve 
+        $O(N\log N)$ complexity instead of $O(N^2)$.
+        
+        Supported basis transformations:
+        - **real -> k-space**: Use Bloch transform to decompose into momentum-space blocks
+        - **k-space -> real**: Use inverse FFT to reconstruct real-space representation
+        
+        Parameters
+        ----------
+        basis_type : str or HilbertBasisType
+            Target basis. Options: "real", "k-space", "fock", etc.
+            
+        enforce : bool, optional
+            If True and lattice unavailable, construct a simple 1D chain lattice from Ns.
+            If False (default), raises error if lattice missing for k-space.
+            
+        sublattice_positions : Optional[np.ndarray]
+            Positions of basis sites within unit cell. Shape (Nb, 3).
+            Only used for Bloch transform. If None, assumes monatomic (single-site) unit cell.
+            
+        **kwargs
+            Additional options (reserved for future use).
+        
+        Returns
+        -------
+        Hamiltonian
+            Self (modified in-place) in target basis. If already in target basis, returns self.
+            
+        Raises
+        ------
+        NotImplementedError
+            If basis transformation not supported (e.g., k-space without lattice and enforce=False).
+        ValueError
+            If basis_type is invalid or transformation fails.
+        
+        Notes
+        -----
+        **Bloch Transform Algorithm:**
+        1. Organize hopping amplitudes by cell displacement: $T_{\alpha\beta}(\Delta\mathbf{R})$
+        2. Apply 3D FFT over displacement indices
+        3. Correct for sublattice phases: $e^{-i\mathbf{k}\cdot(\mathbf{r}_\beta-\mathbf{r}_\alpha)}$
+        4. Result: Small $N_b \times N_b$ blocks at each $\mathbf{k}$-point
+        
+        **Example:**
+        ```python
+        from QES.Algebra import QuadraticHamiltonian
+        from QES.general_python.lattices import Lattice
+        
+        # Create a 1D chain in real space
+        H_real = QuadraticHamiltonian(ns=8)
+        H_real.add_hopping(0, 1, -1.0)  # nearest neighbor
+        H_real.add_onsite(0, 0.5)       # onsite energy
+        
+        # Transform to k-space
+        H_k = H_real.to_basis("k-space", enforce=True)
+        
+        # Diagonalize and examine band structure
+        H_k.diagonalize()
+        print(H_k.eig_val.shape)  # (8, 8) blocks
+        ```
+        """
+        # Pass sublattice_positions to parent's general dispatcher
+        kwargs['sublattice_positions'] = sublattice_positions
+        # Call parent's general to_basis() which will dispatch to registered handlers
+        return super().to_basis(basis_type, enforce=enforce, **kwargs)
+
+    def _transform_real_to_kspace(self, enforce: bool = False, **kwargs) -> 'QuadraticHamiltonian':
+        r"""
+        Internal: Transform real-space Hamiltonian to k-space via FFT-based Bloch decomposition.
+        
+        Modifies in-place by storing transformed representation in general attributes:
+        - self._hamil_transformed: Stores H_k blocks
+        - self._transformed_grid: Stores k_grid
+        - self._is_transformed: Set to True
+        - self._current_basis: Updated to KSPACE
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        # Ensure lattice is available
+        if self._lattice is None:
+            if not enforce:
+                raise ValueError(
+                    "Lattice required for k-space transformation. Either:\n"
+                    "  1. Pass lattice to QuadraticHamiltonian.__init__\n"
+                    "  2. Use enforce=True to auto-create 1D chain"
+                )
+            self._log("Creating simple 1D chain lattice (enforce=True)", lvl=2, color="yellow")
+            raise NotImplementedError("Auto-lattice creation not yet fully implemented. Please pass lattice explicitly.")
+        
+        # Build real-space matrix if needed
+        H_real = self.build_single_particle_matrix(copy=True)
+        
+        # Convert sparse matrix to dense if needed
+        # The lattice code expects dense numpy arrays
+        if sp.sparse.issparse(H_real):
+            self._log(f"Converting sparse matrix to dense for Bloch transform", lvl=2, color="yellow")
+            H_real = H_real.toarray()
+        
+        # Apply Bloch transform with extract_bands=False to get full Ns×Ns matrices
+        self._log(f"Applying FFT-based Bloch transform on {H_real.shape} matrix (full Ns×Ns mode)", lvl=2, color="cyan")
+        (H_k, k_grid, k_grid_frac)  = self._lattice.kspace_from_realspace(H_real)   
+        
+        # Store transformed representation using general attributes
+        self._hamil_transformed     = H_k
+        self._transformed_grid      = k_grid
+        self._transformed_grid_frac = k_grid_frac
+        self._is_transformed        = True
+        self._current_basis         = HilbertBasisType.KSPACE
+        
+        # Clear old real-space matrices if they exist (optional, for memory)
+        # self._hamil_sp = None  # Uncomment if you want to free memory
+        
+        self._log(f"Bloch transform complete: H_k shape = {H_k.shape}, k_grid shape = {k_grid.shape}", lvl=2, color="green")
+        
+        # Push k-space basis to HilbertSpace (don't sync FROM it)
+        self.push_basis_to_hilbert_space()
+        
+        return self
+
+    def _transform_kspace_to_real(self, **kwargs) -> 'QuadraticHamiltonian':
+        r"""
+        Internal: Inverse FFT to reconstruct real-space Hamiltonian from k-space blocks.
+        
+        Modifies in-place by using general transformed storage:
+        - self._hamil_transformed: Should contain H_k blocks
+        - self._transformed_grid: Should contain k_grid
+        - self._is_transformed: Set to False
+        - self._current_basis: Updated to REAL
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        # Check for transformed representation (general storage)
+        if self._hamil_transformed is None:
+            raise ValueError("Cannot transform k-space to real: no transformed Hamiltonian stored in _hamil_transformed")
+        
+        # Apply inverse FFT
+        self._log("Applying inverse FFT to reconstruct real-space Hamiltonian", lvl=2, color="cyan")
+        H_real = self._lattice.realspace_from_kspace(self._hamil_transformed)
+        
+        # Update in-place
+        self.set_single_particle_matrix(H_real)
+        
+        # Update basis tracking flags
+        self._is_transformed = False
+        self._current_basis  = HilbertBasisType.REAL
+        
+        # Clear transformed storage (optional, for memory)
+        # self._hamil_transformed = None
+        # self._transformed_grid = None
+        
+        self._log(f"Inverse Bloch transform complete: H_real shape = {H_real.shape}", lvl=2, color="green")
+        
+        # Push real-space basis to HilbertSpace (don't sync FROM it)
+        self.push_basis_to_hilbert_space()
+        
+        return self
+
+    def set_basis_type(self, basis_type: str):
+        """
+        Override: Set basis type and propagate to Hilbert space if available.
+        """
+        super().set_basis_type(basis_type)
+        
+        # Propagate to Hilbert space
+        if self._hilbert_space is not None and hasattr(self._hilbert_space, 'set_basis'):
+            self._hilbert_space.set_basis(basis_type)
+
+    ##########################################################################
+    #! Basis transformation state queries
+    ##########################################################################
+
     def set_single_particle_matrix(self, H: Array):
         if not self._particle_conserving:
             raise RuntimeError("Use set_bdg_matrices for non-conserving case")
@@ -974,12 +1227,22 @@ class QuadraticHamiltonian(Hamiltonian):
         
     def build_single_particle_matrix(self, copy: bool = True):
         """Return the Ns x Ns single-particle matrix."""
-        return self._backend.array(self._hamil_sp) if copy else self._hamil_sp
+        
+        if self._hamil_sp is None:
+            self.build()
+        
+        if self._is_sparse:
+            return sp.sparse.csr_matrix(self._hamil_sp) if copy else self._hamil_sp
+        return self._backend.array(self._hamil_sp).copy() if copy else self._hamil_sp
 
     def build_bdg_matrix(self, copy: bool = True):
         """Return the 2Ns x 2Ns BdG matrix (raises if particle-conserving)."""
         if self._particle_conserving:
             raise RuntimeError("BdG matrix requested but particle_conserving=True.")
+        
+        if self._hamil_sp is None or self._delta_sp is None:
+            self.build()
+        
         xp  = self._backend
         bdg = xp.block([
                 [self._hamil_sp,                 self._delta_sp],
@@ -1177,7 +1440,8 @@ class QuadraticHamiltonian(Hamiltonian):
             
             # Ensure the quadratic matrix is assembled before diagonalization
             try:
-                self._hamiltonian_quadratic()
+                if (not self._hamil_sp or (not self._particle_conserving and not self._delta_sp)) and not force:
+                    self._hamiltonian_quadratic()
             except Exception:
                 # best-effort; if build fails, let base class handle errors
                 pass
@@ -1319,6 +1583,135 @@ class QuadraticHamiltonian(Hamiltonian):
         # Check if pairing matrix is effectively zero
         delta_norm = np.linalg.norm(self._delta_sp)
         return delta_norm < 1e-12
+
+    ###########################################################################
+    #! Block Diagonal Analysis (Band Structure)
+    ###########################################################################
+
+    def block_diagonal_bdg(self) -> Tuple[List[QuadraticBlockDiagonalInfo], np.ndarray]:
+        r"""
+        Extract and diagonalize each k-space block as a BdG system.
+        
+        For a k-space Hamiltonian (after calling `to_basis("k-space")`), this method:
+        1. Extracts each k-block (Nb x Nb or 2Nb x 2Nb)
+        2. Diagonalizes the block independently
+        3. Returns eigenvalues and eigenvectors for each k-point
+        
+        This is useful for band structure calculations, topological analysis,
+        or sector-specific computations without creating many Hamiltonian objects.
+        
+        Returns
+        -------
+        List[QuadraticBlockDiagonalInfo]
+            List of diagonalized block info, one per k-point in the original lattice.
+            Each block contains:
+            - `point`: k-vector (3D)
+            - `en`: eigenvalues at that k-point
+            - `ev`: eigenvectors (columns)
+            - `block_index`: (ix, iy, iz) index in k-space grid
+            - `is_bdg`: whether this is a BdG block
+        
+        Raises
+        ------
+        ValueError
+            If Hamiltonian is not in k-space representation.
+        RuntimeError
+            If k-space transformation hasn't been performed.
+        
+        Examples
+        --------
+        >>> from QES.Algebra import QuadraticHamiltonian
+        >>> from QES.general_python.lattices import SquareLattice
+        >>> 
+        >>> # Create and transform to k-space
+        >>> lat = SquareLattice(dim=2, lx=4, ly=4, bc='pbc')
+        >>> ham = QuadraticHamiltonian(ns=16, lattice=lat)
+        >>> ham.add_hopping(0, 1, -1.0)  # nearest-neighbor hopping
+        >>> ham.to_basis("k-space")
+        >>> ham.diagonalize()
+        >>> 
+        >>> # Get band structure info
+        >>> blocks = ham.block_diagonal_bdg()
+        >>> 
+        >>> for block in blocks:
+        ...     print(f"k={block.point}, E0={block.en[0]:.4f}")
+        
+        Notes
+        -----
+        - For particle-conserving systems: each block is Nbtimes Nb
+        - For BdG systems: each block is 2Nbtimes 2Nb
+        - Eigenvalues are sorted in ascending order within each block
+        - This method assumes the Hamiltonian is already diagonalized
+          at the whole-system level. For per-block independent diagonalization,
+          that happens internally here.
+        """
+        # Check that we're in k-space
+        if self._hamil_transformed is None:
+            raise RuntimeError(
+                "Hamiltonian not in k-space. Call to_basis('k-space') first."
+            )
+        
+        H_k         = self._hamil_transformed       # Shape: (Lx, Ly, Lz, Nb, Nb) or (Lx, Ly, Lz, 2*Nb, 2*Nb)
+        k_grid      = self._transformed_grid        # Shape: (Lx, Ly, Lz, 3)
+        k_grid_frac = self._transformed_grid_frac   # Shape: (Lx, Ly, Lz, 3) fractional coords
+        
+        if H_k is None or k_grid is None:
+            raise ValueError("Transformed Hamiltonian or k-grid not available. Ensure to_basis('k-space') was successful.")
+        
+        # Determine block type
+        # nb_sublattices  = H_k.shape[3] // (2 if not self._particle_conserving else 1)
+        is_bdg      = not self._particle_conserving
+        energies    = []
+        
+        results: List[QuadraticBlockDiagonalInfo] = []
+        
+        # Iterate over all k-points
+        for i in range(H_k.shape[0]):
+            for j in range(H_k.shape[1]):
+                for k in range(H_k.shape[2]):
+                    # move this by 0.5 fractions to center at Gamma
+                    
+                    k_vec       = np.asarray(k_grid[i, j, k, :],        dtype=np.float64)
+                    k_vec_frac  = np.asarray(k_grid_frac[i, j, k, :],   dtype=np.float64)                    
+                    
+                    
+                    #! WHY TF DO I HAVE TO USE MOVED ONES!
+                    # Extract this k-block
+                    ii          = i
+                    jj          = j
+                    kk          = k
+                    # ii          = (i + H_k.shape[0]//2) % H_k.shape[0]
+                    # jj          = (j + H_k.shape[1]//2) % H_k.shape[1]
+                    # kk          = (k + H_k.shape[2]//2) % H_k.shape[2]
+                    H_block     = np.asarray(H_k[ii, jj, kk, :, :],     dtype=self._dtype)
+
+                    # Diagonalize this block
+                    try:
+                        eigvals, eigvecs = sp.linalg.eigh(H_block)
+                    except Exception:
+                        eigvals, eigvecs = np.linalg.eigh(H_block)
+
+                    # Create info object
+                    info = QuadraticBlockDiagonalInfo(
+                        point       =   k_vec,      # k-point vector
+                        frac_point  =   k_vec_frac, # Fractional k-point vector
+                        en          =   eigvals,    # Eigenvalues
+                        ev          =   eigvecs,    # Columns are eigenvectors
+                        block_index =   (i, j, k),  # Indices in k-grid
+                        is_bdg      =   is_bdg,     # True if BdG block, False if PC
+                        label       =   None,       # Special label?
+                    )
+                    
+                    energies.append(eigvals)
+                    results.append(info)
+        
+        self._log(
+            f"Extracted and diagonalized {len(results)} k-space blocks "
+            f"({'BdG' if is_bdg else 'PC'}, {H_k.shape[3]}x{H_k.shape[3]})",
+            lvl=2, color="cyan"
+        )
+
+        return results, np.array(energies)
 
     ###########################################################################
     #! Transformation Preparation
@@ -2007,20 +2400,23 @@ class QuadraticHamiltonian(Hamiltonian):
                 f"backend={backend}, {diag_status}, constant={self._constant_offset})")
 
     # ========================================================================
-    # Spectral Function Methods
+    #! Spectral Function Methods
     # ========================================================================
     
     def spectral_function(self, 
                         omega       : Union[float, np.ndarray], 
                         operator    : Optional[np.ndarray] = None,
                         eta         : float = 0.01) -> Union[float, np.ndarray]:
-        """
+        r"""
         Compute spectral function A(omega) = -(1/pi) Im[G(omega)].
         
         For arbitrary operator O:
             A_O(omega) = -(1/pi) Im[<n|G(omega)|n>] * <n|O|n>
             
         For this, operator can be selected. If None, computes standard spectral function.
+        $$
+            A(omega) = -(1/pi) Im[Tr(G(omega))]
+        
         Operator is represented as a matrix in the single-particle basis:
             A_O(omega) = -(1/pi) Im[Tr(G(omega) O)]
         
@@ -2047,12 +2443,12 @@ class QuadraticHamiltonian(Hamiltonian):
         >>> N_op    = np.diag([0, 1, 1, 2])                             # Number operator
         >>> A_N     = qh.spectral_function(omega=1.0, operator=N_op)    # Number-weighted
         """
+        
         try:
             from QES.general_python.physics.spectral import greens as greens_mod
             from QES.general_python.physics.spectral.spectral_function import spectral_function as sf_func
         except ImportError:
-            from general_python.physics.spectral import greens as greens_mod
-            from general_python.physics.spectral.spectral_function import spectral_function as sf_func
+            raise ImportError("Required spectral modules not found in QES.general_python.physics.spectral.")
         
         # Ensure diagonalization
         self.diagonalize()
@@ -2214,6 +2610,23 @@ register_hamiltonian(
     description = 'Quadratic (free) Hamiltonian supporting onsite, hopping, and pairing terms.',
     tags        = ('quadratic', 'noninteracting', 'fermion', 'boson'),
 )
+
+# ---------------------------------------------------------------------------
+#! Basis Transformation Handler Registration
+# ---------------------------------------------------------------------------
+
+# Register real -> k-space transformation handler
+def _handler_real_to_kspace(self, enforce=False, **kwargs):
+    """Handler for REAL -> KSPACE transformation."""
+    return self._transform_real_to_kspace(enforce=enforce, **kwargs)
+
+# Register k-space -> real transformation handler
+def _handler_kspace_to_real(self, enforce=False, **kwargs):
+    """Handler for KSPACE -> REAL transformation."""
+    return self._transform_kspace_to_real(**kwargs)
+
+QuadraticHamiltonian.register_basis_transform("real", "k-space", _handler_real_to_kspace)
+QuadraticHamiltonian.register_basis_transform("k-space", "real", _handler_kspace_to_real)
 
 # ---------------------------------------------------------------------------
 #! End of file

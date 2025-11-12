@@ -17,7 +17,7 @@ Changes :
 
 import numpy as np
 import scipy as sp
-from typing import List, Tuple, Union, Optional, Callable
+from typing import List, Tuple, Union, Optional, Callable, Dict, Any
 from abc import ABC
 import time
 
@@ -319,6 +319,22 @@ class Hamiltonian(ABC):
         self._min_en                = 0.0
         self._max_en                = 0.0
         
+        # =====================================================================
+        #! GENERAL BASIS TRANSFORMATION TRACKING (supports any basis type)
+        # =====================================================================
+        # These attributes enable flexible basis transformations for any Hamiltonian subclass
+        # (Quadratic, ManyBody, etc.) and any basis type (REAL, KSPACE, FOCK, etc.)
+        self._original_basis        = None      # The basis Hamiltonian was created in
+        self._current_basis         = None      # The basis it's currently represented in
+        self._is_transformed        = False     # Flag: has transformed representation been stored?
+        self._hamil_transformed     = None      # General storage for transformed Hamiltonian (e.g., H_k, H_fock, etc.)
+        self._transformed_grid      = None      # General storage for associated grid/coords (e.g., k_grid, fock_basis, etc.)
+        self._basis_metadata        = {}        # Metadata about bases (symmetry info, periodicity, etc.)
+        self._symmetry_info         = None      # Information about applied symmetries affecting basis
+        
+        # Infer and set the default basis for this Hamiltonian type
+        self._infer_and_set_default_basis()
+        
         # for the matrix representation of the Hamiltonian
         self._hamil                 : np.ndarray = None  # will store the Hamiltonian matrix with Nh x Nh full Hilbert space
         
@@ -444,8 +460,367 @@ class Hamiltonian(ABC):
         self._log("Hamiltonian cleared...", lvl = 2, color = 'blue')
     
     # ----------------------------------------------------------------------------------------------
-    #! Getter methods
+    #! Basis Transformation Methods
     # ----------------------------------------------------------------------------------------------
+    
+    # Class-level registry for basis transformations (subclasses can register handlers)
+    _basis_transform_handlers = {}
+    
+    @classmethod
+    def register_basis_transform(cls, from_basis: str, to_basis: str, handler):
+        """
+        Register a basis transformation handler for this Hamiltonian class.
+        
+        Parameters
+        ----------
+        from_basis : str
+            Source basis (e.g., "real", "k-space")
+        to_basis : str
+            Target basis
+        handler : callable
+            Function with signature: handler(self, **kwargs) -> self
+            Should modify self in-place and return self
+        
+        Example
+        -------
+        >>> def real_to_kspace(self, **kwargs):
+        ...     # Implementation
+        ...     return self
+        >>> QuadraticHamiltonian.register_basis_transform("real", "k-space", real_to_kspace)
+        """
+        key = (cls.__name__, from_basis, to_basis)
+        cls._basis_transform_handlers[key] = handler
+    
+    def _get_basis_transform_handler(self, from_basis: str, to_basis: str):
+        """
+        Get the registered transformation handler for this transformation.
+        
+        Checks the class hierarchy for registered handlers, starting from the most
+        specific class (self) and moving up to parent classes. This allows subclasses
+        to use handlers registered by their parents.
+        
+        Parameters
+        ----------
+        from_basis : str
+            Source basis
+        to_basis : str
+            Target basis
+        
+        Returns
+        -------
+        callable or None
+            The handler function if registered, None otherwise
+        """
+        # Check class hierarchy for registered handler
+        # Start with current class, then check parent classes
+        for cls in self.__class__.__mro__:
+            key = (cls.__name__, from_basis, to_basis)
+            if key in self._basis_transform_handlers:
+                return self._basis_transform_handlers[key]
+        
+        # No handler found in hierarchy
+        return None
+    
+    def to_basis(self, basis_type: str, enforce: bool = False, **kwargs):
+        r"""
+        Transform the Hamiltonian representation to a different basis.
+        
+        This is a general dispatcher method that:
+        1. Validates the target basis
+        2. Checks if already in target basis
+        3. Dispatches to registered transformation handlers
+        4. Updates basis tracking state
+        5. Synchronizes with HilbertSpace (if available)
+        
+        Parameters
+        ----------
+        basis_type : str or HilbertBasisType
+            Target basis representation. Examples: "real", "k-space", "fock", "sublattice", "symmetry".
+            
+        enforce : bool, optional
+            If True and lattice is unavailable, attempt to construct a simple lattice from Ns.
+            Default: False.
+            
+        **kwargs
+            Additional arguments for specific basis transformations (e.g., sublattice_positions for Bloch).
+        
+        Returns
+        -------
+        Hamiltonian
+            Self (modified in-place) in the target basis.
+            
+        Raises
+        ------
+        NotImplementedError
+            If basis transformation is not supported by this Hamiltonian class.
+        ValueError
+            If basis_type is invalid.
+        
+        Notes
+        -----
+        Subclasses should register transformation handlers using `register_basis_transform()`.
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        # Normalize basis_type
+        if isinstance(basis_type, str):
+            try:
+                target_basis = HilbertBasisType.from_string(basis_type)
+            except ValueError:
+                raise ValueError(f"Unknown basis type: {basis_type}")
+        else:
+            target_basis = basis_type
+        
+        # Get current basis
+        current_basis = self._current_basis
+        
+        # Check if already in target basis
+        if target_basis == current_basis:
+            self._log(f"Already in {target_basis} basis. Returning self.", lvl=1, color="blue")
+            return self
+        
+        # Validate transformation is feasible
+        is_valid, reason = self.validate_basis_transformation(str(target_basis))
+        if not is_valid and not enforce:
+            raise ValueError(f"Cannot transform to {target_basis}: {reason}")
+        
+        # Look up registered handler
+        from_str    = str(current_basis).lower()
+        to_str      = str(target_basis).lower()
+        handler     = self._get_basis_transform_handler(from_str, to_str)
+        
+        if handler is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not support transformation from "
+                f"{current_basis} to {target_basis}. "
+                f"Register handler using `register_basis_transform()`."
+            )
+        
+        # Execute transformation (handler modifies self in-place)
+        self._log(f"Transforming: {current_basis} -> {target_basis}", lvl=1, color="cyan")
+        handler(self, enforce=enforce, **kwargs)
+        
+        # Synchronize with HilbertSpace if available
+        self.sync_basis_with_hilbert_space()
+        
+        return self
+
+    def get_basis_type(self) -> str:
+        """
+        Get the current basis representation of the Hamiltonian.
+        
+        Returns
+        -------
+        str
+            The current basis type (default: "real").
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        return getattr(self, '_basis_type', HilbertBasisType.REAL)
+    
+    def set_basis_type(self, basis_type: str):
+        """
+        Set the basis type metadata for this Hamiltonian.
+        
+        This primarily updates metadata; actual transformation should use to_basis().
+        
+        Parameters
+        ----------
+        basis_type : str
+            Basis type identifier.
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        if isinstance(basis_type, str):
+            basis_type = HilbertBasisType.from_string(basis_type)
+        
+        self._basis_type = basis_type
+        self._log(f"Basis type set to {basis_type}", lvl=2, color="cyan")
+    
+    # -------------------------------------------------------------------------
+    #! Basis Transformation Infrastructure (General)
+    # -------------------------------------------------------------------------
+    
+    def _infer_and_set_default_basis(self):
+        """
+        Infer and set the default basis for this Hamiltonian based on system properties.
+        
+        Priority:
+        1. If HilbertSpace is provided, inherit its basis type
+        2. Otherwise, infer from system properties:
+           - Quadratic with lattice:        REAL (position space)
+           - Quadratic without lattice:     FOCK (single-particle occupation basis)
+           - Many-body with lattice:        REAL (position space / lattice sites)
+           - Many-body without lattice:     COMPUTATIONAL (integer basis)
+
+        This is called during initialization to establish the original basis.
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        # Priority 1: Inherit from HilbertSpace if available
+        if self._hilbert_space is not None and hasattr(self._hilbert_space, '_basis_type'):
+            
+            default_basis                                   = self._hilbert_space._basis_type
+            self._basis_metadata['inherited_from_hilbert']  = True
+            self._log(f"Hamiltonian basis inherited from HilbertSpace: {default_basis}", lvl=2, color="cyan")
+        else:
+            # Priority 2: Infer from Hamiltonian properties
+            if self._is_quadratic:
+                # Quadratic system: choose based on lattice availability
+                if self._lattice is not None:
+                    default_basis = HilbertBasisType.REAL
+                    self._basis_metadata['system_type'] = 'quadratic-real'
+                else:
+                    default_basis = HilbertBasisType.FOCK
+                    self._basis_metadata['system_type'] = 'quadratic-fock'
+            else:
+                # Many-body system: choose based on lattice availability
+                if self._lattice is not None:
+                    default_basis = HilbertBasisType.REAL
+                    self._basis_metadata['system_type'] = 'manybody-real'
+                else:
+                    default_basis = HilbertBasisType.FOCK
+                    self._basis_metadata['system_type'] = 'manybody-fock'
+
+            self._log(f"Hamiltonian default basis inferred: {default_basis} ({self._basis_metadata.get('system_type', 'unknown')})", lvl=2, color="cyan")
+        
+        # Set original and current basis
+        self._original_basis    = default_basis
+        self._current_basis     = default_basis
+        self._is_transformed    = False
+        self._log(f"Default basis inferred: {default_basis} ({self._basis_metadata.get('system_type', 'unknown')})", lvl=2, color="cyan")
+    
+    def get_transformation_state(self) -> Dict[str, Any]:
+        """
+        Query the current transformation state of the Hamiltonian.
+        
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing:
+            - 'original_basis'      : The basis Hamiltonian was created in
+            - 'current_basis'       : The basis it's currently represented in
+            - 'is_transformed'      : Boolean flag if transformed representation is stored
+            - 'has_real_space'      : Whether real-space matrix is available
+            - 'has_transformed'     : Whether transformed representation is available
+            - 'transformed_shape'   : Shape of _hamil_transformed if available
+            - 'grid_shape'          : Shape of _transformed_grid if available
+            - 'symmetry_info'       : Information about applied symmetries
+            - 'metadata'            : Additional basis metadata
+        """
+        state = {
+            'original_basis'        : str(self._original_basis) if self._original_basis else None,
+            'current_basis'         : str(self._current_basis) if self._current_basis else None,
+            'is_transformed'        : self._is_transformed,
+            'has_real_space'        : self._hamil is not None or self._hamil_sp is not None,
+            'has_transformed'       : self._hamil_transformed is not None,
+            'transformed_shape'     : self._hamil_transformed.shape if self._hamil_transformed is not None else None,
+            'grid_shape'            : self._transformed_grid.shape if self._transformed_grid is not None else None,
+            'symmetry_info'         : self._symmetry_info,
+            'metadata'              : self._basis_metadata.copy(),
+        }
+        return state
+    
+    def print_transformation_state(self):
+        """Print a human-readable summary of the transformation state."""
+        state = self.get_transformation_state()
+        self._log(f"Transformation State:", lvl=1, color="bold")
+        self._log(f"  Original basis: {state['original_basis']}", lvl=1)
+        self._log(f"  Current basis: {state['current_basis']}", lvl=1)
+        self._log(f"  Is transformed: {state['is_transformed']}", lvl=1)
+        self._log(f"  Real-space available: {state['has_real_space']}", lvl=1)
+        self._log(f"  Transformed repr available: {state['has_transformed']}", lvl=1)
+        if state['transformed_shape']:
+            self._log(f"  Transformed shape: {state['transformed_shape']}", lvl=1)
+        if state['grid_shape']:
+            self._log(f"  Grid shape: {state['grid_shape']}", lvl=1)
+        if state['symmetry_info']:
+            self._log(f"  Symmetry: {state['symmetry_info']}", lvl=1)
+    
+    def record_symmetry_application(self, symmetry_name: str, sector: Optional[str] = None):
+        """
+        Record information about applied symmetries to track basis reductions.
+        
+        Parameters
+        ----------
+        symmetry_name : str
+            Name of the symmetry applied (e.g., "Z2", "U1", "SU2")
+        sector : str, optional
+            Which sector of the symmetry (e.g., "even", "odd", "up", "down")
+        """
+        sector_str                                  = f" [{sector}]" if sector else ""
+        self._symmetry_info                         = f"{symmetry_name}{sector_str}"
+        self._basis_metadata['symmetry_applied']    = True
+        self._basis_metadata['symmetries']          = self._basis_metadata.get('symmetries', []) + [symmetry_name]
+        self._log(f"Recorded symmetry application: {self._symmetry_info}", lvl=2, color="yellow")
+    
+    def validate_basis_transformation(self, target_basis: str) -> Tuple[bool, str]:
+        """
+        Validate whether a basis transformation is feasible.
+        
+        Parameters
+        ----------
+        target_basis : str
+            The target basis for transformation
+        
+        Returns
+        -------
+        Tuple[bool, str]
+            (is_valid, reason_or_warning)
+        """
+        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        
+        try:
+            target = HilbertBasisType.from_string(target_basis)
+        except ValueError:
+            return False, f"Unknown basis type: {target_basis}"
+        
+        # Specific validation rules
+        if target == HilbertBasisType.KSPACE:
+            if self._lattice is None:
+                return False, "Cannot transform to k-space: no lattice information available"
+            if not hasattr(self._lattice, 'is_periodic'):
+                return False, "Cannot transform to k-space: lattice periodicity unknown"
+        
+        if self._current_basis == target:
+            return False, f"Already in {target_basis} basis"
+        
+        return True, "Transformation is valid"
+    
+    def sync_basis_with_hilbert_space(self):
+        """
+        Synchronize this Hamiltonian's basis with its HilbertSpace.
+        
+        If HilbertSpace has a different basis, update this Hamiltonian to match.
+        This ensures consistency between quantum system representation and Hamiltonian representation.
+        """
+        if self._hilbert_space is None:
+            return
+        
+        if not hasattr(self._hilbert_space, '_basis_type'):
+            return
+        
+        hilbert_basis = self._hilbert_space._basis_type
+        
+        if self._current_basis != hilbert_basis:
+            self._log(f"Syncing basis: Hamiltonian {self._current_basis} -> HilbertSpace {hilbert_basis}", lvl=2, color="yellow")
+            self._current_basis = hilbert_basis
+    
+    def push_basis_to_hilbert_space(self):
+        """
+        Push this Hamiltonian's basis information to its HilbertSpace.
+        
+        Use this when the Hamiltonian's basis representation is the source of truth.
+        """
+        if self._hilbert_space is None:
+            return
+        
+        if hasattr(self._hilbert_space, 'set_basis'):
+            self._hilbert_space.set_basis(str(self._current_basis))
+            self._log(f"Basis pushed to HilbertSpace: {self._current_basis}", lvl=2, color="cyan")
+    
+    # -------------------------------------------------------------------------
+    #! Getter methods
+    # -------------------------------------------------------------------------
     
     @property
     def dtype(self):                    return self._dtype
@@ -522,9 +897,17 @@ class Hamiltonian(ABC):
     # eigenvalues and eigenvectors properties
 
     @property
+    def energies(self):                 return self._eig_val
+    @property
+    def eigenvalues(self):              return self._eig_val
+    @property
     def eig_val(self):                  return self._eig_val
     @property
     def eig_vec(self):                  return self._eig_vec
+    @property
+    def eigenvectors(self):             return self._eig_vec
+    @property
+    def eigenvecs(self):                return self._eig_vec
     @property
     def krylov(self):                   return self._krylov
 
@@ -534,6 +917,20 @@ class Hamiltonian(ABC):
     @hamil.setter
     def hamil(self, hamil):
         self._hamil = hamil
+
+    @property
+    def hamil_transformed(self):        
+        return self._hamil_transformed
+    @hamil_transformed.setter
+    def hamil_transformed(self, hamil_transformed):
+        self._hamil_transformed = hamil_transformed
+        
+    @property
+    def grid_transformed(self):        
+        return self._transformed_grid
+    @grid_transformed.setter
+    def grid_transformed(self, grid_transformed):
+        self._transformed_grid = grid_transformed
 
     @property
     def matrix(self):
@@ -2084,4 +2481,6 @@ def test_generic_hamiltonian(ham: Hamiltonian, ns: int):
     
     return (int_state, np_state, jnp_state), operators
 
+# --------------------------------------------------------------------------------------------------
+#! End of File
 # --------------------------------------------------------------------------------------------------

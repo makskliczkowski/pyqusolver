@@ -273,12 +273,13 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         #! NN contributions
         # -------------------------
         
+        elems = 0
         for i in range(Ns):
-            for idx in range(self.lattice.get_nn_num(i)):
+            for idx in range(self.lattice.get_nn_forward_num(i)):
 
-                j = self.lattice.get_nn(i, idx)
+                j = self.lattice.get_nn_forward(i, idx)
                 
-                if self.lattice.wrong_nei(j) or j < i:
+                if self.lattice.wrong_nei(j):
                     continue
                 
                 bond = self._get_bond_type(idx)
@@ -299,32 +300,35 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                 
                 u_ij    = self.u_nn[(i, j)] if self.u_nn is not None else 1     # default u mean-field if not supplied
                 g_ij    = self.g_nn[(i, j)] if self.g_nn is not None else 0     # default no Γ mean-field if not supplied
-                # Canonical normalization:
-                #   H = (i/4) * sum A_ij c_i c_j
-                #   A_ij^NN = 4 * [ K_gamma * u_ij + (Gamma_gamma/2) * g_ij ]
-                # so that the NN contribution in H is i * [K_gamma u_ij + (Gamma_gamma/2) g_ij].
-                a_ij    = 4.0 * (Kg * u_ij + 0.5 * Gg * g_ij)                   # real
-                
-                self._log(f"Adding NN bond ({i},{j}) type {bond}: K={Kg}, Γ={Gg}, u={u_ij}, g={g_ij} => A_ij={a_ij}", lvl=3, color='blue')
+                # Majorana fermion hopping (no Pauli matrix scaling):
+                #   H = i * sum_ij A_ij c_i c_j  with A_ij antisymmetric
+                #   A_ij^NN = K_gamma * u_ij + Gamma_gamma * g_ij  (just the couplings, no factors)
+                a_ij    = (Kg * u_ij + Gg * g_ij)                              # real, no Pauli scaling
+                elems  += 1 
+                self._log(f"Adding NN bond ({i},{j}) type {bond}: K={Kg}, Γ={Gg}, u={u_ij}, g={g_ij} => A_ij={a_ij}", lvl=3, color='blue', log='debug')
                 
                 if abs(a_ij) > 0:
                     add_mat(i, j, a_ij)
+
+        self._log(f"Total NN elements added: {elems}", color='red')
 
         # -------------------------
         #! NNN contributions
         # -------------------------
         
+        elems = 0
         if self.t2_nnn is not None:
             for (j, k), t2jk in self.t2_nnn.items():
                 if j == k or (k, j) in self.t2_nnn or j >= k:
                     continue
                 add_mat(j, k, float(t2jk))
 
+        self._log(f"Total NNN elements added: {elems}", color='red')
+
         # -------------------------
         #! Finalize H = i A
-        # ------------------------
-        
-        prefactor   = (1.0j / 2.0)
+        prefactor   = 1.0j
+        # prefactor   = 0.25j
         if _HAS_SCIPY and self._is_sparse and not use_numpy:
             A_sp = coo_matrix((
                             np.asarray(vals, dtype=float),
@@ -334,10 +338,10 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                                 )
                             ),
                             shape=(Ns, Ns)).tocsr()
-            A_sp    = 0.5 * (A_sp - A_sp.T)  # enforce antisymmetry once
+            # A_sp    = (A_sp - A_sp.T) / 2.0 # enforce antisymmetry once
             H       = (prefactor * A_sp).astype(self._dtype, copy=False)
         else:
-            A       = 0.5 * (A - A.T)        # enforce antisymmetry once
+            # A       = (A - A.T) / 2.0       # enforce antisymmetry once
             H       = (prefactor * A).astype(self._dtype, copy=False)
 
         self._hamil_sp = H
@@ -370,10 +374,10 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         u       = {}
         Ns      = lattice.ns
         for i in range(Ns):
-            for idx in range(lattice.get_nn_num(i)):
+            for idx in range(lattice.get_nn_forward_num(i)):
 
-                j = lattice.get_nn(i, idx)
-                
+                j = lattice.get_nn_forward(i, idx)
+
                 if lattice.wrong_nei(j) or (j, i) in u:
                     continue
                                 
@@ -477,7 +481,7 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                 f"gamma_z={self.gamma_z}, gamma_y={self.gamma_y}, gamma_x={self.gamma_x})")
         
     def __str__(self) -> str:
-        return (f"K-G-majorana(ns={self.ns})\n")
+        return (f"K-G-majorana(ns={self.ns})")
     
     # ---------------------------------------------------------------------
     
@@ -500,36 +504,33 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
     #! Exact solutions
     # ---------------------------------------------------------------------
     
-    def kitaev_energy(self, qx: int, qy: int, qz: int = 0) -> tuple[float, float]:
+    def kitaev_energy(self, k_vec) -> tuple[float, float]:
         """
         Pure Kitaev-model dispersion:
-            E_pm(k) = +-2 * |f(k)|
+            E_pm(k) = |f(k)|
             f(k) = Kx * exp(i k·dx) + Ky * exp(i k·dy) + Kz * exp(i k·dz)
         """
         # bond displacements (A -> B)
-        dx = np.array([0.0, 1.0, 0.0])
-        dy = np.array([-np.sqrt(3)/2, -0.5, 0.0])
-        dz = np.array([ np.sqrt(3)/2, -0.5, 0.0])
+        
+        dx = self.lattice._delta_x
+        dy = self.lattice._delta_y
+        dz = self.lattice._delta_z
 
-        # use the lattice's reciprocal vectors
-        b1, b2, b3 = self.lattice.k1, self.lattice.k2, self.lattice.k3
+        # Use the SAME couplings that were used to build H_real:
+        Kx = float(self.k_x[0])
+        Ky = float(self.k_y[0])
+        Kz = float(self.k_z[0])
 
-        # momentum in the first Brillouin zone
-        k_vec = (qx / self.lattice.lx) * b1 + (qy / self.lattice.ly) * b2 + (qz / self.lattice.lz) * b3
-
-        # structure factor
-        Kx = self.k_x[0] if self.k_x is not None else 1.0
-        Ky = self.k_y[0] if self.k_y is not None else 1.0
-        Kz = self.k_z[0] if self.k_z is not None else 1.0
-
+        # Match Bloch convention: kspace_from_realspace uses exp(-i k·r)
         f_k = (
-            Kx * np.exp(1j * np.dot(k_vec, dx))
-        + Ky * np.exp(1j * np.dot(k_vec, dy))
-        + Kz * np.exp(1j * np.dot(k_vec, dz))
+            Kx * np.exp(-1j * np.dot(k_vec, dx)) +
+            Ky * np.exp(-1j * np.dot(k_vec, dy)) +
+            Kz * np.exp(-1j * np.dot(k_vec, dz))
         )
 
-        Ek = 2.0 * np.abs(f_k)
+        Ek = np.abs(f_k)
         return +Ek, -Ek
+
     
 # -------------------------------------------------------------------------
 #! End of file
