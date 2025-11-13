@@ -93,8 +93,8 @@ def demonstrate_autoregressive_network():
     
     info = ar_network.get_info()
     print(f"  - Network type: {info['name']}")
-    print(f"  - Architecture: Input({info['n_qubits']}) → " +
-          f"Hidden{info['hidden_layers']} → Output(1)")
+    print(f"  - Architecture: Input({info['n_qubits']}) -> " +
+          f"Hidden{info['hidden_layers']} -> Output(1)")
     print(f"  - Data type: {info['dtype']}")
     print(f"  - Total parameters: ~{info}")
     
@@ -190,7 +190,7 @@ def demonstrate_autoregressive_network():
     ]
     
     for title, description in advantages:
-        print(f"  (ok) {title:20} → {description}")
+        print(f"  (ok) {title:20} -> {description}")
     
     # =====================================================================
     # SUMMARY

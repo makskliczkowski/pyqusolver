@@ -168,6 +168,7 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                 p_flip      : Optional[float]                       = None,
                 p_zero      : Optional[float]                       = None,
                 p_plus      : Optional[float]                       = None,
+                b_flip      : Optional[List[int]]                   = None,
                 # -----------
                 is_sparse   : bool                                  = True,
                 logger      : Optional[object]                      = None,
@@ -205,6 +206,8 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         # NNN field: dictionary keyed by (j,k) on same sublattice
         self.t2_nnn     : Optional[Dict[Tuple[int, int], float]]    = None    # t^{(2)}_{jk}
         
+        self._bonds     : List[Tuple[int, int]]                     = None    # list of bonds (i,j) - can be initialized
+        self.b_flip     : Optional[List[int]]                       = b_flip  # indices to flip u_ij signs on
         # set fields if probabilities supplied
         self.set_nn_fields(p_flip=p_flip, p_zero=p_zero, p_plus=p_plus)
         
@@ -238,6 +241,27 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         self.t2_nnn = { k : v * self.lambda_ for k, v in t2_field.items() } if t2_field is not None else None
 
     # ---------------------------------------------------------------------
+
+    def calculate_bonds(self):
+        """Calculate list of bonds (i,j) in the lattice."""
+        self._bonds = self._lattice.calculate_bonds()
+        return self._bonds
+
+    def _handle_flips(self, b_vec: Dict[int, int]):
+        """Flip u_ij on selected bonds before building Hamiltonian."""
+        if self.b_flip is not None:
+            self._log("Flipping u_ij on selected bonds...", color='orange')
+
+            self._bonds = self.calculate_bonds()
+        
+            for idx_flip in (self.b_flip or []):
+                if idx_flip < len(self._bonds):
+                    i, j            = self._bonds[idx_flip]
+                    b_vec[(i, j)]   = -b_vec[(i, j)]
+                    self._log(f"Flipped ij on bond ({i},{j}) to {b_vec[(i, j)]}.", color='orange', lvl=2)
+        return b_vec
+    
+    # ---------------------------------------------------------------------
     
     def _hamiltonian_quadratic(self, use_numpy: bool = False):
         r"""
@@ -268,11 +292,14 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
             """Add antisymmetric entry to A (A[j,i] = -A[i,j])."""
             add(r, c, +a)
             add(c, r, -a)
-        
+
+        u_nn = self._handle_flips(self.u_nn) if self.u_nn is not None else None
+        g_nn = self._handle_flips(self.g_nn) if self.g_nn is not None else None
+
         # -------------------------
         #! NN contributions
         # -------------------------
-        
+                
         elems = 0
         for i in range(Ns):
             for idx in range(self.lattice.get_nn_forward_num(i)):
@@ -297,16 +324,19 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
                 
                 if Kg is None: Kg = 0.0
                 if Gg is None: Gg = 0.0
-                
-                u_ij    = self.u_nn[(i, j)] if self.u_nn is not None else 1     # default u mean-field if not supplied
-                g_ij    = self.g_nn[(i, j)] if self.g_nn is not None else 0     # default no Γ mean-field if not supplied
+
+                u_ij    = u_nn[(i, j)] if u_nn is not None else 1           # default u_ij = +1 if not supplied
+                g_ij    = g_nn[(i, j)] if g_nn is not None else 0           # default no Γ mean-field if not supplied
                 # Majorana fermion hopping (no Pauli matrix scaling):
                 #   H = i * sum_ij A_ij c_i c_j  with A_ij antisymmetric
                 #   A_ij^NN = K_gamma * u_ij + Gamma_gamma * g_ij  (just the couplings, no factors)
+                
                 a_ij    = (Kg * u_ij + Gg * g_ij)                              # real, no Pauli scaling
                 elems  += 1 
-                self._log(f"Adding NN bond ({i},{j}) type {bond}: K={Kg}, Γ={Gg}, u={u_ij}, g={g_ij} => A_ij={a_ij}", lvl=3, color='blue', log='debug')
-                
+
+                if self.ns <= 24:
+                    self._log(f"Adding NN bond ({i},{j}) type {bond}: K={Kg}, Γ={Gg}, u={u_ij}, g={g_ij} => A_ij={a_ij}", lvl=3, color='blue', log='info')
+
                 if abs(a_ij) > 0:
                     add_mat(i, j, a_ij)
 

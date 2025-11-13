@@ -251,11 +251,11 @@ def main():
         print(f"\n  Autoregressive Parameters: {ar_params}")
         print(f"  Scale: O(N_qubits times  hidden_size²)")
         print(f"\n  For N={n_sites} qubits with hidden_layers=(32,32):")
-        print(f"    ├─ Qubit 1 network: 0 → 32 → 1")
-        print(f"    ├─ Qubit 2 network: 1 → 32 → 1")
-        print(f"    ├─ Qubit 3 network: 2 → 32 → 1")
+        print(f"    ├─ Qubit 1 network: 0 -> 32 -> 1")
+        print(f"    ├─ Qubit 2 network: 1 -> 32 -> 1")
+        print(f"    ├─ Qubit 3 network: 2 -> 32 -> 1")
         print(f"    ├─ ...")
-        print(f"    └─ Qubit {n_sites} network: {n_sites-1} → 32 → 1")
+        print(f"    └─ Qubit {n_sites} network: {n_sites-1} -> 32 -> 1")
     
     # =========================================================================
     # STEP 5: Network Comparison and Evaluation

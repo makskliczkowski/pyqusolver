@@ -95,7 +95,7 @@ def train_function_enhanced(params,
                 'phase_type': phase.phase_type.name,
                 'initial_lr': phase.learning_rate
             })
-            print(f"\n→ Transitioned to {phase.phase_type.name} phase: {phase_name}")
+            print(f"\n-> Transitioned to {phase.phase_type.name} phase: {phase_name}")
             
             # Optional: Call phase callbacks
             if phase.on_phase_start is not None:
@@ -169,16 +169,16 @@ def create_phases_with_callbacks():
     """
     
     def on_pretraining_start():
-        print("→ Pre-training phase started: exploring phase space")
+        print("-> Pre-training phase started: exploring phase space")
     
     def on_pretraining_end():
-        print("→ Pre-training phase complete: checking convergence")
+        print("-> Pre-training phase complete: checking convergence")
     
     def on_main_start():
-        print("→ Main training phase: focus on energy minimization")
+        print("-> Main training phase: focus on energy minimization")
     
     def on_main_end():
-        print("→ Main training phase complete: achieved convergence")
+        print("-> Main training phase complete: achieved convergence")
     
     phases = [
         LearningPhase(
@@ -237,7 +237,7 @@ def compare_phase_presets():
             print(f"  Phase {i}: {phase.name}")
             print(f"    - Type: {phase.phase_type.name}")
             print(f"    - Epochs: {phase.epochs}")
-            print(f"    - LR: {phase.learning_rate:.3e} → {phase.lr_min:.3e}")
+            print(f"    - LR: {phase.learning_rate:.3e} -> {phase.lr_min:.3e}")
             print(f"    - Reg schedule: {phase.reg_schedule}")
 
 
@@ -354,7 +354,7 @@ if __name__ == "__main__":
     for epoch in range(100):
         current_phase_name = scheduler.current_phase.name
         if current_phase_name != prev_phase and epoch > 0:
-            print(f"   → Phase transition at epoch {epoch}: {current_phase_name}")
+            print(f"   -> Phase transition at epoch {epoch}: {current_phase_name}")
             prev_phase = current_phase_name
         scheduler.advance_epoch()
     

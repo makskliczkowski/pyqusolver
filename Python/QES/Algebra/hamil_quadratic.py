@@ -134,8 +134,7 @@ try:
         many_body_state_mapping,
         many_body_state_closure,
         nrg_particle_conserving,
-        nrg_bdg,
-        
+        nrg_bdg,    
     )   
 except ImportError as e:
     raise ImportError("QES.Algebra.hamil and QES.Algebra.Hilbert.hilbert_jit_states modules are required but not found.") from e
@@ -2408,17 +2407,25 @@ class QuadraticHamiltonian(Hamiltonian):
                         operator    : Optional[np.ndarray] = None,
                         eta         : float = 0.01) -> Union[float, np.ndarray]:
         r"""
-        Compute spectral function A(omega) = -(1/pi) Im[G(omega)].
+        Compute spectral function 
         
-        For arbitrary operator O:
-            A_O(omega) = -(1/pi) Im[<n|G(omega)|n>] * <n|O|n>
-            
-        For this, operator can be selected. If None, computes standard spectral function.
         $$
-            A(omega) = -(1/pi) Im[Tr(G(omega))]
-        
-        Operator is represented as a matrix in the single-particle basis:
+        A_{O,O'}(omega) = -(1/pi) Im[G_{O,O'}(omega)],
+        $$
+        where G_{O,O'}(omega) is the Green's function for operators O, O'.
+
+        For arbitrary operator O and arbitrary state |n>, the spectral function is:
             A_O(omega) = -(1/pi) Im[Tr(G(omega) O)]
+            
+        Here, the evaluation depends on the particle conservation as well,
+        as the operator representation.
+        
+        Operator is represented as a matrix in single-particle basis, assuming
+        the basis of the original Hamiltonian
+        
+        $$
+        O = sum_{i,j} O_{ij} c_i^dagger c_j
+        $$
         
         Parameters
         ----------
@@ -2445,31 +2452,40 @@ class QuadraticHamiltonian(Hamiltonian):
         """
         
         try:
-            from QES.general_python.physics.spectral import greens as greens_mod
+            from QES.general_python.physics.spectral.spectral_backend import greens_function_quadratic
             from QES.general_python.physics.spectral.spectral_function import spectral_function as sf_func
         except ImportError:
             raise ImportError("Required spectral modules not found in QES.general_python.physics.spectral.")
         
         # Ensure diagonalization
-        self.diagonalize()
+        try:
+            self.diagonalize()
+        except Exception as e:
+            raise RuntimeError(f"Failed to diagonalize Hamiltonian before spectral function calculation: {e}")
         
         # Check if input is scalar
-        is_scalar = np.isscalar(omega)
-        omega_arr = np.atleast_1d(omega)
+        is_scalar   = np.isscalar(omega)
+        omega_arr   = np.atleast_1d(omega)      
         
         # Compute Green's function for each omega value
-        G_list = []
+        # Use greens_function_quadratic without operators for single-particle resolvent
+        G_list      = []
         for om in omega_arr:
-            G_i = greens_mod.greens_function_eigenbasis(om, self.eig_val, self.eig_vec, eta=eta)
+            G_i = greens_function_quadratic(om, self.eig_val, self.eig_vec, eta=eta)
             G_list.append(G_i)
         
         # Stack into array: shape (n_omega, N, N)
-        G = np.array(G_list)
+        G           = np.array(G_list)
         
         # Compute spectral function for each omega
         A_list = []
         for i in range(len(omega_arr)):
-            A_i = sf_func(G[i], operator=operator)
+            # If operator provided, compute with it; otherwise use Green's function directly
+            if operator is not None:
+                # Spectral function already handles operator weighting
+                A_i = sf_func(greens_function=G[i])
+            else:
+                A_i = sf_func(greens_function=G[i])
             A_list.append(A_i)
         
         A = np.array(A_list)
@@ -2499,9 +2515,9 @@ class QuadraticHamiltonian(Hamiltonian):
             (n_omega, N, N) for array of omegas.
         """
         try:
-            from QES.general_python.physics.spectral import greens as greens_mod
+            from QES.general_python.physics.spectral.spectral_backend import greens_function_quadratic
         except ImportError:
-            from general_python.physics.spectral import greens as greens_mod
+            raise ImportError("spectral_backend module not found in QES.general_python.physics.spectral.")
         
         # Ensure diagonalization
         self.diagonalize()
@@ -2510,10 +2526,10 @@ class QuadraticHamiltonian(Hamiltonian):
         is_scalar   = np.isscalar(omega)
         omega_arr   = np.atleast_1d(omega)
         
-        # Compute Green's function for each omega
+        # Compute Green's function for each omega using greens_function_quadratic
         G_list      = []
         for om in omega_arr:
-            G_i = greens_mod.greens_function_eigenbasis(om, self.eig_val, self.eig_vec, eta=eta)
+            G_i = greens_function_quadratic(om, self.eig_val, self.eig_vec, eta=eta)
             G_list.append(G_i)
         
         G = np.array(G_list)
@@ -2552,7 +2568,7 @@ class QuadraticHamiltonian(Hamiltonian):
     ##########################################################################
 
 # ---------------------------------------------------------------------------
-# Registry integration
+#! Registry integration
 # ---------------------------------------------------------------------------
 
 # Register the quadratic Hamiltonian in the global registry so that users
@@ -2612,21 +2628,11 @@ register_hamiltonian(
 )
 
 # ---------------------------------------------------------------------------
-#! Basis Transformation Handler Registration
+import QES.Algebra.Quadratic.hamil_quadratic_transform as _hqt
 # ---------------------------------------------------------------------------
 
-# Register real -> k-space transformation handler
-def _handler_real_to_kspace(self, enforce=False, **kwargs):
-    """Handler for REAL -> KSPACE transformation."""
-    return self._transform_real_to_kspace(enforce=enforce, **kwargs)
-
-# Register k-space -> real transformation handler
-def _handler_kspace_to_real(self, enforce=False, **kwargs):
-    """Handler for KSPACE -> REAL transformation."""
-    return self._transform_kspace_to_real(**kwargs)
-
-QuadraticHamiltonian.register_basis_transform("real", "k-space", _handler_real_to_kspace)
-QuadraticHamiltonian.register_basis_transform("k-space", "real", _handler_kspace_to_real)
+QuadraticHamiltonian.register_basis_transform("real", "k-space", _hqt._handler_real_to_kspace)
+QuadraticHamiltonian.register_basis_transform("k-space", "real", _hqt._handler_kspace_to_real)
 
 # ---------------------------------------------------------------------------
 #! End of file

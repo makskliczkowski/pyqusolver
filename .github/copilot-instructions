@@ -16,3 +16,11 @@
 # - Use np.ndarray or jnp.ndarray consistently where relevant.
 # - Preserve deterministic memory layout and minimal allocations.
 # - Provide an optional logger argument for profiling or debugging where appropriate.
+
+# !!!!!!!!!! important !!!!!!
+# DON'T CREATE SUMMARY FILES IN THE END UNLESS I ASK
+# DON'T CREATE UNNECESSARY FILES EVERYWHERE
+# USE ONLY ASCI CHARACTERS - FOR MATH USE LATEX - then the strings in python are raw : r'...'
+# Tell if you are going in the loop!
+# NO COMMENTS IN THE CODE REGARDING MY QUESTIONS IN THE QUERY! ONLY LIKE YOU ARE CODING REALLY
+# TRY TO EXPLAIN WHAT YOU ARE DOING IN THE CODE AS WELL, ADD EXAMPLES IN THE FUNCTION DOCS

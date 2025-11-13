@@ -9,7 +9,7 @@ This demonstrates:
 
 NOTES:
 - Basis system now supports inheritance: subclasses can use parent handlers
-- Automatic basis inference: quadratic + lattice → REAL basis
+- Automatic basis inference: quadratic + lattice -> REAL basis
 - Handler registry: extensible pattern for new transformations
 
 Author: Maksymilian Kliczkowski

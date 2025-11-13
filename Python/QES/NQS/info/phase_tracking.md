@@ -174,7 +174,7 @@ def compute_dsf(snapshot_i, snapshot_j, observable_op):
     """
     Compute correlation function accounting for relative phase.
     
-    ⟨ϕ_α(t_i)|O|ϕ_β(t_j)⟩ = e^{i(θ0_i - θ0_j)} ⟨ψ(t_i)|O|ψ(t_j)⟩
+    ⟨ϕ_\alpha(t_i)|O|ϕ_β(t_j)⟩ = e^{i(θ0_i - θ0_j)} ⟨ψ(t_i)|O|ψ(t_j)⟩
     """
     phase_factor = jnp.exp(1j * (snapshot_i['theta0'] - snapshot_j['theta0']))
     

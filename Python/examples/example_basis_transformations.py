@@ -6,8 +6,8 @@ This script demonstrates how to use the FFT-based Bloch transform
 and basis transformations for QuadraticHamiltonians in QES.
 
 Examples included:
-1. Simple 1D chain: real → k-space transformation
-2. Round-trip: real → k-space → real (verify reconstruction)
+1. Simple 1D chain: real -> k-space transformation
+2. Round-trip: real -> k-space -> real (verify reconstruction)
 3. Band structure computation
 4. Multipartite system (honeycomb lattice)
 5. Numerical stability verification
@@ -40,7 +40,7 @@ def print_section(title, width=80):
 
 def example_1d_chain():
     """
-    Demonstrate real → k-space transformation for a simple 1D chain.
+    Demonstrate real -> k-space transformation for a simple 1D chain.
     
     System: 16-site 1D tight-binding with periodic boundary conditions
     H = -t Σᵢ (c†ᵢ cᵢ₊₁ + h.c.)
@@ -69,7 +69,7 @@ def example_1d_chain():
     print(H_real_mat[:3, :3])
     
     # Attempt transformation (will fail without lattice unless we use enforce=True)
-    print(f"\n→ Attempting transformation to k-space...")
+    print(f"\n-> Attempting transformation to k-space...")
     try:
         H_k = H_real.to_basis("k-space", enforce=True)
         print(f"✓ Transformation successful!")
@@ -114,14 +114,14 @@ def example_band_structure():
 
 def example_round_trip_stability():
     """
-    Verify numerical stability of real → k-space → real round-trip.
+    Verify numerical stability of real -> k-space -> real round-trip.
     
     For a small system, we can verify that the reconstruction error
     is at machine precision level.
     """
     print_section("EXAMPLE 3: Round-Trip Stability Verification")
     
-    print("Round-trip test: real-space → Bloch blocks → real-space")
+    print("Round-trip test: real-space -> Bloch blocks -> real-space")
     print("\nFor a properly implemented FFT-based transform:")
     print("  ‖H_original - H_reconstructed‖ / ‖H_original‖ ≈ 10⁻¹⁴ (machine precision)")
     
@@ -147,7 +147,7 @@ def example_bloch_analysis():
     print_section("EXAMPLE 4: Bloch Hamiltonian Analysis")
     
     print("After FFT-based Bloch transform:")
-    print("\n1. Bloch blocks: H_k[kx, ky, kz, α, β]")
+    print("\n1. Bloch blocks: H_k[kx, ky, kz, \alpha, β]")
     print("   - Each H_k[kx, ky, kz] is an (Nb times  Nb) block")
     print("   - Nb = number of basis sites per unit cell")
     print("   - For monatomic lattice: Nb = 1 (scalar blocks)")
@@ -157,7 +157,7 @@ def example_bloch_analysis():
     print("   - Contains the reciprocal-space vectors at each k-point")
     print("   - Used for band structure plots")
     
-    print("\n3. Sublattice phases: e^{-i k·(r_β - r_α)}")
+    print("\n3. Sublattice phases: e^{-i k·(r_β - r_\alpha)}")
     print("   - Applied after FFT to account for intra-cell structure")
     print("   - Critical for multipartite systems (honeycomb, graphene, etc.)")
 
@@ -184,12 +184,12 @@ H_real = QuadraticHamiltonian(ns=32, lattice=my_lattice)
 H_real.add_hopping(0, 1, -1.0)
 
 # Transform to k-space
-H_k = H_real.to_basis("k-space")          # → Returns new Hamiltonian
+H_k = H_real.to_basis("k-space")          # -> Returns new Hamiltonian
 # OR
 H_k = H_real.to_basis(HilbertBasisType.KSPACE)
 
 # Get/set basis information
-current = H_real.get_basis_type()         # → HilbertBasisType.REAL
+current = H_real.get_basis_type()         # -> HilbertBasisType.REAL
 H_real.set_basis_type("k-space")          # Updates metadata
 
 
@@ -283,21 +283,21 @@ TOTAL                      | O(N³)      | O(N² log N) ***
 
 * Data-driven: unavoidable
 ** Dominant term for large N
-*** For N = 1000: ~10⁷ ops (naive) vs ~10⁵ ops (FFT) → 100times  speedup!
+*** For N = 1000: ~10⁷ ops (naive) vs ~10⁵ ops (FFT) -> 100times  speedup!
 
 MEMORY
 ──────
 
 Real-space matrix       : O(N²) dense storage
 k-space Bloch blocks    : O(N times  Nb²) where Nb ≈ 1-10 (typical)
-                        → Much smaller for small Nb
+                        -> Much smaller for small Nb
 
 
 EXAMPLE TIMINGS (estimated for N = 1024 sites):
 ───────────────────────────────────────────────
 
 Naive Fourier transform (explicit DFT)
-  T_naive ≈ N³ = 10⁹ operations → ~1-10 seconds
+  T_naive ≈ N³ = 10⁹ operations -> ~1-10 seconds
 
 FFT-based Bloch transform
   T_fft ≈ N log N = 10⁴ operations (FFT) + N² (extraction)
@@ -323,7 +323,7 @@ ERROR: "Lattice required for k-space transformation"
 
 Problem:
   H = QuadraticHamiltonian(ns=32)  # No lattice provided
-  H_k = H.to_basis("k-space")      # → NotImplementedError
+  H_k = H.to_basis("k-space")      # -> NotImplementedError
 
 Solution (Option A): Provide lattice at construction
   from QES.general_python.lattices import Square1D
@@ -336,7 +336,7 @@ Solution (Option B): Use enforce=True
 
 ──────────────────────────────────────────────────────
 
-ERROR: "No Bloch blocks (_H_k) stored" (k-space → real)
+ERROR: "No Bloch blocks (_H_k) stored" (k-space -> real)
 ────────────────────────────────────────────────────────
 
 Problem:
