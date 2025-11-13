@@ -186,13 +186,71 @@ class HilbertSpace(ABC):
                 Flag indicating if particle number is conserved. Default is True.
             ---------------
             sym_gen (Union[dict, None], optional):
-                Dictionary specifying symmetry generators. Default is None.
+                Dictionary or list specifying symmetry generators. Default is None.
+                
+                **Examples**:
+                
+                1. Translation symmetry (momentum sectors):
+                   ```python
+                   from QES.Algebra.Symmetries.translation import TranslationSymmetry
+                   
+                   # Dictionary format with explicit symmetry objects:
+                   sym_gen = {'translation': TranslationSymmetry(kx=0, ky=0)}
+                   
+                   # Or using string names (if registered):
+                   sym_gen = {'translation': {'kx': 0, 'ky': 0}}
+                   
+                   # List format:
+                   sym_gen = [TranslationSymmetry(kx=0, ky=0)]
+                   ```
+                
+                2. Parity symmetry:
+                   ```python
+                   from QES.Algebra.Symmetries.parity import ParitySymmetry
+                   
+                   sym_gen = {'parity': ParitySymmetry(sector=1)}  # Even parity
+                   ```
+                
+                3. Multiple symmetries:
+                   ```python
+                   sym_gen = {
+                       'translation': TranslationSymmetry(kx=np.pi, ky=0),
+                       'parity': ParitySymmetry(sector=1),
+                       'reflection': ReflectionSymmetry(axis='x', sector=1)
+                   }
+                   ```
+                
+                4. Particle number conservation (for fermions):
+                   ```python
+                   # Automatically handled when part_conserv=True
+                   # Can also specify explicitly:
+                   sym_gen = {'u1_particle': {'n_particles': 4}}
+                   ```
+                
+                Supported symmetry types:
+                  - 'translation'        : Discrete translation (momentum)
+                  - 'parity'            : Spin/particle parity
+                  - 'reflection'        : Spatial reflection
+                  - 'inversion'         : Spatial inversion
+                  - 'time_reversal'     : Time reversal
+                  - 'u1_particle'       : Particle number (U(1))
+                  - 'u1_spin'           : Spin S^z conservation
+                  - Custom symmetries can be registered via SymmetryRegistry
+                
             global_syms (Union[List[GlobalSymmetry], None], optional): 
-                List of global symmetry objects. Default is None.
+                List of global symmetry objects for additional quantum number constraints.
+                These are applied before local symmetry generators. Default is None.
+                
             gen_mapping (bool, optional):
-                Whether to generate state mapping based on symmetries. Default is False.
+                Whether to generate state mapping based on symmetries immediately.
+                If False, mapping is generated on-demand. Default is False.
+                Set to True for immediate symmetry reduction and representative state mapping.
+                
             local_space (Optional[Union[LocalSpace, str]], optional):
-                LocalSpace object or string defining local Hilbert space properties. Default is None.
+                LocalSpace object or string defining local Hilbert space properties. 
+                Default is None (uses spin-1/2).
+                
+                Supported strings: 'spin-1/2', 'spin-1', 'fermion', 'hardcore-boson', etc.
             ---------------
             state_type (str, optional):
                 Type of state representation (e.g., "integer"). Default is "integer".
@@ -296,7 +354,10 @@ class HilbertSpace(ABC):
             if gen_mapping:
                 self._log("Explicitly requested immediate mapping generation.", log='debug', lvl=2)
             
-            self._init_representatives(sym_gen, gen_mapping=gen_mapping) # gen_mapping True here enables reprmap
+            # Normalize symmetry generators (supports dict/list/string formats)
+            normalized_sym_gen = self._normalize_symmetry_generators(sym_gen)
+            
+            self._init_representatives(normalized_sym_gen, gen_mapping=gen_mapping) # gen_mapping True here enables reprmap
             # Set symmetry group from container
             if self._sym_container is not None:
                 self._sym_group = list(self._sym_container.symmetry_group)
@@ -307,7 +368,10 @@ class HilbertSpace(ABC):
             
             # Setup sym container if generators provided
             if sym_gen:
-                self._init_sym_container(sym_gen)
+                # Normalize symmetry generators (supports dict/list/string formats)
+                normalized_sym_gen = self._normalize_symmetry_generators(sym_gen)
+                
+                self._init_sym_container(normalized_sym_gen)
                 if self._sym_container is not None:
                     self._sym_group = list(self._sym_container.symmetry_group)
 
@@ -397,6 +461,187 @@ class HilbertSpace(ABC):
     ####################################################################################################
     #! Unified symmetry container initialization
     ####################################################################################################
+    
+    @staticmethod
+    def _parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, complex]) -> List[Tuple]:
+        """
+        Parse symmetry specification from string name and value to (SymmetryGenerator, sector) tuples.
+        
+        Parameters
+        ----------
+        sym_name : str
+            Symmetry name (e.g., 'translation', 'parity', 'reflection')
+        sym_value : Union[dict, int, float, complex]
+            Either a sector value (for simple symmetries) or dict with parameters
+            
+        Returns
+        -------
+        List[Tuple[SymmetryGenerators, sector_value]]
+            List of symmetry generator specifications
+            
+        Examples
+        --------
+        >>> # Translation with momentum sectors
+        >>> HilbertSpace._parse_symmetry_spec('translation', {'kx': 0, 'ky': np.pi})
+        [(SymmetryGenerators.Translation_x, 0), (SymmetryGenerators.Translation_y, np.pi)]
+        
+        >>> # Parity with sector
+        >>> HilbertSpace._parse_symmetry_spec('parity', 1)
+        [(SymmetryGenerators.ParityZ, 1)]
+        
+        >>> # Parity with axis specification
+        >>> HilbertSpace._parse_symmetry_spec('parity', {'axis': 'x', 'sector': 1})
+        [(SymmetryGenerators.ParityX, 1)]
+        """
+        from QES.Algebra.Operator.operator import SymmetryGenerators
+        
+        sym_name_lower = sym_name.lower().replace('_', '').replace('-', '')
+        specs = []
+        
+        # Translation symmetry (can have multiple directions)
+        if sym_name_lower in ['translation', 'translations', 'trans', 'momentum']:
+            if isinstance(sym_value, dict):
+                # Dict with kx, ky, kz sectors
+                if 'kx' in sym_value or 'k_x' in sym_value:
+                    kx = sym_value.get('kx', sym_value.get('k_x'))
+                    specs.append((SymmetryGenerators.Translation_x, kx))
+                if 'ky' in sym_value or 'k_y' in sym_value:
+                    ky = sym_value.get('ky', sym_value.get('k_y'))
+                    specs.append((SymmetryGenerators.Translation_y, ky))
+                if 'kz' in sym_value or 'k_z' in sym_value:
+                    kz = sym_value.get('kz', sym_value.get('k_z'))
+                    specs.append((SymmetryGenerators.Translation_z, kz))
+            else:
+                # Single value assumed for x-direction
+                specs.append((SymmetryGenerators.Translation_x, sym_value))
+        
+        # Parity symmetry
+        elif sym_name_lower in ['parity', 'parityx', 'parityy', 'parityz', 'spin']:
+            if isinstance(sym_value, dict):
+                axis = sym_value.get('axis', 'z').lower()
+                sector = sym_value.get('sector', 1)
+            else:
+                axis = 'z'  # Default to z-parity
+                sector = sym_value
+            
+            if axis == 'x':
+                specs.append((SymmetryGenerators.ParityX, sector))
+            elif axis == 'y':
+                specs.append((SymmetryGenerators.ParityY, sector))
+            else:  # 'z' or default
+                specs.append((SymmetryGenerators.ParityZ, sector))
+        
+        # Reflection symmetry
+        elif sym_name_lower in ['reflection', 'reflect', 'mirror']:
+            if isinstance(sym_value, dict):
+                sector = sym_value.get('sector', 1)
+            else:
+                sector = sym_value
+            specs.append((SymmetryGenerators.Reflection, sector))
+        
+        # Fermion parity
+        elif sym_name_lower in ['fermionparity', 'fermion', 'fparity']:
+            if isinstance(sym_value, dict):
+                sector = sym_value.get('sector', 1)
+            else:
+                sector = sym_value
+            specs.append((SymmetryGenerators.FermionParity, sector))
+        
+        # Particle-hole symmetry
+        elif sym_name_lower in ['particlehole', 'ph', 'chargeconjugation']:
+            if isinstance(sym_value, dict):
+                sector = sym_value.get('sector', 1)
+            else:
+                sector = sym_value
+            specs.append((SymmetryGenerators.ParticleHole, sector))
+        
+        # Time reversal
+        elif sym_name_lower in ['timereversal', 'tr', 'time']:
+            if isinstance(sym_value, dict):
+                sector = sym_value.get('sector', 1)
+            else:
+                sector = sym_value
+            specs.append((SymmetryGenerators.TimeReversal, sector))
+        
+        else:
+            raise ValueError(f"Unknown symmetry name: '{sym_name}'. "
+                           f"Supported: translation, parity, reflection, fermion_parity, "
+                           f"particle_hole, time_reversal")
+        
+        return specs
+    
+    @staticmethod
+    def _normalize_symmetry_generators(sym_gen: Union[dict, list, None]) -> List[Tuple]:
+        """
+        Normalize symmetry generator input to list of (SymmetryGenerator, sector) tuples.
+        
+        Accepts:
+        - None : No symmetries
+        - dict : {'symmetry_name': value_or_dict, ...}
+        - list : [SymmetryOperator instances] or [(SymmetryGenerator, sector), ...]
+        
+        Returns
+        -------
+        List[Tuple[SymmetryGenerators, sector]]
+            Normalized list of symmetry specifications
+        """
+        from QES.Algebra.Operator.operator import SymmetryGenerators
+        from QES.Algebra.Symmetries.base import SymmetryOperator
+        
+        if sym_gen is None:
+            return []
+        
+        # Already a list of tuples (SymmetryGenerators, sector)
+        if isinstance(sym_gen, list):
+            if len(sym_gen) == 0:
+                return []
+            
+            # Check if already in correct format
+            first_elem = sym_gen[0]
+            if isinstance(first_elem, tuple) and len(first_elem) == 2:
+                if isinstance(first_elem[0], SymmetryGenerators):
+                    return sym_gen  # Already normalized
+                
+                # Check if it's a string-based tuple format like ('parity', 0)
+                if isinstance(first_elem[0], str):
+                    # Parse all string-based tuples
+                    specs = []
+                    for sym_name, sym_value in sym_gen:
+                        parsed = HilbertSpace._parse_symmetry_spec(sym_name, sym_value)
+                        specs.extend(parsed)
+                    return specs
+            
+            # List of SymmetryOperator instances - extract their types
+            # This is less common but supported for backward compatibility
+            if all(isinstance(s, SymmetryOperator) for s in sym_gen):
+                # Convert to specs (this requires operator instances to have type info)
+                # For now, assume they're already properly formatted
+                return sym_gen
+            
+            raise ValueError("List format for sym_gen must be [(SymmetryGenerators, sector), ...] "
+                           "or [('symmetry_name', sector), ...] or [SymmetryOperator instances]")
+        
+        # Dictionary format: parse each entry
+        if isinstance(sym_gen, dict):
+            specs = []
+            for sym_name, sym_value in sym_gen.items():
+                # Check if value is already a SymmetryOperator instance
+                if isinstance(sym_value, SymmetryOperator):
+                    # Extract type and sector from operator
+                    # Assume operator has these attributes
+                    sym_type    = getattr(sym_value, 'symmetry_type', None)
+                    sector      = getattr(sym_value, 'sector', None)
+                    if sym_type and sector is not None:
+                        specs.append((sym_type, sector))
+                    continue
+                
+                # Parse string name to SymmetryGenerators
+                parsed = HilbertSpace._parse_symmetry_spec(sym_name, sym_value)
+                specs.extend(parsed)
+            
+            return specs
+        
+        raise ValueError(f"sym_gen must be dict, list, or None, got {type(sym_gen)}")
     
     def _init_sym_container(self, gen: list) -> None:
         """
@@ -641,7 +886,10 @@ class HilbertSpace(ABC):
         repr_phase_arr  = np.zeros(self._nhfull, dtype=np.complex128)
         mapping_size    = len(self.representative_list) if self.representative_list is not None else 0
 
-        for j in numba.prange(self._nhfull):
+        # for j in numba.prange(self._nhfull):
+        # Use regular range instead of numba.prange to allow Python function calls
+        #!TODO: Consider jitting this function if performance is critical
+        for j in range(self._nhfull):
             if self._state_filter is not None and not self._state_filter(j):
                 continue
 
@@ -655,7 +903,7 @@ class HilbertSpace(ABC):
 
             # If mapping explicitly lists this state, record trivial phase
             if mapping_size > 0:
-                idx = bin_search.binary_search(self.representative_list, 0, mapping_size - 1, j)
+                idx = bin_search.binary_search_numpy(self.representative_list, 0, mapping_size - 1, j)
                 if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
                     repr_idx_arr[j]     = int(idx)
                     repr_phase_arr[j]   = 1+0j
@@ -664,15 +912,12 @@ class HilbertSpace(ABC):
             # Otherwise, find representative and see if its representative is present
             rep, sym_eig = self.find_repr(j)
             if mapping_size > 0:
-                idx = bin_search.binary_search(self.representative_list, 0, mapping_size - 1, rep)
+                idx = bin_search.binary_search_numpy(self.representative_list, 0, mapping_size - 1, rep)
                 if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
                     if self._state_filter is not None and not self._state_filter(rep):
                         continue
-                    try:
-                        repr_phase_arr[j] = complex(sym_eig)
-                    except Exception:
-                        repr_phase_arr[j] = 0+0j
-                    repr_idx_arr[j] = int(idx)
+                    repr_phase_arr[j]   = complex(sym_eig)
+                    repr_idx_arr[j]     = int(idx)
 
         # Expose jittable arrays for builders (created only on demand).
         # Use distinct internal names to avoid confusion with the compact
@@ -730,6 +975,17 @@ class HilbertSpace(ABC):
         
         #! Set the new Hilbert space size
         self._nh = len(self.representative_list)
+        
+        # Set repr_info BEFORE generating full mapping so find_representative works correctly
+        # Convert to backend arrays first if needed
+        if isinstance(self.representative_list, list):
+            repr_list_array     = self._backend.array(self.representative_list, dtype=self._backend.int64)
+            repr_norms_array    = self._backend.array(self.representative_norms, dtype=self._dtype)
+        else:
+            repr_list_array     = self.representative_list
+            repr_norms_array    = self.representative_norms
+        
+        self._sym_container.set_repr_info(repr_list_array, repr_norms_array)
         
         #! Generate full mapping if requested!
         if gen_mapping:

@@ -459,8 +459,9 @@ class SymmetryContainer:
 
     def set_repr_info(self, repr_list: np.ndarray, repr_norms: np.ndarray) -> None:
         """Set the representatives and their normalization factors."""
-        self._repr_list     = repr_list
-        self._repr_norms    = repr_norms
+        # Ensure repr_list is a numpy array to avoid numba warnings
+        self._repr_list     = np.asarray(repr_list) if not isinstance(repr_list, np.ndarray) else repr_list
+        self._repr_norms    = np.asarray(repr_norms) if not isinstance(repr_norms, np.ndarray) else repr_norms
         self._repr_get_norm = lambda x: self._repr_norms[x]
         self._repr_active   = True
 
@@ -751,20 +752,25 @@ class SymmetryContainer:
         -------
         representative : StateInt, complex
             Minimal state in the orbit of the given state
-            and the associated symmetry eigenvalue
+            and the associated symmetry eigenvalue (character)
         """
         min_state   = _INT_HUGE
-        value       = 1.0
+        min_element = ()
         
         # Try all group elements
         for element in self.symmetry_group:
-            new_state, new_value = self.apply_group_element(element, state)
+            # Apply group element to get transformed state
+            # (we only need the state, not the boundary phase)
+            new_state, _ = self.apply_group_element(element, state)
             
             if new_state < min_state:
-                min_state = new_state
-                value     = new_value
-
-        return min_state, value
+                min_state   = new_state
+                min_element = element
+        
+        # Get the character (representation eigenvalue) for the transformation
+        character = self.get_character(min_element)
+        
+        return min_state, character
 
     def find_representative(self, 
                             state           : StateInt, 
@@ -804,27 +810,37 @@ class SymmetryContainer:
         if not self._repr_active or (self._repr_list is None) or len(self.symmetry_group) == 0:
             return state, 1.0 # No mapping - return state itself
 
-        # Check cache
+        # Check cache - stores (representative_INDEX, phase), NOT state value
+        # IMPORTANT: _repr_map[state, 0] is the INDEX in _repr_list, not the state value
         if use_cache and self._repr_map is not None and state < len(self._repr_map):
-            idx     = self._repr_map[state, 0]
-            sym_eig = self._repr_map[state, 1]
-            if idx != _INT_HUGE:
-                return int(self._repr_list[idx]), self._repr_get_norm(idx) * np.conjugate(sym_eig) / normalization_b # return to the original state's phase
+            rep_idx     = int(self._repr_map[state, 0])
+            sym_eig     = self._repr_map[state, 1]
+            
+            # Check if state is in this sector (rep_idx == -1 or _INT_HUGE means not in sector)
+            if rep_idx != _INT_HUGE and rep_idx != -1 and rep_idx >= 0 and rep_idx < len(self._repr_list):
+                # Get the actual representative state from the list
+                rep_state = int(self._repr_list[rep_idx])
+                return rep_state, self._repr_get_norm(rep_idx) * np.conjugate(sym_eig) / normalization_b
+            
+            # Cache indicates state not in sector - return zero
+            if rep_idx == -1 or rep_idx == 0:
+                return 0, 0.0
 
-        from QES.general_python.common.embedded import binary_search as bin_search
+        from QES.general_python.common.embedded.binary_search import binary_search_numpy, _BAD_BINARY_SEARCH_STATE
         
         # Check if state is already a representative
-        state_in_mapping        = bin_search.binary_search(self._repr_list, 0, len(self._repr_list) - 1, state)
-        if state_in_mapping != bin_search._BAD_BINARY_SEARCH_STATE and state_in_mapping < len(self._repr_list):
+        state_in_mapping        = binary_search_numpy(self._repr_list, 0, len(self._repr_list) - 1, state)
+        if state_in_mapping != _BAD_BINARY_SEARCH_STATE and state_in_mapping < len(self._repr_list):
             return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) / normalization_b # State is already a representative
 
         # Otherwise, find representative by applying group elements
         min_state, min_phase    = self._find_representative(state)
-        state_in_mapping        = bin_search.binary_search(self._repr_list, 0, len(self._repr_list) - 1, min_state)
-        if state_in_mapping != bin_search._BAD_BINARY_SEARCH_STATE and state_in_mapping < len(self._repr_list):
+        state_in_mapping        = binary_search_numpy(self._repr_list, 0, len(self._repr_list) - 1, min_state)    
+        if state_in_mapping != _BAD_BINARY_SEARCH_STATE and state_in_mapping < len(self._repr_list):
             return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) * np.conjugate(min_phase) / normalization_b
 
-        return 0, 0.0  # Should not reach here if mapping is correct
+        return 0, 0.0 # State not in this sector (maybe -1?)
+
     
     # -----------------------------------------------------
     #! Character and Normalization Computation
@@ -834,8 +850,8 @@ class SymmetryContainer:
         """
         Compute the character (representation eigenvalue) for a group element.
         
-        For translation T^n in momentum sector k: chi _k(T^n) = exp(2pi i * k * n / L)
-        For other symmetries: chi (g) = sector_value (usually +/- 1)
+        For translation T^n in momentum sector k: chi_k(T^n) = exp(2pi i * k * n / L)
+        For other symmetries: chi(g) = sector_value (usually +/- 1)
         
         Parameters
         ----------
@@ -847,8 +863,6 @@ class SymmetryContainer:
         character : complex
             Character value for this element in the current representation
         """
-        #TODO: is this general enough for all symmetries?
-        
         if len(element) == 0:
             return 1.0  # Identity element
         
@@ -858,9 +872,7 @@ class SymmetryContainer:
         from collections import Counter
         op_counts = Counter(element)
         
-        for op in op_counts:
-            count = op_counts[op]
-            
+        for op, count in op_counts.items():
             # Find the sector for this operator
             sector_value = None
             for gen_op, (gen_type, sector) in self.generators:
@@ -871,29 +883,9 @@ class SymmetryContainer:
             if sector_value is None:
                 continue
             
-            # For translation: character is exp(2pi i * k * power / L)
-            if hasattr(op, 'symmetry_class') and op.symmetry_class == SymmetryClass.TRANSLATION:
-                
-                # Get the period (lattice size in this direction)
-                period = self.ns  # Default
-                if self.lattice is not None:
-                    if hasattr(op, 'direction'):
-                        from QES.general_python.lattices.lattice import LatticeDirection
-                        if op.direction == LatticeDirection.X or str(op.direction) == 'x':
-                            period = getattr(self.lattice, 'lx', self.ns)
-                        elif op.direction == LatticeDirection.Y or str(op.direction) == 'y':
-                            period = getattr(self.lattice, 'ly', self.ns)
-                        elif op.direction == LatticeDirection.Z or str(op.direction) == 'z':
-                            period = getattr(self.lattice, 'lz', self.ns)
-                
-                # Character for T^count in momentum sector k
-                character *= np.exp(2j * np.pi * sector_value * count / period)
-            
-            # For discrete symmetries (reflection, parity): character is sector_value^count
-            else:
-                # Usually sector is +/- 1, so character is (+/- 1)^count
-                # anyway, we raise to power count
-                character *= sector_value ** count
+            # Use polymorphic get_character method from the operator
+            # This delegates the character computation to the symmetry class itself
+            character *= op.get_character(count, sector_value, lattice=self.lattice, ns=self.ns)
         
         return character
     
@@ -951,17 +943,11 @@ class SymmetryContainer:
                 # Contribution: chi _k(g)^* * phase
                 projection_sum         += np.conj(character) * intrinsic_phase
         
-        # The projection operator includes a 1/|G| prefactor. Apply it
-        # before taking the square root to compute the proper normalization
-        # N = sqrt( (1/|G|) * sum_g chi _k(g)^* <state|g|state> ).
-        try:
-            gsize = len(self.symmetry_group)
-            if gsize > 0:
-                projection_sum = projection_sum / float(gsize)
-        except Exception:
-            pass
-
-        # Normalization is sqrt of the (possibly scaled) projection sum
+        # Correct formula:
+        #   N_k^2(|r>) = sum_{m=0}^{s-1} e^{ikp*m}  where s = period, p = L/period
+        # 
+        # We've already computed this sum above as projection_sum.
+        # Normalization is sqrt of the projection sum
         norm = np.sqrt(abs(projection_sum))
         
         # Check if normalization is non-zero (state allowed in this sector)

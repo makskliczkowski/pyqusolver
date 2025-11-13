@@ -15,7 +15,7 @@ Date        : 2025-10-26
 import numpy as np
 from collections import defaultdict
 from itertools import product
-from typing import Tuple, Optional, Mapping, Dict, List
+from typing import Tuple, Optional, Mapping, Dict, List, Union
 
 # -------------------------------------------------
 
@@ -329,6 +329,57 @@ class TranslationSymmetry(SymmetryOperator):
     def __str__(self) -> str:
         return f'T({str(self.direction)};{self.momentum_index})'
 
+    # -----------------------------------------------------
+    #! Character computation
+    # -----------------------------------------------------
+    
+    def get_character(self, count: int, sector: Union[int, float, complex], **kwargs) -> complex:
+        """
+        Compute the character (representation eigenvalue) for translation raised to a power.
+        
+        For translation T^n in momentum sector k:
+            chi_k(T^n) = exp(2*pi*i * k * n / L)
+        
+        where:
+            k = sector (momentum index, e.g., 0, 1, 2, ...)
+            n = count (how many times translation is applied)
+            L = period (lattice size in this direction)
+        
+        Parameters
+        ----------
+        count : int
+            How many times translation is applied (power)
+        sector : Union[int, float, complex]
+            Momentum index k (0, 1, 2, ..., L-1)
+        **kwargs : dict
+            Additional context (lattice provided via self.lattice)
+        
+        Returns
+        -------
+        character : complex
+            Phase factor exp(2*pi*i * k * n / L)
+        
+        Examples
+        --------
+        1D chain L=4, k=0:   chi(T^1) = exp(0) = 1
+        1D chain L=4, k=1:   chi(T^1) = exp(2*pi*i/4) = i
+        1D chain L=4, k=2:   chi(T^1) = exp(2*pi*i*2/4) = -1
+        1D chain L=4, k=1:   chi(T^2) = exp(2*pi*i*2/4) = -1
+        """
+        # Get the period (lattice size in this direction)
+        period = self.ns  # Default fallback
+        
+        if self.lattice is not None:
+            if self.direction == LatticeDirection.X or str(self.direction).lower() == 'x':
+                period = getattr(self.lattice, 'lx', self.ns)
+            elif self.direction == LatticeDirection.Y or str(self.direction).lower() == 'y':
+                period = getattr(self.lattice, 'ly', self.ns)
+            elif self.direction == LatticeDirection.Z or str(self.direction).lower() == 'z':
+                period = getattr(self.lattice, 'lz', self.ns)
+        
+        # Character for T^count in momentum sector k
+        return np.exp(2j * np.pi * sector * count / period)
+    
     # -----------------------------------------------------
     #! Override checks
     # -----------------------------------------------------

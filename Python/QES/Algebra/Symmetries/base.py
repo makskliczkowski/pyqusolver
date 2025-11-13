@@ -307,6 +307,47 @@ class SymmetryOperator:
         raise NotImplementedError(f"{self.__class__.__name__} must implement apply_jax()")
         
     # ------------------------------------------------
+    # Character computation
+    # ------------------------------------------------
+    
+    def get_character(self, count: int, sector: Union[int, float, complex], **kwargs) -> complex:
+        """
+        Compute the character (representation eigenvalue) for this symmetry raised to a power.
+        
+        This is a key quantum number that determines the eigenvalue of the symmetry operator
+        in a given representation (momentum sector, parity sector, etc.).
+        
+        Parameters
+        ----------
+        count : int
+            How many times this symmetry operation is applied (power)
+        sector : Union[int, float, complex]
+            The quantum number/sector for this representation
+        **kwargs : dict
+            Additional context (lattice, ns, etc.)
+        
+        Returns
+        -------
+        character : complex
+            Character value chi_sector(op^count)
+        
+        Notes
+        -----
+        Default implementation for discrete symmetries:
+            chi(g^n) = sector^n
+        
+        For translation and other continuous symmetries, override this method.
+        
+        Examples
+        --------
+        Parity with sector=+1: chi(P^2) = (+1)^2 = 1
+        Parity with sector=-1: chi(P^2) = (-1)^2 = 1
+        Translation: See TranslationSymmetry.get_character() for exp(ikn) formula
+        """
+        # Default: discrete symmetry with character = sector^count
+        return sector ** count
+    
+    # ------------------------------------------------
     # Compatibility checking
     # ------------------------------------------------
 

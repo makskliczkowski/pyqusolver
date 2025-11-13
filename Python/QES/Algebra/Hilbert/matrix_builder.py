@@ -155,20 +155,30 @@ def _build_sparse_same_sector_py(
 
             if use_precomputed:
                 idx             = int(hilbert_space.repr_idx[int(new_state)])
+                # Check if state is in this sector (idx == -1 means not in sector)
+                if idx < 0:
+                    continue
+                # repr_phase stores: conj(phase_to_rep) for non-rep states, 1.0 for rep states
+                # Matrix element formula: conj(phase) × norm_idx / norm_k
                 phase           = hilbert_space.repr_phase[int(new_state)]
-                norm_rep        = normalization[idx] if normalization is not None else 1.0
-                sym_factor      = phase * norm_k / norm_rep
+                norm_idx        = normalization[idx] if normalization is not None else 1.0
+                sym_factor      = np.conj(phase) * norm_idx / norm_k
             else:
-                rep, sym_factor      = hilbert_space._sym_container.find_representative(int(new_state), norm_k)
-                idx                                = _binary_search_representative_list(representative_list, rep)
+                rep, sym_factor = hilbert_space._sym_container.find_representative(int(new_state), norm_k)
+                # Binary search returns -1 if state not in this sector
+                idx             = _binary_search_representative_list(representative_list, rep)
+                if idx < 0:
+                    continue  # State not in this symmetry sector, skip
 
-            if idx >= 0:
-                matrix_elem = value * sym_factor
-                if abs(matrix_elem) > 1e-14:
-                    rows[data_idx]  = int(k)
-                    cols[data_idx]  = int(idx)
-                    data[data_idx]  = matrix_elem
-                    data_idx       += 1
+            # idx is valid (>= 0), add matrix element
+            matrix_elem = value * sym_factor
+            if abs(matrix_elem) > 1e-14:
+                # C++ does H(idx, k) where idx is output state, k is input state
+                # This matches operator convention: H|k⟩ gives contributions to state |idx⟩
+                rows[data_idx]  = int(idx)  # Row = output state
+                cols[data_idx]  = int(k)    # Col = input state  
+                data[data_idx]  = matrix_elem
+                data_idx       += 1
 
     return data_idx
 
