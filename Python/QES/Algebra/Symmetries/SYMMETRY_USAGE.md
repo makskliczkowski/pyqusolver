@@ -118,84 +118,70 @@ hilbert = HilbertSpace(
     }
 )
 
-# Only compatible symmetries will be kept
-# The system automatically checks compatibility
+Only compatible symmetries survive this normalization step; incompatible
+constraints are removed automatically.
 ```
 
 ---
 
 ## Why Symmetries Matter
 
-Exploiting symmetries in quantum many-body systems is not just a mathematical convenience—it is often **essential** for making computations tractable and extracting physical insights.
+Exploiting symmetries in quantum many-body systems is essential for keeping
+computations tractable and for extracting physical insight.
 
 ### Computational Benefits
 
-**1. Exponential Hilbert Space Reduction**
+**1. Exponential Hilbert space reduction**
 
-The full Hilbert space of an $L$-site spin-1/2 system has dimension $2^L$, which grows exponentially:
+The Hilbert space of an $L$-site spin-$\tfrac{1}{2}$ chain has dimension $2^L$.
+Symmetries partition this space into much smaller blocks:
 
-- $L=10$: 1,024 states
+- Translation: $L$ momentum sectors, each of size $\approx 2^L/L$.
+- Parity: two subsectors (even/odd).
+- U(1) conservation: binomial blocks $\binom{L}{N}$.
+- Combined symmetries: multiplicative reductions, e.g. translation + parity
+  yields $\approx 2L$ sectors.
 
-Symmetries can reduce this dramatically:
+For $L=20$, the full Hilbert space contains $1\,048\,576$ states (roughly
+8&nbsp;GB for dense double-precision storage). Restricting to the $k=0$ sector
+reduces the matrix to $\sim 175{,}000$ states ($\approx 230$&nbsp;MB), providing
+about a factor of $35$ reduction in dimension and $35^2$ in dense
+diagonalization cost.
 
-- **Translation**: Reduces dimension by factor $\sim L$ (divides into $L$ momentum sectors)
-- **Parity**: Factor of $\sim 2$ (even/odd sectors)
-- **U(1) particle conservation**: Reduces to binomial coefficients $\binom{L}{N}$ (e.g., half-filling: $\sim 2^L/\sqrt{L}$)
-- **Combined symmetries**: Multiplicative reductions (e.g., translation + parity $\sim 2L$)
+**2. Numerical stability**
 
-**2. Memory and Speed Improvements**
-
-For a system with $L=20$ sites:
-
-- Full space: $2^{20} = 1,048,576$ states -> 8 GB matrix (double precision)
-- With translation ($k=0$ sector): $\sim 175,000$ states -> 230 MB matrix
-- **~35× memory reduction, ~35² = 1,225× faster diagonalization**
-
-**3. Numerical Stability**
-
-Block-diagonalizing by symmetry sectors:
-
-- Improves condition numbers of matrices
-- Reduces numerical errors in eigenvalue computations
-- Enables higher precision for degenerate eigenvalues
+Block-diagonalization improves condition numbers, facilitates the resolution of
+degenerate manifolds, and reduces rounding errors in iterative solvers.
 
 ### Physical Insights
 
-**1. Quantum Numbers and Selection Rules**
+**1. Quantum numbers and selection rules**
 
-Symmetries correspond to conserved quantities (Noether's theorem):
+Symmetries correspond to conserved quantities: translation yields crystal
+momentum, U(1) gives particle number or magnetization, and parity encodes
+reflection eigenvalues. These labels identify eigenstates, enforce selection
+rules, and reveal phase structure.
 
-- Translation symmetry -> **Crystal momentum** (k-vector)
-- U(1) symmetry -> **Particle number** (magnetization in spin systems)
-- Parity -> **Reflection eigenvalue**
+**2. Characterizing quantum phases**
 
-These quantum numbers:
+Symmetry content distinguishes phase types: symmetry-protected topological
+phases rely on discrete invariants, continuous symmetry breaking introduces
+order parameters, and integrable versus chaotic regimes display characteristic
+level statistics.
 
-- Label eigenstates unambiguously
-- Impose selection rules (transitions only within same symmetry sector)
-- Reveal phase structure (e.g., spontaneous symmetry breaking)
-
-**2. Characterizing Quantum Phases**
-
-Different phases exhibit different symmetries:
-
-- **Symmetry-protected topological (SPT) phases**: Protected by symmetries
-- **Symmetry-breaking transitions**: Order parameter defined by broken symmetry
-- **Integrable vs. chaotic systems**: Symmetries affect level spacing statistics
-
-**Reference**: For applications of symmetries to quantum chaos and thermalization, see:
-> **"Quantum chaos and thermalization in the two-mode Dicke model"**  
-> Physical Review E **107**, 064119 (2023)  
-> DOI: [10.1103/PhysRevE.107.064119](https://doi.org/10.1103/PhysRevE.107.064119)
-
-This work demonstrates how symmetry sectors exhibit distinct thermalization properties and chaotic dynamics in collective spin models.
+**Reference**: M. Kliczkowski, R. Swietek, L. Vidmar, and M. Rigol, "Average
+entanglement entropy of midspectrum eigenstates of quantum-chaotic interacting
+Hamiltonians," Phys. Rev. E **107**, 064119 (2023),
+doi:10.1103/PhysRevE.107.064119.
 
 ### Practical Recommendations
 
-- **Always exploit symmetries when available**: Even for "small" systems ($L \sim 12$), the gains are substantial
-- **Check symmetry breaking**: Ensure external fields don't break the symmetry you're exploiting (e.g., $h_x \neq 0$ breaks Z-parity)
-- **Use combined symmetries**: Multiple compatible symmetries give multiplicative improvements
-- **Validate your implementation**: Compare symmetry-reduced spectrum with full spectrum on small systems
+- Exploit every compatible symmetry, even on $L \sim 12$ clusters.
+- Confirm that external fields or disorder do not break the symmetry
+  being enforced (e.g. $h_x \neq 0$ violates $P_z$).
+- Combine commuting symmetries whenever possible.
+- Validate each configuration by comparing to the full Hilbert space on
+  the smallest tractable system.
 
 ---
 
@@ -272,7 +258,7 @@ print(f"Hilbert space: {len(E_full)} -> {len(E_all_k)} (factor ~{len(E_full)/len
 assert max_error < 1e-12, "Translation symmetry validation failed!"
 ```
 
-**Validated Output** (L=6):
+**Validated output** ($L=6$):
 
 ```
 k=0: dim=6, n_eigs=14
@@ -286,7 +272,8 @@ Spectrum reconstruction error: 1.67e-15
 Hilbert space: 64 -> 64 (factor ~1.0)
 ```
 
-✅ **Result**: Perfect spectrum reconstruction with machine precision error ($\sim 10^{-15}$)
+Result: the concatenated momentum sectors reproduce the full spectrum to
+machine precision ($\sim 10^{-15}$).
 
 #### 2. Parity Z Symmetry (Even/Odd Sectors)
 
@@ -317,7 +304,7 @@ print(f"Spectrum reconstruction error: {max_error:.2e}")
 assert max_error < 1e-12, "Parity symmetry validation failed!"
 ```
 
-**Validated Output**:
+**Validated output**:
 
 ```
 Parity even: dim=32, GS=-5.500000
@@ -325,7 +312,8 @@ Parity odd:  dim=32, GS=-5.000000
 Spectrum reconstruction error: 8.88e-16
 ```
 
-✅ **Result**: Perfect parity symmetry with 2× Hilbert space reduction
+Result: even and odd parity subsectors each contain half the Hilbert space and
+collectively reconstruct the full spectrum.
 
 #### 3. Combined Translation + Parity
 
@@ -353,12 +341,12 @@ E_kp_sorted = np.sort(E_all_kp)
 max_error = np.max(np.abs(E_kp_sorted - E_full_sorted))
 
 print(f"\nHilbert space reduction: {len(E_full)} -> smallest sector")
-print(f"Combined reduction factor: ~{2*L:.0f}×")
+print(f"Combined reduction factor: ~{2*L:.0f}x")
 print(f"Spectrum reconstruction error: {max_error:.2e}")
 assert max_error < 1e-12, "Combined symmetry validation failed!"
 ```
 
-**Validated Output**:
+**Validated output**:
 
 ```
 k=0, P=+1: dim=7
@@ -368,11 +356,12 @@ k=1, P=-1: dim=5
 ... (all sectors)
 
 Hilbert space reduction: 64 -> smallest sector
-Combined reduction factor: ~12×
+Combined reduction factor: approximately 12
 Spectrum reconstruction error: 1.33e-15
 ```
 
-✅ **Result**: Up to 12× Hilbert space reduction with perfect accuracy
+Result: simultaneous translation and parity enforcement yields nearly a
+$2L$-fold reduction while preserving the full spectrum.
 
 #### 4. Special Limits
 
@@ -412,15 +401,15 @@ print(f"Ising model GS energy: {E[0]:.6f}")
 Comprehensive test suite at `test/test_xxz_symmetries.py`:
 
 | Test | Status | Error | Description |
-| **Translation (all k)** | ✅ | $1.67 \times 10^{-15}$ | All momentum sectors -> full spectrum |
-| **Translation (k=0)** | ✅ | - | Hermiticity, real eigenvalues |
-| **Parity (even/odd)** | ✅ | $8.88 \times 10^{-16}$ | Both sectors -> full spectrum |
-| **Translation + Parity** | ✅ | $1.33 \times 10^{-15}$    | All (k,P) sectors -> full spectrum |
-| **U(1) Conservation** | ✅    | $<10^{-12}$               | All particle sectors -> full spectrum |
-| **Translation + U(1)** | ✅   | $<10^{-12}$               | All (k,N) sectors -> full spectrum |
-| **Heisenberg (Δ=1)** | ✅     | -                         | Isotropic SU(2) symmetric limit |
-| **XY (Δ=0)** | ✅             | -                         | Free fermion limit (Jordan-Wigner) |
-| **Ising (Jxy=0)** | ✅        | -                         | Classical Ising limit |
+| **Translation (all k)** | Pass | $1.67 \times 10^{-15}$ | All momentum sectors reproduce the full spectrum |
+| **Translation (k=0)** | Pass | - | Hermiticity and real eigenvalues verified |
+| **Parity (even/odd)** | Pass | $8.88 \times 10^{-16}$ | Even and odd sectors reconstruct the spectrum |
+| **Translation + Parity** | Pass | $1.33 \times 10^{-15}$    | All $(k,P)$ sectors combine to the full spectrum |
+| **U(1) Conservation** | Pass    | $<10^{-12}$               | All particle sectors reproduce the full spectrum |
+| **Translation + U(1)** | Pass   | $<10^{-12}$               | All $(k,N)$ sectors reproduce the full spectrum |
+| **Heisenberg ($\Delta=1$)** | Pass     | -                         | Isotropic SU(2) symmetric limit |
+| **XY ($\Delta=0$)** | Pass             | -                         | Free-fermion (Jordan-Wigner) limit |
+| **Ising ($J_{xy}=0$)** | Pass        | -                         | Classical Ising limit |
 
 **Total**: 9/9 tests passing
 
@@ -476,14 +465,17 @@ The honeycomb lattice has 2 sites per unit cell (A and B sublattices):
 
 ### Available Symmetries
 
-**IMPORTANT**: Translation symmetry on honeycomb lattice is complex due to the two-site unit cell structure. The current implementation treats translation as shifting individual sites rather than unit cells, which leads to representation normalization issues.
+Translation symmetry on the honeycomb lattice requires unit-cell translations;
+site-by-site shifts generate incorrect normalization factors. Workflows that
+need momentum resolution should therefore carefully validate the reduced
+representation.
 
 | Symmetry | Condition | Implementation Status | Notes |
 |----------|-----------|----------------------|-------|
-| **U(1) Particle** | $h_x = h_z = 0$   | ✅ Works              | Conserves $S^z_{total}$                               |
-| **Translation**   | Uniform couplings | ⚠️ Partial            | Non-Hermitian in reduced basis (normalization issue)  |
-| **Inversion**     | -                 | ❌ Not tested         | Honeycomb has inversion symmetry                      |
-| **Time-Reversal** | -                 | ❌ Not implemented    | Complex conjugation + spin flip                       |
+| **U(1) particle** | $h_x = h_z = 0$   | Supported            | Conserves $S^z_{\text{tot}}$                               |
+| **Translation**   | Uniform couplings | Partial            | Reduced basis requires normalization fix  |
+| **Inversion**     | -                 | Not tested         | Honeycomb admits inversion symmetry                      |
+| **Time-reversal** | -                 | Not implemented    | Requires complex conjugation combined with spin flip                       |
 
 ### Code Examples
 
@@ -640,22 +632,22 @@ print(f"Energy gap: {E_kh[1] - E_kh[0]:.6f}")
 
 | Test | Result | Notes |
 |------|--------|-------|
-| **U(1) Conservation** | ✅ | Spectrum reconstruction error $< 10^{-12}$ |
-| **Translation (k=0)** | ⚠️ | Eigenvalues correct but H not Hermitian |
-| **Translation (all k)** | ⚠️ | Spectrum recoverable with normalization fix needed |
-| **Isotropic Kitaev** | ✅ | Hermitian, real spectrum |
-| **Ising-X limit** | ✅ | Hermitian, real spectrum |
-| **Kitaev-Heisenberg** | ✅ | Hermitian, real spectrum |
+| **U(1) conservation** | Pass | Spectrum reconstruction error $< 10^{-12}$ |
+| **Translation (k=0)** | Partial | Eigenvalues correct but $H$ is not Hermitian |
+| **Translation (all k)** | Partial | Spectrum recoverable; normalization fix required |
+| **Isotropic Kitaev** | Pass | Hermitian, real spectrum |
+| **Ising-X limit** | Pass | Hermitian, real spectrum |
+| **Kitaev-Heisenberg** | Pass | Hermitian, real spectrum |
 
 ### Physical Insights
 
-1. **Quantum Spin Liquid**: The ground state is a quantum spin liquid with fractionalized excitations (Majorana fermions and Z₂ flux vortices)
-
-2. **Exact Solvability**: The Kitaev model is exactly solvable via mapping to free Majorana fermions
-
-3. **Bond-Directional Interactions**: The key feature is that different bonds couple different spin components - this frustrates conventional magnetic order
-
-4. **Honeycomb Geometry**: The non-Bravais lattice structure (2 sites/cell) complicates translation symmetry compared to Bravais lattices
+1. **Quantum spin liquid**: The ground state hosts fractionalized excitations
+   (Majorana fermions and $Z_2$ flux vortices).
+2. **Exact solvability**: The Kitaev model maps to free Majorana fermions.
+3. **Bond-directional interactions**: Different bonds couple different spin
+   components, frustrating conventional order.
+4. **Honeycomb geometry**: The two-site unit cell complicates translation
+   symmetry relative to Bravais lattices.
 
 ### Known Limitations
 
@@ -782,7 +774,7 @@ G_k_single = fourier_transform_lattice(G_real, k_vec, r_vecs)
 
 ## Symmetry Types: Detailed Theory
 
-### Discrete Symmetries (ℤ₂)
+### Discrete Symmetries ($\mathbb{Z}_2$)
 
 **Parity Symmetries**: Spin-flip operators $P_\alpha$ where $\alpha \in \{x, y, z\}$
 
@@ -976,8 +968,8 @@ $$\langle k,r|\hat{H}|k,s\rangle = h_{rs} \cdot \chi_k(g_s)^* \cdot \frac{\mathc
 **Implementation Details**:
 
 - Character formula: `χ_k(T^n) = exp(2πi * k * n / L)` where k=sector, n=count, L=lattice size
-- Normalization: `N = sqrt(Σ_{g∈stabilizer} χ(g)* ⟨ψ|g|ψ⟩)` (no division by |G|)
-- Matrix elements: `⟨k,r|H|k,s⟩ = Σ_t ⟨r|H|t⟩ · conj(χ_k(g_t)) · N_r / N_k`
+- Normalization: `N = sqrt(Σ_{g$\in$stabilizer} χ(g)* ⟨ψ|g|ψ⟩)` (no division by |G|)
+- Matrix elements: `⟨k,r|H|k,s⟩ = Σ_t ⟨r|H|t⟩ \cdot  conj(χ_k(g_t)) \cdot  N_r / N_k`
   where `g_t` maps representative `s` to state `t`
 
 **Example (validated)**:
@@ -1061,7 +1053,7 @@ Output: representative |r̄⟩, group element g_s such that g_s|r̄⟩ = |s⟩
 
 Algorithm:
 1. Initialize: r̄ ← s, g_min ← identity
-2. For each g ∈ G:
+2. For each g $\in$ G:
    a. Compute: s' ← g|s⟩
    b. If s' < r̄ (lexicographic):
       r̄ ← s', g_min ← g
@@ -1098,7 +1090,7 @@ For each non-zero h_rs:
 1. Find representative: s̄ = rep(s), and g_s: g_s|s̄⟩ = |s⟩
 2. Compute character phase: χ_α(g_s)*
 3. Get normalization ratio: N_s̄ / N_r
-4. Matrix element: H_αrs̄ = h_rs · χ_α(g_s)* · (N_s̄ / N_r)
+4. Matrix element: H_αrs̄ = h_rs \cdot  χ_α(g_s)* \cdot  (N_s̄ / N_r)
 ```
 
 **4. Initialization Order**:
@@ -1154,18 +1146,18 @@ Physically: The Hamiltonian must be **invariant** under the symmetry transformat
 
 #### ParityZ (σz -> -σz) Compatibility:
 
-- ✅ **Compatible**: σz σz interactions (Ising coupling), σz fields when hz=0
-- ❌ **Incompatible**: σx terms (transverse field), σy terms
+- Compatible: σz σz interactions (Ising coupling), σz fields when $h_z=0$.
+- Incompatible: σx terms (transverse field) and σy terms.
 
 #### Translation Compatibility:
 
-- ✅ **Compatible**: Any translationally invariant Hamiltonian (including TFIM with uniform hx)
-- ❌ **Incompatible**: Position-dependent couplings, disorder
+- Compatible: Any translationally invariant Hamiltonian (including TFIM with uniform $h_x$).
+- Incompatible: Position-dependent couplings or disorder.
 
 #### U(1) (Particle Conservation) Compatibility:
 
-- ✅ **Compatible**: Number-conserving terms (σz σz, hopping without pairing)
-- ❌ **Incompatible**: σx terms (create/annihilate particles), pairing terms
+- Compatible: Number-conserving terms (σz σz, hopping without pairing).
+- Incompatible: σx terms (create/annihilate particles) or pairing terms.
 
 ### Best Practices
 

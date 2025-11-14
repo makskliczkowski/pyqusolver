@@ -264,55 +264,118 @@ class TranslationSymmetry(SymmetryOperator):
         Returns (perm, crossing_mask)
         
         This helps optimize the application of the translation operator
-        to integer states by precomputing how each site maps under translation
+        to integer states by precomputing how each site maps under translation.
         
+        -----------------------------------------
+        CRITICAL: For non-Bravais lattices (multiple sites per unit cell), translation
+        must act on UNIT CELLS, not individual sites. This preserves sublattice structure.
+        
+        Example: Honeycomb lattice (2 sites per unit cell)
+        - Sites: 0(A), 1(B), 2(A), 3(B), 4(A), 5(B) for Lx=3
+        - Translation T^1 should map:
+            - Site 0(A) -> Site 2(A)
+            - Site 1(B) -> Site 3(B)
+            - Site 2(A) -> Site 4(A)
+            - Site 3(B) -> Site 5(B)
+            - Site 4(A) -> Site 0(A) (wraps around)
+            - Site 5(B) -> Site 1(B) (wraps around)
+        - This means we translate the unit cell index, preserving the sublattice index.
+        - The permutation array must reflect this unit cell translation.
         -----------------------------------------
         perm : np.ndarray
             Array mapping each site to its translated site index.
         crossing_mask : np.ndarray
             Boolean array indicating which sites cross the boundary during translation.
         """
-        lat         = self.lattice
-        direction   = self.direction
-        axis_map    = {
-                        LatticeDirection.X: 0,
-                        LatticeDirection.Y: 1,
-                        LatticeDirection.Z: 2,
-                    }
+        lat             = self.lattice
+        direction       = self.direction
+        axis_map        = {
+                            LatticeDirection.X: 0,
+                            LatticeDirection.Y: 1,
+                            LatticeDirection.Z: 2,
+                        }
         # Determine the axis index for the given direction
         axis            = axis_map[direction]
         dims            = (lat.lx, lat.ly if lat.dim > 1 else 1, lat.lz if lat.dim > 2 else 1)
         size_axis       = dims[axis]
         ns              = getattr(lat, 'Ns', None) or getattr(lat, 'ns', None) or getattr(lat, 'sites', None)
+        
+        # Detect if this is a non-Bravais lattice (multiple sites per unit cell)
+        n_basis         = len(getattr(lat, '_basis', [np.array([0., 0., 0.])]))
+        is_non_bravais  = n_basis > 1
+        
         perm            = np.empty(ns, dtype=np.int64)      # permutation array
         crossing_mask   = np.zeros(ns, dtype=bool)          # do we cross the boundary when translating this site?
         
-        # Build the permutation and crossing mask
-        for site in range(ns):
-            coord       = list(lat.get_coordinates(site))
-            while len(coord) < 3:
-                coord.append(0)
+        if is_non_bravais:
+            # NON-BRAVAIS LATTICE: Translate unit cells, preserve sublattice
+            # Site indexing: site   = cell * n_basis + sublattice (this is how we map sites to unit cells)
+            # where cell            = nx + ny*Lx + nz*Lx*Ly       (this is convention - we stick to it)
+            
+            for site in range(ns):
+                # Decompose site into cell and sublattice
+                cell                = site // n_basis                       # Unit cell index
+                sublattice          = site % n_basis                        # Sublattice index within the unit cell
                 
-            # Compute new coordinates after translation using self.shift
-            new_coord           = coord.copy()
-            new_coord[axis]    += int(getattr(self, 'shift', 1))
-            wrap                = False
+                # Get cell coordinates
+                nx                  =  cell            % lat.lx
+                ny                  = (cell // lat.lx) % lat.ly             if lat.dim >= 2 else 0
+                nz                  = (cell // (lat.lx * lat.ly)) % lat.lz  if lat.dim >= 3 else 0
+                
+                # Translate the UNIT CELL, not the site
+                shift               = int(getattr(self, 'shift', 1))        # Translation shift
+                new_coords          = [nx, ny, nz]                          # Current cell coordinates
+                new_coords[axis]   += shift                                 # Apply translation
+                wrap                = False                                 # Did we wrap around? - for the phase or sign (fermions)
+                
+                # Apply periodic boundary conditions
+                # Compute new coordinates with PBC - on the unit cell level
+                # Phase is handled later during application
+                if new_coords[axis] >= size_axis:
+                    new_coords[axis]   -= size_axis
+                    wrap                = True
+                elif new_coords[axis] < 0:
+                    new_coords[axis]   += size_axis
+                    wrap                = True
+                
+                # Reconstruct new cell index
+                new_nx, new_ny, new_nz  = new_coords[0], new_coords[1], new_coords[2]
+                new_cell                = new_nx + new_ny * lat.lx + new_nz * lat.lx * lat.ly
+                
+                # CRITICAL: Keep the SAME sublattice
+                new_site            = new_cell * n_basis + sublattice
+                perm[site]          = new_site
 
-            # Apply periodic boundary conditions depending on shift sign
-            if new_coord[axis] >= size_axis:
-                new_coord[axis] -= size_axis
-                wrap             = True
-            elif new_coord[axis] < 0:
-                new_coord[axis] += size_axis
-                wrap             = True
-            
-            # Get the destination site index
-            dest                = lat.site_index(int(new_coord[0]), int(new_coord[1]), int(new_coord[2]))
-            perm[site]          = dest
-            
-            # Mark crossing if we wrapped around
-            if wrap:
-                crossing_mask[site] = True
+                # Mark crossing if we wrapped around
+                if wrap:
+                    crossing_mask[site] = True
+        else:
+            # BRAVAIS LATTICE: Easier path, site translation directly
+            for site in range(ns):
+                coord       = list(lat.get_coordinates(site))
+                while len(coord) < 3:
+                    coord.append(0)
+                    
+                # Compute new coordinates after translation using self.shift
+                new_coord           = coord.copy()
+                new_coord[axis]    += int(getattr(self, 'shift', 1))
+                wrap                = False
+
+                # Apply periodic boundary conditions depending on shift sign
+                if new_coord[axis] >= size_axis:
+                    new_coord[axis] -= size_axis
+                    wrap             = True
+                elif new_coord[axis] < 0:
+                    new_coord[axis] += size_axis
+                    wrap             = True
+                
+                # Get the destination site index
+                dest                = lat.site_index(int(new_coord[0]), int(new_coord[1]), int(new_coord[2]))
+                perm[site]          = dest
+                
+                # Mark crossing if we wrapped around
+                if wrap:
+                    crossing_mask[site] = True
 
         return perm, crossing_mask
 
@@ -345,6 +408,10 @@ class TranslationSymmetry(SymmetryOperator):
             n = count (how many times translation is applied)
             L = period (lattice size in this direction)
         
+        NOTE: For non-Bravais lattices, L = number of UNIT CELLS, not total sites.
+        The character is still just the Bloch phase - the N_b degeneracy manifests
+        as N_b bands at each k-point, not as a multiplicative factor in the character.
+        
         Parameters
         ----------
         count : int
@@ -364,9 +431,9 @@ class TranslationSymmetry(SymmetryOperator):
         1D chain L=4, k=0:   chi(T^1) = exp(0) = 1
         1D chain L=4, k=1:   chi(T^1) = exp(2*pi*i/4) = i
         1D chain L=4, k=2:   chi(T^1) = exp(2*pi*i*2/4) = -1
-        1D chain L=4, k=1:   chi(T^2) = exp(2*pi*i*2/4) = -1
+        Honeycomb Lx=3, k=1: chi(T^1) = exp(2*pi*i/3) (same formula, L=Lx=number of cells)
         """
-        # Get the period (lattice size in this direction)
+        # Get the period (number of unit cells in this direction)
         period = self.ns  # Default fallback
         
         if self.lattice is not None:

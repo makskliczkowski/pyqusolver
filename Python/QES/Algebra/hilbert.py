@@ -1100,7 +1100,6 @@ class HilbertSpace(ABC):
     
     @property
     def lattice(self) -> Optional[Lattice]:     return self._lattice
-    def get_lattice(self) -> Optional[Lattice]: return self._lattice
     
     def get_basis(self):
         """
@@ -1139,10 +1138,11 @@ class HilbertSpace(ABC):
     @property
     def sites(self):                            return self._ns
     @property
+    def n_sites(self):                          return self._ns
+    @property
     def Ns(self):                               return self._ns
     @property
     def ns(self):                               return self._ns
-    def get_Ns(self):                           return self._ns
     
     # --------------------------------------------------------------------------------------------------
     
@@ -1283,25 +1283,21 @@ class HilbertSpace(ABC):
     # --------------------------------------------------------------------------------------------------
     
     @property
-    def full(self):                             return self._nhfull
-    @property
-    def Nhfull(self):                           return self._nhfull
-    def get_Nh_full(self):                      return self._nhfull
-    
-    # --------------------------------------------------------------------------------------------------
-    
-    @property
     def dimension(self):                        return self._nh
     @property
     def dim(self):                              return self._nh
     @property
-    def Nh(self):                               return self._nh    
-    def get_Nh(self):                           return self._nh
+    def Nh(self):                               return self._nh
+    @property
+    def nh(self):                               return self._nh
+    @property
+    def hilbert_dim(self):                      return self._nh
     @property
     def full(self):                             return self._nhfull
     @property
     def Nhfull(self):                           return self._nhfull
-    def get_Nh_full(self):                      return self._nhfull
+    @property
+    def nhfull(self):                           return self._nhfull
     
     # --------------------------------------------------------------------------------------------------
     
@@ -1320,6 +1316,37 @@ class HilbertSpace(ABC):
     
     @property
     def logger(self):                           return self._logger
+    
+    @property
+    def operators(self):
+        """
+        Lazy-loaded operator module for convenient operator access.
+        
+        Returns
+        -------
+        OperatorModule
+            Module providing operator factory functions based on the local space type.
+            
+        Examples
+        --------
+        >>> # For spin systems
+        >>> hilbert         = HilbertSpace(ns=4, local_space='spin-1/2')
+        >>> sig_x           = hilbert.operators.sig_x(sites=[0, 1])
+        >>> sig_x_matrix    = sig_x.matrix
+
+        >>> # For fermion systems
+        >>> hilbert         = HilbertSpace(ns=4, local_space='fermion')
+        >>> c_dag           = hilbert.operators.c_dag(sites=[0])
+        >>> c_dag_matrix    = c_dag.matrix
+        
+        >>> # Get help on available operators
+        >>> hilbert.operators.help()
+        """
+        if not hasattr(self, '_operator_module') or self._operator_module is None:
+            from QES.Algebra.Operator.operator_loader import get_operator_module
+            local_space_type = self._local_space.typ if self._local_space else None
+            self._operator_module = get_operator_module(local_space_type)
+        return self._operator_module
     
     ####################################################################################################
     #! Representation of the Hilbert space

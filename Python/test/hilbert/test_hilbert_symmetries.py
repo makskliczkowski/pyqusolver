@@ -1980,7 +1980,7 @@ class TestTranslation2D:
         """
         Test that all 2D momentum sectors sum to full Hilbert space.
         
-        For a 2D lattice of size Lx × Ly, there are Lx × Ly distinct
+        For a 2D lattice of size Lx x Ly, there are Lx x Ly distinct
         momentum sectors. The total number of states across all sectors
         should equal the full Hilbert space dimension.
         """

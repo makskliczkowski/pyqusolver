@@ -50,7 +50,7 @@ class LocalOperator:
     description     : str
     algebra         : str
     sign_convention : str
-    tags            : Tuple[str, ...] = field(default_factory=tuple)
+    tags            : Tuple[str, ...]   = field(default_factory=tuple)
     parameters      : Dict[str, object] = field(default_factory=dict)
 
     def summary(self) -> str:

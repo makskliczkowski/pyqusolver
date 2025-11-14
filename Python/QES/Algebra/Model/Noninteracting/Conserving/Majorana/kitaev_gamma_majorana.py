@@ -538,7 +538,7 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         """
         Pure Kitaev-model dispersion:
             E_pm(k) = |f(k)|
-            f(k) = Kx * exp(i k·dx) + Ky * exp(i k·dy) + Kz * exp(i k·dz)
+            f(k) = Kx * exp(i k\cdot dx) + Ky * exp(i k\cdot dy) + Kz * exp(i k\cdot dz)
         """
         # bond displacements (A -> B)
         
@@ -551,7 +551,7 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         Ky = float(self.k_y[0])
         Kz = float(self.k_z[0])
 
-        # Match Bloch convention: kspace_from_realspace uses exp(-i k·r)
+        # Match Bloch convention: kspace_from_realspace uses exp(-i k\cdot r)
         f_k = (
             Kx * np.exp(-1j * np.dot(k_vec, dx)) +
             Ky * np.exp(-1j * np.dot(k_vec, dy)) +

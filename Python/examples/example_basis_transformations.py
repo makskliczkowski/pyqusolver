@@ -157,7 +157,7 @@ def example_bloch_analysis():
     print("   - Contains the reciprocal-space vectors at each k-point")
     print("   - Used for band structure plots")
     
-    print("\n3. Sublattice phases: e^{-i k·(r_β - r_\alpha)}")
+    print("\n3. Sublattice phases: e^{-i k\cdot (r_β - r_\alpha)}")
     print("   - Applied after FFT to account for intra-cell structure")
     print("   - Critical for multipartite systems (honeycomb, graphene, etc.)")
 

@@ -152,8 +152,8 @@ class Hamiltonian(ABC):
                 
         elif hilbert_space is not None:
             # if the Hilbert space is provided, get the number of sites
-            self._ns        = hilbert_space.get_Ns()
-            self._lattice   = hilbert_space.get_lattice()
+            self._ns        = hilbert_space.ns
+            self._lattice   = hilbert_space.lattice
             if self._dtype is None:
                 self._dtype = hilbert_space.dtype
             if self._logger and self._hilbert_space is not None:
@@ -194,8 +194,8 @@ class Hamiltonian(ABC):
                     raise ValueError(Hamiltonian._ERR_MODE_MISMATCH)
                 self._hamil = None    
     
-        if self._hilbert_space.get_Ns() != self._ns:
-            raise ValueError(f"Ns mismatch: {self._hilbert_space.get_Ns()} != {self._ns}")
+        if self._hilbert_space.ns != self._ns:
+            raise ValueError(f"Ns mismatch: {self._hilbert_space.ns} != {self._ns}")
         
     def _handle_dtype(self, dtype: Optional[Union[str, np.dtype]]):
         '''
@@ -301,8 +301,8 @@ class Hamiltonian(ABC):
         self._handle_system(ns, hilbert_space, lattice, logger, **kwargs)        
                 
         # if the Hilbert space is provided, get the number of sites
-        self._lattice               = self._hilbert_space.get_lattice()
-        self._nh                    = self._hilbert_space.get_Nh()                
+        self._lattice               = self._hilbert_space.lattice
+        self._nh                    = self._hilbert_space.nh                
         self._handle_dtype(dtype)
         if self._lattice is not None:
             self._local_nei         = self.lattice.cardinality
@@ -884,11 +884,11 @@ class Hamiltonian(ABC):
     # modes and hilbert space properties
     
     @property
-    def modes(self):                    return self._hilbert_space.get_modes() if self._hilbert_space is not None else None
+    def modes(self):                    return self._hilbert_space.local_space.local_dim if self._hilbert_space is not None else None
     @property
     def hilbert_space(self):            return self._hilbert_space
     @property
-    def hilbert_size(self):             return self._hilbert_space.get_Nh()
+    def hilbert_size(self):             return self._hilbert_space.nh
     @property
     def dim(self):                      return self.hilbert_size
     @property
@@ -995,6 +995,44 @@ class Hamiltonian(ABC):
     def min_en(self):                   return self._min_en
     @property
     def max_en(self):                   return self._max_en
+    
+    @property
+    def operators(self):
+        """
+        Lazy-loaded operator module for convenient operator access.
+        
+        Returns
+        -------
+        OperatorModule
+            Module providing operator factory functions based on the Hilbert space's local space type.
+            
+        Examples
+        --------
+        >>> # Via Hamiltonian (inherits from HilbertSpace)
+        >>> model           = KitaevModel(lattice, ...)
+        >>> ops             = model.operators
+        >>> sig_x           = ops.sig_x(ns=model.ns, sites=[0, 1])
+        >>> sig_x_matrix    = sig_x.matrix
+
+        >>> # For fermion Hamiltonians
+        >>> hamil           = FermionHamiltonian(ns=4, ...)
+        >>> c_dag           = hamil.operators.c_dag(ns=4, sites=[0])
+        >>> n_op            = hamil.operators.n(ns=4, sites=[0])
+        
+        >>> # Get help
+        >>> hamil.operators.help()
+        """
+        if not hasattr(self, '_operator_module') or self._operator_module is None:
+            from QES.Algebra.Operator.operator_loader import get_operator_module
+            # Get local space type from Hilbert space if available
+            if self._hilbert_space is not None and hasattr(self._hilbert_space, '_local_space'):
+                local_space_type    = self._hilbert_space._local_space.typ
+            else:
+                # Default to spin-1/2 for many-body, None for quadratic
+                from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
+                local_space_type    = LocalSpaceTypes.SPIN_HALF if self._is_manybody else None
+            self._operator_module = get_operator_module(local_space_type)
+        return self._operator_module
         
     @property
     def av_en_idx(self):
@@ -1604,7 +1642,7 @@ class Hamiltonian(ABC):
         
     # ----------------------------------------------------------------------------------------------
 
-    def build(self, verbose: bool = False, use_numpy: bool = False):
+    def build(self, verbose: bool = False, use_numpy: bool = True, force: bool = False):
         '''
         Builds the Hamiltonian matrix. It checks the internal masks 
         wheter it's many-body or quadratic...
@@ -1616,6 +1654,14 @@ class Hamiltonian(ABC):
                 Force numpy usage.
             
         '''
+        if self.hamil is not None:
+            if not force:
+                self._log("Hamiltonian matrix already built. Use force=True to rebuild.", lvl=1)
+                return
+            else:
+                self._log("Forcing rebuild of the Hamiltonian matrix...", lvl=1)
+                self.hamil = None # Clear existing Hamiltonian to force rebuild
+        
         if verbose:
             self._log(f"Building Hamiltonian (Type: {'Many-Body' if self._is_manybody else 'Quadratic'})...", lvl=1, color = 'orange')
         
@@ -2399,6 +2445,139 @@ class Hamiltonian(ABC):
     def fmt(name, value, prec=1):
         """Choose scalar vs array formatter."""
         return Hamiltonian._fmt_scalar(name, value, prec=prec) if np.isscalar(value) else Hamiltonian._fmt_array(name, value, prec=prec)
+    
+    # ----------------------------------------------------------------------------------------------
+    #! K-space transformation helpers (for quadratic Hamiltonians)
+    # ----------------------------------------------------------------------------------------------
+    
+    def to_kspace(self, return_transform: bool = False, **kwargs):
+        r"""
+        Transform quadratic Hamiltonian to k-space.
+        
+        Convenience method that calls kspace_from_realspace with the Hamiltonian's
+        quadratic matrix and lattice.
+        
+        Parameters
+        ----------
+        return_transform : bool, optional
+            If True, also return the Bloch unitary matrix W for operator transformations.
+            Default is False.
+        **kwargs
+            Additional arguments passed to kspace_from_realspace (e.g., unitary_norm, use_cache)
+            
+        Returns
+        -------
+        Hk : np.ndarray
+            K-space Hamiltonian, shape (Lx, Ly, Lz, Nb, Nb)
+        kgrid : np.ndarray
+            K-points in Cartesian coordinates, shape (Lx, Ly, Lz, 3)
+        kgrid_frac : np.ndarray
+            K-points in fractional coordinates, shape (Lx, Ly, Lz, 3)
+        W : np.ndarray, optional
+            Bloch unitary matrix (only if return_transform=True), shape (Lx, Ly, Lz, Ns, Nb)
+            
+        Examples
+        --------
+        >>> model = KitaevModel(lattice, ...)
+        >>> model.build()
+        >>> Hk, kgrid, kgrid_frac = model.to_kspace()
+        >>> 
+        >>> # Get W for operator transformations
+        >>> Hk, kgrid, kgrid_frac, W = model.to_kspace(return_transform=True)
+        >>> # Transform operator: O_k = W^+ @ O @ W
+        
+        Raises
+        ------
+        ValueError
+            If Hamiltonian is not quadratic or lattice is not available
+        """
+        if self._is_manybody:
+            raise ValueError("K-space transformation only available for quadratic Hamiltonians")
+        
+        if self._lattice is None:
+            raise ValueError("Lattice information required for k-space transformation")
+        
+        if self._hamil_sp is None:
+            raise ValueError("Quadratic Hamiltonian not built. Call build() first.")
+        
+        from QES.general_python.lattices.tools.lattice_kspace import kspace_from_realspace
+        
+        # Get matrix (convert sparse to dense if needed)
+        H_real = self._hamil_sp.toarray() if hasattr(self._hamil_sp, 'toarray') else self._hamil_sp
+        
+        return kspace_from_realspace(self._lattice,  H_real, return_transform=return_transform, **kwargs)
+    
+    def from_kspace(self, Hk, kgrid=None):
+        """
+        Transform k-space Hamiltonian back to real space.
+        
+        Parameters
+        ----------
+        Hk : np.ndarray
+            K-space Hamiltonian, shape (Lx, Ly, Lz, Nb, Nb)
+        kgrid : np.ndarray, optional
+            K-point grid (not used, kept for compatibility)
+            
+        Returns
+        -------
+        H_real : np.ndarray
+            Real-space Hamiltonian, shape (Ns, Ns)
+            
+        Examples
+        --------
+        >>> Hk, kgrid, kgrid_frac = model.to_kspace()
+        >>> # Modify Hk...
+        >>> H_real_new = model.from_kspace(Hk)
+        """
+        if self._lattice is None:
+            raise ValueError("Lattice information required for inverse k-space transformation")
+        
+        from QES.general_python.lattices.tools.lattice_kspace import realspace_from_kspace
+        
+        return realspace_from_kspace(self._lattice, Hk, kgrid)
+    
+    def transform_operator_to_kspace(self, operator_matrix, return_grid=True, **kwargs):
+        """
+        Transform an operator to k-space using the same Bloch basis as the Hamiltonian.
+        
+        Parameters
+        ----------
+        operator_matrix : np.ndarray
+            Real-space operator matrix (Ns x Ns)
+        return_grid : bool, optional
+            If True, return k-grid along with transformed operator. Default is True.
+        **kwargs
+            Additional arguments for kspace_from_realspace
+            
+        Returns
+        -------
+        O_k : np.ndarray
+            K-space operator, shape (Lx, Ly, Lz, Nb, Nb)
+        kgrid : np.ndarray, optional
+            K-point grid (only if return_grid=True)
+        kgrid_frac : np.ndarray, optional
+            Fractional k-grid (only if return_grid=True)
+            
+        Examples
+        --------
+        >>> # Create density operator
+        >>> rho = np.zeros((model.ns, model.ns))
+        >>> rho[0, 0] = 1  # Density on site 0
+        >>> 
+        >>> # Transform to k-space
+        >>> rho_k, kgrid, kgrid_frac = model.transform_operator_to_kspace(rho)
+        """
+        if self._lattice is None:
+            raise ValueError("Lattice required for operator transformation")
+        
+        from QES.general_python.lattices.tools.lattice_kspace import kspace_from_realspace
+        
+        result = kspace_from_realspace(self._lattice, operator_matrix, **kwargs)
+        
+        if return_grid:
+            return result  # Returns (O_k, kgrid, kgrid_frac)
+        else:
+            return result[0]  # Returns only O_k
 
 # --------------------------------------------------------------------------------------------------
 

@@ -178,7 +178,7 @@ class MomentumSectorAnalyzer:
             representative  = min(orbit)
             visited.update(orbit)
             
-            # Allowed momenta: k where k·period ≡ 0 (mod extent)
+            # Allowed momenta: k where k\cdot period ≡ 0 (mod extent)
             allowed_k       = []
             
             # Find allowed momentum indices

@@ -159,7 +159,7 @@ def _build_sparse_same_sector_py(
                 if idx < 0:
                     continue
                 # repr_phase stores: conj(phase_to_rep) for non-rep states, 1.0 for rep states
-                # Matrix element formula: conj(phase) × norm_idx / norm_k
+                # Matrix element formula: conj(phase) x norm_idx / norm_k
                 phase           = hilbert_space.repr_phase[int(new_state)]
                 norm_idx        = normalization[idx] if normalization is not None else 1.0
                 sym_factor      = np.conj(phase) * norm_idx / norm_k

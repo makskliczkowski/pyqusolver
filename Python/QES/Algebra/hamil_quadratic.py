@@ -1107,9 +1107,9 @@ class QuadraticHamiltonian(Hamiltonian):
             self._log(f"Converting sparse matrix to dense for Bloch transform", lvl=2, color="yellow")
             H_real = H_real.toarray()
         
-        # Apply Bloch transform with extract_bands=False to get full Ns×Ns matrices
-        self._log(f"Applying FFT-based Bloch transform on {H_real.shape} matrix (full Ns×Ns mode)", lvl=2, color="cyan")
-        (H_k, k_grid, k_grid_frac)  = self._lattice.kspace_from_realspace(H_real)   
+        # Apply Bloch transform with extract_bands=False to get full NsxNs matrices
+        self._log(f"Applying FFT-based Bloch transform on {H_real.shape} matrix (full NsxNs mode)", lvl=2, color="cyan")
+        (H_k, k_grid, k_grid_frac)  = self._lattice.kspace_from_realspace(H_real, block_diag=True)  
         
         # Store transformed representation using general attributes
         self._hamil_transformed     = H_k
@@ -1664,25 +1664,17 @@ class QuadraticHamiltonian(Hamiltonian):
         
         results: List[QuadraticBlockDiagonalInfo] = []
         
+        # H_k and k_grid are both in fftfreq order (unshifted)
+        # Gamma point is at index [0,0,0] for both
         # Iterate over all k-points
         for i in range(H_k.shape[0]):
             for j in range(H_k.shape[1]):
                 for k in range(H_k.shape[2]):
-                    # move this by 0.5 fractions to center at Gamma
-                    
                     k_vec       = np.asarray(k_grid[i, j, k, :],        dtype=np.float64)
-                    k_vec_frac  = np.asarray(k_grid_frac[i, j, k, :],   dtype=np.float64)                    
+                    k_vec_frac  = np.asarray(k_grid_frac[i, j, k, :],   dtype=np.float64)
                     
-                    
-                    #! WHY TF DO I HAVE TO USE MOVED ONES!
-                    # Extract this k-block
-                    ii          = i
-                    jj          = j
-                    kk          = k
-                    # ii          = (i + H_k.shape[0]//2) % H_k.shape[0]
-                    # jj          = (j + H_k.shape[1]//2) % H_k.shape[1]
-                    # kk          = (k + H_k.shape[2]//2) % H_k.shape[2]
-                    H_block     = np.asarray(H_k[ii, jj, kk, :, :],     dtype=self._dtype)
+                    # Use H_k directly (both in fftfreq order)
+                    H_block     = np.asarray(H_k[i, j, k, :, :], dtype=self._dtype)
 
                     # Diagonalize this block
                     try:
