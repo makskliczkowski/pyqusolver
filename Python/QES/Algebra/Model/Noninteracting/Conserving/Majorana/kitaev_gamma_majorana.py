@@ -559,7 +559,7 @@ class KitaevGammaMajorana(QuadraticHamiltonian):
         )
 
         Ek = np.abs(f_k)
-        return +Ek, -Ek
+        return -Ek, +Ek
 
     
 # -------------------------------------------------------------------------

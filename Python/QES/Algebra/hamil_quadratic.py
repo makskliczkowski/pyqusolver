@@ -1674,7 +1674,11 @@ class QuadraticHamiltonian(Hamiltonian):
                     k_vec_frac  = np.asarray(k_grid_frac[i, j, k, :],   dtype=np.float64)
                     
                     # Use H_k directly (both in fftfreq order)
-                    H_block     = np.asarray(H_k[i, j, k, :, :], dtype=self._dtype)
+                    im, jm, km  = i, j, k
+                    # im, jm, km  = (i + H_k.shape[0]//2) % H_k.shape[0], \
+                    #               (j + H_k.shape[1]//2) % H_k.shape[1], \
+                    #               (k + H_k.shape[2]//2) % H_k.shape[2]
+                    H_block     = np.asarray(H_k[im, jm, km, :, :], dtype=self._dtype)
 
                     # Diagonalize this block
                     try:
