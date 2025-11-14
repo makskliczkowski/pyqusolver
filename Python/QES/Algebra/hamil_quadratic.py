@@ -2444,8 +2444,8 @@ class QuadraticHamiltonian(Hamiltonian):
         """
         
         try:
-            from QES.general_python.physics.spectral.spectral_backend import greens_function_quadratic
-            from QES.general_python.physics.spectral.spectral_function import spectral_function as sf_func
+            from QES.general_python.physics.spectral.spectral_backend   import greens_function_quadratic
+            from QES.general_python.physics.spectral.spectral_function  import spectral_function as sf_func
         except ImportError:
             raise ImportError("Required spectral modules not found in QES.general_python.physics.spectral.")
         

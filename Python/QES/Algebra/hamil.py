@@ -2251,17 +2251,17 @@ class Hamiltonian(ABC):
         if not modifies:
             if operator.type_acting == OperatorTypeActing.Global:
                 self._ops_nmod_nosites[i].append((op_tuple))
-                self._log(f"Adding non-modifying operator {operator} at site {i} (global) with multiplier {op_tuple[2]}", lvl = 2)
+                self._log(f"Adding non-modifying operator {operator} at site {i} (global) with multiplier {op_tuple[2]}", lvl = 2, log = 'debug')
             else:
                 self._ops_nmod_sites[i].append((op_tuple))
-                self._log(f"Adding non-modifying operator {operator} at site {i} (sites: {str(op_tuple[1])}) with multiplier {op_tuple[2]}", lvl = 2)
+                self._log(f"Adding non-modifying operator {operator} at site {i} (sites: {str(op_tuple[1])}) with multiplier {op_tuple[2]}", lvl = 2, log = 'debug')
         else:
             if operator.type_acting == OperatorTypeActing.Global:
                 self._ops_mod_nosites[i].append((op_tuple))
-                self._log(f"Adding modifying operator {operator} at site {i} (global) with multiplier {op_tuple[2]}", lvl = 2)
+                self._log(f"Adding modifying operator {operator} at site {i} (global) with multiplier {op_tuple[2]}", lvl = 2, log = 'debug')
             else:
                 self._ops_mod_sites[i].append((op_tuple))
-                self._log(f"Adding modifying operator {operator} at site {i} (sites: {str(op_tuple[1])}) with multiplier {op_tuple[2]}", lvl = 2)
+                self._log(f"Adding modifying operator {operator} at site {i} (sites: {str(op_tuple[1])}) with multiplier {op_tuple[2]}", lvl = 2, log = 'debug')
 
     def _set_local_energy_operators(self):
         '''

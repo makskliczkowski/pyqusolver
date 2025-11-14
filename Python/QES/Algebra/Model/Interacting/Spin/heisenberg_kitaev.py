@@ -341,20 +341,20 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
             if self._hz is not None and not np.isclose(self._hz[i], 0.0, rtol=1e-10):
                 z_field = SINGLE_TERM_MULT * self._hz[i]
                 self.add(op_sz_l, multiplier = z_field, modifies = False, sites = [i])
-                self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
+                # self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
 
             #? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if self._hx is not None and not np.isclose(self._hx[i], 0.0, rtol=1e-10):
                 x_field = SINGLE_TERM_MULT * self._hx[i]
                 self.add(op_sx_l, multiplier = x_field, modifies = True, sites = [i])
-                self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = 'debug')
+                # self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = 'debug')
             
             #? impurities
             for (imp_site, imp_strength) in self._impurities:
                 if imp_site == i:
                     imp_field = SINGLE_TERM_MULT * imp_strength
                     self.add(op_sz_l, multiplier = imp_field, modifies = False, sites = [i])
-                    self._log(f"Adding impurity Sz at {i} with value {imp_field:.2f}", lvl = 2, log = 'debug')
+                    # self._log(f"Adding impurity Sz at {i} with value {imp_field:.2f}", lvl = 2, log = 'debug')
 
             #? now check the correlation operators
             nn_num = nn_nums[i]
@@ -388,13 +388,13 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 if True:
                     if not np.isclose(sz_sz, 0.0, rtol=1e-10):
                         self.add(op_sz_sz_c, sites = [i, nei], multiplier = sz_sz, modifies = False)
-                        self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
+                        # self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
                     if not np.isclose(sx_sx, 0.0, rtol=1e-10):
                         self.add(op_sx_sx_c, sites = [i, nei], multiplier = sx_sx, modifies = True)
-                        self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
+                        # self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
                     if not np.isclose(sy_sy, 0.0, rtol=1e-10):
                         self.add(op_sy_sy_c, sites = [i, nei], multiplier = sy_sy, modifies = True)
-                        self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
+                        # self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
                 
                 elems += 1
                 
@@ -419,7 +419,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                     #     self._log(f"Adding Gamma_z SzSx + SxSz at {i},{nei} with value {self._gz:.2f}", lvl = 2, log = 'debug')
 
                 #! Finalize the operator addition for this neighbor
-                self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
+                # self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
         self._log(f"Total NN elements added: {elems}", color='red')
         self._log("Successfully set local energy operators...", lvl=1, log='info')
 
