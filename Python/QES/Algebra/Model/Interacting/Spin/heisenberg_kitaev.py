@@ -82,6 +82,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 Gamma               : Union[List[float], None, float]       = None,
                 # Magnetic fields
                 hx                  : Union[List[float], None, float]       = None,
+                hy                  : Union[List[float], None, float]       = None,
                 hz                  : Union[List[float], None, float]       = None,
                 # Classical impurities (s^z_i * <s^z_imp> * cos(theta), with theta the angle between the spin and the z-axis)
                 impurities          : List[Tuple[int, float]]               = [],
@@ -112,6 +113,9 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 Can be a single float (uniform) or a list (site-dependent).
             hx : Union[List[float], None, float], optional
                 External magnetic field in the x direction. Default is 0.0.
+                Can be a single float (uniform) or a list (site-dependent).
+            hy : Union[List[float], None, float], optional
+                External magnetic field in the y direction. Default is 0.0.
                 Can be a single float (uniform) or a list (site-dependent).
             hz : Union[List[float], None, float], optional
                 External magnetic field in the z direction. Default is 0.0.
@@ -145,7 +149,8 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                          hilbert_space  = hilbert_space,
                          lattice        = lattice, 
                          is_sparse      = True,
-                         dtype          = dtype, backend=backend, logger=logger, use_forward=use_forward, **kwargs)
+                         dtype          = dtype if hy is None else np.complex128, # enforce complex dtype if hy field is used
+                         backend=backend, logger=logger, use_forward=use_forward, **kwargs)
 
         # Initialize the Hamiltonian
         if hilbert_space is None:
@@ -153,6 +158,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         
         # setup the fields
         self._hx                        = hx    if isinstance(hx, (list, np.ndarray, tuple)) else [hx] * self.ns if hx is not None else None
+        self._hy                        = hy    if isinstance(hy, (list, np.ndarray, tuple)) else [hy] * self.ns if hy is not None else None
         self._hz                        = hz    if isinstance(hz, (list, np.ndarray, tuple)) else [hz] * self.ns if hz is not None else None
         # setup the couplings
         self._j                         = J     if isinstance(J, (list, np.ndarray, tuple)) else [J] * self.ns if J is not None else None
@@ -160,9 +166,9 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         self._dlt                       = dlt   if isinstance(dlt, (list, np.ndarray, tuple)) else [dlt] * self.ns if dlt is not None else None
         self._kx, self._ky, self._kz    = K     if isinstance(K, (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K)
         # setup the impurities
-        if self._logger is not None:
-            self._log(f"Setting up impurities: {impurities}", lvl = 2, log = 'info', color = 'green')
         self._impurities                = impurities if (isinstance(impurities, list) and all(isinstance(i, tuple) and len(i) == 2 for i in impurities)) else []
+        self._log(f"Initializing Heisenberg-Kitaev Hamiltonian on lattice: {lattice}", lvl = 1, log = 'info', color = 'green')
+        self._log(f"Impurities provided: {self._impurities}", lvl = 2, log = 'info', color = 'blue')
             
         self._neibz                     = [[]]
         self._neiby                     = [[]]
@@ -176,11 +182,12 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         #! Calculate maximum local coupling channels
         # 3 from Heisenberg + 3 from Kitaev + 6 from Gamma + 2 from fields + impurities len(self._impurities)
         self._max_local_ch              = 3                                             + \
-                                        (3 if self._j is not None else 0)               + \
+                                        (3 if self._j is not None else  0)              + \
                                         (2 if self._gx is not None else 0)              + \
                                         (2 if self._gy is not None else 0)              + \
                                         (2 if self._gz is not None else 0)              + \
                                         (1 if self._hz is not None else 0)              + \
+                                        (1 if self._hy is not None else 0)              + \
                                         (1 if self._hx is not None else 0)              + \
                                         len(self._impurities)
         self.set_couplings()
@@ -221,15 +228,11 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
             hamil_module.Hamiltonian.fmt("Gz",      self._gz,       prec=prec) if self._gz  is not None else "",
             hamil_module.Hamiltonian.fmt("dlt",     self._dlt,      prec=prec) if self._dlt is not None else "",
             hamil_module.Hamiltonian.fmt("hz",      self._hz,       prec=prec) if self._hz  is not None else "",
+            hamil_module.Hamiltonian.fmt("hy",      self._hy,       prec=prec) if self._hy  is not None else "",
             hamil_module.Hamiltonian.fmt("hx",      self._hx,       prec=prec) if self._hx  is not None else "",
         ]
-
-        # # symmetry / boundary info from HilbertSpace object
-        # hilbert_info = self.hilbert_space.get_sym_info().strip()
-        # if len(hilbert_info) > 0:
-        #     parts.append(hilbert_info)
-        # parts.append(str(self.lattice.bc))
         
+        parts = [p for p in parts if p]
         return sep.join(parts) + ")"
     
     def __str__(self): return self.__repr__()
@@ -304,30 +307,33 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         super()._set_local_energy_operators()
         
         # Use the lattice from the Hamiltonian
-        lattice         = self._lattice
+        lattice         =   self._lattice
+        if lattice is None:
+            raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
         
         #! define the operators beforehand - to avoid multiple creations
-        op_sx_l         =   operators_spin_module.sig_x(lattice = lattice,
-                                type_act = operators_spin_module.OperatorTypeActing.Local)
-        op_sy_l         =   operators_spin_module.sig_y(lattice = lattice,
-                                type_act = operators_spin_module.OperatorTypeActing.Local)
-        op_sz_l         =   operators_spin_module.sig_z(lattice = lattice,
-                                type_act = operators_spin_module.OperatorTypeActing.Local)
+        op_sx_l         =   operators_spin_module.sig_x(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Local)
+        op_sy_l         =   operators_spin_module.sig_y(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Local)
+        op_sz_l         =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Local)
+
+        # Kitaev and Heisenberg terms - correlation operators (two-site)
+        op_sx_sx_c      =   operators_spin_module.sig_x(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
+        op_sy_sy_c      =   operators_spin_module.sig_y(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
+        op_sz_sz_c      =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
         
-        # Kitaev and Heisenberg terms
-        op_sx_sx_c      =   operators_spin_module.sig_x(lattice = lattice,
-                                type_act = operators_spin_module.OperatorTypeActing.Correlation)
-        op_sy_sy_c      =   operators_spin_module.sig_y(lattice = lattice,
-                                type_act = operators_spin_module.OperatorTypeActing.Correlation)
-        op_sz_sz_c      =   operators_spin_module.sig_z(lattice = lattice,
-                                type_act = operators_spin_module.OperatorTypeActing.Correlation)
-        # Gamma terms - off-diagonal couplings SxSy + SySx, SxSz + SzSx, SySz + SzSy
-        op_sx_sy_c      =   op_sx_l * op_sy_l
-        op_sz_sx_c      =   op_sz_l * op_sx_l
-        op_sy_sz_c      =   op_sy_l * op_sz_l
-        op_sz_sy_c      =   op_sz_l * op_sy_l
-        op_sx_sz_c      =   op_sx_l * op_sz_l
-        op_sy_sx_c      =   op_sy_l * op_sx_l
+        # Gamma terms - off-diagonal couplings using correlation operators
+        # Gz * (SxSy + SySx), Gy * (SxSz + SzSx), Gx * (SySz + SzSy)
+        op_sx_c         =   operators_spin_module.sig_x(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
+        op_sy_c         =   operators_spin_module.sig_y(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
+        op_sz_c         =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
+        
+        # Create Gamma operators as products of correlation operators
+        op_sx_sy_c      =   op_sx_c * op_sy_c   # SxSy
+        op_sy_sx_c      =   op_sy_c * op_sx_c   # SySx
+        op_sz_sx_c      =   op_sz_c * op_sx_c   # SzSx
+        op_sx_sz_c      =   op_sx_c * op_sz_c   # SxSz
+        op_sy_sz_c      =   op_sy_c * op_sz_c   # SySz
+        op_sz_sy_c      =   op_sz_c * op_sy_c   # SzSy
 
         nn_nums         =   [lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else \
                             [lattice.get_nn_num(i) for i in range(self.ns)]
@@ -342,6 +348,12 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 z_field = SINGLE_TERM_MULT * self._hz[i]
                 self.add(op_sz_l, multiplier = z_field, modifies = False, sites = [i])
                 # self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
+
+            #? y-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
+            if self._hy is not None and not np.isclose(self._hy[i], 0.0, rtol=1e-10):
+                y_field = SINGLE_TERM_MULT * self._hy[i]
+                self.add(op_sy_l, multiplier = y_field, modifies = True, sites = [i])
+                # self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl = 2, log = 'debug')
 
             #? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if self._hx is not None and not np.isclose(self._hx[i], 0.0, rtol=1e-10):
@@ -399,27 +411,30 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 elems += 1
                 
                 #! Gamma terms
-                # if True:
+                if True:
                     #? Gamma_x terms
-                    # if self._gx is not None and not np.isclose(self._gx, 0.0, rtol=1e-10):
-                    #     self.add(op_sx_sy_c, sites = [i, nei], multiplier = self._gx * phase, modifies = True)
-                    #     self.add(op_sy_sx_c, sites = [i, nei], multiplier = self._gx * phase, modifies = True)
-                    #     self._log(f"Adding Gamma_x SxSy + SySx at {i},{nei} with value {self._gx:.2f}", lvl = 2, log = 'debug')
-                        
+                    if self._gx is not None and not np.isclose(self._gx, 0.0, rtol=1e-10):
+                        val = self._gx * phase * CORR_TERM_MULT
+                        self.add(op_sy_sz_c, sites = [i, nei], multiplier = val, modifies = True)
+                        self.add(op_sz_sy_c, sites = [i, nei], multiplier = val, modifies = True)
+                        self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+
                     # #? Gamma_y terms
-                    # if self._gy is not None and not np.isclose(self._gy, 0.0, rtol=1e-10):
-                    #     self.add(op_sy_sz_c, sites = [i, nei], multiplier = self._gy * phase, modifies = True)
-                    #     self.add(op_sz_sy_c, sites = [i, nei], multiplier = self._gy * phase, modifies = True)
-                    #     self._log(f"Adding Gamma_y SySz + SzSy at {i},{nei} with value {self._gy:.2f}", lvl = 2, log = 'debug')
-                        
+                    if self._gy is not None and not np.isclose(self._gy, 0.0, rtol=1e-10):
+                        val = self._gy * phase * CORR_TERM_MULT
+                        self.add(op_sz_sx_c, sites = [i, nei], multiplier = val, modifies = True)
+                        self.add(op_sx_sz_c, sites = [i, nei], multiplier = val, modifies = True)
+                        self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+
                     # #? Gamma_z terms
-                    # if self._gz is not None and not np.isclose(self._gz, 0.0, rtol=1e-10):
-                    #     self.add(op_sz_sx_c, sites = [i, nei], multiplier = self._gz * phase, modifies = True)
-                    #     self.add(op_sx_sz_c, sites = [i, nei], multiplier = self._gz * phase, modifies = True)
-                    #     self._log(f"Adding Gamma_z SzSx + SxSz at {i},{nei} with value {self._gz:.2f}", lvl = 2, log = 'debug')
+                    if self._gz is not None and not np.isclose(self._gz, 0.0, rtol=1e-10):
+                        val = self._gz * phase * CORR_TERM_MULT
+                        self.add(op_sx_sy_c, sites = [i, nei], multiplier = val, modifies = True)
+                        self.add(op_sy_sx_c, sites = [i, nei], multiplier = val, modifies = True)
+                        self._log(f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
 
                 #! Finalize the operator addition for this neighbor
-                # self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
+                self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
         self._log(f"Total NN elements added: {elems}", color='red')
         self._log("Successfully set local energy operators...", lvl=1, log='info')
 

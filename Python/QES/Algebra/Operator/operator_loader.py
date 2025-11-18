@@ -23,10 +23,11 @@ Email           : maxgrom97@gmail.com
 ------------------------------------------------------------------------
 """
 
-from typing import Optional, TYPE_CHECKING
+from typing import Callable, Optional, TYPE_CHECKING
 from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
 
 if TYPE_CHECKING:
+    from QES.Algebra.Operator import Operator
     from QES.Algebra.Operator import operators_spin
     from QES.Algebra.Operator import operators_spinless_fermions
     from QES.Algebra.Operator import operators_hardcore
@@ -49,7 +50,7 @@ class OperatorModule:
             The type of local space to determine which operators to load.
             If None, defaults to SPIN_HALF.
         """
-        self._local_space_type = local_space_type or LocalSpaceTypes.SPIN_1_2
+        self._local_space_type  = local_space_type or LocalSpaceTypes.SPIN_1_2
         self._spin_module       = None
         self._fermion_module    = None
         self._hardcore_module   = None
@@ -83,7 +84,7 @@ class OperatorModule:
             self._anyon_module = operators_anyon
         return self._anyon_module
     
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Callable[..., 'Operator']:
         """
         Dynamically load and return operator factory functions.
         
@@ -170,6 +171,30 @@ class OperatorModule:
     # ----------------------------
     # Utility method to print help
     # ----------------------------
+
+    @staticmethod
+    def overlap(a, O, b, backend: str = 'default'):
+        """
+        Compute the overlap <a|O|b> using the specified backend.
+        """
+        from QES.Algebra.backends import overlap
+        return overlap(a, O, b, backend=backend)
+    
+    @staticmethod
+    def kron(A, B, backend: str = 'default'):
+        """
+        Compute the Kronecker product A ⊗ B using the specified backend.
+        """
+        from QES.Algebra.backends import kron
+        return kron(A, B, backend=backend)
+    
+    @staticmethod
+    def outer(a, b, backend: str = 'default'):
+        """
+        Compute the outer product |a><b| using the specified backend.
+        """
+        from QES.Algebra.backends import outer
+        return outer(a, b, backend=backend)
     
     def help(self):
         """
@@ -181,24 +206,24 @@ class OperatorModule:
         
         if self._local_space_type in (LocalSpaceTypes.SPIN_1_2, LocalSpaceTypes.SPIN_1):
             print("\n  Spin Operators:")
-            print("    sig_x      - Pauli X (sigma_x) operator")
-            print("    sig_y      - Pauli Y (sigma_y) operator") 
-            print("    sig_z      - Pauli Z (sigma_z) operator")
-            print("    sig_plus   - Raising operator (sigma_+)")
-            print("    sig_minus  - Lowering operator (sigma_-)")
-            print("    sig_z_total- Total magnetization (sigma_i sigma_z^i)")
+            print("    sig_x        - Pauli X (sigma_x) operator")
+            print("    sig_y        - Pauli Y (sigma_y) operator") 
+            print("    sig_z        - Pauli Z (sigma_z) operator")
+            print("    sig_plus     - Raising operator (sigma_+)")
+            print("    sig_minus    - Lowering operator (sigma_-)")
+            print("    sig_z_total  - Total magnetization (sigma_i sigma_z^i)")
             
         elif self._local_space_type == LocalSpaceTypes.SPINLESS_FERMIONS:
             print("\n  Fermionic Operators:")
-            print("    c_dag      - Creation operator (c^+)")
-            print("    c, c_ann   - Annihilation operator (c)")
-            print("    n, n_op    - Number operator (n = c^+c)")
+            print("    c_dag        - Creation operator (c^+)")
+            print("    c, c_ann     - Annihilation operator (c)")
+            print("    n, n_op      - Number operator (n = c^+c)")
             
         elif self._local_space_type == LocalSpaceTypes.BOSONS:
             print("\n  Boson Operators:")
-            print("    b_dag      - Creation operator (b^+)")
-            print("    b, b_ann   - Annihilation operator (b)")
-            print("    n, n_op    - Number operator (n = b^+b)")
+            print("    b_dag        - Creation operator (b^+)")
+            print("    b, b_ann     - Annihilation operator (b)")
+            print("    n, n_op      - Number operator (n = b^+b)")
         
         print("\nUsage:")
         print("  op = operators.sig_x(ns=4, sites=[0, 1])")

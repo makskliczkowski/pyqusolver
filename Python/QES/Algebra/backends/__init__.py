@@ -254,7 +254,6 @@ def register_backend(name: str, backend_class: type) -> None:
     """
     pass  # No-op - backends are managed centrally
 
-
 def get_backend_registry() -> BackendRegistry:
     """
     Access the backend registry (backward compatibility).
@@ -270,7 +269,6 @@ def get_backend_registry() -> BackendRegistry:
     get_backend() and get_available_backends() functions.
     """
     return BackendRegistry()
-
 
 def get_available_backends() -> List[Tuple[str, bool]]:
     """
@@ -300,7 +298,6 @@ def get_available_backends() -> List[Tuple[str, bool]]:
         ('jax', JAX_AVAILABLE),
     ]
 
-
 def get_dtype_registry() -> Dict[str, Dict[str, Any]]:
     """
     Access the unified dtype registry.
@@ -320,7 +317,6 @@ def get_dtype_registry() -> Dict[str, Dict[str, Any]]:
     """
     return _DTYPE_REGISTRY
 
-
 def get_dtype_map() -> Dict[Any, str]:
     """
     Access the dtype-to-name mapping.
@@ -331,7 +327,6 @@ def get_dtype_map() -> Dict[Any, str]:
         Mapping from dtype to name (e.g., np.float64 -> 'float64')
     """
     return _TYPE_TO_NAME
-
 
 def get_global_backend_manager():
     """
@@ -349,7 +344,6 @@ def get_global_backend_manager():
     Advanced use only. Most users should use get_backend() instead.
     """
     return backend_mgr
-
 
 # ============================================================================
 # Linear Algebra Operations (via backend_linalg)

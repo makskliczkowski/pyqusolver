@@ -903,6 +903,15 @@ class Hamiltonian(ABC):
     @property
     def eig_val(self):                  return self._eig_val
     @property
+    def eigenvals(self):                return self._eig_val
+    @property
+    def eig_vals(self):                 return self._eig_val
+    @property
+    def eigen_vals(self):               return self._eig_val
+    @property 
+    def energies(self):                 return self._eig_val
+    
+    @property
     def eig_vec(self):                  return self._eig_vec
     @property
     def eigenvectors(self):             return self._eig_vec
@@ -1031,8 +1040,50 @@ class Hamiltonian(ABC):
                 # Default to spin-1/2 for many-body, None for quadratic
                 from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
                 local_space_type    = LocalSpaceTypes.SPIN_HALF if self._is_manybody else None
-            self._operator_module = get_operator_module(local_space_type)
+            self._operator_module   = get_operator_module(local_space_type)
         return self._operator_module
+        
+    @property
+    def entanglement(self):
+        """
+        Lazy-loaded entanglement module for convenient entanglement entropy calculations.
+        
+        Returns
+        -------
+        EntanglementModule
+            Module providing entanglement entropy calculations for arbitrary bipartitions.
+            Supports both correlation matrix (fast, for quadratic Hamiltonians) and 
+            many-body (exact, for any state) methods.
+            
+        Examples
+        --------
+        >>> # For quadratic Hamiltonians (fast correlation matrix method)
+        >>> hamil       = FreeFermions(ns=12, t=1.0)
+        >>> hamil.diagonalize()
+        >>> ent         = hamil.entanglement
+        >>> bipart      = ent.bipartition([0, 1, 2, 3, 4])  # First 5 sites
+        >>> S           = ent.entropy_correlation(bipart, orbitals=[0,1,2,3,4])
+        
+        >>> # For any Hamiltonian (exact many-body method)
+        >>> state       = hamil.many_body_state([0,1,2,3,4])
+        >>> S           = ent.entropy_many_body(bipart, state)
+        
+        >>> # Non-contiguous bipartitions
+        >>> bipart      = ent.bipartition([0, 2, 4, 6, 8])  # Even sites
+        >>> S           = ent.entropy_correlation(bipart, [0,1,2])
+        
+        >>> # Entropy scaling
+        >>> results     = ent.entropy_scan([0,1,2,3,4])
+        >>> import matplotlib.pyplot as plt
+        >>> plt.plot(results['sizes'], results['entropies'])
+        
+        >>> # Get help
+        >>> hamil.entanglement.help()
+        """
+        if not hasattr(self, '_entanglement_module') or self._entanglement_module is None:
+            from QES.general_python.physics.entanglement_module import get_entanglement_module
+            self._entanglement_module = get_entanglement_module(self)
+        return self._entanglement_module
         
     @property
     def av_en_idx(self):
@@ -1323,6 +1374,10 @@ class Hamiltonian(ABC):
     def get_krylov_basis(self) -> Optional[Array]:
         """
         Get the Krylov basis from the last diagonalization.
+        This corespons to the matrix V whose columns are the Krylov basis vectors.
+        
+        To be available, the Krylov basis must have been stored during
+        diagonalization (store_basis=True) using an iterative method.
         
         Returns:
         --------
@@ -1334,6 +1389,15 @@ class Hamiltonian(ABC):
             >>> V = hamil.get_krylov_basis()
             >>> if V is not None:
             ...     print(f"Krylov basis shape: {V.shape}")
+            
+            >>> # Manual transformation
+            >>> v_krylov    = np.array([1, 0, 0, ...])  # First Ritz vector
+            >>> v_original  = V @ v_krylov              # Transform to original basis
+            >>> print(f"Original vector: {v_original}")
+            
+            >>> # Matrix reconstruction
+            >>> H_reconstructed = V @ np.diag(hamil.energies) @ V.T
+            >>> print(f"Reconstructed Hamiltonian shape: {H_reconstructed.shape}")
         """
         return diag_helpers.get_krylov_basis(self._diag_engine, self._krylov)
     
@@ -1377,8 +1441,7 @@ class Hamiltonian(ABC):
             to_krylov_basis : Inverse transformation
             has_krylov_basis : Check if basis is available
         """
-        return diag_helpers.to_original_basis(vec, self._diag_engine, 
-                                             self.get_diagonalization_method())
+        return diag_helpers.to_original_basis(vec, self._diag_engine, self.get_diagonalization_method())
 
     def to_krylov_basis(self, vec: Array) -> Array:
         """
@@ -1943,67 +2006,77 @@ class Hamiltonian(ABC):
         - 'arnoldi'         : Arnoldi iteration for general matrices
         - 'shift-invert'    : Shift-invert mode for interior eigenvalues
         
+        Other features:
+        -----------
+        - Backend selection: NumPy, SciPy, JAX
+        - Krylov basis storage for transformations
+        - Convergence control and diagnostics
+        
         The method stores Krylov basis information when using iterative methods,
         enabling transformations between Krylov and original basis spaces.
         
         Parameters:
         -----------
-            verbose : bool, optional
-                Enable verbose output. Default is False.
-            **kwargs : dict
-                Method selection and solver parameters:
+        
+        verbose : bool, optional
+            Enable verbose output. Default is False.
+            
+        Method Selection:
+        --------
+        method : str
+            Diagonalization method ('auto', 'exact', 'lanczos', 
+            'block_lanczos', 'arnoldi', 'shift-invert'). Default: 'auto'.
+        backend : str
+            Computational backend ('numpy', 'scipy', 'jax'). 
+            Default: inferred from Hamiltonian.
+        use_scipy : bool
+            Prefer SciPy implementations. Default: True.    
                 
-                Method Selection:
-                    method : str
-                        Diagonalization method ('auto', 'exact', 'lanczos', 
-                        'block_lanczos', 'arnoldi', 'shift-invert'). Default: 'auto'.
-                    backend : str
-                        Computational backend ('numpy', 'scipy', 'jax'). 
-                        Default: inferred from Hamiltonian.
-                    use_scipy : bool
-                        Prefer SciPy implementations. Default: True.
-                
-                Eigenvalue Selection:
-                    k : int
-                        Number of eigenvalues to compute. Default: 6 for iterative,
-                        all for exact.
-                    which : str
-                        Which eigenvalues to find:
-                        - Lanczos/Block Lanczos: 'smallest', 'largest', 'both'
-                        - Arnoldi: 'LM', 'SM', 'LR', 'SR', 'LI', 'SI'
-                        - Shift-invert: eigenvalues nearest to sigma
-                        Default: 'smallest'.
-                    sigma : float
-                        Shift value for shift-invert mode. Finds eigenvalues
-                        nearest to this value. Default: 0.0.
-                
-                Convergence Control:
-                    tol : float
-                        Convergence tolerance. Default: 1e-10.
-                    max_iter : int
-                        Maximum number of iterations. Default: auto.
-                
-                Block Lanczos Specific:
-                    block_size : int
-                        Size of block for Block Lanczos. Default: min(k, 3).
-                    reorthogonalize : bool
-                        Enable reorthogonalization. Default: True.
-                
-                Basis Storage:
-                    store_basis : bool
-                        Store Krylov basis for transformations. Default: True.
+        Eigenvalue Selection:
+        --------
+        k : int
+            Number of eigenvalues to compute. Default: 6 for iterative,
+            all for exact.
+        which : str
+            Which eigenvalues to find:
+            - Lanczos/Block Lanczos: 'smallest', 'largest', 'both'
+            - Arnoldi: 'LM', 'SM', 'LR', 'SR', 'LI', 'SI'
+            - Shift-invert: eigenvalues nearest to sigma
+            Default: 'smallest'.
+        sigma : float
+            Shift value for shift-invert mode. Finds eigenvalues
+            nearest to this value. Default: 0.0.
+    
+        Convergence Control:
+        --------
+        tol : float
+            Convergence tolerance. Default: 1e-10.
+        max_iter : int
+            Maximum number of iterations. Default: auto.
+    
+        Block Lanczos Specific:
+        --------
+        block_size : int
+            Size of block for Block Lanczos. Default: min(k, 3).
+        reorthogonalize : bool
+            Enable reorthogonalization. Default: True.
+    
+        Basis Storage:
+        --------
+        store_basis : bool
+            Store Krylov basis for transformations. Default: True.
         
         Updates:
         --------
-            self._eig_val : ndarray
-                Computed eigenvalues (sorted).
-            self._eig_vec : ndarray
-                Computed eigenvectors (columns).
-            self._krylov : ndarray
-                Krylov basis (for iterative methods, if store_basis=True).
-            self._diag_engine : DiagonalizationEngine
-                Engine instance with full result information.
-        
+        self._eig_val : ndarray
+            Computed eigenvalues (sorted).
+        self._eig_vec : ndarray
+            Computed eigenvectors (columns).
+        self._krylov : ndarray
+            Krylov basis (for iterative methods, if store_basis=True).
+        self._diag_engine : DiagonalizationEngine
+            Engine instance with full result information.
+    
         Examples:
         ---------
             >>> # Auto-select method and compute all eigenvalues (small matrix)
@@ -2058,6 +2131,9 @@ class Hamiltonian(ABC):
             
             hermitian       = kwargs.get("hermitian", True)
             if hermitian in kwargs: kwargs.pop("hermitian")
+            
+            max_iter        = kwargs.get("max_iter", None)
+            if max_iter in kwargs: kwargs.pop("max_iter")
 
         # Determine backend
         if backend_str is None:
@@ -2089,7 +2165,7 @@ class Hamiltonian(ABC):
         
         # Prepare solver kwargs (remove our custom parameters)
         solver_kwargs   = {key: val for key, val in kwargs.items() 
-                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which']}
+                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which', 'max_iter']}
         
         matrix_to_diag  = self._hamil
 

@@ -1804,7 +1804,6 @@ class SpinOperatorTests(GeneralAlgebraicTest):
 #! Registration with the operator catalog
 ###############################################################################
 
-
 def _register_catalog_entries():
     """
     Register standard spin-1/2 onsite operators with the global catalog.

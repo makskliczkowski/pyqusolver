@@ -208,18 +208,31 @@ def local_energy_jax_wrap(ns                        : int,
     total_rows                                                  = total_rows_sites + total_rows_nosites + 1 # +1 for the original state
     
     # Convert functions to tuples
-    def operator_wrap(f, sites):
+    def operator_wrap(f, sites, target_dtype):
         static_sites = jnp.asarray(sites, dtype=jnp.int32)
         
         @jax.jit
         def wrapped_operator(state):
-            return f(state, *static_sites)
+            new_state, coeff    = f(state, *static_sites)
+            # Ensure coefficient matches target dtype for jax.lax.switch compatibility
+            coeff_typed         = jnp.asarray(coeff, dtype=target_dtype)
+            return new_state, coeff_typed
         return wrapped_operator
     
-    _op_f_mod_sites_wrap                                        = tuple(operator_wrap(_op_f_mod_sites[i], _op_i_mod_sites[i]) for i in range(len(_op_f_mod_sites)))
-    _op_f_nmod_sites_wrap                                       = tuple(operator_wrap(_op_f_nmod_sites[i], _op_i_nmod_sites[i]) for i in range(len(_op_f_nmod_sites)))
-    _op_f_mod_nosites                                           = tuple(_op_f_mod_nosites)
-    _op_f_nmod_nosites                                          = tuple(_op_f_nmod_nosites)
+    # Wrapper for operators without site arguments
+    def operator_wrap_nosites(f, target_dtype):
+        @jax.jit
+        def wrapped_operator(state):
+            new_state, coeff = f(state)
+            # Ensure coefficient matches target dtype for jax.lax.switch compatibility
+            coeff_typed = jnp.asarray(coeff, dtype=target_dtype)
+            return new_state, coeff_typed
+        return wrapped_operator
+    
+    _op_f_mod_sites_wrap                                        = tuple(operator_wrap(_op_f_mod_sites[i], _op_i_mod_sites[i], dtype) for i in range(len(_op_f_mod_sites)))
+    _op_f_nmod_sites_wrap                                       = tuple(operator_wrap(_op_f_nmod_sites[i], _op_i_nmod_sites[i], dtype) for i in range(len(_op_f_nmod_sites)))
+    _op_f_mod_nosites                                           = tuple(operator_wrap_nosites(_op_f_mod_nosites[i], dtype) for i in range(len(_op_f_mod_nosites)))
+    _op_f_nmod_nosites                                          = tuple(operator_wrap_nosites(_op_f_nmod_nosites[i], dtype) for i in range(len(_op_f_nmod_nosites)))
     
     # create a wrapper function
     def init_wrapper(

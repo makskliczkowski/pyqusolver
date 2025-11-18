@@ -154,13 +154,13 @@ class DiagonalizationEngine:
     # ------------------------------------------------------------------------------------
     
     def diagonalize(self,
-                    A               : Optional[NDArray]                         = None,
-                    matvec          : Optional[Callable[[NDArray], NDArray]]    = None,
-                    n               : Optional[int]                             = None,
-                    k               : Optional[int]                             = None,
-                    hermitian       : bool                                      = True,
-                    which           : Union[str, Literal['smallest', 'largest', 'both']] = 'smallest',
-                    store_basis     : bool                                      = True,
+                    A               : Optional[NDArray]                                     = None,
+                    matvec          : Optional[Callable[[NDArray], NDArray]]                = None,
+                    n               : Optional[int]                                         = None,
+                    k               : Optional[int]                                         = None,
+                    hermitian       : bool                                                  = True,
+                    which           : Union[str, Literal['smallest', 'largest', 'both']]    = 'smallest',
+                    store_basis     : bool                                                  = True,
                     **kwargs)       -> EigenResult:
         r"""
         Diagonalize a matrix using the specified or auto-selected method.
@@ -343,17 +343,14 @@ class DiagonalizationEngine:
             >>> original_vec    = engine.to_original_basis(ritz_vec)
         """
 
-        if self._method_used == 'exact':    # For exact diagonalization, eigenvectors are already in original basis
+        if self._method_used == 'exact':
             return vec
         
-        if self._krylov_basis is None:      # If no Krylov basis stored, assume already in original basis
-            return vec
-        
-        #! Transform: original = V @ krylov
-        if vec.ndim == 1:
-            return self._krylov_basis @ vec
-        else:
-            return self._krylov_basis @ vec
+        if self._krylov_basis is None:
+            raise ValueError("No Krylov basis available")
+
+        V = self._krylov_basis
+        return V @ vec
     
     def to_krylov_basis(self, vec: NDArray) -> NDArray:
         """
@@ -381,24 +378,16 @@ class DiagonalizationEngine:
             >>> krylov_coeffs = engine.to_krylov_basis(state)
         """
         
-        if self._method_used == 'exact':    # For exact diagonalization, no transformation needed
+        if self._method_used == 'exact':
             return vec
-        
+
         if self._krylov_basis is None:
             raise ValueError("No Krylov basis available for transformation")
-        
-        # Transform: krylov = V.H @ original (or V.T for real)
+
         V = self._krylov_basis
-        if np.iscomplexobj(V):
-            if vec.ndim == 1:
-                return V.conj().T @ vec
-            else:
-                return V.conj().T @ vec
-        else:
-            if vec.ndim == 1:
-                return V.T @ vec
-            else:
-                return V.T @ vec
+
+        # Always correct, real or complex:
+        return V.conj().T @ vec
     
     def get_basis_transform(self) -> Optional[NDArray]:
         """

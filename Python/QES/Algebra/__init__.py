@@ -31,10 +31,11 @@ MODULE_DESCRIPTION = "Algebra for quantum many-body: Hilbert spaces, Hamiltonian
 
 # Import main classes with explicit relative imports to avoid ambiguity
 try:
-    from .hilbert import HilbertSpace                           # type: ignore
-    from .hilbert_config import HilbertConfig, SymmetrySpec     # type: ignore
-    from .hamil import Hamiltonian                              # type: ignore
-    from .hamil_config import (                                 # type: ignore
+    from .hilbert import HilbertSpace                                   # type: ignore
+    from .hilbert_config import HilbertConfig, SymmetrySpec             # type: ignore
+    from .hamil import Hamiltonian                                      # type: ignore
+    from .backends import overlap, outer, kron, inner, trace, identity  # type: ignore
+    from .hamil_config import (                                         # type: ignore
         HamiltonianConfig,
         HAMILTONIAN_REGISTRY,
         register_hamiltonian,

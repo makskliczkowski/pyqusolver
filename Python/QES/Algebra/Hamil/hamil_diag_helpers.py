@@ -14,14 +14,17 @@ Date        : 2025-10-26
 """
 
 import numpy as np
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from QES.Algebra.Hamil.hamil_diag_engine import DiagonalizationEngine
 
 # ----------------------------------------------------------------------------------------
 #! Basis Transformation Utilities
 # ----------------------------------------------------------------------------------------
 
-def has_krylov_basis(diag_engine, krylov_stored: Optional[NDArray]) -> bool:
+def has_krylov_basis(diag_engine: Optional['DiagonalizationEngine'], krylov_stored: Optional[NDArray]) -> bool:
     """
     Check if a Krylov basis is available.
     
@@ -40,7 +43,7 @@ def has_krylov_basis(diag_engine, krylov_stored: Optional[NDArray]) -> bool:
         return diag_engine.has_krylov_basis()
     return krylov_stored is not None
 
-def get_krylov_basis(diag_engine, krylov_stored: Optional[NDArray]) -> Optional[NDArray]:
+def get_krylov_basis(diag_engine: Optional['DiagonalizationEngine'], krylov_stored: Optional[NDArray]) -> Optional[NDArray]:
     """
     Get the Krylov basis.
     
@@ -129,7 +132,7 @@ def get_basis_transform(diag_engine: Optional['DiagonalizationEngine'], krylov_s
 #! Diagnostic Information
 # ----------------------------------------------------------------------------------------
 
-def get_diagonalization_method(diag_engine) -> Optional[str]:
+def get_diagonalization_method(diag_engine: Optional['DiagonalizationEngine']) -> Optional[str]:
     """
     Get the diagonalization method used.
     
@@ -166,12 +169,12 @@ def get_diagonalization_info(diag_engine    : Optional['DiagonalizationEngine'],
         dict : Dictionary with diagnostic information
     """
     info = {
-        'method': None,
-        'converged': True,
-        'iterations': None,
-        'residual_norms': None,
-        'has_krylov_basis': has_krylov_basis(diag_engine, krylov_stored),
-        'num_eigenvalues': len(eig_val) if eig_val is not None else 0
+        'method'            : None,
+        'converged'         : True,
+        'iterations'       : None,
+        'residual_norms'   : None,
+        'has_krylov_basis' : has_krylov_basis(diag_engine, krylov_stored),
+        'num_eigenvalues'  : len(eig_val) if eig_val is not None else 0
     }
     
     if diag_engine is not None:
