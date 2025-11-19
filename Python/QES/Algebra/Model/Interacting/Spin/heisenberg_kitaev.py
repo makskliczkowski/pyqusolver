@@ -212,7 +212,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         HeiKit(Ns=16, J=1.000, Kx=0.200, Ky=0.200, Kz=0.000, dlt=1.000,
                 hz[min=-0.500, max=0.300], hx=0.000, sym=U1 CBC)
         """
-        prec   = 2          # decimal places
+        prec   = 3          # decimal places
         sep    = ","        # parameter separator
 
         # string

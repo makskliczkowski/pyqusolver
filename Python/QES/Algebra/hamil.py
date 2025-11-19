@@ -2514,7 +2514,7 @@ class Hamiltonian(ABC):
         if arr.size == 0:
             return f"{name}=[]"
         if np.allclose(arr, arr.flat[0], atol=tol, rtol=0):
-            return Hamiltonian._fmt_scalar(name, float(arr.flat[0]))
+            return Hamiltonian._fmt_scalar(name, float(arr.flat[0]), prec=prec)
         return f"{name}[min={arr.min():.{prec}f},max={arr.max():.{prec}f}]"
 
     @staticmethod
