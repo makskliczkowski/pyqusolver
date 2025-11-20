@@ -289,7 +289,7 @@ if NUMBA_AVAILABLE:
         matrix = np.zeros((nh, nh), dtype=dtype)
         for row in numba.prange(nh):
             # Call the Python operator_func in object mode
-            with numba.objmode(py_out='UniTuple(pyobject, pyobject)'):
+            with numba.objmode(py_out='UniTuple(pyobject, 2)'):
                 py_out = operator_func(row)
             
             new_states_py, values_py = py_out
