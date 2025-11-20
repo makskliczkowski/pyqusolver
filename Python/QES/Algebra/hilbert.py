@@ -119,7 +119,7 @@ class HilbertSpace(ABC):
                 
                 self._ns      = Ns_est
                 self._lattice = None
-                self._log(f"Inferred Ns={self._ns} from Nh={nh} and local_dim={_local_dim}", log='info', lvl=2)
+                self._log(f"Inferred Ns={self._ns} from Nh={nh} and local_dim={_local_dim}", log='debug', lvl=2)
             except Exception as e:
                 HilbertSpace._raise(HilbertSpace._ERRORS['nh_incons'])
         elif nh is not None and self._is_quadratic:
@@ -1055,7 +1055,7 @@ class HilbertSpace(ABC):
 
         # Set the basis type
         self._basis_type = default_basis
-        self._log(f"HilbertSpace default basis inferred: {default_basis} ({basis_reason})", lvl=2, color="cyan")
+        self._log(f"HilbertSpace default basis inferred: {default_basis} ({basis_reason})", lvl=2, color="cyan", log='debug')
     
     ####################################################################################################
     #! Getters and checkers for the Hilbert space

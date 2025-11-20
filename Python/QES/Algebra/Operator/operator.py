@@ -1782,14 +1782,18 @@ class Operator(ABC):
                 from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
                 if verbose:
                     hilbert_1.log(f"Calculating the operator matrix {self._name} using NumPy with single Hilbert space...", lvl=2)
-                    
-                t1      = time.time()
-                matrix  = build_operator_matrix(
-                    operator_func       = wrapped_fun,
+                
+                # wrapped_cmp_fun = numba.njit(wrapped_fun)
+                wrapped_cmp_fun = wrapped_fun
+                t1              = time.time()
+                matrix          = build_operator_matrix(
+                    operator_func       = wrapped_cmp_fun,
                     hilbert_space       = hilbert_1,
                     sparse              = is_sparse,
                     max_local_changes   = max_loc_upd,
-                    dtype               = dtype
+                    dtype               = dtype,
+                    nh                  = hilbert_1.nh if hilbert_1 is not None else dim1,
+                    ns                  = hilbert_1.ns if hilbert_1 is not None else None
                 )
                 if verbose:
                     hilbert_1.log(f"Time taken to create the matrix {self._name}: {time.time() - t1:.2e} seconds", lvl=2)
@@ -1813,7 +1817,9 @@ class Operator(ABC):
                     hilbert_space_out   = hilbert_2,
                     sparse              = is_sparse,
                     max_local_changes   = max_loc_upd,
-                    dtype               = dtype
+                    dtype               = dtype,
+                    nh                  = hilbert_1.nh if hilbert_1 is not None else dim1,
+                    ns                  = hilbert_1.ns if hilbert_1 is not None else None
                 )
                 if verbose:
                     if hasattr(hilbert_1, 'log'):
