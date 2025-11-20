@@ -27,7 +27,13 @@ if JAX_AVAILABLE:
 else:
     jax = None
     jnp = np
-    
+
+class StatTypes(Enum):
+    MEAN       = 'mean'
+    MEDIAN     = 'median'
+    VARIANCE   = 'variance'
+    STD        = 'std'
+
 # -----------------------------------------------------------------------------
 #! LDOS
 # -----------------------------------------------------------------------------
@@ -288,7 +294,7 @@ def _alloc_bin_info(uniform_bins: bool, uniform_log_bins: bool, bins: Optional[n
 @numba.njit(fastmath=True, cache=True)
 def _normalize_by_bin_width(sums: np.ndarray, bins: np.ndarray) -> None:
     """
-    In-place divide by Δω; counts- or typical-normalization can be done elsewhere.
+    In-place divide by \Deltaω; counts- or typical-normalization can be done elsewhere.
     """
     nbins = bins.shape[0] - 1
     for i in range(nbins):
@@ -810,7 +816,73 @@ def spectral_structure(data: np.ndarray, window: int) -> np.ndarray:
     return residual
 
 # -----------------------------------------------------------------------------
+#! Statistical properties
+# -----------------------------------------------------------------------------
+
+def microcanonical_average(energies     : np.ndarray,
+                        observables     : np.ndarray,
+                        e_mean          : float,
+                        delta_e         : float = 5e-2,
+                        n_closest       : int   = 10,
+                        stat            : StatTypes = StatTypes.MEAN
+                        ) -> float:
+    r"""
+    Compute the microcanonical ensemble average Q_ME(\mu) for a single realization \mu.
+
+    According to Eq. (E4):
+        Q_ME(\mu) = (1 / N_{\epsilon_i,\Delta\epsilon}) * Σ_{|E_n - \epsilon_i| < \Delta\epsilon} O_n,
+    where O_n is the observable value corresponding to eigenstate n.
+
+    If there are no states within |E_n - \epsilon_i| < \Delta\epsilon, the function instead selects
+    the n_closest eigenstates (default: 10) closest in energy to \epsilon_i.
+
+    Parameters
+    ----------
+    energies : np.ndarray
+        1D array of eigenenergies E_n for a single realization.
+    observables : np.ndarray
+        1D array of observable values O_n corresponding to each energy E_n.
+    e_mean : float
+        Mean energy \epsilon_i of the initial state.
+    delta_e : float, optional
+        Microcanonical window width \Delta\epsilon. Default is 5e-2.
+    n_closest : int, optional
+        Number of nearest eigenstates to use if the window is empty. Default is 10.
+
+    Returns
+    -------
+    float
+        Microcanonical ensemble average Q_ME(\mu).
+    """
+    
+    if len(energies) == 0 or len(observables) == 0:
+        return np.nan
+
+    if isinstance(stat, str):
+        stat = StatTypes(stat.lower())
+
+    # indices within |E_n - \epsilon_i| < \Delta\epsilon
+    idx = np.where(np.abs(energies - e_mean) < delta_e)[0]
+
+    if len(idx) == 0:
+        # fallback: take n_closest states
+        idx = np.argsort(np.abs(energies - e_mean))[:n_closest]
+
+    if stat == StatTypes.MEAN:
+        return np.mean(observables[idx])
+    elif stat == StatTypes.MEDIAN:
+        return np.median(observables[idx])
+    elif stat == StatTypes.MAX:
+        return np.max(observables[idx])
+    elif stat == StatTypes.MIN:
+        return np.min(observables[idx])
+    else:
+        raise ValueError(f"Unknown statistical method: {stat}")
+    return np.nan
+
+# -----------------------------------------------------------------------------
 #! EOF 
+# -----------------------------------------------------------------------------
 
 
 
