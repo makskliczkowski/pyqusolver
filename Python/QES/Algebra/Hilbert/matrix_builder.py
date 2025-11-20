@@ -271,106 +271,7 @@ def _build_dense_same_sector_py(
 
     return matrix
 
-# -----------------------------------------------------------------------------------------------
-#! JITTED FUNCTIONS (if numba is available)
-# -----------------------------------------------------------------------------------------------
 
-if NUMBA_AVAILABLE:
-    @numba.njit(parallel=True, cache=True)
-    def _build_dense_no_hilbert_jit(operator_func, nh, dtype_char):
-        """
-        Numba-accelerated dense matrix builder for no-symmetry case.
-        """
-        if dtype_char == 'f':
-            dtype = np.float64
-        else:
-            dtype = np.complex128
-
-        matrix = np.zeros((nh, nh), dtype=dtype)
-        for row in numba.prange(nh):
-            # Call the Python operator_func in object mode
-            with numba.objmode(py_out='UniTuple(pyobject, 2)'):
-                py_out = operator_func(row)
-            
-            new_states_py, values_py = py_out
-            new_states = np.asarray(new_states_py, dtype=np.int64)
-            values = np.asarray(values_py)
-
-            if values.dtype != dtype:
-                values = values.astype(dtype)
-
-            mask = (new_states >= 0) & (new_states < nh)
-            
-            # Atomic add not needed since each thread writes to a different row
-            for i in range(len(new_states)):
-                if mask[i]:
-                    if abs(values[i]) >= 1e-14:
-                         matrix[row, new_states[i]] += values[i]
-        return matrix
-
-    @numba.njit(parallel=True, cache=True)
-    def _build_triplets_parallel_jit(operator_func, nh, dtype_char):
-        """
-        Numba-accelerated triplet builder for sparse matrix construction.
-        Uses thread-local lists to build COO data in parallel.
-        """
-        if dtype_char == 'f':
-            dtype = np.float64
-        else:
-            dtype = np.complex128
-        
-        num_threads = numba.get_num_threads()
-        rows_per_thread = [List.empty_list(numba.int64) for _ in range(num_threads)]
-        cols_per_thread = [List.empty_list(numba.int64) for _ in range(num_threads)]
-        vals_per_thread = [List.empty_list(dtype) for _ in range(num_threads)]
-
-        for i in numba.prange(nh):
-            thread_id = numba.get_thread_id()
-            # Call Python operator_func in object mode
-            with numba.objmode(py_out='UniTuple(pyobject, 2)'):
-                py_out = operator_func(i)
-
-            new_states_py, values_py = py_out
-            new_states = np.asarray(new_states_py, dtype=np.int64)
-            values = np.asarray(values_py)
-            if values.dtype != dtype:
-                values = values.astype(dtype)
-
-            for j in range(len(new_states)):
-                if 0 <= new_states[j] < nh:
-                    if abs(values[j]) >= 1e-14:
-                        rows_per_thread[thread_id].append(i)
-                        cols_per_thread[thread_id].append(new_states[j])
-                        vals_per_thread[thread_id].append(values[j])
-
-        return rows_per_thread, cols_per_thread, vals_per_thread
-
-    def _build_triplets_jit_wrapper(operator_func, nh, alloc_dtype):
-        """
-        Wrapper to run the parallel Numba triplet builder and concatenate results.
-        """
-        dtype_char = 'c' if np.issubdtype(alloc_dtype, np.complexfloating) else 'f'
-        
-        # Run the JIT-compiled parallel builder
-        thread_results = _build_triplets_parallel_jit(operator_func, nh, dtype_char)
-        rows_per_thread, cols_per_thread, vals_per_thread = thread_results
-        
-        # Concatenate results from all threads
-        total_nnz = sum(len(l) for l in rows_per_thread)
-        rows = np.empty(total_nnz, dtype=np.int64)
-        cols = np.empty(total_nnz, dtype=np.int64)
-        data = np.empty(total_nnz, dtype=alloc_dtype)
-        
-        pos = 0
-        for i in range(len(rows_per_thread)):
-            n = len(rows_per_thread[i])
-            if n > 0:
-                rows[pos:pos+n] = np.asarray(rows_per_thread[i])
-                cols[pos:pos+n] = np.asarray(cols_per_thread[i])
-                data[pos:pos+n] = np.asarray(vals_per_thread[i])
-                pos += n
-                
-        return rows, cols, data
 
 # ------------------------------------------------------------------------------------------
 
@@ -535,34 +436,99 @@ def _build_no_hilbert(operator_func       : Callable,
     if NUMBA_AVAILABLE:
         dtype_char = 'c' if np.issubdtype(alloc_dtype, np.complexfloating) else 'f'
         if not sparse:
-            return _build_dense_no_hilbert_jit(operator_func, nh, dtype_char)
-        else:
-            r, c, d = _build_triplets_jit_wrapper(operator_func, nh, alloc_dtype)
-            return sp.csr_matrix((d, (r, c)), shape=(nh, nh), dtype=alloc_dtype)
+            @numba.njit(parallel=True, cache=True)
+            def _build_dense_no_hilbert_jit_inner(n_hilbert, dtype_char_inner):
+                if dtype_char_inner == 'f':
+                    dt = np.float64
+                else:
+                    dt = np.complex128
+
+                matrix = np.zeros((n_hilbert, n_hilbert), dtype=dt)
+                for row in numba.prange(n_hilbert):
+                    with numba.objmode(py_out='UniTuple(pyobject, 2)'):
+                        py_out = operator_func(row)
+                    
+                    new_states_py, values_py = py_out
+                    new_states = np.asarray(new_states_py, dtype=np.int64)
+                    values = np.asarray(values_py)
+
+                    if values.dtype != dt:
+                        values = values.astype(dt)
+
+                    for i in range(len(new_states)):
+                        if 0 <= new_states[i] < n_hilbert and abs(values[i]) >= 1e-14:
+                            matrix[row, new_states[i]] += values[i]
+                return matrix
+
+            return _build_dense_no_hilbert_jit_inner(nh, dtype_char)
+        else: # sparse
+            @numba.njit(parallel=True, cache=True)
+            def _build_triplets_parallel_jit_inner(n_hilbert, dtype_char_inner):
+                if dtype_char_inner == 'f':
+                    dt = np.float64
+                else:
+                    dt = np.complex128
+                
+                num_threads = numba.get_num_threads()
+                rows_per_thread = [List.empty_list(numba.int64) for _ in range(num_threads)]
+                cols_per_thread = [List.empty_list(numba.int64) for _ in range(num_threads)]
+                vals_per_thread = [List.empty_list(dt) for _ in range(num_threads)]
+
+                for i in numba.prange(n_hilbert):
+                    thread_id = numba.get_thread_id()
+                    with numba.objmode(py_out='UniTuple(pyobject, 2)'):
+                        py_out = operator_func(i)
+
+                    new_states_py, values_py = py_out
+                    new_states = np.asarray(new_states_py, dtype=np.int64)
+                    values = np.asarray(values_py)
+                    if values.dtype != dt:
+                        values = values.astype(dt)
+
+                    for j in range(len(new_states)):
+                        if 0 <= new_states[j] < n_hilbert and abs(values[j]) >= 1e-14:
+                            rows_per_thread[thread_id].append(i)
+                            cols_per_thread[thread_id].append(new_states[j])
+                            vals_per_thread[thread_id].append(values[j])
+                return rows_per_thread, cols_per_thread, vals_per_thread
+
+            thread_results = _build_triplets_parallel_jit_inner(nh, dtype_char)
+            rows_per_thread, cols_per_thread, vals_per_thread = thread_results
+            
+            total_nnz = sum(len(l) for l in rows_per_thread)
+            if total_nnz == 0:
+                return sp.csr_matrix((nh, nh), dtype=alloc_dtype)
+
+            rows = np.empty(total_nnz, dtype=np.int64)
+            cols = np.empty(total_nnz, dtype=np.int64)
+            data = np.empty(total_nnz, dtype=alloc_dtype)
+            
+            pos = 0
+            for i in range(len(rows_per_thread)):
+                n = len(rows_per_thread[i])
+                if n > 0:
+                    rows[pos:pos+n] = np.asarray(rows_per_thread[i])
+                    cols[pos:pos+n] = np.asarray(cols_per_thread[i])
+                    data[pos:pos+n] = np.asarray(vals_per_thread[i])
+                    pos += n
+            
+            return sp.csr_matrix((data, (rows, cols)), shape=(nh, nh), dtype=alloc_dtype)
 
     # Fallback to pure Python implementation if Numba is not available
     if not sparse:
-        # Dense matrix — use vectorized row writes instead of element loops
         matrix = np.zeros((nh, nh), dtype=alloc_dtype)
-
         for row in range(nh):
             new_states, values  = operator_func(row)
-
-            # Convert once, vectorized assignment
             new_states          = np.asarray(new_states)
             values              = np.asarray(values, dtype=alloc_dtype)
-
             mask                = (np.abs(values) >= 1e-14) & (new_states >= 0) & (new_states < nh)
             if mask.any():
-                # Use np.add.at for safe accumulation if new_states has duplicates
                 np.add.at(matrix[row], new_states[mask], values[mask])
-
         return matrix
 
-    # Sparse mode — accumulate in Python lists (fast), then build CSR once
+    # Sparse mode
     r, c, d = _build_triplets(operator_func, nh)
-    M       = sp.csr_matrix((d, (r, c)), shape=(nh, nh), dtype=alloc_dtype)
-    return M
+    return sp.csr_matrix((d, (r, c)), shape=(nh, nh), dtype=alloc_dtype)
 
 # ------------------------------------------------------------------------------------------
 #! GENERAL MATRIX BUILDER INTERFACE
