@@ -177,7 +177,7 @@ class NumpyBackend(BackendInterface):
     @staticmethod
     def stable_ratio(exp_top, exp_bot):
         # exp_top/log_psi_top and exp_bot/log_psi_bot are log-amplitudes if you store logs;
-        # compute ratio r = Ψ_top / Ψ_bot in log-space for stability.
+        # compute ratio r = Psi_top / Psi_bot in log-space for stability.
         return np.exp(exp_top - exp_bot)
 
 # --------------------------------------------------------------
@@ -268,7 +268,7 @@ class JAXBackend(BackendInterface):
     def stable_ratio(log_top, log_bot):
         '''Compute stable ratio of two exponentials in log-space.'''
         # log_top and log_bot are log-amplitudes if you store logs;
-        # compute ratio r = Ψ_top / Ψ_bot in log-space for stability.
+        # compute ratio r = Psi_top / Psi_bot in log-space for stability.
         return jnp.exp(log_top - log_bot)
 
 # --------------------------------------------------------------

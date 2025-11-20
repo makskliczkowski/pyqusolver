@@ -177,7 +177,11 @@ def local_energy_int(k_map              : np.int64,
             if len(val) == 1:
                 if np.abs(val[0]) > 1e-10:
                     states_list.append(new_states)
-                    values_list.append(np.array([mult_arr[0] * val[0]], dtype=local_dtype))
+                    # Extract real part for real dtypes to avoid casting warnings
+                    coeff_val = val[0]
+                    if np.iscomplexobj(coeff_val) and not np.issubdtype(local_dtype, np.complexfloating):
+                        coeff_val = np.real(coeff_val)
+                    values_list.append(np.array([mult_arr[0] * coeff_val], dtype=local_dtype))
             elif len(val) > 0 and len(val) == len(new_states):
                 filtered_vals   = val[np.abs(val) > 1e-10]
                 filtered_states = new_states[np.abs(val) > 1e-10]
@@ -307,7 +311,7 @@ def local_energy_int_wrap(ns            : int,
     for m in m_nmod_sites_flat:  mns_nb.append(np.array([m], dtype=dtype))
     for m in m_nmod_nos_flat:    mnn_nb.append(np.array([m], dtype=dtype))
 
-    # 5) Map dtype → small int code
+    # 5) Map dtype -> small int code
     code = {np.float32:0, np.float64:1, np.complex64:2, np.complex128:3}[dtype]
 
     # 6) Compile one flat, nopython entrypoint

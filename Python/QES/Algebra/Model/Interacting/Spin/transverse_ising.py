@@ -1,26 +1,32 @@
 """
-file    : Model/Interacting/Spin/transverse_field_ising.py
-High-level Hamiltonian class for the Transverse Field Ising Model (TFIM)
-within the Quantum Eigen Solver (QES) package.
+High-level Hamiltonian class for the Transverse Field Ising Model (TFIM).
 
-Based on the C++ implementation and Heisenberg-Kitaev structure.
+--------------------
+File    : Model/Interacting/Spin/transverse_field_ising.py
 Author  : Maksymilian Kliczkowski
 Date    : 2025-04-26
-Version : 0.1
+Version : 0.2
+Changes : 
+    2025-10-30 (0.2) : Improved performance and fixed for new matrix representation. - MK
+--------------------
 """
 
 import numpy as np
-import numba
 from typing import List, Tuple, Union, Optional
 
 # Assume these are available from the QES package:
-import QES.Algebra.hilbert as hilbert_module
-import QES.Algebra.hamil as hamil_module
-from QES.Algebra.Operator import operators_spin as operators_spin_module
+try:
+    import QES.Algebra.hilbert as hilbert_module
+    import QES.Algebra.hamil as hamil_module
+    from QES.Algebra.Operator import operators_spin as operators_spin_module
+except ImportError as e:
+    raise ImportError("Required QES modules are not available.") from e
 
 # Utilities (assuming availability)
-import QES.general_python.algebra.linalg as linalg
-from QES.general_python.lattices.lattice import Lattice, LatticeType
+try:
+    from QES.general_python.lattices.lattice import Lattice, LatticeType
+except ImportError as e:
+    raise ImportError("Required QES lattice module is not available.") from e
 
 ##########################################################################################
 #! HAMILTONIAN CLASS
@@ -80,30 +86,27 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         if lattice is None:
             raise ValueError("TFIM requires a 'lattice' object to define neighbors.")
 
-        # Determine number of sites from lattice
-        ns = lattice.Ns
-
         # Initialize the base Hamiltonian class
-        super().__init__(hilbert_space=hilbert_space, lattice=lattice, is_sparse=True,
-                         dtype=dtype, backend=backend, **kwargs)
-        # self.ns should now be correctly set by the base class using hilbert_space
+        super().__init__(hilbert_space=hilbert_space, lattice=lattice, is_sparse=True, dtype=dtype, backend=backend, **kwargs)
+
+        # Set Hamiltonian attributes before base class init
+        self._name          = "Transverse Field Ising Model"
 
         # Store model-specific parameters
         self._j             = None # Initialize before setting
         self._hx            = None
         self._hz            = None
-        self.set_couplings(j=j, hx=hx, hz=hz)
-
         # Set Hamiltonian attributes
-        self._name          = "Transverse Field Ising Model"
         self._is_sparse     = True
-        # Max local changes: Sx flips one spin
-        self._max_local_ch  = 1
-
+        self._is_manybody   = True
+        self._max_local_ch  = self.cardinality + 1  # Each site can be flipped (ns terms) + diagonal
+                                                    # (1 - hx) + (n_neighbors - hz + (n_neighbors - J))
+                                                    
         #! Build the Hamiltonian Terms
+        self.set_couplings(j=j, hx=hx, hz=hz)
         self._set_local_energy_operators()
         self._set_local_energy_functions()
-        self._log(f"TFIM Hamiltonian initialized for {self.ns} sites.", lvl=1)
+        self._log(f"TFIM Hamiltonian initialized for {self.ns} sites.", lvl=1, log='debug')
 
     # ----------------------------------------------------------------------------------------------
 
@@ -118,28 +121,22 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         >>> print(tfim) # site-dependent h_x
         TFIM(Ns=32, J=1.000, hx=[min=-0.200, max=0.300])
         """
-        prec   = 3
-        sep    = ","
-        tol    = 1e-10                      # tolerance for “all equal”
+        prec    = 1
+        sep     = ","
+        tol     = 1e-10                      # tolerance for “all equal”
         
         # fields
-        parts = [f"TFIM(Ns={self.ns}"]
+        parts   = [f"TFIM(Ns={self.ns}"]
 
-        # Exchange J
-        parts.append(
-            hamil_module.Hamiltonian._fmt_scalar("J", self._j) if np.isscalar(self._j) else hamil_module.Hamiltonian._fmt_array("J", self._j)
-        )
-
-        # Transverse field h_x
-        parts.append(
-            hamil_module.Hamiltonian._fmt_scalar("hx", self._hx) if np.isscalar(self._hx) else hamil_module.Hamiltonian._fmt_array("hx", self._hx)
-        )
+        parts  += [
+            hamil_module.Hamiltonian.fmt("J",   self._j,    prec=prec),
+            hamil_module.Hamiltonian.fmt("hx",  self._hx,   prec=prec),
+            hamil_module.Hamiltonian.fmt("hz",  self._hz,   prec=prec)
+        ]
 
         return sep.join(parts) + ")"
 
-    def __str__(self):
-        ''' Returns a user-friendly string representation. '''
-        return self.__repr__()
+    def __str__(self): return self.__repr__()
 
     # ----------------------------------------------------------------------------------------------
     #! INIT / SETTERS
@@ -148,7 +145,8 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
     def set_couplings(self,
                         j       : Union[List[float], float, None] = None,
                         hx      : Union[List[float], float, None] = None,
-                        hz      : Union[List[float], float, None] = None
+                        hz      : Union[List[float], float, None] = None,
+                        **kwargs
                         ):
         '''
         Sets or updates the Ising coupling (J) and transverse field (hx).
@@ -162,16 +160,9 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
             hz : Optional[Union[List[float], float]]:
                 Perpendicular field strength(s).
         '''
-        if j is not None:
-            self._j = self._set_some_coupling(j)
-        if hx is not None:
-            self._hx = self._set_some_coupling(hx)
-        if hz is not None:
-            self._hz = self._set_some_coupling(hz)
-
-        # Log the update
-        self._log(f"Updated couplings: J={type(self._j)}, hx={type(self._hx)}, hz={type(self._hz)}", lvl=2, log='debug')
-        self._operators_built = False
+        self._j                 = self._set_some_coupling(j)
+        self._hx                = self._set_some_coupling(hx)
+        self._hz                = self._set_some_coupling(hz)
 
     def _set_local_energy_operators(self):
         """
@@ -182,74 +173,53 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
             - Ising coupling:   -J[i] * Sz_i * Sz_j for each nearest-neighbor pair <i,j>
         """
         # Clear existing operators (important if rebuilding)
-        self.reset_operators()
+        super()._set_local_energy_operators()
         self._log("Building TFIM operator list...", lvl=1, log='info')
 
-        lattice : Lattice = self._lattice
-        if lattice is None:
-            raise RuntimeError("Lattice is not defined during operator setup.")
-
-        #! Define Base Operators
+        lattice     = self._lattice
         
+        #! Define Base Operators
         # Local operators (act on one site)
-        op_sx_l     = operators_spin_module.sig_x(lattice=lattice,
-                                type_act=operators_spin_module.OperatorTypeActing.Local)
-        op_sz_l     = operators_spin_module.sig_z(lattice=lattice,
-                                type_act=operators_spin_module.OperatorTypeActing.Local)
+        op_sx_l     = operators_spin_module.sig_x(lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local)
+        op_sz_l     = operators_spin_module.sig_z(lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local)
 
         # Correlation operators (act on two sites)
-        op_sz_sz_c  = operators_spin_module.sig_z(lattice=lattice,
-                                type_act=operators_spin_module.OperatorTypeActing.Correlation)
+        op_sz_sz_c  = operators_spin_module.sig_z(lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation)
 
         #! Add Transverse Field Terms
         for i in range(self.ns):
             if not np.isclose(self._hx[i], 0.0):
-                self.add(operator   =   op_sx_l,
-                        multiplier  =   -self._hx[i],
-                        sites       =   [i],
-                        modifies    =   True)
+                self.add(operator = op_sx_l, multiplier = -self._hx[i], sites = [i], modifies = True)
                 self._log(f"Adding Sx at site {i} with multiplier {-self._hx[i]:.3f}", lvl=2, log='debug')
-            else:
-                self._log(f"Skipping Sx at site {i} (hx is zero)", lvl=3, log='debug')
         
         #! Add Ising Perpendicular Terms
         for i in range(self.ns):
             if not np.isclose(self._hz[i], 0.0):
-                self.add(operator   =   op_sz_l,
-                        multiplier  =   -self._hz[i],
-                        sites       =   [i],
-                        modifies    =   False)
+                self.add(operator = op_sz_l, multiplier = -self._hz[i], sites = [i], modifies = False)
                 self._log(f"Adding Sz at site {i} with multiplier {-self._hz[i]:.3f}", lvl=2, log='debug')
-            else:
-                self._log(f"Skipping Sz at site {i} (hz is zero)", lvl=3, log='debug')
         
         #! Add Ising Interaction Terms
         # Sum over unique nearest-neighbor pairs <i,j>
         for i in range(self.ns):
             # Use get_nn_forward to avoid double counting bonds
             nn_forward_num = lattice.get_nn_forward_num(i)
+            
             for nn_idx in range(nn_forward_num):
-                j_neighbor = lattice.get_nn_forward(i, num=nn_idx)
-
-                if j_neighbor < 0 or j_neighbor >= self.ns or np.isnan(j_neighbor):
-                    self._log(f"Skipping invalid neighbor for site {i}, nn_idx {nn_idx}", lvl=3, log='debug')
+                
+                j_neighbor  = lattice.get_nn_forward(i, num=nn_idx)
+                if lattice.wrong_nei(j_neighbor):
                     continue
+                
+                wx, wy, wz  = lattice.bond_winding(i, j_neighbor)
+                phase       = lattice.boundary_phase_from_winding(wx, wy, wz)
 
                 # Use the coupling J associated with site i (or average, depending on convention)
                 # Simplest: use J[i]. Assume coupling belongs to the bond originating from i.
-                coupling_j = self._j[i]
+                coupling_j  = self._j[i] * phase
 
                 if not np.isclose(coupling_j, 0.0):
-                    self.add(operator   =   op_sz_sz_c,
-                            multiplier  =   -coupling_j,
-                            sites       =   [i, j_neighbor],
-                            modifies    =   False)
+                    self.add(operator = op_sz_sz_c, multiplier = -coupling_j, sites = [i, j_neighbor], modifies = False)
                     self._log(f"Adding SzSz between sites ({i}, {j_neighbor}) with multiplier {-coupling_j:.3f}", lvl=2, log='debug')
-                else:
-                    self._log(f"Skipping SzSz between ({i}, {j_neighbor}) (J is zero)", lvl=3, log='debug')
-
-        # Mark operators as built
-        self._operators_built = True
 
     # ----------------------------------------------------------------------------------------------
     #! Properties
@@ -270,3 +240,7 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         return self._hx
     
     # ----------------------------------------------------------------------------------------------
+    
+# --------------------------------------------------------------------------------------------------
+#! END OF FILE
+# --------------------------------------------------------------------------------------------------

@@ -17,21 +17,53 @@ And more...
 
 Classes:
 --------
-- HilbertSpace: Main class for quantum many-body Hilbert spaces
-- Hamiltonian: Hamiltonian matrix construction and operations
-- Operator: General quantum mechanical operators
+- HilbertSpace  : Main class for quantum many-body Hilbert spaces
+- Hamiltonian   : Hamiltonian matrix construction and operations
+- Operator      : General quantum mechanical operators
 
-Author: Maksymilian Kliczkowski
-Email: maksymilian.kliczkowski@pwr.edu.pl
+File    : QES/Algebra/__init__.py
+Author  : Maksymilian Kliczkowski
+Email   : maksymilian.kliczkowski@pwr.edu.pl
 """
+
+# A short, user-facing description used by QES.registry
+MODULE_DESCRIPTION = "Algebra for quantum many-body: Hilbert spaces, Hamiltonians, operators, symmetries."
 
 # Import main classes with explicit relative imports to avoid ambiguity
 try:
-    from .hilbert import HilbertSpace  # type: ignore
-    from .hamil import Hamiltonian     # type: ignore
-    from . import symmetries as _sym
+    from .hilbert import HilbertSpace                                   # type: ignore
+    from .hilbert_config import HilbertConfig, SymmetrySpec             # type: ignore
+    from .hamil import Hamiltonian                                      # type: ignore
+    from .backends import overlap, outer, kron, inner, trace, identity  # type: ignore
+    from .hamil_config import (                                         # type: ignore
+        HamiltonianConfig,
+        HAMILTONIAN_REGISTRY,
+        register_hamiltonian,
+    )
+    from . import symmetries as _sym    # type: ignore
     # Curate exported symmetry names (skip private/dunder)
     _sym_exports    = [n for n in dir(_sym) if not n.startswith("_")]
-    __all__         = ['HilbertSpace', 'Hamiltonian', *_sym_exports]
+    __all__         = [
+        'HilbertSpace',
+        'HilbertConfig',
+        'SymmetrySpec',
+        'Hamiltonian',
+        'HamiltonianConfig',
+        'HAMILTONIAN_REGISTRY',
+        'register_hamiltonian',
+        *_sym_exports,
+    ]
 except Exception:                                       # Broad except to keep package import resilient
-    __all__         = ['HilbertSpace', 'Hamiltonian']   # Minimal exports if imports fail
+    __all__         = [
+        'HilbertSpace',
+        'Hamiltonian',
+        'HilbertConfig',
+        'SymmetrySpec',
+        'HamiltonianConfig',
+        'HAMILTONIAN_REGISTRY',
+        'register_hamiltonian',
+    ]   # Minimal exports if imports fail
+    
+# ----------------------------------------------------------------------------
+#! EOF
+# ---------------------------------------------------------------------------

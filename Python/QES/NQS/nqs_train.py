@@ -377,7 +377,7 @@ class NQSTrainer:
             times       = {p: self.timings[p][-1] for p in ("sample","step","update","gradient","prepare","solve")}
             total       = sum(times.values())
             pbar.set_postfix({
-                "E/N"           :   f"{mean_E / self.nqs.size:.4e} ± {std_E_real / self.nqs.size:.4e}",
+                "E/N"           :   f"{mean_E / self.nqs.size:.4e} +/-  {std_E_real / self.nqs.size:.4e}",
                 "lr"            :   f"{lr:.1e}",
                 "sig"           :   f"{reg:.1e}",
                 **{f"t_{k}"     :   f"{v:.2e}s" for k,v in times.items()},

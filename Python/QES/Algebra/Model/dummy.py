@@ -1,9 +1,4 @@
 '''
-file:   : Model/dummy.py
-author: : Maksymilian Kliczkowski
-email:  : maksymilian.kliczkowski@pwr.edu.pl
-This file defines a dummy Hamiltonian class for testing purposes. 
-
 Description:
         This module implements a dummy Hamiltonian class for testing and development purposes.
         It provides a simplified implementation of quantum Hamiltonian mechanics with integer
@@ -13,6 +8,12 @@ Description:
         The DummyHamiltonian class inherits from the Hamiltonian base class and implements
         a simple parametric Hamiltonian with diagonal and off-diagonal elements for 
         benchmarking and testing matrix operations within the QES framework.
+--------------------------------------------------------------------------------
+file:       : Algebra/Model/dummy.py
+author:     : Maksymilian Kliczkowski
+email:      : maksymilian.kliczkowski@pwr.edu.pl
+Description : This file defines a dummy Hamiltonian class for testing purposes. 
+--------------------------------------------------------------------------------
 '''
 
 import numpy as np
@@ -24,12 +25,15 @@ from typing import Union, Optional
 # Assume these are available from the QES package:
 from QES.Algebra.hilbert import HilbertSpace
 from QES.Algebra.hamil import Hamiltonian
-import Algebra.Operator.operators_spin as operators_spin_module
+from QES.Algebra.Operator import operators_spin as operators_spin_module
 
 ##########################################################################################
-import QES.general_python.algebra.linalg as linalg
-from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, JAX_AVAILABLE
-from QES.general_python.common import binary as _binary
+try:
+    from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, JAX_AVAILABLE
+    from QES.general_python.common import binary as _binary
+except ImportError as e:
+    raise ImportError("Required modules from QES.general_python.algebra.utils or QES.general_python.common could not be imported.") from e
+
 ##########################################################################################
 
 # ----------------------------------------------------------------------------------------
@@ -98,7 +102,7 @@ class DummyHamiltonian(Hamiltonian):
     def _set_local_energy_operators(self):
         ''' Set local energy operators for the Hamiltonian '''
         
-        if self._hilbert_space.Nhl == 2:
+        if self._hilbert_space.local_space.local_dim == 2:
             self._log('Using spin operators', log = 'info', lvl = 1, color = 'green')
             
             for i in range(self.ns):

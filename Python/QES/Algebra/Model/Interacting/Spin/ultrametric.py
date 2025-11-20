@@ -11,13 +11,14 @@ import numpy as np
 from typing import List, Optional, Union
 
 #! QES package imports
-import Algebra.hilbert as hilbert_module
-import Algebra.hamil as hamil_module
+from QES.Algebra import hilbert as hilbert_module
+from QES.Algebra import hamil as hamil_module
 
 #! Random matrix wrapper and linear algebra utilities
 from QES.general_python.algebra.ran_wrapper import RMT, random_matrix, set_global_seed
 from QES.general_python.algebra.utils import Array
-import QES.general_python.algebra.linalg as linalg
+# NOTE: The 'linalg' module has been reorganized. Use 'backend_linalg' or direct imports as needed.
+# import QES.general_python.algebra.linalg as linalg  # (not used in this file)
 
 class UltrametricModel(hamil_module.Hamiltonian):
     r"""

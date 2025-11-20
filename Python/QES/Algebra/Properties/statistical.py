@@ -294,7 +294,7 @@ def _alloc_bin_info(uniform_bins: bool, uniform_log_bins: bool, bins: Optional[n
 @numba.njit(fastmath=True, cache=True)
 def _normalize_by_bin_width(sums: np.ndarray, bins: np.ndarray) -> None:
     """
-    In-place divide by \Deltaω; counts- or typical-normalization can be done elsewhere.
+    In-place divide by delta \Omega; counts- or typical-normalization can be done elsewhere.
     """
     nbins = bins.shape[0] - 1
     for i in range(nbins):
@@ -380,7 +380,7 @@ def pair_histogram(eigvals,
     Returns
     -------
     values : (K,2) float
-        (ω, value) pairs if not histogram mode, else empty.
+        (\Omega, value) pairs if not histogram mode, else empty.
     counts : (nbins,) uint64
         Bin counts if histogram mode.
     sums : (nbins,) float
@@ -477,7 +477,7 @@ if JAX_AVAILABLE:
         idx         : Optional[int] = None) -> Array:
         """
         JAX version of fidelity susceptibility. If idx is given (and in-range),
-        returns a scalar χ_idx; otherwise returns an Array of shape (N,) with all χ_i.
+        returns a scalar chi_idx; otherwise returns an Array of shape (N,) with all chi_i.
         """
         mu2 = mu * mu
 
@@ -522,6 +522,18 @@ def fidelity_susceptibility(energies: Array, V: Array, mu: float, idx: Optional[
     -------
     float
         Fidelity susceptibility \(\chi_i\).
+        
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from QES.Algebra.Properties.statistical import fidelity_susceptibility
+    >>> energies = np.array([0.0, 1.0, 2.0])
+    >>> V       = np.array([[0.0, 0.1, 0.2],
+    ...                     [0.1, 0.0, 0.3],
+    ...                     [0.2, 0.3, 0.0]])
+    >>> mu      = 0.5
+    >>> chi_0   = fidelity_susceptibility(energies, V, mu, idx=0)
+    >>> print(chi_0)
     """
     mu2 = mu * mu
 
@@ -581,8 +593,8 @@ else:
 @numba.njit(parallel=True, fastmath=True)
 def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True) -> np.ndarray:
     """
-    Compute IPR_j = ∑_i |ψ_{i j}|^{2q} for each column j of `states`.
-    If `new_basis` is provided (shape n \times n), then ψ → B^T·ψ is used
+    Compute IPR_j = ∑_i |\psi _{i j}|^{2q} for each column j of `states`.
+    If `new_basis` is provided (shape n \times n), then \psi  -> B^T\cdot \psi  is used
     before raising to the 2q power.  Works on 1D or 2D `states`.
 
     Parameters
@@ -592,8 +604,8 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
     q : float
         Exponent in the IPR definition (default 1.0).
     new_basis : np.ndarray, optional
-        Change-of-basis matrix (n \times n).  If not None, each state ψ_j is
-        transformed via B^T·ψ_j before computing |·|^(2q).
+        Change-of-basis matrix (n \times n).  If not None, each state \psi _j is
+        transformed via B^T\cdot \psi _j before computing |\cdot |^(2q).
 
     Returns
     -------
@@ -622,7 +634,7 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
                 acc    += p
             out[j] = acc
     else:
-        # on-the-fly transform: φ_i = ∑_k B[k,i]*ψ_k
+        # on-the-fly transform: φ_i = ∑_k B[k,i]*\psi _k
         # then acc += |φ_i|^(2q)
         B = new_basis
         for j in numba.prange(m):
@@ -630,7 +642,7 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
             for i in range(n):
                 re = 0.0
                 im = 0.0
-                # compute (B^T·ψ)_i = ∑_k B[k,i] * ψ[k,j]
+                # compute (B^T\cdot \psi )_i = ∑_k B[k,i] * \psi [k,j]
                 for k in range(n):
                     b   = B[k, i]
                     s   = states[k, j]

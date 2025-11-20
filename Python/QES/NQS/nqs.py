@@ -3,10 +3,6 @@
 QES.NQS.nqs
 ===========
 
-Author: Maks Kliczkowski
-Email: maxgrom97@gmail.com
-Date: 01.10.25
-
 Neural Quantum State (NQS) Solver.
 
 Implements a Monte Carlo-based training method for optimizing NQS models.
@@ -20,6 +16,12 @@ Import and use the NQS solver:
     nqs = NQS(...)
 
 See the documentation and examples for details.
+----------------------------------------------------------
+Author          : Maks Kliczkowski
+Email           : maxgrom97@gmail.com
+Date            : 01.10.25
+Description     : Neural Quantum State (NQS) Solver implementation.
+----------------------------------------------------------
 """
 
 import json
@@ -32,11 +34,20 @@ from pathlib import Path
 from dataclasses import dataclass
 
 # Import timeit utility for timing code blocks
-from QES.general_python.common.timer import timeit
+try:
+    from QES.general_python.common.timer import timeit
+except ImportError as e:
+    raise ImportError("Failed to import timer module. Ensure QES.general_python is correctly installed.") from e
 
 # import physical problems
-from .src.nqs_physics import *
-from .src.nqs_networks import *
+try:
+    from .src.nqs_physics import *
+    from .src.nqs_networks import *
+    from .src.nqs_engine import NQSEvalEngine
+except ImportError as e:
+    raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
+
+# ----------------------------------------------------------
 
 # from QES.general_python imports
 try:
@@ -160,22 +171,22 @@ class NQS(MonteCarloSolver):
                         backend     =   backend)
         
         # --------------------------------------------------
-        self._batch_size        = batch_size        
-        self._initialized       = False
+        self._batch_size            = batch_size        
+        self._initialized           = False
         
-        self._modifier          = None #! State modifier (for later), for quench dynamics, etc.
-        self._modifier_func     = None
+        self._modifier              = None #! State modifier (for later), for quench dynamics, etc.
+        self._modifier_func         = None
 
         #######################################
         #! collect the Hilbert space information
         #######################################
         
-        self._nh                = self._hilbert.Nh if self._hilbert is not None else None
-        self._nparticles        = nparticles if nparticles is not None else self._size
-        self._nvisible          = self._size
-        self._nparticles2       = self._nparticles**2
-        self._nvisible2         = self._nvisible**2
-        self._beta_penalty      = kwargs.get('beta_penalty', 0.0)
+        self._nh                    = self._hilbert.Nh if self._hilbert is not None else None
+        self._nparticles            = nparticles if nparticles is not None else self._size
+        self._nvisible              = self._size
+        self._nparticles2           = self._nparticles**2
+        self._nvisible2             = self._nvisible**2
+        self._beta_penalty          = kwargs.get('beta_penalty', 0.0)
         
         # --------------------------------------------------
         #! Backend
@@ -205,15 +216,15 @@ class NQS(MonteCarloSolver):
         #! Handle gradients
         # --------------------------------------------------
         self._grad_info             = self._nqsbackend.prepare_gradients(self._net)    
-        self._flat_grad_func        = self._grad_info["flat_grad_func"]
-        self._dict_grad_type        = self._grad_info["dict_grad_type"]
-        self._params_slice_metadata = self._grad_info["slice_metadata"]
-        self._params_leaf_info      = self._grad_info["leaf_info"]
-        self._params_tree_def       = self._grad_info["tree_def"]
-        self._params_shapes         = self._grad_info["shapes"]
-        self._params_sizes          = self._grad_info["sizes"]
-        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]
-        self._params_total_size     = self._grad_info["total_size"]
+        self._flat_grad_func        = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
+        self._dict_grad_type        = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
+        self._params_slice_metadata = self._grad_info["slice_metadata"]         # Metadata for slicing parameters
+        self._params_leaf_info      = self._grad_info["leaf_info"]              # Leaf information
+        self._params_tree_def       = self._grad_info["tree_def"]               # Tree definition
+        self._params_shapes         = self._grad_info["shapes"]                 # Shapes of parameters
+        self._params_sizes          = self._grad_info["sizes"]                  # Sizes of parameters
+        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]    # Whether each parameter is complex
+        self._params_total_size     = self._grad_info["total_size"]             # Total size of parameters -> cost for training
         
         # --------------------------------------------------
         #! Compile functions
@@ -224,10 +235,15 @@ class NQS(MonteCarloSolver):
         #! Model and physics setup
         # --------------------------------------------------
 
-        self._model = model
+        self._model                 = model
         self._nqsproblem.setup(self._model, self._net)
         # For wavefunction problem we keep the same attribute name you used:
         self._local_en_func         = getattr(self._nqsproblem, "local_energy_fn", None)
+
+        # --------------------------------------------------
+        #! Initialize unified evaluation engine
+        # --------------------------------------------------
+        self._eval_engine           = NQSEvalEngine(self, backend='auto', batch_size=batch_size)
 
         #######################################
         #! directory to save the results
@@ -237,8 +253,8 @@ class NQS(MonteCarloSolver):
         self._dir_detailed.mkdir()
         
         #! Orbax checkpoint manager
-        self._use_orbax         = kwargs.get('use_orbax', True)
-        self._orbax_max_to_keep = kwargs.get('orbax_max_to_keep', 3)
+        self._use_orbax             = kwargs.get('use_orbax', True)
+        self._orbax_max_to_keep     = kwargs.get('orbax_max_to_keep', 3)
 
         if (self._isjax and self._use_orbax and hasattr(self._net, 'net_module') and isinstance(self._net.net_module, nn.Module)):
 
@@ -248,9 +264,9 @@ class NQS(MonteCarloSolver):
             
             handler   = PyTreeCheckpointHandler()
             self._ckpt_manager = CheckpointManager(
-                directory       = str(ckpt_base),
-                checkpoint_type = handler,
-                max_to_keep     = self._orbax_max_to_keep)
+                directory           = str(ckpt_base),
+                checkpoint_type     = handler,
+                max_to_keep         = self._orbax_max_to_keep)
         else:
             self._ckpt_manager = None
     
@@ -384,79 +400,26 @@ class NQS(MonteCarloSolver):
     #! EVALUATION OF THE ANSATZ BATCHED (\psi(s))
     #####################################
     
-    def _eval_jax(self, states, batch_size = None, params = None):
-        """
-        Evaluates the neural network (log ansatz) for the given quantum states using JAX.
-        This method applies the network function to the provided quantum states, using
-        JAX for computation. The evaluation can be performed in batches for memory efficiency.
-        Parameters
-        ----------
-        states : array_like
-            The quantum states for which to evaluate the network.
-        states : array_like
-            The quantum states (configurations) to evaluate the network on.
-        batch_size : int, optional
-            The size of batches to use for the evaluation. If None, uses the default batch size
-            stored in self._batch_size.
-        params : dict, optional
-            The parameters (weights) to use for the network evaluation. If None, uses the
-            current parameters stored in network._params.
-        Returns
-        -------
-        array_like
-            The output of the neural network for the given states, representing the log of the 
-            wavefunction amplitudes.
-        """
-        # evaluate the network (log ansatz) using JAX
-        return net_utils.jaxpy.eval_batched_jax(batch_size, self._ansatz_func, params, states)
-    
-    def _eval_np(self, states, batch_size = None, params = None):
-        """
-        Evaluates the neural network (log ansatz) for the given quantum states using NumPy.
-        This method applies the network function to the provided quantum states, using
-        NumPy for computation. The evaluation can be performed in batches for memory efficiency.
-        Parameters
-        ----------
-        states : array_like
-            The quantum states for which to evaluate the network.
-        batch_size : int, optional
-            The size of batches to use for the evaluation. If None, uses the default batch size
-            stored in self._batch_size.
-        params : dict, optional
-            The parameters (weights) to use for the network evaluation. If None, uses the
-            current parameters stored in self._params.
-        Returns
-        -------
-        array_like
-            The output of the neural network for the given states, representing the log of the 
-            wavefunction amplitudes.
-        """
-
-        # evaluate the network (log ansatz) using NumPy
-        return net_utils.numpy.eval_batched_np(batch_size, self._ansatz_func, params, states)
-    
-    def ansatz(self, states, batch_size = None, params = None):
+    def evaluate(self, states, batch_size=None, params=None):
         '''
-        Evaluate the network using the provided state. This
-        will return the log ansatz of the state coefficient.
+        Evaluate the neural network (log ansatz) for the given quantum states.
+        
+        This uses the unified evaluation engine for efficient computation with both
+        JAX and NumPy backends, and automatic batching for memory efficiency.
         
         Parameters:
-            states      : The state vector.
+            states      : The state configurations to evaluate.
             batch_size  : The size of batches to use for the evaluation.
             params      : The parameters (weights) to use for the network evaluation.
         Returns:
-            The evaluated network output.
+            The evaluated network output (log ansatz values).
         '''
-        
-        if params is None:
-            params = self.get_params()
-            
-        if batch_size is None:
-            batch_size = self._batch_size
-        
-        if self._isjax:
-            return self._eval_jax(states, batch_size=batch_size, params=params)
-        return self._eval_np(states, batch_size=batch_size, params=params)
+        result = self._eval_engine.evaluate_ansatz(states, params, batch_size)
+        return result.values
+    
+    def ansatz(self, states, batch_size=None, params=None): 
+        ''' Alias for the log ansatz evaluation '''
+        return self.evaluate(states, batch_size, params)
     
     def __call__(self, states, **kwargs):
         '''
@@ -668,11 +631,11 @@ class NQS(MonteCarloSolver):
         return (states, ansatze), probabilities, evaluated_results
     
     def apply(self,
-                functions       : Optional[Union[List, Callable]]                                                   = None,
-                states_and_psi  : Optional[Tuple[Union[np.ndarray, jnp.ndarray], Union[np.ndarray, jnp.ndarray]]]   = None,
-                probabilities   : Optional[Union[np.ndarray, jnp.ndarray]]                                          = None,
-                batch_size      : Optional[int]                                                                     = None,
-                **kwargs):
+            functions       : Optional[Union[List, Callable]]                                                   = None,
+            states_and_psi  : Optional[Tuple[Union[np.ndarray, jnp.ndarray], Union[np.ndarray, jnp.ndarray]]]   = None,
+            probabilities   : Optional[Union[np.ndarray, jnp.ndarray]]                                          = None,
+            batch_size      : Optional[int]                                                                     = None,
+            **kwargs):
         """
         Evaluate a set of functions based on the provided states, wavefunction, and probabilities.
         This method computes the output of one or more functions using the provided states, 
@@ -775,6 +738,84 @@ class NQS(MonteCarloSolver):
             Callable: The apply function.
         '''
         return self._apply_fun_jax if self._isjax else self._apply_fun_np
+    
+    #####################################
+    #! UNIFIED EVALUATION INTERFACE USING EVALUATION ENGINE
+    #####################################
+
+    def compute_energy(self, states, ham_action_func=None, params=None, probabilities=None, batch_size=None):
+        """
+        Compute local energies using the evaluation engine.
+        
+        Parameters:
+        -----------
+            states: 
+                Array of state configurations
+            ham_action_func: 
+                Function computing local energy
+            params: 
+                Optional network parameters
+            probabilities: 
+                Optional probability weights
+            batch_size: 
+                Optional batch size override
+
+        Returns:
+            EnergyStatistics object with energy values and statistics
+        """
+        if ham_action_func is None:
+            ham_action_func = self._local_en_func
+        return self._eval_engine.compute_local_energy(states, ham_action_func, params, probabilities, batch_size)
+    
+    def compute_observable(self, observable_func, states, observable_name="Observable", params=None, compute_expectation=False, batch_size=None):
+        """
+        Evaluate an observable using the evaluation engine.
+        
+        Parameters:
+        -----------
+            observable_func: 
+                Function computing observable values
+            states: 
+                Array of state configurations
+            observable_name: 
+                Name of the observable
+            params: 
+                Optional network parameters. If not provided, uses current network parameters.
+            compute_expectation: 
+                Whether to compute expectation value
+            batch_size: 
+                Optional batch size override
+
+        Returns:
+            ObservableResult with local values and statistics
+        """
+        return self._eval_engine.compute_observable(observable_func, states, observable_name, params, compute_expectation, batch_size)
+    
+    def evaluate_function(self, func, states, params=None, probabilities=None, batch_size=None):
+        """
+        Evaluate a function using the evaluation engine.
+        
+        Parameters:
+            func: 
+                Function to evaluate
+            states: 
+                Array of state configurations
+            params: 
+                Optional network parameters. If not provided, uses current network parameters.
+            probabilities: 
+                Optional probability weights
+            batch_size: 
+                Optional batch size override
+
+        Returns:
+            EvaluationResult with computed values and statistics
+        """
+        return self._eval_engine.evaluate_function(func, states, params, probabilities, batch_size)
+    
+    @property
+    def eval_engine(self):
+        """Get the evaluation engine for advanced use cases."""
+        return self._eval_engine
     
     #####################################
     #! SAMPLE
@@ -1131,7 +1172,7 @@ class NQS(MonteCarloSolver):
                                     parameters      = params,           # network parameters
                                     batch_size      = batch_size) # batch size
         
-        #! b) compute the gradients O_k = ∇ log ψ
+        #! b) compute the gradients O_k = ∇ log \psi 
         # The output `flat_grads` will have the dtype determined by single_sample_flat_grad_fun
         # For complex NQS, this is typically complex. Shape: (batch_size, n_params_flat)
         flat_grads, shapes, sizes, iscpx = compute_grad_f(net_apply     = ansatz_fn,
@@ -1206,59 +1247,22 @@ class NQS(MonteCarloSolver):
             raise ValueError("Unknown problem type.")
     
     #####################################
-    
-    def train(self,
-            nsteps  : int = 1,
-            verbose : bool = False,
-            use_sr  : bool = True,
-            **kwargs) -> list:
-        """
-        Train the NQS solver for a specified number of steps.
-
-        Parameters:
-            nsteps: Number of training steps.
-            verbose: Whether to print progress.
-            use_sr: Whether to use stochastic reconfiguration.
-
-        Returns:
-            List of mean energies for each step.
-        """
-        energies = []
-        for step in range(nsteps):
-            if self._isjax:
-                pass
-                # self._state, mean_energy, std_energy, _ = self.single_step_jax(
-                #         params      = self._net.get_params(),
-                #         configs     = 
-            else:
-                self._params, mean_energy, std_energy, _ = self.train_step_np(
-                    params=self._params,
-                    sampler=self._sampler,
-                    hamiltonian=self._model,
-                    batch_size=self._batch_size,
-                    use_sr=use_sr,
-                    reg=kwargs.get('reg', 1e-7),
-                    lr=kwargs.get('lr', 1e-2))
-
-            energies.append(mean_energy)
-            if verbose:
-                print(f"Step {step + 1}/{nsteps}: Mean Energy = {mean_energy}, Std Energy = {std_energy}")
-
-        return energies
-    
-    #####################################
-    #! LOG_PROBABILITY_RATIO
+    #! TRAINING NOTE
     #####################################
     
-    @staticmethod
-    def log_prob_ratio( top_log_ansatz   :   Callable,
-                        top_params,
-                        bot_log_ansatz   :   Callable,
-                        bot_params,
-                        states           :   jnp.ndarray):
-        top_log = top_log_ansatz(top_params, states)
-        bot_log = bot_log_ansatz(bot_params, states)
-        return top_log - bot_log
+    # NOTE: Training logic has been moved to NQSTrainer class for better separation of concerns.
+    # NQS.step() provides single-step computations (sampling + gradient + energy).
+    # NQSTrainer orchestrates the full training loop with learning phases, TDVP, and optimizers.
+    #
+    # To train an NQS:
+    # 1. Create NQSTrainer with learning phase schedulers:
+    #    from QES.NQS.src.learning_phases_scheduler_wrapper import create_learning_phase_schedulers
+    #    lr_sched, reg_sched = create_learning_phase_schedulers('default')
+    #    trainer = NQSTrainer(..., lr_scheduler=lr_sched, reg_scheduler=reg_sched, ...)
+    #
+    # 2. Call trainer.train() for multi-phase optimization
+    #
+    # For custom training loops, use NQS.step() directly with NQS.sample()
     
     #####################################
     #! STATE MODIFIER
@@ -1348,8 +1352,8 @@ class NQS(MonteCarloSolver):
             st, w       = jax.vmap(self._modifier_func)(x)
             M           = st.shape[1]                                               # number of modified states
             #! flatten (B * M) so we can call the network once
-            st_flat     = st.reshape(-1, st.shape[-1])                              # (B·M, N_dim)
-            log_psi     = jax.vmap(lambda s: model_callable(params, s))(st_flat)    # (B·M,)
+            st_flat     = st.reshape(-1, st.shape[-1])                              # (B\cdot M, N_dim)
+            log_psi     = jax.vmap(lambda s: model_callable(params, s))(st_flat)    # (B\cdot M,)
             #! reshape the log_psi to (B, M)
             log_psi_r   = log_psi.reshape(B, -1)                                    # (B, M)
             log_psi_r  += jnp.log(w.astype(log_psi_r.dtype))
@@ -1787,7 +1791,7 @@ class NQS(MonteCarloSolver):
             timings[f"obs_{i}"]     = timings_op
             results[op]             = dict(raw=vals, mean=mu, std=sig)
             color                   = ["red","blue","green","orange","purple","brown"][i%6]
-            logger.info(f"{op}: ⟨O⟩ = ({mu:.4f}) ± ({sig:.4f})  (N={len(vals)})", color=color)
+            logger.info(rf"{op}: <O> = ({mu:.4f}) \pm ({sig:.4f})  (N={len(vals)})", color=color)
 
             #! compare to true value
             if true_values is not None and true_values[i] is not None:
@@ -1809,7 +1813,7 @@ class NQS(MonteCarloSolver):
                 batch_size     = batch_size,
             )
             energy = dict(raw=e_vals, mean=e_mu, std=e_sig)
-            logger.info(f"Energy: E = ({e_mu:.4e}) ± ({e_sig:.4f}) (N={len(e_vals)})", color='cyan')
+            logger.info(f"Energy: E = ({e_mu:.4e}) +/-  ({e_sig:.4f}) (N={len(e_vals)})", color='cyan')
             if true_en is not None:
                 rel = abs(e_mu-true_en)/abs(true_en)*100
                 logger.info(f"ref = {true_en:.4e} - rel.err = {rel:.2f} %", lvl=2)
@@ -1904,202 +1908,6 @@ class NQS(MonteCarloSolver):
     #####################################
 
 #########################################
-#! NQS Lower States
-#########################################
-
-class NQSLower:
-    def __init__(self,
-                lower_nqs_instances     : List[NQS],                # List of NQS objects for lower states
-                lower_betas             : List[float],              # Penalty terms beta_i
-                parent_nqs              : NQS):
-
-        if len(lower_nqs_instances) != len(lower_betas):
-            raise ValueError("Number of lower NQS instances must match number of betas.")
-        
-        self._backend               = parent_nqs.backend
-        self._isjax                 = parent_nqs.isjax
-        
-        # assert that all are the same backend
-        if not all([nqs.backend == parent_nqs.backend for nqs in lower_nqs_instances]):
-            raise ValueError("All lower NQS instances must have the same backend as the parent NQS.")
-        
-        self._parent_nqs                    = parent_nqs
-        self._parent_apply_fn               = parent_nqs.ansatz
-        self._parent_params                 = parent_nqs.get_params()                               # will likely be updated during training
-        self._parent_evaluate               = parent_nqs.apply_f
-        self._log_p_ratio_fn                = parent_nqs.log_prob_ratio        
-        
-        #! handle the lower states
-        self._lower_nqs             = lower_nqs_instances
-        self._lower_betas           = self._backend.array(lower_betas)
-        self._num_lower_states      = len(lower_nqs_instances)
-        self._is_set                = self._num_lower_states > 0
-
-        if not self._is_set:
-            return
-
-        # Store apply functions and parameters for each lower state
-        self._lower_apply_fns       = [nqs.ansatz for nqs in self._lower_nqs]               # this is static as it is not updated during training
-        self._lower_params          = [nqs.get_params() for nqs in self._lower_nqs]         # this is static as it is not updated during training
-        if self._isjax:
-            self._lower_evaluate    = [nqs.apply_f for nqs in self._lower_nqs]     # this is static as it is not updated during training
-        else:
-            self._lower_evaluate    = [nqs.apply_f for nqs in self._lower_nqs]
-
-        #! Placeholder for ratios - these would be computed during the excited state's MC sampling
-        # Shape: (num_lower_states, num_samples_excited_state)
-        self._ratios_psi_exc_div_psi_lower = None       # Psi_W / Psi_W_j (current excited / lower_j)
-        self._ratios_psi_lower_div_psi_exc = None       # Psi_W_j / Psi_W (lower_j / current excited)
-
-        # The C++ code has `train_lower_` for MC parameters for sampling *within* lower states.
-        # For the JAX implementation, this might translate to parameters for sampling
-        # from each P(s) ~ |psi_lower_j(s)|^2 if needed for <Psi_W / Psi_W_j>_j terms.
-        # This part is complex as it implies separate MC runs or combined sampling.
-
-    def get_p_ratio_wrapper(self, lower_idx: int):
-        """
-        Wrapper to compute log(Psi_1 / Psi_2) for a given lower state.
-        """
-        
-        if 0 <= lower_idx < self._num_lower_states:
-            # compute log(Psi_exc / Psi_lower_j)
-            ansatz_top = self._parent_apply_fn
-            params_top = self._parent_nqs.get_params()          # not static - will be updated during training
-            
-            ansatz_low = self._lower_apply_fns[lower_idx]
-            params_low = self._lower_params[lower_idx]
-        else:
-            # reverse order - compute log(Psi_lower_j / Psi_exc)
-            ansatz_top = self._lower_apply_fns[lower_idx]
-            params_top = self._lower_params[lower_idx]
-
-            ansatz_low = self._parent_apply_fn
-            params_low = self._parent_nqs.get_params()          # not static - will be updated during training
-
-        @jax.jit
-        def wrapme(states):
-            log_ratio = self._log_p_ratio_fn(ansatz_top, params_top, ansatz_low, params_low, states)
-            return jnp.exp(log_ratio)
-        return wrapme
-
-    ######################################
-    #! Properties and Getters
-    ######################################
-    
-    @property
-    def is_set(self) -> bool:
-        return self._is_set
-
-    @property
-    def num_lower_states(self) -> int:
-        return self._num_lower_states
-
-    @property
-    def lower_betas(self) -> jnp.ndarray:
-        return self._lower_betas
-
-    ######################################
-    #! Getters
-    ######################################
-
-    def get_lower_state_ansatz_val(self, lower_idx: int, states: jnp.ndarray) -> jnp.ndarray:
-        """
-        Computes log(psi_lower_j(s)) for a given lower state j and batch of states s.
-        
-        lower_idx:
-            index of the lower state.
-        states: 
-            batch of sampled configurations.
-        Returns:
-            log(psi_lower_j(s)) for all samples s.
-        """
-        if not self._is_set or lower_idx >= self._num_lower_states:
-            raise IndexError("Lower state index out of bounds.")
-        apply_fn    = self._lower_apply_fns[lower_idx]
-        params      = self._lower_params[lower_idx]
-        return apply_fn(params, states)
-
-    # --- Methods to compute quantities needed for excited state ---
-
-    @partial(jax.jit, static_argnums=(0,))
-    def _compute_log_psi_ratios_for_single_lower_state(self,
-                                                       lower_idx: int,
-                                                       excited_log_psi_s: jnp.ndarray,
-                                                       states_s: jnp.ndarray) -> jnp.ndarray:
-        """
-        Computes log( Psi_excited(s) / Psi_lower_j(s) ) for all samples s.
-        excited_log_psi_s: log amplitudes of the current excited state for the samples.
-        states_s: the sampled configurations.
-        """
-        log_psi_lower_j_s = self.get_lower_state_ansatz_val(lower_idx, states_s)
-        return excited_log_psi_s - log_psi_lower_j_s # log(A/B) = logA - logB
-
-    def compute_all_log_psi_ratios(self,
-                                   excited_log_psi_s: jnp.ndarray, # log psi_exc(s_i) for N_samples
-                                   states_s: jnp.ndarray           # configurations s_i (N_samples, n_visible)
-                                   ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        """
-        Computes log_ratio_exc_div_lower = log(Psi_exc(s) / Psi_lower_j(s)) and
-                 log_ratio_lower_div_exc = log(Psi_lower_j(s) / Psi_exc(s))
-        for all lower states j and all samples s.
-
-        Returns:
-            Tuple of JAX arrays:
-            - log_ratios_exc_div_lower (num_lower_states, num_samples)
-            - log_ratios_lower_div_exc (num_lower_states, num_samples)
-        """
-        if not self.is_set:
-            return jnp.array([]), jnp.array([])
-
-        all_log_ratios_exc_div_lower = []
-        for j in range(self.num_lower_states):
-            log_ratios_j = self._compute_log_psi_ratios_for_single_lower_state(j, excited_log_psi_s, states_s)
-            all_log_ratios_exc_div_lower.append(log_ratios_j)
-
-        log_ratios_exc_div_lower_arr = jnp.stack(all_log_ratios_exc_div_lower, axis=0)
-        log_ratios_lower_div_exc_arr = -log_ratios_exc_div_lower_arr # log(B/A) = -log(A/B)
-
-        return log_ratios_exc_div_lower_arr, log_ratios_lower_div_exc_arr
-
-    # The C++ `collectLowerEnergy` seems to sample from P_j(s) = |psi_j(s)|^2
-    # and then computes < P_exc(s) >_j where P_exc is |psi_exc(s')/psi_exc(s)|^2 * <s|H_proj|s'>.
-    # This is intricate. For JAX, we'll likely compute everything using samples from P_exc(s).
-    # The energy penalty term H_i = beta_i * |f_i><f_i| / <f_i|f_i> becomes
-    # E_penalty_i(s) = beta_i * sum_s' <s| |f_i><f_i| |s'> / <f_i|f_i> * (psi_exc(s')/psi_exc(s))
-    #                = beta_i * |<s|f_i>|^2 / <f_i|f_i> * (psi_exc(f_i)/psi_exc(s))
-    # If f_i is a single configuration, <s|f_i> = delta_s,f_i.
-    # More generally, if f_i is a known wavefunction psi_lower_i:
-    # E_penalty_i(s) = beta_i * |psi_lower_i(s)|^2 / <|psi_lower_i|^2> * (sum_s' psi_lower_i(s')^* psi_exc(s') / (psi_lower_i(s)^* psi_exc(s)))
-    # This simplifies to: beta_i * |psi_lower_i(s) / psi_exc(s)|^2. (Assuming <|psi_lower_i|^2> = 1 after normalization)
-    # This is the local energy contribution from the penalty term for state i.
-    # E_penalty_local(s) = sum_i beta_i * |psi_lower_i(s) / psi_exc(s)|^2
-    #                  = sum_i beta_i * exp(2 * Re[log(psi_lower_i(s)) - log(psi_exc(s))])
-
-    @partial(jax.jit, static_argnums=(0,))
-    def compute_local_penalty_energies(self,
-                                       log_psi_exc_s: jnp.ndarray, # (N_samples,)
-                                       states_s: jnp.ndarray       # (N_samples, n_visible)
-                                       ) -> jnp.ndarray:           # (N_samples,)
-        """
-        Computes the local energy contribution from all penalty terms for each sample.
-        E_penalty_local(s) = sum_i beta_i * |psi_lower_i(s) / psi_exc(s)|^2
-        """
-        if not self.is_set:
-            return jnp.zeros_like(log_psi_exc_s)
-
-        _, log_ratios_lower_div_exc = self.compute_all_log_psi_ratios(log_psi_exc_s, states_s)
-        # log_ratios_lower_div_exc has shape (num_lower_states, N_samples)
-
-        # |psi_lower_i(s) / psi_exc(s)|^2 = exp(2 * Re[log_ratios_lower_div_exc_i(s)])
-        abs_sq_ratios = jnp.exp(2 * jnp.real(log_ratios_lower_div_exc)) # (num_lower_states, N_samples)
-
-        # Multiply by betas and sum over lower states
-        # betas shape (num_lower_states,), need to reshape for broadcasting
-        penalties_per_lower_state = self._lower_betas[:, None] * abs_sq_ratios # (num_lower_states, N_samples)
-        total_local_penalty = jnp.sum(penalties_per_lower_state, axis=0) # (N_samples,)
-        return total_local_penalty
-
-#########################################
 #! TESTS
 #########################################
 
@@ -2119,4 +1927,6 @@ def test_net_ansatz(nqs: NQS, nsamples = 10):
     ansatz      = ansatz.reshape(-1, 1)
     return ansatz, ansatz.shape
 
+#########################################
+#! EOF
 #########################################

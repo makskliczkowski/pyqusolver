@@ -132,6 +132,13 @@ class DummyVector:
         backend = backend or self._backend
         tgt_dt  = distinguish_type(dtype)
 
+        if (backend.iscomplexobj(self.val) and not backend.iscomplexobj(dtype)):
+            # If we're casting from complex to real, take the real part
+            self.val = backend.real(self.val)
+        elif (not backend.iscomplexobj(self.val) and backend.iscomplexobj(dtype)):
+            # If we're casting from real to complex, add a zero imaginary part
+            self.val = backend.asarray(self.val, dtype=backend.complex128)
+
         # fast path: nothing to change
         if not copy and tgt_dt == self.dtype:
             return self

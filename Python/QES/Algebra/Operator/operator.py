@@ -23,6 +23,7 @@ import copy
 import time
 import numpy as np
 import numba
+from numba.core.registry import CPUDispatcher
 import numbers
 
 #####################################################################################################
@@ -32,7 +33,7 @@ from typing import Optional, Callable, Union, Sequence, Any, Set
 from typing import Union, Tuple, List               # type hints for the functions and methods
 from functools import partial                       # partial function application for operator composition
 ####################################################################################################
-from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, StateTypes, LocalOpKernels
+from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, LocalOperator, StateTypes, LocalOpKernels
 from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
 from QES.general_python.lattices import Lattice
 
@@ -110,7 +111,7 @@ class SymmetryGenerators(Enum):
     ParityZ         = auto()    # spin-only (sigma-z parity)
 
     # fermion-specific
-    FermionParity   = auto()    # (−1)^{N}
+    FermionParity   = auto()    # (-1)^{N}
     ParticleHole    = auto()    # PH transform
     TimeReversal    = auto()    # optional placeholder, depends on model
 
@@ -207,6 +208,12 @@ class OperatorTypeActing(Enum):
             return self.value == other
         return NotImplemented
 
+    def __repr__(self):
+        return f"{self.name}"
+    
+    def __str__(self):
+        return f"{self.name}"
+
 ####################################################################################################
 #! OperatorFunction
 ####################################################################################################
@@ -233,21 +240,20 @@ def _make_mul_int_njit(outer_op_fun, inner_op_fun, allocator_m=2):
     Returns:
         callable:
             A function with signature (state, *args) -> (states, coefficients), where `states` is a 1D numpy
-            array of int64 and `coefficients` is a 1D numpy array of float64.
+            array of int64 and `coefficients` is a 1D numpy array of float64 or complex128.
     """
     try:
-        # if not isinstance(outer_op_fun, numba.core.registry.CPUDispatcher) or not isinstance(inner_op_fun, numba.core.registry.CPUDispatcher):
-            # raise TypeError("Both outer_op_fun and inner_op_fun must be @numba.njit-compiled functions")
-        
+        # Wrapper that always returns complex128 - safe for all operator products
+        # This avoids Numba's strict type unification issues with conditional dtypes
         @numba.njit(cache=True)
         def mul_int_impl(state, *args):
             g_states, g_coeffs = inner_op_fun(state, *args)
             if g_states.shape[0] == 0:
-                return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
+                return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.complex128)
 
             total_estimate  = g_states.shape[0] * allocator_m
             res_states      = np.empty(total_estimate, dtype=np.int64)
-            res_coeffs      = np.empty(total_estimate, dtype=g_coeffs.dtype)
+            res_coeffs      = np.empty(total_estimate, dtype=np.complex128)
             count           = 0
 
             for k in range(g_states.shape[0]):
@@ -258,16 +264,16 @@ def _make_mul_int_njit(outer_op_fun, inner_op_fun, allocator_m=2):
                 for l in range(f_states_k.shape[0]):
                     if count >= res_states.shape[0]:
                         new_size = res_states.shape[0] * 2
-                        tmp_s = np.empty(new_size, dtype=np.int64)
-                        tmp_c = np.empty(new_size, dtype=np.float64)
-                        tmp_s[:count] = res_states[:count]
-                        tmp_c[:count] = res_coeffs[:count]
-                        res_states = tmp_s
-                        res_coeffs = tmp_c
+                        tmp_s           = np.empty(new_size, dtype=np.int64)
+                        tmp_c           = np.empty(new_size, dtype=np.complex128)
+                        tmp_s[:count]   = res_states[:count]
+                        tmp_c[:count]   = res_coeffs[:count]
+                        res_states      = tmp_s
+                        res_coeffs      = tmp_c
 
-                    res_states[count] = f_states_k[l]
-                    res_coeffs[count] = g_coeff_k * f_coeffs_k[l]
-                    count += 1
+                    res_states[count]   = f_states_k[l]
+                    res_coeffs[count]   = g_coeff_k * f_coeffs_k[l]
+                    count              += 1
 
             return res_states[:count], res_coeffs[:count]
 
@@ -350,7 +356,13 @@ def _make_mul_jax_vmap(outer_op_fun_jax, inner_op_fun_jax):
 
         def apply_outer(state, coeff):
             f_states, f_coeffs = outer_op_fun_jax(state, *args)  # (K, D), (K,)
-            return f_states, coeff * f_coeffs
+            # Ensure complex dtype if either coefficient is complex
+            # This handles cases like sigma_y which returns complex coefficients
+            combined_coeffs = coeff * f_coeffs
+            # Cast to complex128 if needed to avoid dtype mismatches in JAX operations
+            if jnp.iscomplexobj(g_coeffs) or jnp.iscomplexobj(f_coeffs):
+                combined_coeffs = jnp.asarray(combined_coeffs, dtype=jnp.complex128)
+            return f_states, combined_coeffs
 
         # g_states: (M, D), g_coeffs: (M,)
         f_states, f_coeffs = jax.vmap(apply_outer, in_axes=(0, 0))(g_states, g_coeffs)
@@ -599,8 +611,12 @@ class OperatorFunction:
         # apply the operator function based on the number of necessary arguments
         result = self._dispatch(s, *args)
 
-        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], (int, np.ndarray, jnp.ndarray)):
-            return result
+        # Check if result is a valid (state, value) tuple
+        # Accept int, np.integer (for np.int64, etc.), np.ndarray, or jnp.ndarray for state
+        if isinstance(result, tuple) and len(result) == 2:
+            state_valid = isinstance(result[0], (int, np.integer, np.ndarray, jnp.ndarray))
+            if state_valid:
+                return result
         elif isinstance(result, list) and all(isinstance(item, tuple) and len(item) == 2 for item in result):
             return result
         raise ValueError("Operator function returned an invalid type. Expected a tuple or a list of (state, value) pairs.")
@@ -1222,6 +1238,33 @@ class Operator(ABC):
     #! Operators that modify the operator class itself
     #################################
     
+    def _multiply_const(self, constant):
+        """
+        Multiply the operator by a constant value and return a new Operator.
+        
+        Parameters:
+            constant (numeric): The constant value to multiply with the operator.
+            
+        Returns:
+            Operator: A new Operator instance with the multiplied function and eigenvalue.
+        """
+        new_kwargs = self.__dict__.copy()
+        new_kwargs.pop('_fun', None)
+        new_kwargs.pop('_name', None)
+        new_kwargs.pop('_eigval', None)
+        
+        new_fun     = self._fun._multiply_const(constant)
+        new_eigval  = self._eigval * constant
+        new_name    = f"({constant} * {self._name})"
+        
+        return Operator(op_fun      =   new_fun,
+                        name        =   new_name,
+                        eigval      =   new_eigval,
+                        ns          =   new_kwargs['_ns'],
+                        lattice     =   new_kwargs['_lattice'], 
+                        modifies    =   new_kwargs['_modifies'],
+                        backend     =   new_kwargs['_backend_str'], **new_kwargs)
+
     def __imul__(self, scalar):
         """ *= Operator for a general operator """
         self._fun = self._fun * scalar
@@ -1315,7 +1358,72 @@ class Operator(ABC):
         else:
             raise ValueError(f"Invalid type for multiplication.{type(scalar)}")
         return None
+    
+    # -------------------------------
+    
+    def __add__(self, other):
+        """
+        Addition of two operators.
         
+        Parameters:
+            other: Another Operator instance to add to this operator.
+            
+        Returns:
+            Operator: A new Operator instance representing the sum.
+        """
+        if not isinstance(other, Operator):
+            raise TypeError(f"Cannot add Operator with type {type(other)}")
+        
+        new_kwargs  = self.__dict__.copy()
+        new_kwargs.pop('_fun', None)
+        new_kwargs.pop('_name', None)
+        new_kwargs.pop('_eigval', None)
+        
+        new_fun     = self._fun + other._fun
+        new_name    = f"({self._name} + {other._name})"
+        # Note: eigenvalue addition doesn't have clear physical meaning for general operators
+        # Set to None or keep the first operator's eigenvalue
+        new_eigval  = None
+        
+        return Operator(op_fun  =   new_fun, 
+                        name    =   new_name, 
+                        eigval  =   new_eigval,
+                        ns      =   new_kwargs['_ns'],
+                        lattice =   new_kwargs['_lattice'], modifies=new_kwargs['_modifies'],
+                        backend =   new_kwargs['_backend_str'], **new_kwargs)
+    
+    def __sub__(self, other):
+        """
+        Subtraction of two operators.
+        
+        Parameters:
+            other: Another Operator instance to subtract from this operator.
+            
+        Returns:
+            Operator: A new Operator instance representing the difference.
+        """
+        if not isinstance(other, Operator):
+            raise TypeError(f"Cannot subtract type {type(other)} from Operator")
+
+        new_kwargs  = self.__dict__.copy()
+        new_kwargs.pop('_fun', None)
+        new_kwargs.pop('_name', None)
+        new_kwargs.pop('_eigval', None)
+        
+        new_fun     = self._fun - other._fun
+        new_name    = f"({self._name} - {other._name})"
+        # Note: eigenvalue subtraction doesn't have clear physical meaning for general operators
+        # Set to None or keep the first operator's eigenvalue
+        new_eigval  = None
+
+        return Operator(op_fun  =   new_fun, 
+                        name    =   new_name, 
+                        eigval  =   new_eigval,
+                        ns      =   new_kwargs['_ns'],
+                        lattice =   new_kwargs['_lattice'], 
+                        modifies=   new_kwargs['_modifies'],
+                        backend =   new_kwargs['_backend_str'], **new_kwargs)
+
     #################################
     #! Setters and Getters
     #################################
@@ -1455,21 +1563,18 @@ class Operator(ABC):
                 array, or jax.numpy array.
 
         Returns:
-            Union[tuple[list, list], Any]: 
-                - If `states` is a single state, returns the result of `_fun(states)`.
-                - If `states` is a collection, returns a tuple of two lists:
-                    - The first list contains the transformed states.
-                    - The second list contains the corresponding values.
+            tuple[list, list]: 
+                Two lists: the first contains the transformed states, the second contains the corresponding values.
         """
-        if (hasattr(states, 'shape') and len(states.shape) == 1) or isinstance(states, (int, np.int8, np.int16, np.int32, np.int64)):
-            # if the state is a single state, apply the function directly
+        if (hasattr(states, 'shape') and len(states.shape) <= 1) or isinstance(states, (int, np.integer)):
+            # if the state is a single state (scalar or 0-d/1-d array), apply the function directly
             st, val = self._fun(states)
-            return st, val * self._eigval
+            return st, self._backend.asarray(val) * self._eigval
         
         # if the state is a collection of states, apply the function to each state
         results     = [self._fun(state) for state in states]
         out, val    = zip(*results) if results else ([], [])
-        return list(out), list(val * self._eigval)
+        return (self._backend.stack(list(out)), self._backend.stack([v * self._eigval for v in val])) if list(out) else (self._backend.array([]), self._backend.array([]))
     
     def _apply_local(self, states, i):
         """
@@ -1479,18 +1584,15 @@ class Operator(ABC):
                 Can be a single integer, a list of integers, or a NumPy/JAX array.
             i (int): The index or parameter used by the local operation.
         Returns:
-            tuple: A tuple containing two lists:
-                - The first list contains the resulting states after applying the operation.
-                - The second list contains the corresponding values or results of the operation.
-                If the input is a single state, the result is returned as a single state and value.
+            tuple[list, list]: Two lists: the resulting states and the corresponding values.
         """
-        if (hasattr(states, 'shape') and len(states.shape) == 1) or isinstance(states, (int, np.int8, np.int16, np.int32, np.int64)):
-            # if the state is a single state, apply the function directly
+        if (hasattr(states, 'shape') and len(states.shape) <= 1) or isinstance(states, (int, np.integer)):
+            # if the state is a single state (scalar or 0-d/1-d array), apply the function directly
             st, val = self._fun(states, i)
-            return st, val * self._eigval
+            return st, self._backend.asarray(val) * self._eigval
         results     = [self._fun(state, i) for state in states]
         out, val    = zip(*results) if results else ([], [])
-        return list(out), list(val * self._eigval)
+        return (self._backend.stack(list(out)), self._backend.stack([v * self._eigval for v in val])) if list(out) else (self._backend.array([]), self._backend.array([]))
     
     def _apply_correlation(self, states, i, j):
         """
@@ -1501,21 +1603,16 @@ class Operator(ABC):
             i (int): The first index parameter for the correlation function.
             j (int): The second index parameter for the correlation function.
         Returns:
-            tuple: If `states` is a single state, returns a tuple `(out, val)` where:
-                - `out` is the output state after applying the correlation function.
-                - `val` is the value associated with the correlation function.
-            If `states` is a collection of states, returns a tuple of lists `(out_list, val_list)` where:
-                - `out_list` contains the output states for each input state.
-                - `val_list` contains the corresponding values for each input state.
+            tuple[list, list]: Two lists: the output states and the corresponding values.
         """
         if (hasattr(states, 'shape') and len(states.shape) == 1) or isinstance(states, (int, np.int8, np.int16, np.int32, np.int64)):
             # if the state is a single state, apply the function directly
             st, val = self._fun(states, i, j)
-            return st, val * self._eigval
+            return st, self._backend.asarray(val) * self._eigval
         
         results     = [self._fun(state, i, j) for state in states]
         out, val    = zip(*results) if results else ([], [])
-        return list(out), list(val * self._eigval)
+        return (self._backend.stack(list(out)), self._backend.stack([v * self._eigval for v in val])) if list(out) else (self._backend.array([]), self._backend.array([]))
         
     def apply(self, states : list | Array, *args):
         """
@@ -1591,7 +1688,7 @@ class Operator(ABC):
         """
         # create a dummy Hilbert space for convenience
         from QES.Algebra.hilbert import HilbertSpace
-        from QES.Algebra.Operator.operator_matrix import operator_create_np
+        from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
         
         dummy_hilbert   = HilbertSpace(nh = dim, backend = self._backend)
         if verbose:
@@ -1599,13 +1696,11 @@ class Operator(ABC):
 
         # calculate the time to create the matrix
         t1              = time.time()
-        matrix          = operator_create_np(ns                 = None, 
-                                            hilbert_space       = dummy_hilbert,
-                                            local_fun           = wrapped_funct,
-                                            max_local_changes   = max_loc_upd,
-                                            is_sparse           = is_sparse,
-                                            start               = None,
-                                            dtype               = dtype)
+        matrix          = build_operator_matrix(hilbert_space       = dummy_hilbert,
+                                                operator_func       = wrapped_funct,
+                                                sparse              = is_sparse,
+                                                max_local_changes   = max_loc_upd,
+                                                dtype               = dtype)
         time_taken      = time.time() - t1
         if verbose:
             dummy_hilbert.log(f"Time taken to create the matrix {self._name}: {time_taken:.2e} seconds", lvl=2)
@@ -1683,10 +1778,50 @@ class Operator(ABC):
                 return self._matrix_no_hilbert_jax(dim1, is_sparse, wrapped_fun, dtype, max_loc_upd)
         # Case2: one Hilbert space provided
         elif matrix_hilbert == 'single':
-            pass
+            if not jax_maybe_av or use_numpy:
+                from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
+                if verbose:
+                    hilbert_1.log(f"Calculating the operator matrix {self._name} using NumPy with single Hilbert space...", lvl=2)
+                    
+                t1      = time.time()
+                matrix  = build_operator_matrix(
+                    operator_func       = wrapped_fun,
+                    hilbert_space       = hilbert_1,
+                    sparse              = is_sparse,
+                    max_local_changes   = max_loc_upd,
+                    dtype               = dtype
+                )
+                if verbose:
+                    hilbert_1.log(f"Time taken to create the matrix {self._name}: {time.time() - t1:.2e} seconds", lvl=2)
+                return matrix
+            else:
+                #!TODO: Implement the JAX version of the matrix function for single Hilbert space
+                raise NotImplementedError("JAX backend for single Hilbert space matrix construction is not yet implemented.")
+                
         # Case3: two Hilbert spaces provided
         elif matrix_hilbert == 'double':
-            pass
+            if not jax_maybe_av or use_numpy:
+                from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
+                if verbose:
+                    if hasattr(hilbert_1, 'log'):
+                        hilbert_1.log(f"Calculating the operator matrix {self._name} using NumPy with two Hilbert spaces...", lvl=2)
+                        
+                t1      = time.time()
+                matrix  = build_operator_matrix(
+                    operator_func       = wrapped_fun,
+                    hilbert_space       = hilbert_1,
+                    hilbert_space_out   = hilbert_2,
+                    sparse              = is_sparse,
+                    max_local_changes   = max_loc_upd,
+                    dtype               = dtype
+                )
+                if verbose:
+                    if hasattr(hilbert_1, 'log'):
+                        hilbert_1.log(f"Time taken to create the matrix {self._name}: {time.time() - t1:.2e} seconds", lvl=2)
+                return matrix
+            else:
+                #!TODO: Implement the JAX version of the matrix function for two Hilbert spaces
+                raise NotImplementedError("JAX backend for two Hilbert spaces matrix construction is not yet implemented.")
         else:
             raise ValueError("Invalid Hilbert space provided.")
         return None
@@ -1695,9 +1830,29 @@ class Operator(ABC):
     
     def standardize_matrix(self, matrix):
         """
-        Standardizes the given matrix if the _standarize flag is set to true.
+        Standardizes the given matrix representation of the operator.
+        
+        This method can be used to apply normalization, symmetrization, or other
+        standardization procedures to a matrix representation of the operator.
+        Currently, this is a placeholder for future implementation.
+        
+        Parameters:
+            matrix: The matrix to standardize (sparse or dense array).
+            
+        Returns:
+            The standardized matrix (currently returns the input unchanged).
+            
+        Note:
+            This method is reserved for future extensions that may require
+            matrix standardization based on specific operator properties or
+            symmetries. Override in subclasses if needed.
         """
-        pass
+        # Placeholder - return matrix unchanged
+        # Future implementations might include:
+        # - Normalization by trace or norm
+        # - Symmetrization for hermitian operators
+        # - Removal of numerical noise below threshold
+        return matrix
     
     #################################
     
@@ -1726,7 +1881,7 @@ def operator_identity(backend : str = 'default') -> Operator:
 
 ####################################################################################################
 
-def create_operator(type_act        : int | OperatorTypeActing,
+def create_operator(type_act        : int                   | OperatorTypeActing,
                     op_func_int     : Callable,
                     op_func_np      : Callable,
                     op_func_jnp     : Callable,
@@ -1796,16 +1951,21 @@ def create_operator(type_act        : int | OperatorTypeActing,
     if type_act == OperatorTypeActing.Global.value or sites is not None:
         
         # If sites is None, we act on all sites.
+        if isinstance(sites, int):
+            sites = [sites]
         if sites is None or len(sites) == 0:
             sites = list(range(ns))
         sites           = tuple(sites) if isinstance(sites, list) else sites
         sites_np        = np.array(sites, dtype = np.int32)
         
-        @numba.njit
-        def fun_int(state):
-            return op_func_int(state, ns, sites, *extra_args)
-        
-        @numba.njit
+        if isinstance(op_func_int, CPUDispatcher):
+            @numba.njit
+            def fun_int(state):
+                return op_func_int(state, ns, sites, *extra_args)
+        else:
+            def fun_int(state):
+                return op_func_int(state, ns, sites, *extra_args)
+
         def fun_np(state):
             return op_func_np(state, sites_np, *extra_args)
 
@@ -1817,25 +1977,29 @@ def create_operator(type_act        : int | OperatorTypeActing,
         
         op_name =   (name if name is not None else op_func_int.__name__) + "/"
         op_name +=  "-".join(str(site) for site in sites)
-        return Operator(fun_int = fun_int,
-                        fun_np  = fun_np,
-                        fun_jnp = fun_jnp,
-                        eigval  = 1.0,
-                        lattice = lattice,
-                        ns      = ns,
-                        name    = op_name,
-                        typek   = SymmetryGenerators.Other,
-                        modifies= modifies)
+        return Operator(fun_int     = fun_int,
+                        fun_np      = fun_np,
+                        fun_jnp     = fun_jnp,
+                        eigval      = 1.0,
+                        lattice     = lattice,
+                        ns          = ns,
+                        name        = op_name,
+                        typek       = SymmetryGenerators.Other,
+                        modifies    = modifies)
     
     #! Local operator: the operator acts on one specific site. The returned functions expect an extra site argument.
     elif type_act == OperatorTypeActing.Local.value:
         
-        @numba.njit
-        def fun_int(state, i):
-            sites_1 = np.array([i], dtype=np.int32)
-            return op_func_int(state, ns, sites_1, *extra_args)
-        
-        @numba.njit
+        if isinstance(op_func_int, CPUDispatcher):
+            @numba.njit
+            def fun_int(state, i):
+                sites_1 = np.array([i], dtype=np.int32)
+                return op_func_int(state, ns, sites_1, *extra_args)
+        else:
+            def fun_int(state, i):
+                sites_1 = np.array([i], dtype=np.int32)
+                return op_func_int(state, ns, sites_1, *extra_args)
+
         def fun_np(state, i):
             sites_1 = np.array([i], dtype=np.int32)
             return op_func_np(state, sites_1, *extra_args)
@@ -1865,12 +2029,16 @@ def create_operator(type_act        : int | OperatorTypeActing,
     #! Correlation operator: the operator acts on a pair of sites.
     elif type_act == OperatorTypeActing.Correlation.value:
         
-        @numba.njit
-        def fun_int(state, i, j):
-            sites_2 = np.array([i, j], dtype=np.int32)
-            return op_func_int(state, ns, sites_2, *extra_args)
-        
-        @numba.njit
+        if isinstance(op_func_int, CPUDispatcher):
+            @numba.njit
+            def fun_int(state, i, j):
+                sites_2 = np.array([i, j], dtype=np.int32)
+                return op_func_int(state, ns, sites_2, *extra_args)
+        else:
+            def fun_int(state, i, j):
+                sites_2 = np.array([i, j], dtype=np.int32)
+                return op_func_int(state, ns, sites_2, *extra_args)
+
         def fun_np(state, i, j):
             sites_2 = np.array([i, j], dtype=np.int32)
             return op_func_np(state, sites_2, *extra_args)
@@ -1898,6 +2066,52 @@ def create_operator(type_act        : int | OperatorTypeActing,
     
     else:
         raise ValueError("Invalid OperatorTypeActing")
+
+def operator_from_local(local_op: LocalOperator,
+                        *,
+                        lattice: Optional[Lattice] = None,
+                        ns: Optional[int] = None,
+                        name: Optional[str] = None,
+                        type_override: Optional[OperatorTypeActing] = None) -> Operator:
+    """
+    Convert a catalogued :class:`LocalOperator` into a concrete :class:`Operator`.
+    """
+
+    kernels = local_op.kernels
+    if kernels.fun_int is None:
+        raise ValueError(f"Integer backend not available for operator '{local_op.key}'.")
+
+    def _missing_np_kernel(*_args, **_kwargs):
+        raise NotImplementedError(
+            f"NumPy backend not available for operator '{local_op.key}'."
+        )
+
+    def _missing_jax_kernel(*_args, **_kwargs):
+        raise NotImplementedError(
+            f"JAX backend not available for operator '{local_op.key}'."
+        )
+
+    fun_np = kernels.fun_np if kernels.fun_np is not None else _missing_np_kernel
+    fun_jnp = kernels.fun_jax if kernels.fun_jax is not None else _missing_jax_kernel
+
+    type_map = {
+        0: OperatorTypeActing.Global,
+        1: OperatorTypeActing.Local,
+        2: OperatorTypeActing.Correlation,
+    }
+    type_act = type_override or type_map.get(kernels.site_parity, OperatorTypeActing.Local)
+
+    return create_operator(
+        type_act=type_act,
+        op_func_int=kernels.fun_int,
+        op_func_np=fun_np,
+        op_func_jnp=fun_jnp,
+        lattice=lattice,
+        ns=ns,
+        extra_args=kernels.default_extra_args,
+        name=name or local_op.key,
+        modifies=kernels.modifies_state,
+    )
 
 # Example usage:
 # (Assume sigma_x_int_np, sigma_x_np, sigma_x_jnp are defined elsewhere and JAX_AVAILABLE is set.)
@@ -1933,7 +2147,6 @@ def create_add_operator(operator: Operator, multiplier: Union[float, int, comple
         Tuple[Operator, List[Any], Union[float, int, complex]]:
             A tuple containing the operator, the adjusted list of sites, and the multiplier.
     """
-
     
     # if the operator is of Global type, we don't want to add the states to the argument, pass empty list
     
@@ -2222,7 +2435,7 @@ def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
     op_label : str | sequence[str], optional
         LaTeX label(s).  If *None*, uses ``op.name`` for every operator.
     to_bin : Callable[[int, int], str], optional
-        Integer → binary-string formatter.  Defaults to
+        Integer -> binary-string formatter.  Defaults to
         ``lambda k,L: format(k, f'0{L}b')``.
     just_time : bool, default = False
         If True, only measure the time taken for the operation without
@@ -2236,13 +2449,17 @@ def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
     """
     
     from QES.general_python.common.timer import Timer
-    if not just_time:
-        from IPython.display import Math, display
-        from QES.general_python.common.display import (
-            display_state,
-            prepare_labels
-        )
-
+    
+    try:
+        if not just_time:
+            from IPython.display import Math, display
+            from QES.general_python.common.display import (
+                display_state,
+                prepare_labels
+            )
+    except:
+        raise ImportError("IPython is required for displaying operator actions.")
+    
     # ------------------------------------------------------------------
     ops      = (op,) if not isinstance(op, Sequence) else tuple(op)
     is_int   = isinstance(state, (numbers.Integral, int, np.integer)) 
@@ -2259,7 +2476,7 @@ def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
                     verbose = not just_time)
 
     # ------------------------------------------------------------------
-    with Timer(verbose=True, precision='us', name="Operator action"):
+    with Timer(verbose=True, name="Operator action"):
         for cur_op, lab in zip(ops, labels):
             if not just_time:
                 display(Math(fr"\text{{Operator: }} {lab}, \text{{typeacting}}: {op_acting}"))

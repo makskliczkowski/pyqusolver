@@ -157,7 +157,7 @@ def get_u1_sym(lat: Lattice, val: float) -> GlobalSymmetry:
     Returns:
         An instance of GlobalSymmetry with name U1, value val, and the checking function set to U1_sym.
     """
-    sym = GlobalSymmetry(lat, val, GlobalSymmetries.U1)
+    sym = GlobalSymmetry(lat=lat, val=val, name=GlobalSymmetries.U1)
     sym.set_fun(u1_sym)
     return sym
 

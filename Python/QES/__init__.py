@@ -3,10 +3,11 @@
 QES package initialization
 =========================
 
-Author: Maks Kliczkowski
-Email: maxgrom97@gmail.com
-Date: 01.10.25
-File: QES/__init__.py
+File    : QES/__init__.py
+Author  : Maks Kliczkowski
+Email   : maxgrom97@gmail.com
+Date    : 01.10.25
+File    : QES/__init__.py
 
 This is the top-level package for Quantum EigenSolver (QES).
 It provides unified access to all submodules, global singletons, and core functionality.
@@ -33,6 +34,12 @@ __all__ = [
     "qes_next_key",
     "qes_split_keys",
     "qes_seed_scope",
+    # Discovery utilities
+    "list_modules",
+    "describe_module",
+    # Convenience API exports (lazy):
+    "HilbertSpace",
+    "Hamiltonian",
     # Global accessor re-exports
     "get_logger",
     "get_backend_manager",
@@ -48,7 +55,11 @@ __all__ = [
     "__description__",
 ]
 
+####################################################################################################
+
+import importlib
 from contextlib import contextmanager
+from typing import Optional, Dict
 
 # Centralized globals (lazy singletons)
 from .qes_globals import (
@@ -59,6 +70,9 @@ from .qes_globals import (
     next_jax_key as _next_jax_key,
     split_jax_keys as _split_jax_keys,
 )
+
+# Lightweight registry utilities
+from .registry import list_modules, describe_module
 
 ####################################################################################################
 
@@ -86,6 +100,30 @@ def qes_seed_scope(seed: int, *, touch_numpy_global: bool = False, touch_python_
     backend_mgr = get_backend_manager()
     with backend_mgr.seed_scope(seed, touch_numpy_global=touch_numpy_global, touch_python_random=touch_python_random) as suite:
         yield suite
+
+# ----------------------------------------------------------------------------
+# Lazy access to top-level subpackages and common classes (keeps `import QES` light)
+# ----------------------------------------------------------------------------
+
+_SUBMODULES: Dict[str, str] = {
+    'Algebra'           : 'QES.Algebra',
+    'NQS'               : 'QES.NQS',
+    'Solver'            : 'QES.Solver',
+    'general_python'    : 'QES.general_python',
+}
+
+_API_EXPORTS: Dict[str, str] = {
+    'HilbertSpace'      : 'QES.Algebra.hilbert',
+    'Hamiltonian'       : 'QES.Algebra.hamil',
+}
+
+def __getattr__(name: str):  # PEP 562
+    if name in _SUBMODULES:
+        return importlib.import_module(_SUBMODULES[name])
+    if name in _API_EXPORTS:
+        mod = importlib.import_module(_API_EXPORTS[name])
+        return getattr(mod, name)
+    raise AttributeError(f"module 'QES' has no attribute {name!r}")
 
 # -------------------------------------------------------------------------------------------------
 #! End of QES package initialization

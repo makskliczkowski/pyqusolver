@@ -1,4 +1,4 @@
-'''
+r'''
 Spinless Fermion Operators (Jordan-Wigner) with JAX
 ===================================================
 
@@ -36,21 +36,35 @@ Notes:
 - The module relies on utility functions for bit manipulation and type definitions from `general_python.algebra.utils` and `general_python.common.binary`.
 - For further documentation, see the corresponding `operators_spinless_fermions.py` file.
 
-file    : Algebra/Operator/operators_spinless_fermions_jax.py
-
-desc    : Spinless fermions operators (Jordan-Wigner) with JAX. For documentation
-          see `operators_spinless_fermions.py`.
+----------------------------------------------------------------------------
+File        : Algebra/Operator/operators_spinless_fermions_jax.py
+Author      : Maksymilian Kliczkowski
+Date        : 30.10.2025
+Version     : 0.9.0
+Desc        : Spinless fermions operators (Jordan-Wigner) with JAX. For documentation
+             see `operators_spinless_fermions.py`.
+----------------------------------------------------------------------------
 '''
 
 import math
 import numpy as np
-import numba
 from typing import List, Union, Optional, Callable, Sequence
 from functools import partial
 
-from QES.general_python.algebra.utils import JAX_AVAILABLE, Array, DEFAULT_JP_FLOAT_TYPE, DEFAULT_JP_CPX_TYPE, DEFAULT_JP_INT_TYPE
-from QES.Algebra.Operator.operator import ensure_operator_output_shape_jax
-import QES.general_python.common.binary as _binary
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, Array, DEFAULT_JP_FLOAT_TYPE, DEFAULT_JP_CPX_TYPE, DEFAULT_JP_INT_TYPE
+    import QES.general_python.common.binary as _binary
+except ImportError as e:
+    JAX_AVAILABLE   = False
+
+try:
+    from QES.Algebra.Operator.operator import ensure_operator_output_shape_jax
+except ImportError as e:
+    ensure_operator_output_shape_jax = None
+
+# ============================================================================
+#! JAX operators for spinless fermions (Jordan-Wigner)
+# ============================================================================
 
 if JAX_AVAILABLE:
     import jax
@@ -162,7 +176,7 @@ if JAX_AVAILABLE:
                   sites: jnp.ndarray,
                   pref : float = 1.0):
         """
-        In-place creation on an occupation array (1 → already occupied).
+        In-place creation on an occupation array (1 -> already occupied).
         """
         bits      = jnp.take(state, sites)
         any_occ   = jnp.any(bits == 1)
@@ -235,7 +249,7 @@ if JAX_AVAILABLE:
 
         new_states     = state ^ (jnp.int64(1) << pos)      # flipped regardless; masked later
         coeffs         = signs * pref * jnp.exp(-1j * k * sites)
-        coeffs         = coeffs * (1.0 - bits)              # zero where bit==1 is False
+        coeffs         = coeffs * bits                      # only occupied
 
         norm           = jnp.sqrt(jnp.maximum(jnp.count_nonzero(coeffs), 1))
         return new_states.astype(_DEFAULT_INT), coeffs / norm
@@ -247,7 +261,7 @@ if JAX_AVAILABLE:
                         sites : jnp.ndarray,
                         k     : float,
                         pref  : float = 1.0):
-        """
+        r"""
         Momentum-space creation  c_k\dag  on integer basis label.
         """
         pos            = ns - 1 - sites
@@ -256,7 +270,7 @@ if JAX_AVAILABLE:
 
         new_states     = state ^ (jnp.int64(1) << pos)
         coeffs         = signs * pref * jnp.exp(1j * k * sites)
-        coeffs         = coeffs * bits                          # only where bit==1
+        coeffs         = coeffs * (1.0 - bits)                            # only empty
 
         norm           = jnp.sqrt(jnp.maximum(jnp.count_nonzero(coeffs), 1))
         return new_states.astype(_DEFAULT_INT), coeffs / norm
@@ -267,7 +281,7 @@ if JAX_AVAILABLE:
     
     f_parity_np_vec = jax.vmap(f_parity_np_jnp, in_axes=(None, 0))
 
-    # @jit
+    @jit
     def c_k_jnp(state    : jnp.ndarray,
                 sites    : jnp.ndarray,
                 k        : float,
@@ -287,12 +301,12 @@ if JAX_AVAILABLE:
         norm           = jnp.sqrt(jnp.maximum(jnp.count_nonzero(coeffs), 1))
         return new_states, coeffs / norm
 
-    # @jit
+    @jit
     def c_k_dag_jnp(state  : jnp.ndarray,
                     sites  : jnp.ndarray,
                     k      : float,
                     pref   : float = 1.0):
-        """
+        r"""
         Momentum-space creation  c_k\dag  on occupation array.
         """
         bits           = jnp.take(state, sites)
@@ -314,13 +328,13 @@ if JAX_AVAILABLE:
                 ns          : int,
                 sites       : Sequence[int],
                 prefactor   : float = 1.0):
-        """
+        r"""
         JAX version of the number operator acting on an **integer-encoded** state.
 
         Parameters
         ----------
         state : int | jax.Array
-            Basis state encoded as an integer (Jordan–Wigner binary).
+            Basis state encoded as an integer (Jordan-Wigner binary).
         ns : int
             Total number of sites.
         sites : Sequence[int]
@@ -333,7 +347,7 @@ if JAX_AVAILABLE:
         out_state : jax.Array(shape=(1,), dtype=_DEFAULT_INT)
             Same integer state, wrapped in a length-1 array.
         out_coeff : jax.Array(shape=(1,), dtype=_DEFAULT_FLOAT)
-            1·prefactor**n  if **all** sites are occupied, else 0.
+            1\cdot prefactor**n  if **all** sites are occupied, else 0.
         """
         state_arr     = jnp.asarray(state, dtype=_DEFAULT_INT)
 
@@ -367,8 +381,8 @@ if JAX_AVAILABLE:
         tuple
             (state, amplitude) with
 
-            * **state** – unchanged input array (not copied);
-            * **amplitude** – :math:`\Bigl(\prod_i \mathrm{occ}_i\Bigr)\,
+            * **state** - unchanged input array (not copied);
+            * **amplitude** - :math:`\Bigl(\prod_i \mathrm{occ}_i\Bigr)\,
             \text{prefactor}^{\,m}`.
         """
         occ_prod  = jnp.prod(state[sites], dtype=_DEFAULT_FLOAT)

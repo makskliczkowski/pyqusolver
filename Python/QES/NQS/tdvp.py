@@ -1,31 +1,48 @@
 '''
-file    : QES/NQS/tdvp.py
+This module implements the Time-Dependent Variational Principle (TDVP) for quantum systems.
+It provides classes and methods to perform time evolution of quantum states using variational techniques.
+
+In this module, we implement the core algorithms and data structures needed for TDVP, including:
+- TDVP class: 
+    Main class to handle TDVP computations.
+- TDVPConfig class: 
+    Configuration class for TDVP parameters - such as solver options, regularization, and backend settings.
+- TDVPUtils class: 
+    Utility functions for TDVP computations.
+
+----------------------------
+File    : QES/NQS/tdvp.py
 author  : Maksymilian Kliczkowski
 email   : maksymilian.kliczkowski@pwr.edu.pl
+Date    : 2025-11-01
+----------------------------
 '''
 
 import os
-import sys
-import numpy as np
 import warnings
-from dataclasses import dataclass, field
+import numpy as np
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, Any, List
 
 try:
     JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
+    
+    # Common utilities
     from QES.general_python.common.timer import timeit
     from QES.general_python.algebra.utils import get_backend, Array
     
     # Stochastic reconfiguration for TDVP
     import QES.general_python.algebra.solvers.stochastic_rcnfg as sr
     
-    # Preconditioners and Solvers for A * x = b
+    # Preconditioners and Solvers for A * x = b ; used in TDVP
     import QES.general_python.algebra.preconditioners as precond
     import QES.general_python.algebra.solvers as solvers
+    
 except ImportError:
     raise ImportError("Please install the 'general_python' package...")
 
+#################################################################
 
 if JAX_AVAILABLE:
     import jax
@@ -43,6 +60,7 @@ class TDVPTimes:
     covariance  : float = 0.0
     x0          : float = 0.0
     solve       : float = 0.0
+    phase       : float = 0.0
     
     def __getitem__(self, key):
         return getattr(self, key)
@@ -52,12 +70,13 @@ class TDVPTimes:
 
     def todict(self):
         return {
-            'prepare'   : self.prepare,
-            'gradient'  : self.gradient,
-            'covariance': self.covariance,
-            'x0'        : self.x0,
-            'solve'     : self.solve,
-            'epoch'     : self.prepare + self.gradient + self.covariance + self.x0 + self.solve
+            'prepare'   : self.prepare,     # time for preparation
+            'gradient'  : self.gradient,    # gradient computation time
+            'covariance': self.covariance,  # covariance matrix preparation time
+            'x0'        : self.x0,          # initial guess time
+            'solve'     : self.solve,       # solve linear system time
+            'phase'     : self.phase,       # phase estimation time
+            'epoch'     : self.prepare + self.gradient + self.covariance + self.x0 + self.solve + self.phase
         }
         
 @dataclass
@@ -70,17 +89,20 @@ class TDVPStepInfo:
     sr_executed     : Optional[bool] = None
     sr_iterations   : Optional[int]  = None
     timings         : TDVPTimes = field(default_factory=TDVPTimes)
+    # Global phase tracking for dynamical correlations Santos, Schmitt, Heyl, PRL 131, 046501 (2023)
+    theta0_dot      : Optional[Array] = None  # Time derivative of global phase θ̇₀
+    theta0          : Optional[Array] = None  # Global phase parameter θ₀
 
 #################################################################
 
 @dataclass
 class TDVPLowerPenalty:
     # most important
-    excited_on_lower        : Array         # (n_j,) complex; ratios Ψ_{W}(σ_j)
-    lower_on_excited        : Array         # (n_j,) complex; ratios Ψ_{W_j}(σ)
+    excited_on_lower        : Array         # (n_j,) complex; ratios Psi_{W}(\sum _j)
+    lower_on_excited        : Array         # (n_j,) complex; ratios Psi_{W_j}(\sigma )
     # parameters of the lower state
-    lower_on_lower          : Array         # (n_j,) complex; ratios Ψ_{W_j}(σ_j)
-    excited_on_excited      : Array         # (n_j,) complex; ratios Ψ_{W}(σ)
+    lower_on_lower          : Array         # (n_j,) complex; ratios Psi_{W_j}(\sum _j)
+    excited_on_excited      : Array         # (n_j,) complex; ratios Psi_{W}(\sigma )
     # samples drawn from pi(.; params_j)
     params_j                : Any
     configs_j               : Array         # (n_j, ...)
@@ -89,9 +111,9 @@ class TDVPLowerPenalty:
     probabilities_j         : Optional[Array] = None
     # penalty parameter
     beta_j                  : float = 0.0
-    # optional, kept for symmetry
-    r_le                    : np.array = None  # (n_j,) complex; ratios Ψ_{W}(σ)/Ψ_{W_j}(σ) on configs_j
-    r_el                    : np.array = None  # (n_j,) complex; ratios E_loc^{W}(σ)Ψ_{W}(σ)/Ψ_{W_j}(σ) on configs
+    # The final rations r_le (lower to excited) [configs_excited] and r_el (excited to lower) [configs]
+    r_le                    : np.array = None  # (n_j,) complex; ratios Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs_j
+    r_el                    : np.array = None  # (n_j,) complex; ratios E_loc^{W}(\sigma )Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs
     # backend
     backend_np              : Any = jnp if JAX_AVAILABLE else np
     
@@ -135,14 +157,17 @@ class TDVP:
     a) The force vector (can be treated already as a gradient in the first order)
         :math:`F_k=\\langle \\mathcal O_{\\theta_k}^* E_{loc}^{\\theta}\\rangle_c`
         
-        i) :math:`\\mathcal O_{\\theta_k}^*` is logarithmic derivative of the wavefunction
-        ii) :math:`E_{loc}^{\\theta}` is the local energy of the wavefunction
-        iii) :math:`\\langle \\cdots \\rangle_c` is the connected correlation function
-        iv*) The force vector can be appended with penalty terms:
+        i) Calculation of the force vector:
+            :math:`\\mathcal O_{\\theta_k}^*` is logarithmic derivative of the wavefunction
+        ii) Calculation of the local energy:
+            :math:`E_{loc}^{\\theta}` is the local energy of the wavefunction
+        iii) Calculation of the connected correlation function: 
+            :math:`\\langle \\cdots \\rangle_c` is the connected correlation function
+        iv*) The force vector can be appended with penalty terms [excited state search]:
             :math:`F_k=\\langle \\mathcal O_{\\theta_k}^* E_{loc}^{\\theta}\\rangle_c + \\sum_j \\beta_j
             \\langle (\\frac{\\psi _{W_j}}{\\psi _{W}}) - \\langle \\frac{\\psi _{W_j}}{\\psi _{W}} \\rangle ) O_k^\dag \\rangle_c`
             \\langle \\frac{\\psi _{W}}{\\psi _{W_j}} \\rangle`
-    b) The quantum Fisher matrix 
+    b) The quantum Fisher matrix [covariance matrix]
         :math:`S_{k,k'} = \\langle (\\mathcal O_{\\theta_k})^* \\mathcal O_{\\theta_{k'}}\\rangle_c`
     
     and for real parameters :math:`\\theta\\in\\mathbb R`, the TDVP equation reads
@@ -161,7 +186,9 @@ class TDVP:
 
         :math:`S = V\\Sigma V^\\dagger`
 
-    with a diagonal matrix :math:`\\Sigma_{kk}=\\sigma_k`
+    with a diagonal matrix :math:`\\Sigma_{kk}=\\sigma_k`. In order to do this, it uses the backend specified
+    (either JAX or NumPy) and a provided ODE solver.
+    
     Assuming that :math:`\\sigma_1` is the smallest eigenvalue, the pseudo-inverse is constructed 
     from the regularized inverted eigenvalues
 
@@ -171,15 +198,14 @@ class TDVP:
     
     '''
     
-    #!TODO: Create META for TDVP parameters - for SR and LinSolvers
     @dataclass
     class TDVPCompiledMeta:
-        gradient_fn         : Callable
-        loss_c_fn           : Callable
-        deriv_c_fn          : Callable
-        covariance_fn       : Callable
-        prepare_fn          : Callable
-        prepare_fn_m        : Callable
+        gradient_fn         : Callable      # Gradient calculator for a given NN        (not jitted)
+        loss_c_fn           : Callable      # Centered loss function calculator         (not jitted)
+        deriv_c_fn          : Callable      # Centered derivative function calculator   (not jitted)
+        covariance_fn       : Callable      # Covariance matrix calculator              (not jitted)
+        prepare_fn          : Callable      # Preparation function
+        prepare_fn_m        : Callable      # Preparation function for the excited state
         # jitted versions
         gradient_fn_j       : Callable
         loss_c_fn_j         : Callable
@@ -214,23 +240,23 @@ class TDVP:
         self.is_np           = not self.is_jax
         self.backend_str     = 'jax' if self.is_jax else 'numpy'
         
-        self.use_sr          = use_sr
-        self.use_minsr       = use_minsr
-        self.rhs_prefactor   = rhs_prefactor
-        self.form_matrix     = False    # flag to indicate if the full matrix is formed
+        self.use_sr          = use_sr           # flag to indicate if stochastic reconfiguration is used
+        self.use_minsr       = use_minsr        # flag to indicate if minimal SR is used -> reverse O^+O to O O^+
+        self.rhs_prefactor   = rhs_prefactor    # prefactor for the RHS of the TDVP equation (1 for ground state, i for real time)
+        self.form_matrix     = False            # flag to indicate if the full matrix is formed
         
         #! handle the stochastic reconfiguration parameters
-        self.sr_snr_tol      = sr_snr_tol
-        self.sr_pinv_tol     = sr_pinv_tol
-        self.sr_pinv_cutoff  = sr_pinv_cutoff
-        self.sr_diag_shift   = sr_diag_shift
-        self.sr_maxiter      = sr_maxiter
-        
+        self.sr_snr_tol      = sr_snr_tol       # for signal-to-noise ratio
+        self.sr_pinv_tol     = sr_pinv_tol      # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
+        self.sr_pinv_cutoff  = sr_pinv_cutoff   # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
+        self.sr_diag_shift   = sr_diag_shift    # diagonal shift for the covariance matrix in case of ill-conditioning
+        self.sr_maxiter      = sr_maxiter       # maximum number of iterations for the linear solver
+
         #! handle the solver
         try:
-            self.sr_solve_lin    = None
-            self.sr_solve_lin_t  = sr_lin_solver_t
-            self.sr_solve_lin_fn = None
+            self.sr_solve_lin    = None             # linear solver for the TDVP equation (A x = b)
+            self.sr_solve_lin_t  = sr_lin_solver_t  # form of the solver
+            self.sr_solve_lin_fn = None             # function handle for the solver
             self.set_solver(sr_lin_solver)
         except Exception as e:
             warnings.warn(f"Solver could not be set: {e}")
@@ -238,8 +264,8 @@ class TDVP:
             
         #! handle the preconditioner
         try:
-            self.sr_precond      = None
-            self.sr_precond_fn   = None
+            self.sr_precond      = None             # preconditioner for the TDVP equation (A x = b)
+            self.sr_precond_fn   = None             # function handle for the preconditioner
             self.set_preconditioner(sr_precond)
         except Exception as e:
             warnings.warn(f"Preconditioner could not be set: {e}")
@@ -248,8 +274,9 @@ class TDVP:
         self.meta            = None
         
         # Helper storage
-        self._e_local_mean   = None
-        self._e_local_std    = None
+        self._e_local_mean   = None     # mean local energy
+        self._e_local_std    = None     # std local energy
+        # ---
         self._solution       = None     # solution of the TDVP equation
         self._f0             = None     # force vector obtained from the covariance of loss and derivative
         self._s0             = None     # Fisher matrix obtained from the covariance of derivatives
@@ -257,6 +284,12 @@ class TDVP:
         self._full_size      = None     # full size of the covariance matrix
         self._x0             = sr_lin_x0
         self.timings         = TDVPTimes()
+        
+        # Global phase parameter tracking for dynamical correlation functions
+        # Equation from paper: $|\psi_{\theta_0,\theta}\rangle = e^{\theta_0}|\psi_\theta\rangle$
+        # Evolution: $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
+        self._theta0         = 0.0      # global phase parameter
+        self._theta0_dot     = 0.0      # time derivative of global phase parameter
 
         #! functions
         self._init_functions()
@@ -752,6 +785,49 @@ class TDVP:
             self._x0 = self.backend.zeros_like(vec_b)
         return self._x0
 
+    ###############
+    #! GLOBAL PHASE
+    ###############
+
+    def compute_global_phase_evolution(self, mean_energy: Array, param_derivatives: Array, log_derivatives: Array):
+        r"""
+        Compute the evolution of the global phase parameter $\theta_0$.
+        
+        Based on Equation (5) from PHYSICAL REVIEW LETTERS 131, 046501 (2023):
+        
+        $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
+        
+        The global phase parameter tracks the overall phase of the wavefunction,
+        which is important for computing dynamical correlation functions.
+        
+        Parameters
+        ----------
+        mean_energy : Array
+            The mean energy $\langle\hat{H}\rangle$ from local energy computation
+        param_derivatives : Array
+            The time derivatives $\dot{\theta}_k$ from solving the TDVP equation
+        log_derivatives : Array
+            The centered log derivatives $\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$ from the covariance computation
+        
+        Returns
+        -------
+        Array
+            The computed time derivative $\dot{\theta}_0$ for the global phase parameter
+        """
+        # First term: -i * <H> -> average energy
+        term1 = -1j * mean_energy
+        
+        # Second term: - <dot{theta}_k * <psi|d_theta_k psi>>
+        # This is the contraction of parameter derivatives with log derivatives
+        term2 = -self.backend.sum(param_derivatives * log_derivatives)
+        
+        self._theta0_dot = term1 + term2
+        return self._theta0_dot
+
+    ###################
+    #! MAIN SOLVE
+    ###################
+
     def solve(self, e_loc: Array, log_deriv: Array, **kwargs):
         #? Get the lower states information penalty
         
@@ -803,6 +879,13 @@ class TDVP:
             )
             solution = new_solution
         
+        # Compute global phase evolution $\dot{\theta}_0$
+        # $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
+        if solution is not None and self.rhs_prefactor != complex(0, 1):
+            param_derivatives           = solution.x if hasattr(solution, 'x') else solution
+            log_derivatives_centered    = vd_c  # centered log derivatives
+            self._theta0_dot            = self.compute_global_phase_evolution(self._e_local_mean, param_derivatives, log_derivatives_centered)
+            
         #! save the solution
         self._solution = solution
         return solution
@@ -857,7 +940,9 @@ class TDVP:
                 sr_converged    = solution.converged,
                 sr_executed     = True,
                 sr_iterations   = solution.iterations,
-                timings         = self.timings
+                timings         = self.timings,
+                theta0_dot      = self._theta0_dot,  # Global phase time derivative
+                theta0          = self._theta0       # Current global phase
             )
             
             return solution.x, self.meta, (shapes, sizes, iscpx)
@@ -871,7 +956,9 @@ class TDVP:
                 sr_converged    = False,
                 sr_executed     = False,
                 sr_iterations   = 0,
-                timings         = self.timings
+                timings         = self.timings,
+                theta0_dot      = self._theta0_dot,
+                theta0          = self._theta0
             )
         
         return None, self.meta, (shapes, sizes, iscpx)
@@ -926,6 +1013,38 @@ class TDVP:
     @property
     def full_size(self):
         return self._full_size
+    
+    #########################
+    #! GLOBAL PHASE PROPERTIES
+    #########################
+    
+    @property
+    def global_phase(self):
+        """Get the current global phase parameter θ₀."""
+        return self._theta0
+    
+    @property
+    def global_phase_dot(self):
+        """Get the current time derivative of global phase θ̇₀."""
+        return self._theta0_dot
+    
+    def set_global_phase(self, theta0: float):
+        """Set the global phase parameter θ₀ (e.g., when loading from checkpoint)."""
+        self._theta0 = theta0
+    
+    def update_global_phase(self, dt: float):
+        """
+        Integrate the global phase forward in time.
+        
+        $\\theta_0(t+dt) = \\theta_0(t) + dt \\times \\dot{\\theta}_0(t)$
+        
+        Parameters
+        ----------
+        dt : float
+            The time step for integration
+        """
+        self._theta0 += dt * self._theta0_dot
+        return self._theta0
 
 ###############
 #! END OF FILE

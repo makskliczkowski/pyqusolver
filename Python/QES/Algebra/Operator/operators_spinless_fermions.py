@@ -86,24 +86,15 @@ Acting on a basis state gives a superposition with amplitudes
 
     \langle\mathbf{n}|\,c_k\,|\mathbf{n}\rangle =
     \frac{1}{\sqrt{|S|}} \sum_{i\in S} \mathcal{P}_i(\mathbf{n})\,n_i\,e^{-ik i}
+    
+----------------------------------------------------------------
 
-Author
-------
-
-Maksymilian Kliczkowski, WUST, Poland
-
-Date
-----
-
-May 2025
-
-Version
--------
-
-1.0
+File        : Algebra/Operator/operators_spinless_fermions.py
+Author      : Maksymilian Kliczkowski
+Date        : 2025-10-25
+License     : MIT
 """
 
-import math
 import numpy as np
 import numba
 from typing import List, Union, Optional, Callable
@@ -113,9 +104,25 @@ from QES.Algebra.Operator.operator import (
     Operator, OperatorTypeActing, SymmetryGenerators, create_operator,
     ensure_operator_output_shape_numba
 )
+from QES.Algebra.Operator.catalog import register_local_operator
+from QES.Algebra.Hilbert.hilbert_local import LocalOpKernels, LocalSpaceTypes
+from QES.Algebra.Operator.operators_hardcore import (
+    hardcore_create_int,
+    hardcore_create_np,
+    hardcore_annihilate_int,
+    hardcore_annihilate_np,
+    hardcore_number_int,
+    hardcore_number_np,
+)
 ################################################################################
 
 from QES.general_python.common.tests import GeneralAlgebraicTest
+from QES.Algebra.Operator.phase_utils import (
+    bit_popcount,
+    fermionic_parity_int,
+    fermionic_parity_array,
+)
+
 from QES.general_python.lattices.lattice import Lattice
 from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
 from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
@@ -130,53 +137,6 @@ _DEFAULT_INT    = DEFAULT_NP_INT_TYPE
 _DEFAULT_FLOAT  = DEFAULT_NP_FLOAT_TYPE
 _bit            = _binary.check_int
 _flip           = _binary.flip_int
-
-@numba.njit(inline="always")
-def _popcount_mask(x, mask_bits):
-    """
-    Return the Hamming weight of `x & mask_bits`.
-    """
-    v     = x & mask_bits
-    count = 0
-
-    # Kernighan trick: clear the least-significant set bit each iteration
-    while v:
-        v &= v - 1
-        count += 1
-
-    return count
-
-###############################################################################
-#! Jordan-Wigner sign  (-1)^{#occupied to the *left* of site}
-#   * we use the convention that the creation operators are ordered from right to left
-#   * $i_1 < i_2 < \ldots < i_n$ and $c_{i_1}^\dagger \cdots c_{i_m}^\dagger |0\rangle$
-#   * then, to count how many fermions from site k one needs to pass through, we need to count
-#     the number of fermions to the left of $i_1$, $i_2$, and so on until $i_k$.
-#   * we use the reverse order of the sites as oposed to the binary representation
-#     - the leftmost bit is the first site
-#   * the sign is given by the parity of the number of occupied sites to the left of the site
-###############################################################################
-
-@numba.njit
-def f_parity_int(state: int, ns: int, site: int) -> float:
-    
-    # mask   = bits for sites < site  ⇒  positions  ns-1-(0 … site-1)
-    shift      = ns - site              # first of the sites to the left of site
-    mask_bits  = ((1 << shift) - 1)     # faster than per-bit loop - moves shift to the left and fills with 1s to the right.
-    # then the mask is shifted to the left by site
-    # >>> site = 2
-    # >>> ns   = 6
-    # >>> mask = 0b010000 -> 0b001111 -> we need to pass through 4 bits
-    parity     = _popcount_mask(state, mask_bits) & 1
-    return -1.0 if parity else 1.0
-
-@numba.njit
-def f_parity_np(state: np.ndarray, site: int) -> float:
-    """Return ±1 for NumPy occupation array."""
-    parity = 0
-    for i in range(site):
-        parity ^= int(state[i] > 0) # modulo-2 sum
-    return -1.0 if parity else 1.0
 
 ###############################################################################
 #! Creation / annihilation on *integer* occupation number
@@ -209,7 +169,7 @@ def c_dag_int_np(state      : int,
     -----
     - If the site is already occupied, the result is zero (fermionic exclusion principle).
     - The sign is determined by the fermionic parity up to the given site.
-    - Helper functions `_bit`, `_flip`, and `f_parity_int` are used for bit manipulation and parity calculation.
+    - Helper functions `_bit`, `_flip`, and `fermionic_parity_int` are used for bit manipulation and parity calculation.
     
     Example
     -------
@@ -236,7 +196,7 @@ def c_dag_int_np(state      : int,
             new_state = state         # revert to input
             break
 
-        sign        = f_parity_int(new_state, ns, site)
+        sign        = fermionic_parity_int(new_state, ns, site)
         new_state   = _flip(new_state, pos)
         coeff_val  *= sign * prefactor
         
@@ -273,7 +233,7 @@ def c_int_np(state       : int,
     -----
     - If the site is unoccupied (bit is 0), the output coefficient is 0 and the state is unchanged.
     - The function accounts for the fermionic sign (parity) when applying the operator.
-    - Helper functions `_bit`, `_flip`, and `f_parity_int` are assumed to be defined elsewhere in the module.
+    - Helper functions `_bit`, `_flip`, and `fermionic_parity_int` are assumed to be defined elsewhere in the module.
     """
 
     # position of the site in the integer representation
@@ -287,7 +247,7 @@ def c_int_np(state       : int,
             coeff_val = 0.0
             new_state = state
             break
-        sign        = f_parity_int(new_state, ns, site)
+        sign        = fermionic_parity_int(new_state, ns, site)
         new_state   = _flip(new_state, pos)
         coeff_val  *= sign * prefactor
     
@@ -336,7 +296,7 @@ def c_dag_np(state      : np.ndarray,
         if out[site] > 0: # already occupied
             coeff *= 0.0
             break
-        sign       *= f_parity_np(out, site)
+        sign       *= fermionic_parity_array(out, site)
         out[site]   = 1
     n_sites  = sites.shape[0]
     coeff   *= sign * prefactor**n_sites
@@ -379,7 +339,7 @@ def c_np(state       : np.ndarray,
         if out[site] == 0:
             coeff *= 0.0
             break
-        sign        = f_parity_np(out, site)
+        sign        = fermionic_parity_array(out, site)
         out[site] = 0
     n_sites  = sites.shape[0]
     coeff   *= sign * prefactor**n_sites
@@ -388,7 +348,7 @@ def c_np(state       : np.ndarray,
 
 ###############################################################################
 #!  Momentum-space fermionic operator  c_k and c_k\dag
-#      c_k = (1/√N) Σ_i  e^{-ik i} c_i
+#      c_k = (1/\sqrtN) \sum _i  e^{-ik i} c_i
 ###############################################################################
 
 @numba.njit
@@ -426,7 +386,7 @@ def c_k_int_np(state      : int,
         - The function assumes the existence of `c_int_np`, which applies the site-local annihilation operator.
     """
     # count non-zero bits in the state
-    non_zero        = _popcount_mask(state, (1 << ns) - 1)
+    non_zero        = bit_popcount(state, ns)
     if non_zero == 0:
         return np.empty(0, dtype=_DEFAULT_INT), np.empty(0, dtype=_DEFAULT_FLOAT)
     out_state       = np.empty(non_zero, dtype=_DEFAULT_INT)
@@ -461,7 +421,7 @@ def c_k_np(state       : np.ndarray,
 
     index            = 0
     for i in sites:
-        if state[i] == 0:                         # empty ⇒ no contribution
+        if state[i] == 0:                         # empty -> no contribution
             continue
 
         tmp_state     = state.copy()
@@ -511,10 +471,10 @@ def c_k_dag_int_np(state      : int,
     Notes:
         - If the input state is fully occupied, returns empty arrays.
         - The coefficients are normalized by the square root of the number of nonzero terms.
-        - Requires the helper functions `_popcount_mask` and `c_dag_int_np`, as well as the constants `_DEFAULT_INT` and `_DEFAULT_FLOAT`.
+        - Requires the helper functions `bit_popcount` and `c_dag_int_np`, as well as the constants `_DEFAULT_INT` and `_DEFAULT_FLOAT`.
     """
     # number of empty sites
-    occ_bits        = _popcount_mask(state, (1 << ns) - 1)
+    occ_bits        = bit_popcount(state, ns)
     non_zero        = ns - occ_bits
     if non_zero == 0:
         return (np.empty(0, dtype=_DEFAULT_INT),
@@ -540,11 +500,11 @@ def c_k_dag_np(state       : np.ndarray,
                sites       : List[int],
                k           : float,
                prefactor   : float = 1.0):
-    """
+    r"""
     Apply momentum-space creation operator c_k\dag to a NumPy occupation array.
     """
     ns               = state.shape[0]
-    # empty sites count ⇒ upper bound
+    # empty sites count -> upper bound
     non_zero         = ns
     for j in range(ns):
         non_zero    -= 1 if state[j] else 0
@@ -587,7 +547,7 @@ def n_int_np(state     : int,
     coeff_val = 1.0
     for site in sites:
         pos = ns - 1 - site
-        if _bit(state, pos) == 0:   # site unoccupied ⇒ result = 0
+        if _bit(state, pos) == 0:   # site unoccupied -> result = 0
             coeff_val = 0.0
             break
 
@@ -605,7 +565,7 @@ def n_np(state      : np.ndarray,
     coeff_val   = np.ones(1, dtype=_DEFAULT_FLOAT)
     out         = state.copy()
     for site in sites:
-        if out[site] == 0:        # unoccupied ⇒ zero immediately
+        if out[site] == 0:        # unoccupied -> zero immediately
             coeff_val = np.zeros(1, dtype=_DEFAULT_FLOAT)
             break
 
@@ -614,7 +574,7 @@ def n_np(state      : np.ndarray,
     # return state, coeff_val * prefactor**n_sites
 
 ###############################################################################
-#! Public dispatch helpers  (match your σ-operator API)
+#! Public dispatch helpers  (match your \sigma -operator API)
 ###############################################################################
 
 def c_dag(state       : Union[int, np.ndarray],
@@ -667,11 +627,12 @@ def c_k_dag(state     : Union[int, np.ndarray],
         return c_k_dag_np(state, sites, k, prefactor)
     return c_k_dag_jnp(state, ns, sites, k, prefactor)
 
-def n(state      : Union[int, np.ndarray],
-    ns           : int,
-    sites        : Optional[List[int]],
-    prefactor    : float = 1.0):
-    """Number operator dispatcher."""
+def n(  state           : Union[int, np.ndarray],
+        ns              : int,
+        sites           : Optional[List[int]],
+        prefactor       : float = 1.0):
+    r"""Number operator dispatcher."""
+    
     if sites is None:
         sites = list(range(ns))
     if isinstance(state, (int, np.integer)):
@@ -689,7 +650,7 @@ def c( lattice  : Optional[Lattice]     = None,
     type_act    : OperatorTypeActing    = OperatorTypeActing.Local,
     sites       : Optional[List[int]]   = None,
     prefactor   : float                 = 1.0) -> Operator:
-    """
+    r"""
     Factory for the fermionic annihilation operator c_i.
     """
     return create_operator(
@@ -710,7 +671,7 @@ def cdag( lattice   : Optional[Lattice]     = None,
         type_act    : OperatorTypeActing    = OperatorTypeActing.Local,
         sites       : Optional[List[int]]   = None,
         prefactor   : float                 = 1.0) -> Operator:
-    """
+    r"""
     Factory for the fermionic creation operator c_i\dag.
     """
     return create_operator(
@@ -772,6 +733,10 @@ def ckdag(  k         : float,
         modifies    = True
     )
 
+# ------------------------------------------------------------------------------
+#! Number operator factory
+# ------------------------------------------------------------------------------
+
 def n( lattice      : Optional[Lattice]     = None,
         ns          : Optional[int]         = None,
         type_act    : OperatorTypeActing    = OperatorTypeActing.Local,
@@ -792,6 +757,130 @@ def n( lattice      : Optional[Lattice]     = None,
         name        = "n",
         modifies    = False
     )
+
+################################################################################
+# Registration with the operator catalog
+################################################################################
+
+def _register_catalog_entries():
+    """
+    Register canonical spinless fermion operators with the global catalog.
+    """
+
+    def _creation_factory(statistics_angle: float = np.pi) -> LocalOpKernels:
+        r''' Creation operator c\dag factory '''
+        def _int_kernel(state, ns, sites):
+            out_state, out_coeff    = hardcore_create_int(state, ns, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        def _np_kernel(state, sites):
+            out_state, out_coeff    = hardcore_create_np(state, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        if JAX_AVAILABLE:
+            def _jax_kernel(state, sites):
+                return c_dag_jnp(state, sites, pref=1.0)
+        else:
+            _jax_kernel = None
+
+        return LocalOpKernels(
+            fun_int         =   _int_kernel,
+            fun_np          =   _np_kernel,
+            fun_jax         =   _jax_kernel,
+            site_parity     =   1,
+            modifies_state  =   True,
+        )
+
+    def _annihilation_factory(statistics_angle: float = np.pi) -> LocalOpKernels:
+        r''' Annihilation operator c_i factory '''
+        
+        def _int_kernel(state, ns, sites):
+            out_state, out_coeff    = hardcore_annihilate_int(state, ns, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        def _np_kernel(state, sites):
+            out_state, out_coeff    = hardcore_annihilate_np(state, sites, statistics_angle)
+            coeff                   = np.real_if_close(out_coeff).astype(_DEFAULT_FLOAT, copy=False)
+            return out_state, coeff
+
+        if JAX_AVAILABLE:
+            def _jax_kernel(state, sites):
+                return c_jnp(state, sites, pref=1.0)
+        else:
+            _jax_kernel = None
+
+        return LocalOpKernels(
+            fun_int         =   _int_kernel,
+            fun_np          =   _np_kernel,
+            fun_jax         =   _jax_kernel,
+            site_parity     =   1,
+            modifies_state  =   True,
+        )
+
+    def _number_factory() -> LocalOpKernels:
+        r''' Number operator n_i = c\dag_i c_i factory '''
+        
+        def _int_kernel(state, ns, sites):
+            out_state, out_coeff = hardcore_number_int(state, ns, sites)
+            return out_state, out_coeff.astype(_DEFAULT_FLOAT, copy=False)
+
+        def _np_kernel(state, sites):
+            out_state, out_coeff = hardcore_number_np(state, sites)
+            return out_state, out_coeff.astype(_DEFAULT_FLOAT, copy=False)
+
+        if JAX_AVAILABLE:
+            def _jax_kernel(state, sites):
+                return n_jax(state, sites, pref=1.0)
+        else:
+            _jax_kernel = None
+
+        return LocalOpKernels(
+            fun_int         =   _int_kernel,
+            fun_np          =   _np_kernel,
+            fun_jax         =   _jax_kernel,
+            site_parity     =   1,
+            modifies_state  =   False,
+        )
+
+    # --------------------------------------------------------------------------
+    #! Register operators in the global catalog
+    # --------------------------------------------------------------------------
+
+    register_local_operator(
+        LocalSpaceTypes.SPINLESS_FERMIONS,
+        key             =   "c_dag",
+        factory         =   _creation_factory,
+        description     =   r"Fermionic creation operator c\dag_i acting on the computational basis.",
+        algebra         =   r"{c_i, c_j\dag} = \delta _{ij}",
+        sign_convention =   "Jordan-Wigner string counting occupied sites to the left of i.",
+        tags            =   ("fermion", "creation"),
+    )
+
+    register_local_operator(
+        LocalSpaceTypes.SPINLESS_FERMIONS,
+        key             =   "c",
+        factory         =   _annihilation_factory,
+        description     =   r"Fermionic annihilation operator c_i.",
+        algebra         =   r"{c_i, c_j\dag} = \delta _{ij}",
+        sign_convention =   "Jordan-Wigner string counting occupied sites to the left of i.",
+        tags            =   ("fermion", "annihilation"),
+    )
+
+    register_local_operator(
+        LocalSpaceTypes.SPINLESS_FERMIONS,
+        key             =   "n",
+        factory         =   _number_factory,
+        description     =   r"Onsite fermion number operator n_i = c\dag_i c_i.",
+        algebra         =   r"[n_i, c_j\dag] = \delta _{ij} c_j\dag,  [n_i, c_j] = -\delta _{ij} c_j",
+        sign_convention =   "No additional phase; diagonal in occupation basis.",
+        tags            =   ("fermion", "number"),
+    )
+
+# Execute registration upon module import
+_register_catalog_entries()
 
 ##############################################################################
 #! End of file

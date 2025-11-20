@@ -10,8 +10,8 @@ import numpy as np
 from typing import List, Optional, Union
 
 #! QES package imports
-import Algebra.hilbert as hilbert_module
-import Algebra.hamil as hamil_module
+from QES.Algebra import hilbert as hilbert_module
+from QES.Algebra import hamil as hamil_module
 
 #! Random matrix wrapper and linear algebra utilities
 from QES.general_python.algebra.ran_wrapper import set_global_seed, GOE, GUE
@@ -100,12 +100,12 @@ class RosenzweigPorter(hamil_module.Hamiltonian):
         """
         Build the Rosenzweig-Porter Hamiltonian.
 
-        H = D + λ * V
+        H = D + \lambda * V
 
         where
             - D is a random diagonal with entries ~ N(0,1)
             - V is a GOE (or GUE if complex) random matrix
-            - λ = N^{-gamma/2}, with N = hilbert space dimension (_nh)
+            - \lambda = N^{-gamma/2}, with N = hilbert space dimension (_nh)
 
         Parameters
         ----------

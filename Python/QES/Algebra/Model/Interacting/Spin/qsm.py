@@ -23,9 +23,8 @@ import QES.Algebra.hamil as hamil_module
 from QES.Algebra.Operator import operators_spin as operators_spin_module
 
 ##########################################################################################
-import QES.general_python.algebra.linalg as linalg
+from QES.general_python.algebra.backend_linalg import hilbert_schmidt_norm, identity_sparse, kron_sparse
 from QES.general_python.algebra.ran_wrapper import RMT, random_matrix, random_vector
-from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, JAX_AVAILABLE
 
 # ----------------------------------------------------------------------------------------
 #! DEFINE CONSTANTS
@@ -238,7 +237,7 @@ class QSM(hamil_module.Hamiltonian):
         hdot      = self._gamma / np.sqrt(self._dimin + 1) * hdot
         
         if _QSM_CHECK_HS_NORM:
-            _norm           = linalg.hilbert_schmidt_norm(hdot, backend=self._backend)
+            _norm           = hilbert_schmidt_norm(hdot, backend=self._backend)
             self._log(f"H_dot norm: {_norm:.3e}", lvl = 2, log = 'debug')
             return hdot / np.sqrt(_norm)
         return hdot
@@ -398,8 +397,8 @@ class QSM(hamil_module.Hamiltonian):
         
         # add the Hamiltonian of the dot particles
         backend_changed = self._backend if not use_numpy else np
-        eye             = linalg.sparse.identity(self._dimout, backend=backend_changed, dtype=self._dtype)
-        kron_prod       = linalg.sparse.kron(self._hdot, eye, backend=backend_changed)
+        eye             = identity_sparse(self._dimout, backend=backend_changed, dtype=self._dtype)
+        kron_prod       = kron_sparse(self._hdot, eye, backend=backend_changed)
         self._hamil     += kron_prod
 
     # ----------------------------------------------------------------------------------------------

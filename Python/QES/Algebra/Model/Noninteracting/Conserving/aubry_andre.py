@@ -120,12 +120,12 @@ class AubryAndre(QuadraticHamiltonian):
             # 1D
             return -self._J * self._lmbd * np.cos(self._twopi * self._beta * x + self._phi)
         elif self._lz == 1:
-            # 2D – diagonal Harper form, matches C++ (with diag()/=4)
+            # 2D - diagonal Harper form, matches C++ (with diag()/=4)
             v = (np.cos(self._twopi * self._beta * (x + y) + self._phi) +
                  np.cos(self._twopi * self._beta * (x - y) + self._phi))
             return -(self._lmbd * v) / 4.0 * self._J
         else:
-            # 3D – separable sum over axes, normalized by 3 to keep scale comparable
+            # 3D - separable sum over axes, normalized by 3 to keep scale comparable
             v = (np.cos(self._twopi * self._beta * x + self._phi) +
                  np.cos(self._twopi * self._beta * y + self._phi) +
                  np.cos(self._twopi * self._beta * z + self._phi))

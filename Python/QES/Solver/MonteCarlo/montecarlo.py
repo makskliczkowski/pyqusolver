@@ -4,8 +4,13 @@ This module defines the abstract base class for Monte Carlo solvers, providing a
 and shared functionality for various Monte Carlo simulation methods. It includes methods for
 initialization, state management, training loops, and statistical tracking.
 
-Author: Maksymilian Kliczkowski
-Email: maksymilian.kliczkowski@pwr.edu.pl
+------------------------------
+File        : Solver/MonteCarlo/montecarlo.py
+Author      : Maksymilian Kliczkowski
+Email       : maksymilian.kliczkowski@pwr.edu.pl
+Date        : 2025-11-01
+License     : MIT
+------------------------------
 '''
 from typing import Union, Callable, Optional, Dict, Any
 from dataclasses import dataclass
@@ -35,8 +40,11 @@ if JAX_AVAILABLE:
     from jax import vmap
 
 ###################################
-from Solver.solver import Solver
-from Solver.MonteCarlo.sampler import Sampler, get_sampler, SolverInitState
+try:
+    from QES.Solver.solver import Solver
+    from QES.Solver.MonteCarlo.sampler import Sampler, get_sampler, SolverInitState
+except ImportError as e:
+    raise ImportError("Failed to import Solver modules. Ensure QES package is correctly installed.") from e
 ###################################
 
 @dataclass
@@ -226,7 +234,7 @@ class MonteCarloSolver(Solver):
             str: A formatted string representing the object.
         """
 
-        return f"[{self._replica_idx}] I am a {self.__class__.__name__} object with {self._info} at β = {self._beta : .2f}."
+        return f"[{self._replica_idx}] I am a {self.__class__.__name__} object with {self._info} at \beta = {self._beta : .2f}."
     
     # ----------------
     
@@ -524,4 +532,6 @@ class MonteCarloSolver(Solver):
         pass
 
 
+########################################
+#! END OF FILE
 ########################################

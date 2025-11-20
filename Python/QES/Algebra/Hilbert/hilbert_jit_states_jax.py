@@ -15,13 +15,30 @@ else:
 
 if JAX_AVAILABLE:
     
+    # a) MAPPING
+    
+    @jax.jit
+    def get_mapping_jax(mapping, state):
+        """
+        Get the mapping of the state.
+        
+        Args:
+            mapping (list)  : The mapping of the states.
+            state (int)     : The state to get the mapping for.
+        
+        Returns:
+            int: The mapping of the state.
+        """
+        return mapping[state] if len(mapping) > state else state
+    
+    
     @partial(jax.jit)
     def calculate_slater_det_jax(sp_eigvecs         : jnp.ndarray,      # U matrix (Ns x Norb)
                                 occupied_orbitals   : jnp.ndarray,      # Indices {\alpha_k}
                                 org_basis_state     : Union[int, jnp.ndarray],
                                 ns                  : int
                                 ) -> jnp.ndarray: # Returns JAX array (scalar)
-        """
+        r"""
         Calculates the Slater determinant using JAX.
 
         Represents the amplitude <Fock(R)|State_F(O)>. See NumPy version docstring
@@ -30,7 +47,7 @@ if JAX_AVAILABLE:
         Args:
             sp_eigvecs (jnp.ndarray):
                 Eigenvector matrix U (shape: Ns x Norb). Assumes columns are eigenvectors,
-                so sp_eigvecs[i, \alpha] = <i|ψ_\alpha>.
+                so sp_eigvecs[i, \alpha] = <i|\psi _\alpha>.
             occupied_orbitals (jnp.ndarray):
                 1D array (length N) of integer indices of the occupied orbitals {\alpha_k}.
             org_basis_state (Union[int, jnp.ndarray]):

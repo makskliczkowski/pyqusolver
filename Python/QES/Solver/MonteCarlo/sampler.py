@@ -1,19 +1,17 @@
 """
-file    : Solver/MonteCarlo/sampler.py
-author  : Maksymilian Kliczkowski
-date    : 2025-02-01
-
 Monte Carlo samplers for quantum state space.
 This module provides samplers for efficiently exploring the Hilbert space 
 of quantum systems using Monte Carlo techniques. The main component is the 
 MCSampler class which implements Markov Chain Monte Carlo sampling for quantum
 wavefunctions.
+
 The module supports:
 - Sampling from quantum state space according to Born distribution or modified distributions
 - Multiple concurrent Markov chains
 - Different initial state configurations (random, ferromagnetic, antiferromagnetic)
 - Customizable state update proposals
 - Both NumPy and JAX backends
+
 Classes:
     SamplerErrors   : Error messages related to sampler operations
     SolverInitState : Enum for different types of initial states
@@ -22,6 +20,12 @@ Classes:
     SamplerType     : Enum for different sampler types
 Functions:
     get_sampler     : Factory function for creating samplers
+    
+---------------------------------------------------------------------------
+file    : Solver/MonteCarlo/sampler.py
+author  : Maksymilian Kliczkowski
+date    : 2025-02-01
+---------------------------------------------------------------------------
 """
 
 import numpy as np
@@ -141,8 +145,8 @@ if JAX_AVAILABLE:
     def _propose_random_flips_jax(state: jnp.ndarray, rng_k, num: int = 1):
         """
         Propose `num` random flips on a state or batch of states using JAX.
-        If `state` is 1D → flip single state.
-        If `state` is 2D → flip batch of states independently.
+        If `state` is 1D -> flip single state.
+        If `state` is 2D -> flip batch of states independently.
         """
         if state.ndim == 1:
             idx = randint_jax(rng_k, shape=(num,), minval=0, maxval=state.size, dtype=DEFAULT_JP_INT_TYPE)
@@ -1395,7 +1399,7 @@ class MCSampler(Sampler):
                         accept_config_fun   : Callable,
                         net_callable_fun    : Callable,
                         ):
-        """
+        r"""
         NumPy version of sweeping a single chain.
         
         This function carries a tuple:
@@ -1410,15 +1414,15 @@ class MCSampler(Sampler):
         
         Parameters:
         chain           : Current state of the chain (NumPy array, shape (nChains, ...))
-        logprobas       : Current log–probabilities for each chain element (1D NumPy array)
+        logprobas       : Current log-probabilities for each chain element (1D NumPy array)
         rng_k           : (Not really used in the NumPy version; can be updated with a new seed)
         num_proposed    : Total number of proposals made so far (integer)
         num_accepted    : Total number of accepted proposals so far (integer)
         params          : Network parameters (passed to log_probability)
         update_proposer : Function that proposes a new state. Signature should be: new_state = update_proposer(key, state, update_proposer_arg)
-        log_probability : Function to compute the log–probability; signature: new_logprob = log_probability(new_state, net_callable=..., net_params=params)
-        accept_config   : Function to compute the acceptance probability from current and candidate log–probabilities.
-        net_callable    : The network callable (e.g. returns Re(logψ(s)))
+        log_probability : Function to compute the log-probability; signature: new_logprob = log_probability(new_state, net_callable=..., net_params=params)
+        accept_config   : Function to compute the acceptance probability from current and candidate log-probabilities.
+        net_callable    : The network callable (e.g. returns Re(log\psi (s)))
         steps           : Number of update steps to perform.
         
         Returns:
@@ -1814,7 +1818,7 @@ class MCSampler(Sampler):
         # Flatten the collected states from all sample steps.
         configs_flat        = collected_samples.reshape((-1,) + shape)
         
-        # Evaluate the network in a fully batched (vectorized) manner to obtain log_ψ.
+        # Evaluate the network in a fully batched (vectorized) manner to obtain log_\psi .
         net_apply           = lambda conf: net_callable_fun(params, conf)
         batched_log_ansatz  = jax.vmap(net_apply)(configs_flat)
 

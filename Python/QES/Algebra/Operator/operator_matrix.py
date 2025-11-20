@@ -16,8 +16,8 @@ if JAX_AVAILABLE:
     import jax.scipy as jsp
 
 ####################################################################################################
-# from Algebra.hilbert import HilbertSpace, set_operator_elem, get_mapping, get_matrix_element
-import Algebra.hilbert as Hilbert
+# from QES.Algebra.hilbert import HilbertSpace, set_operator_elem, get_mapping, get_matrix_element
+from QES.Algebra import hilbert as Hilbert
 
 ####################################################################################################
 #! Numpy operator setup

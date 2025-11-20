@@ -12,17 +12,37 @@ Modules:
 - tdvp: Time-Dependent Variational Principle methods
 - REF: Reference implementations and examples
 
-Author: Maksymilian Kliczkowski
-Email: maksymilian.kliczkowski@pwr.edu.pl
+File    : QES/NQS/__init__.py
+Author  : Maksymilian Kliczkowski
+Email   : maksymilian.kliczkowski@pwr.edu.pl
 """
 
-# Import main classes when available
+# A short, user-facing description used by QES.registry
+MODULE_DESCRIPTION  = "Neural Quantum States (models, training, and TDVP methods)."
+
+# Expose submodules without wildcard imports to keep import time light
+_submods            = []
+
 try:
-    from .nqs import *
-    from .nqs_train import *
-    from .tdvp import *
-except ImportError:
-    # Handle cases where dependencies might not be available
+    from . import nqs as nqs
+    _submods.append('nqs')
+except Exception:
     pass
 
-__all__ = []
+try:
+    from . import nqs_train as nqs_train
+    _submods.append('nqs_train')
+except Exception:
+    pass
+
+try:
+    from . import tdvp as tdvp
+    _submods.append('tdvp')
+except Exception:
+    pass
+
+__all__ = _submods
+
+# ----------------------------------------------------------------------------
+#! EOF
+# ----------------------------------------------------------------------------
