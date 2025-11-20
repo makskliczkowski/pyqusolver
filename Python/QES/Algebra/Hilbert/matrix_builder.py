@@ -327,7 +327,7 @@ if NUMBA_AVAILABLE:
         for i in numba.prange(nh):
             thread_id = numba.get_thread_id()
             # Call Python operator_func in object mode
-            with numba.objmode(py_out='UniTuple(pyobject, pyobject)'):
+            with numba.objmode(py_out='UniTuple(pyobject, 2)'):
                 py_out = operator_func(i)
 
             new_states_py, values_py = py_out
