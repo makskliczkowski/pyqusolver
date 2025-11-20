@@ -61,11 +61,6 @@ import importlib
 from contextlib import contextmanager
 from typing import Optional, Dict
 
-
-import importlib
-from contextlib import contextmanager
-from typing import Optional, Dict
-
 # Centralized globals (lazy singletons)
 from .qes_globals import (
     get_logger,
@@ -118,8 +113,8 @@ _SUBMODULES: Dict[str, str] = {
 }
 
 _API_EXPORTS: Dict[str, str] = {
-    'HilbertSpace': 'QES.Algebra.hilbert',
-    'Hamiltonian': 'QES.Algebra.hamil',
+    'HilbertSpace'      : 'QES.Algebra.hilbert',
+    'Hamiltonian'       : 'QES.Algebra.hamil',
 }
 
 def __getattr__(name: str):  # PEP 562

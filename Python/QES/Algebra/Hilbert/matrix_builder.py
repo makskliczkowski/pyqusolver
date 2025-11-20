@@ -398,6 +398,21 @@ def _build_sector_change(hilbert_in         : object,
 
 # ------------------------------------------------------------------------------------------
 
+# @numba.njit
+def _build_triplets(operator_func, nh):
+    rows = []
+    cols = []
+    vals = []
+    for row in range(nh):
+        ns, vs = operator_func(row)
+        for j in range(len(ns)):
+            if 0 <= ns[j] < nh:
+                if abs(vs[j]) >= 1e-14:
+                    rows.append(row)
+                    cols.append(ns[j])
+                    vals.append(vs[j])
+    return np.array(rows), np.array(cols), np.array(vals)
+
 def _build_no_hilbert(operator_func       : Callable,
                       nh                  : int,
                       ns                  : int,
@@ -408,38 +423,28 @@ def _build_no_hilbert(operator_func       : Callable,
     """Build matrix for operator without Hilbert space (no symmetries)."""
     
     alloc_dtype = _determine_matrix_dtype(dtype, None, operator_func, ns)
-    
+
     if not sparse:
-        # Dense matrix
+        # Dense matrix — use vectorized row writes instead of element loops
         matrix = np.zeros((nh, nh), dtype=alloc_dtype)
-        for k in range(nh):
-            new_states, values = operator_func(k)
-            for new_state, value in zip(new_states, values):
-                if abs(value) < 1e-14:
-                    continue
-                if 0 <= new_state < nh:
-                    matrix[k, new_state] += value
+
+        for row in range(nh):
+            new_states, values  = operator_func(row)
+
+            # Convert once, vectorized assignment
+            new_states          = np.asarray(new_states)
+            values              = np.asarray(values, dtype=alloc_dtype)
+
+            mask                = (np.abs(values) >= 1e-14) & (new_states >= 0) & (new_states < nh)
+            if mask.any():
+                matrix[row, new_states[mask]] += values[mask]
+
         return matrix
-    
-    # Sparse matrix
-    max_nnz     = nh * max_local_changes
-    rows        = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
-    cols        = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
-    data        = np.zeros(max_nnz, dtype=alloc_dtype)
-    data_idx    = 0
-    
-    for k in range(nh):
-        new_states, values = operator_func(k)
-        for new_state, value in zip(new_states, values):
-            if abs(value) < 1e-14:
-                continue
-            if 0 <= new_state < nh:
-                rows[data_idx] = k
-                cols[data_idx] = new_state
-                data[data_idx] = value
-                data_idx      += 1
-    
-    return sp.csr_matrix((data[:data_idx], (rows[:data_idx], cols[:data_idx])), shape=(nh, nh), dtype=alloc_dtype)
+
+    # Sparse mode — accumulate in Python lists (fast), then build CSR once
+    r, c, d = _build_triplets(operator_func, nh)
+    M       = sp.csr_matrix((d, (r, c)), shape=(nh, nh))
+    return M
 
 # ------------------------------------------------------------------------------------------
 #! GENERAL MATRIX BUILDER INTERFACE
@@ -509,7 +514,7 @@ def build_operator_matrix(
     >>> # Without Hilbert space (no symmetries)
     >>> H_simple = build_operator_matrix(operator_func, nh=dim, ns=num_sites)
     """
-    if hilbert_space is None:
+    if hilbert_space is None or hilbert_space.nh == hilbert_space.nhfull:
         if nh is None or ns is None:
             raise ValueError("If hilbert_space is None, nh and ns must be provided")
         if hilbert_space_out is not None:

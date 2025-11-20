@@ -921,7 +921,7 @@ class Hamiltonian(ABC):
     def krylov(self):                   return self._krylov
 
     @property
-    def hamil(self) -> Union[np.ndarray, jnp.ndarray, sp.sparse.spmatrix]: 
+    def hamil(self) -> Union[np.ndarray, sp.sparse.spmatrix]: 
         return self._hamil
     @hamil.setter
     def hamil(self, hamil):
@@ -965,7 +965,7 @@ class Hamiltonian(ABC):
         if JAX_AVAILABLE and self._backend != np:
             if isinstance(target_hamiltonian, BCOO):
                 return target_hamiltonian.diagonal()
-            elif isinstance(target_hamiltonian, jnp.ndarray):
+            elif jnp is not None and isinstance(target_hamiltonian, jnp.ndarray):
                 return jnp.diag(target_hamiltonian)
             else:
                 # dunnno what to do here
@@ -1916,7 +1916,9 @@ class Hamiltonian(ABC):
                 operator_func       =   self._loc_energy_int_fun,
                 sparse              =   self._is_sparse,
                 max_local_changes   =   self._max_local_ch_o,
-                dtype               =   self._dtype
+                dtype               =   self._dtype,
+                ns                  =   self._ns,
+                nh                  =   self._hilbert_space.nh,
             )
         else:
             raise ValueError("JAX not yet implemented for the build...")

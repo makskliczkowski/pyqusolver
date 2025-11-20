@@ -516,6 +516,18 @@ def fidelity_susceptibility(energies: Array, V: Array, mu: float, idx: Optional[
     -------
     float
         Fidelity susceptibility \(\chi_i\).
+        
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from QES.Algebra.Properties.statistical import fidelity_susceptibility
+    >>> energies = np.array([0.0, 1.0, 2.0])
+    >>> V       = np.array([[0.0, 0.1, 0.2],
+    ...                     [0.1, 0.0, 0.3],
+    ...                     [0.2, 0.3, 0.0]])
+    >>> mu      = 0.5
+    >>> chi_0   = fidelity_susceptibility(energies, V, mu, idx=0)
+    >>> print(chi_0)
     """
     mu2 = mu * mu
 
