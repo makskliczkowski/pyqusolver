@@ -20,7 +20,7 @@ Tests are organized by functionality:
 All tests include verbose assertions with detailed error messages.
 
 ----------------------------------------------------------------------------
-File        : Python/test/operators/test_operators_comprehensive.py
+File        : Python/test/operators/test_operatorsomprehensive.py
 Author      : Maksymilian Kliczkowski
 Date        : 30.10.2025
 Version     : 1.0

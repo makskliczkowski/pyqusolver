@@ -20,6 +20,7 @@ Changelog   :
 """
 
 import numpy as np
+import numba
 from typing import List, Tuple, Union, Optional
 
 # QES package imports
@@ -30,6 +31,60 @@ try:
     from QES.general_python.lattices.honeycomb import HoneycombLattice, X_BOND_NEI, Y_BOND_NEI, Z_BOND_NEI
 except ImportError as e:
     raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
+
+@numba.njit
+def sigma_xy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
+    """ Applies Sigma_X to sites[0] and Sigma_Y to sites[1] """
+    s_arr, c1_arr       = operators_spin_module.sigma_x_int_np(state, ns, [sites[0]], spin, spin_value)
+    s_int               = s_arr[0] 
+    s_final_arr, c2_arr = operators_spin_module.sigma_y_int_np(s_int, ns, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_yx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = operators_spin_module.sigma_y_int_np(state, ns, [sites[0]], spin, spin_value)
+    s_int               = s_arr[0]
+    s_final_arr, c2_arr = operators_spin_module.sigma_x_int_np(s_int, ns, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_yz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = operators_spin_module.sigma_y_int_np(state, ns, [sites[0]], spin, spin_value)
+    s_int               = s_arr[0]
+    s_final_arr, c2_arr = operators_spin_module.sigma_z_int_np(s_int, ns, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_zx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = operators_spin_module.sigma_z_int_np(state, ns, [sites[0]], spin, spin_value)
+    s_int               = s_arr[0]
+    s_final_arr, c2_arr = operators_spin_module.sigma_x_int_np(s_int, ns, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_xz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = operators_spin_module.sigma_x_int_np(state, ns, [sites[0]], spin, spin_value)
+    s_int               = s_arr[0]
+    s_final_arr, c2_arr = operators_spin_module.sigma_z_int_np(s_int, ns, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_zy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = operators_spin_module.sigma_z_int_np(state, ns, [sites[0]], spin, spin_value)
+    s_int               = s_arr[0]
+    s_final_arr, c2_arr = operators_spin_module.sigma_y_int_np(s_int, ns, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+def make_mixed(name, int_func, lattice=None):
+    return operators_spin_module.create_operator(
+        type_act    = operators_spin_module.OperatorTypeActing.Correlation,
+        op_func_int = int_func,
+        op_func_np  = None,
+        op_func_jnp = None,
+        lattice     = lattice,
+        name        = name,
+        modifies    = True
+    )
 
 ##########################################################################################
 #! IMPORTS
@@ -321,19 +376,15 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         op_sy_sy_c      =   operators_spin_module.sig_y(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
         op_sz_sz_c      =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
         
-        # Gamma terms - off-diagonal couplings using correlation operators
-        # Gz * (SxSy + SySx), Gy * (SxSz + SzSx), Gx * (SySz + SzSy)
-        op_sx_c         =   operators_spin_module.sig_x(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
-        op_sy_c         =   operators_spin_module.sig_y(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
-        op_sz_c         =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
-        
         # Create Gamma operators as products of correlation operators
-        op_sx_sy_c      =   op_sx_c * op_sy_c   # SxSy
-        op_sy_sx_c      =   op_sy_c * op_sx_c   # SySx
-        op_sz_sx_c      =   op_sz_c * op_sx_c   # SzSx
-        op_sx_sz_c      =   op_sx_c * op_sz_c   # SxSz
-        op_sy_sz_c      =   op_sy_c * op_sz_c   # SySz
-        op_sz_sy_c      =   op_sz_c * op_sy_c   # SzSy
+        op_sx_sy_c      =   make_mixed("SxSy", sigma_xy_mixed_int_np, lattice=lattice)
+        op_sy_sx_c      =   make_mixed("SySx", sigma_yx_mixed_int_np, lattice=lattice)
+        
+        op_sz_sx_c      =   make_mixed("SzSx", sigma_zx_mixed_int_np, lattice=lattice)
+        op_sx_sz_c      =   make_mixed("SxSz", sigma_xz_mixed_int_np, lattice=lattice)
+        
+        op_sy_sz_c      =   make_mixed("SySz", sigma_yz_mixed_int_np, lattice=lattice)
+        op_sz_sy_c      =   make_mixed("SzSy", sigma_zy_mixed_int_np, lattice=lattice)
 
         nn_nums         =   [lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else \
                             [lattice.get_nn_num(i) for i in range(self.ns)]

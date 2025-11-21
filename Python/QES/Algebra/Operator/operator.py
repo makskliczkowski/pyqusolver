@@ -235,168 +235,6 @@ def _empty_result_int():
 
 ####################################################################################################
 
-def _make_mul_int_njit(outer_op_fun, inner_op_fun, allocator_m=2):
-    """
-    Creates a Numba-jitted function that composes two operator functions acting on integer-based quantum states.
-    This function returns a compiled implementation that, given a quantum state and additional arguments, applies
-    `inner_op_fun` to the state, then applies `outer_op_fun` to each resulting state, combining the coefficients
-    appropriately. The result is a tuple of arrays containing the resulting states and their corresponding coefficients.
-    If Numba compilation fails, a fallback implementation returning an empty result is provided.
-    Args:
-        outer_op_fun (callable):
-            A function that takes a state and additional arguments, returning a tuple of
-            (states, coefficients) as 1D numpy arrays.
-        inner_op_fun (callable): 
-            A function with the same signature as `outer_op_fun`, applied first.
-    Returns:
-        callable:
-            A function with signature (state, *args) -> (states, coefficients), where `states` is a 1D numpy
-            array of int64 and `coefficients` is a 1D numpy array of float64 or complex128.
-    """
-    try:
-        # Wrapper that always returns complex128 - safe for all operator products
-        # This avoids Numba's strict type unification issues with conditional dtypes
-        @numba.njit(cache=True)
-        def mul_int_impl(state, *args):
-            g_states, g_coeffs = inner_op_fun(state, *args)
-            if g_states.shape[0] == 0:
-                return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.complex128)
-
-            total_estimate  = g_states.shape[0] * allocator_m
-            res_states      = np.empty(total_estimate, dtype=np.int64)
-            res_coeffs      = np.empty(total_estimate, dtype=np.complex128)
-            count           = 0
-
-            for k in range(g_states.shape[0]):
-                g_state_k   = g_states[k]
-                g_coeff_k   = g_coeffs[k]
-                f_states_k, f_coeffs_k = outer_op_fun(g_state_k, *args)
-
-                for l in range(f_states_k.shape[0]):
-                    if count >= res_states.shape[0]:
-                        new_size = res_states.shape[0] * 2
-                        tmp_s           = np.empty(new_size, dtype=np.int64)
-                        tmp_c           = np.empty(new_size, dtype=np.complex128)
-                        tmp_s[:count]   = res_states[:count]
-                        tmp_c[:count]   = res_coeffs[:count]
-                        res_states      = tmp_s
-                        res_coeffs      = tmp_c
-
-                    res_states[count]   = f_states_k[l]
-                    res_coeffs[count]   = g_coeff_k * f_coeffs_k[l]
-                    count              += 1
-
-            return res_states[:count], res_coeffs[:count]
-
-        return mul_int_impl
-    except Exception as e: # Catch Numba errors
-        print(f"Numba compilation failed for _make_mul_int_njit: {e}. Falling back to Python.")
-        
-        def mul_int_fallback(state, *args):
-            return _empty_result_int()
-        return mul_int_fallback
-
-def _make_mul_np_njit(outer_op_fun, inner_op_fun, allocator_m=2):
-    """
-    Creates a function that applies two operator functions in sequence to a given state,
-    efficiently handling the allocation of output arrays for states and coefficients.
-    Parameters
-    ----------
-    outer_op_fun : callable
-        A function that takes a state and additional arguments, and returns a tuple of
-        (states, coefficients) as NumPy arrays. This function is applied after `inner_op_fun`.
-    inner_op_fun : callable
-        A function that takes a state and additional arguments, and returns a tuple of
-        (states, coefficients) as NumPy arrays. This function is applied first.
-    allocator_m : int, optional
-        A multiplier used to estimate the maximum number of output states for pre-allocation.
-        Default is 2.
-    Returns
-    -------
-    mul_np_impl : callable
-        A function that takes a state (as a NumPy array) and additional arguments, applies
-        `inner_op_fun` followed by `outer_op_fun` to each resulting state, and returns a tuple:
-        (resulting_states, resulting_coefficients), both as NumPy arrays.
-    Notes
-    -----
-    - If the number of resulting states exceeds the pre-allocated size, the function will
-      stop processing further states to avoid overflow.
-    - If Numba compilation is intended but fails, the function falls back to a pure NumPy implementation.
-    - The function assumes that the input state is a 1D NumPy array.
-    """
-    
-    def mul_np_impl(state_np, *args_np):
-        g_states, g_coeffs = inner_op_fun(state_np, *args_np)  # (M, D), (M,)
-        if g_states.shape[0] == 0:
-            return np.empty((0, state_np.shape[0]), dtype=state_np.dtype), np.empty((0,), dtype=g_coeffs.dtype)
-
-        max_est     = g_states.shape[0] * allocator_m
-        state_dim   = state_np.shape[0]  # assumes 1D input
-        res_states  = np.empty((max_est, state_dim), dtype=state_np.dtype)
-        res_coeffs  = np.empty((max_est,), dtype=g_coeffs.dtype)
-        count       = 0
-
-        for k in range(g_states.shape[0]):
-            f_states_k, f_coeffs_k = outer_op_fun(g_states[k], *args_np)
-            for j in range(f_states_k.shape[0]):
-                if count >= max_est:
-                    break
-                res_states[count] = f_states_k[j]
-                res_coeffs[count] = g_coeffs[k] * f_coeffs_k[j]
-                count            += 1
-        return res_states[:count], res_coeffs[:count]
-    
-    #! Attempt Numba compilation; if it fails, use the pure Python/NumPy version.
-    try:
-        return mul_np_impl
-    except Exception as e:
-        print("Numba compilation failed for _make_mul_np_njit. Falling back to pure NumPy version: ", e)
-        return lambda state_np, *args_np: np.empty((0, state_np.shape[0]), dtype=state_np.dtype), np.empty((0,), dtype=np.float64)
-
-def _make_mul_jax_vmap(outer_op_fun_jax, inner_op_fun_jax):
-
-    if not JAX_AVAILABLE:
-        return None 
-        
-    if outer_op_fun_jax is None or inner_op_fun_jax is None:
-        return None
-
-    @partial(jax.jit, static_argnums=())
-    def mul_jax_impl(state_initial, *args):
-        g_states, g_coeffs = inner_op_fun_jax(state_initial, *args)  # (M, D), (M,)
-
-        def apply_outer(state, coeff):
-            f_states, f_coeffs = outer_op_fun_jax(state, *args)  # (K, D), (K,)
-            # Ensure complex dtype if either coefficient is complex
-            # This handles cases like sigma_y which returns complex coefficients
-            combined_coeffs = coeff * f_coeffs
-            # Cast to complex128 if needed to avoid dtype mismatches in JAX operations
-            if jnp.iscomplexobj(g_coeffs) or jnp.iscomplexobj(f_coeffs):
-                combined_coeffs = jnp.asarray(combined_coeffs, dtype=jnp.complex128)
-            return f_states, combined_coeffs
-
-        # g_states: (M, D), g_coeffs: (M,)
-        f_states, f_coeffs = jax.vmap(apply_outer, in_axes=(0, 0))(g_states, g_coeffs)
-
-        s_dim = f_states.shape[-1]
-        return f_states.reshape(-1, s_dim), f_coeffs.reshape(-1)
-    
-    try:
-        # Example call to force compilation and catch errors early (optional)
-        # This requires knowing typical shapes and dtypes for s_initial and args_for_ops
-        # For instance, if s_initial is (D,) and args_for_ops is empty for global ops:
-        # test_state = jnp.zeros((1,), dtype=jnp.float32) # Or a more representative state
-        # if necessary_args == 0: mul_jax_impl.lower(test_state).compile()
-        # elif necessary_args == 1: mul_jax_impl.lower(test_state, 0).compile()
-        # This is complex to generalize here. JAX will compile on first actual call.
-        pass
-    except jax.errors.JAXTypeError as e:
-        print(f"JAX compilation failed for _make_mul_jax_vmap: {e}. JAX operations will not be available for this composed operator.")
-        return None
-    return mul_jax_impl
-
-####################################################################################################
-
 class OperatorFunction:
     '''
     OperatorFunction is a class that represents a mathematical operator that can be applied to a state. 
@@ -770,6 +608,11 @@ class OperatorFunction:
         if self._acting_type != other._acting_type:
             raise ValueError(f"Operator acting type mismatch for composition: {self._acting_type} (f) vs {other._acting_type} (g)")
         
+        try:
+            from .operator_wrap import _make_mul_int_njit, _make_mul_np_njit, _make_mul_jax_vmap
+        except ImportError as e:
+            raise ImportError("Failed to import multiplication helper functions for OperatorFunction. Ensure that operator_wrap module is available.") from e
+        
         # The composed operator (f*g) modifies state if f modifies g's output, or if g modifies initial state.
         # If f is diagonal (modifies_state=False), it doesn't change g's state structure.
         # If f can change state (modifies_state=True), it can change g's output state.
@@ -835,6 +678,11 @@ class OperatorFunction:
         # For other * self (g * f), where g is `other`, f is `self`
         if other._acting_type != self._acting_type:
             raise ValueError(f"Operator acting type mismatch for composition: {other._acting_type} (g) vs {self._acting_type} (f)")
+
+        try:
+            from .operator_wrap import _make_mul_int_njit, _make_mul_np_njit, _make_mul_jax_vmap
+        except ImportError as e:
+            raise ImportError("Failed to import multiplication helper functions for OperatorFunction. Ensure that operator_wrap module is available.") from e
         
         composed_modifies_state = other._modifies_state or self._modifies_state
         composed_necessary_args = self._necessary_args # From check, same as other._necessary_args
@@ -873,111 +721,72 @@ class OperatorFunction:
     #! Addition
     # -----------
 
-    def __add__(self, other: 'OperatorFunction'):
+    def __add__(self, other: 'OperatorFunction') -> 'OperatorFunction':
         """
-        Add two operator functions. The operator is defined as:
-        (f + g)(s, *args) = f(s, *args) + g(s, *args)
-        where the sum means that when applied to a state, the outputs (a list of (state, value) pairs)
-        are combined by summing the values for duplicate states.
-        
-        JIT compilation is applied for the JAX version when available.
+        Add two operator functions: (A + B).
+        This results in a function that returns the concatenation of the results of A and B.
         """
-        # Pure Python / NumPy version.
-        def add_int(s, *args):
-            result_f                = np.array(self(s, *args))
-            result_g                = np.array(other(s, *args))
-            # Extract states and values.
-            states_f, values_f      = result_f[:, 0], result_f[:, 1]
-            states_g, values_g      = result_g[:, 0], result_g[:, 1]
-            # Combine results.
-            combined_states         = np.concatenate([states_f, states_g])
-            combined_values         = np.concatenate([values_f, values_g])
-            # Get unique states and sum the corresponding values.
-            unique_states, indices  = np.unique(combined_states, return_inverse=True)
-            summed_values           = np.zeros_like(unique_states, dtype=complex)
-            for idx, val in zip(indices, combined_values):
-                summed_values[idx] += val
-            return list(zip(unique_states, summed_values))
         
-        # For the NumPy version we use the same as add_int.
-        def add_np(s, *args):
-            return add_int(s, *args)
+        if not isinstance(other, OperatorFunction):
+            return NotImplementedError(f"Cannot add OperatorFunction with {type(other)}")
         
-        # JAX version.
-        def add_jax(s, *args):
-            result_f                = jnp.array(self(s, *args))
-            result_g                = jnp.array(other(s, *args))
-            states_f, values_f      = result_f[:, 0], result_f[:, 1]
-            states_g, values_g      = result_g[:, 0], result_g[:, 1]
-            combined_states         = jnp.concatenate([states_f, states_g])
-            combined_values         = jnp.concatenate([values_f, values_g])
-            unique_states, indices  = jnp.unique(combined_states, return_inverse=True)
-            # jnp.zeros returns a jax array; note that we use jnp.complex128 as the dtype.
-            summed_values           = jnp.zeros(unique_states.shape, dtype=jnp.complex128).at[indices].add(combined_values)
-            return list(zip(unique_states, summed_values))
-        
-        fun_jax = add_jax
-        if JAX_AVAILABLE:
-            fun_jax = jax.jit(add_jax)
-        
+        try:
+            from .operator_wrap import _make_add_int_njit, _make_add_np_njit, _make_add_jax
+        except ImportError as e:
+            raise ImportError("Failed to import addition helper functions for OperatorFunction. Ensure that operator_wrap module is available.") from e
+
+        # Compatibility Checks
+        if self._necessary_args != other._necessary_args:
+            raise ValueError(f"Argument number mismatch for addition: {self._necessary_args} vs {other._necessary_args}")
+
+        # Construct composed functions
+        composed_fun_int = _make_add_int_njit(self._fun_int, other._fun_int)
+        composed_fun_np  = _make_add_np_njit(self._fun_np, other._fun_np)
+        composed_fun_jax = _make_add_jax(self._fun_jax, other._fun_jax) if JAX_AVAILABLE else None
+
+        # The combined operator modifies state if either modifies it
+        new_modifies = self._modifies_state or other._modifies_state
+
         return OperatorFunction(
-            add_int,
-            add_np, 
-            fun_jax,
-            modifies_state=self._modifies_state or other._modifies_state,
-            necessary_args=max(self._necessary_args, other._necessary_args)
+            composed_fun_int,
+            composed_fun_np,
+            composed_fun_jax,
+            modifies_state=new_modifies,
+            necessary_args=self._necessary_args
         )
 
-    
-    # -----------
-    #! Subtraction
-    # -----------
-    
-    def __sub__(self, other: 'OperatorFunction'):
+    def __sub__(self, other: 'OperatorFunction') -> 'OperatorFunction':
         """
-        Subtract two operator functions. The operator is defined as:
-        (f - g)(s, *args) = f(s, *args) - g(s, *args)
-        which is implemented by negating the output of g and then combining results.
-        
-        JIT compilation is applied for the JAX version when available.
+        Subtract two operator functions: (A - B).
+        This results in a function that returns the concatenation of A and B, 
+        with B's coefficients negated.
         """
-        def sub_int(s, *args):
-            result_f = np.array(self(s, *args))
-            result_g = np.array(other(s, *args))
-            states_f, values_f = result_f[:, 0], result_f[:, 1]
-            states_g, values_g = result_g[:, 0], result_g[:, 1]
-            combined_states = np.concatenate([states_f, states_g])
-            combined_values = np.concatenate([values_f, -values_g])  # negate g's values
-            unique_states, indices = np.unique(combined_states, return_inverse=True)
-            summed_values = np.zeros_like(unique_states, dtype=complex)
-            for idx, val in zip(indices, combined_values):
-                summed_values[idx] += val
-            return list(zip(unique_states, summed_values))
         
-        def sub_np(s, *args):
-            return sub_int(s, *args)
-        
-        def sub_jax(s, *args):
-            result_f = jnp.array(self(s, *args))
-            result_g = jnp.array(other(s, *args))
-            states_f, values_f = result_f[:, 0], result_f[:, 1]
-            states_g, values_g = result_g[:, 0], result_g[:, 1]
-            combined_states = jnp.concatenate([states_f, states_g])
-            combined_values = jnp.concatenate([values_f, -values_g])
-            unique_states, indices = jnp.unique(combined_states, return_inverse=True)
-            summed_values = jnp.zeros(unique_states.shape, dtype=jnp.complex128).at[indices].add(combined_values)
-            return list(zip(unique_states, summed_values))
-        
-        fun_jax = sub_jax
-        if JAX_AVAILABLE:
-            fun_jax = jax.jit(sub_jax)
-        
+        if not isinstance(other, OperatorFunction):
+            return NotImplementedError(f"Cannot subtract OperatorFunction with {type(other)}")
+
+        try:
+            from .operator_wrap import _make_sub_int_njit, _make_sub_np_njit, _make_sub_jax
+        except ImportError as e:
+            raise ImportError("Failed to import subtraction helper functions for OperatorFunction. Ensure that operator_wrap module is available.") from e
+
+        # Compatibility Checks
+        if self._necessary_args != other._necessary_args:
+            raise ValueError(f"Argument number mismatch for subtraction: {self._necessary_args} vs {other._necessary_args}")
+
+        # Construct composed functions
+        composed_fun_int = _make_sub_int_njit(self._fun_int, other._fun_int)
+        composed_fun_np  = _make_sub_np_njit(self._fun_np, other._fun_np)
+        composed_fun_jax = _make_sub_jax(self._fun_jax, other._fun_jax) if JAX_AVAILABLE else None
+
+        new_modifies = self._modifies_state or other._modifies_state
+
         return OperatorFunction(
-            sub_int,
-            sub_np,
-            fun_jax,
-            modifies_state=self._modifies_state or other.modifies_state,
-            necessary_args=max(self._necessary_args, other.necessary_args)
+            composed_fun_int,
+            composed_fun_np,
+            composed_fun_jax,
+            modifies_state=new_modifies,
+            necessary_args=self._necessary_args
         )
         
     # -----------
@@ -1318,15 +1127,15 @@ class Operator(ABC):
             # For now, inherit from self, or define combination rules
             new_kwargs['quadratic'] = self._quadratic or other._quadratic #? what to do here?
         elif isinstance(other, _PYTHON_SCALARS) or (JAX_AVAILABLE and isinstance(other, jax.Array) and other.ndim == 0):
-            new_fun                 = self._fun * other
-            new_eigval              = self._eigval * other
-            new_name                = f"({self._name} * {other})"
+            new_fun                 =   self._fun * other
+            new_eigval              =   self._eigval * other
+            new_name                =   f"({self._name} * {other})"
         else:
             return NotImplementedError("Incompatible operator function")
         return Operator(op_fun=new_fun, name=new_name, eigval=new_eigval,
-                        ns=new_kwargs['_ns'],
-                        lattice=new_kwargs['_lattice'], modifies=new_kwargs['_modifies'],
-                        backend=new_kwargs['_backend'], **new_kwargs)
+                        ns          =   new_kwargs['_ns'],
+                        lattice     =   new_kwargs['_lattice'], modifies=new_kwargs['_modifies'],
+                        backend     =   new_kwargs['_backend'], **new_kwargs)
         
 
     def __rmul__(self, other):

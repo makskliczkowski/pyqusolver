@@ -521,7 +521,7 @@ def _build_sector_change(hilbert_in         : object,
 
 # ------------------------------------------------------------------------------------------
 
-@numba.njit(cache=True, nogil=True)
+# @numba.njit(cache=True, nogil=True)
 def _fill_row_kernel(row_idx, ns_arr, vs_arr, rows, cols, vals, current_ptr, max_len, nh):
     added_count = 0
     n_items     = len(ns_arr)

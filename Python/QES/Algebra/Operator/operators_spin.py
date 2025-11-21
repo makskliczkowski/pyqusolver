@@ -1820,7 +1820,7 @@ def _register_catalog_entries():
 
     def _sigma_y_factory() -> LocalOpKernels:
         return LocalOpKernels(
-            fun_int         =   sigma_y_int,
+            fun_int         =   sigma_y_int_np, # Use the NumPy version for integer inputs
             fun_np          =   sigma_y_np,
             fun_jax         =   sigma_y_jnp if JAX_AVAILABLE else None,
             site_parity     =   1,
