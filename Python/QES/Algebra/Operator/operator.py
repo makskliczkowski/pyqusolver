@@ -949,19 +949,20 @@ class Operator(ABC):
         self._backend, self._backend_sp = get_backend(backend, scipy=True)
         
         # property of the operator itself
-        self._eigval        = eigval
-        self._name          = name
-        self._type          = typek
+        self._eigval            = eigval
+        self._name              = name
+        self._type              = typek
         if self._type != SymmetryGenerators.Other and self._name == 'Operator':
             self._name      = self._type.name
         
         # property for the behavior of the operator - e.g., quadratic, action, etc.
-        self._quadratic     = quadratic                             # flag for the quadratic operator - this enables different matrix representation
-        self._acton         = kwargs.get('acton', False)            # flag for the action of the operator on the local physical space
-        self._modifies      = modifies                              # flag for the operator that modifies the state
-        self._matrix_fun    = None                                  # the function that defines the matrix form of the operator - if not provided, the matrix is generated from the function fun
-        self._necessary_args= kwargs.get("necessary_args", 0)       # number of necessary arguments for the operator function
-        self._fun           = None                                  # the function that defines the operator - it is set to None if not provided
+        self._quadratic         = quadratic                         # flag for the quadratic operator - this enables different matrix representation
+        self._acton             = kwargs.get('acton', False)        # flag for the action of the operator on the local physical space
+        self._modifies          = modifies                          # flag for the operator that modifies the state
+        self._matrix_fun        = None                              # the function that defines the matrix form of the operator - if not provided, the matrix is generated from the function fun
+        self._necessary_args    = kwargs.get("necessary_args", 0)   # number of necessary arguments for the operator function
+        self._fun               = None                              # the function that defines the operator - it is set to None if not provided
+        self._jit_wrapper_cache = {}                                # cache for JIT wrappers
         self._init_functions(op_fun, fun_int, fun_np, fun_jnp)      # initialize the operator function
     
     def __repr__(self):
