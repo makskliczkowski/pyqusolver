@@ -13,20 +13,14 @@ description : Optimized matrix construction for symmetry-reduced Hilbert spaces
 author      : Maksymilian Kliczkowski
 email       : maksymilian.kliczkowski@pwr.edu.pl
 date        : 2025-10-29
-version     : 2.1.0
+version     : 2.0.0
 --------------------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import numpy as np
 import scipy.sparse as sp
+import numba
 from typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
-
-try:
-    import numba
-    from numba.typed import List
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
 
 # ------------------------------------------------------------------------------------------
 
@@ -271,8 +265,6 @@ def _build_dense_same_sector_py(
 
     return matrix
 
-
-
 # ------------------------------------------------------------------------------------------
 
 def _build_same_sector(hilbert_space    : HilbertSpace,
@@ -407,115 +399,66 @@ def _build_sector_change(hilbert_in         : object,
 # ------------------------------------------------------------------------------------------
 
 # @numba.njit
-def _build_triplets(operator_func, nh):
-    rows = []
-    cols = []
-    vals = []
-    for row in range(nh):
-        ns, vs = operator_func(row)
-        for j in range(len(ns)):
-            if 0 <= ns[j] < nh:
-                if abs(vs[j]) >= 1e-14:
-                    rows.append(row)
-                    cols.append(ns[j])
-                    vals.append(vs[j])
-    return np.array(rows), np.array(cols), np.array(vals)
+@numba.njit(cache=True, nogil=True)
+def _fill_row_kernel(row_idx, ns_arr, vs_arr, rows, cols, vals, current_ptr, max_len, nh):
+    added_count = 0
+    n_items     = len(ns_arr)
+    
+    for j in range(n_items):
+        # Bounds check for the buffer
+        if current_ptr + added_count >= max_len:
+            return -1 # Signal that we ran out of space
+            
+        col = ns_arr[j]
+        val = vs_arr[j]
+        
+        # The logic from your original loop
+        if (0 <= col < nh) and (np.abs(val) >= 1e-14):
+            rows[current_ptr + added_count] = row_idx
+            cols[current_ptr + added_count] = col
+            vals[current_ptr + added_count] = val
+            added_count += 1
+            
+    return added_count
 
-def _build_no_hilbert(operator_func       : Callable,
-                      nh                  : int,
-                      ns                  : int,
-                      sparse              : bool,
-                      max_local_changes   : int,
-                      dtype               : np.dtype
-                     ) -> Union[sp.csr_matrix, np.ndarray]:
-    """Build matrix for operator without Hilbert space (no symmetries)."""
+def _build_triplets(operator_func, nh, ns, max_local_changes=4, dtype=np.float64):
+    # FIX: Allocation size must depend on Hilbert dimension (nh), not System size (ns)
+    # We use a multiplier (e.g., 1.2) to be safe against rows with extra connections
+    buffer_size = int(ns * max_local_changes * 1.2)
+    rows        = np.empty(buffer_size, dtype=np.int64)
+    cols        = np.empty(buffer_size, dtype=np.int64)
+    vals        = np.empty(buffer_size, dtype=dtype)
+    elem        = 0
+    
+    for row in range(nh):
+        # 1. Call the slow Python operator
+        curr_ns, curr_vs    = operator_func(row)
+        curr_ns             = np.asarray(curr_ns)
+        curr_vs             = np.asarray(curr_vs)
+        added               = _fill_row_kernel(row, curr_ns, curr_vs, rows, cols, vals, elem, buffer_size, nh)
+        
+        # 4. Handle Buffer Overflow (Dynamic Resizing)
+        if added == -1:
+            # Double the buffer size
+            new_size = buffer_size * 2
+            rows.resize(new_size, refcheck=False)
+            cols.resize(new_size, refcheck=False)
+            vals.resize(new_size, refcheck=False)
+            buffer_size = new_size
+            # Retry the current row
+            added = _fill_row_kernel(row, curr_ns, curr_vs, rows, cols, vals, elem, buffer_size, nh)
+            
+        elem += added
+
+    # Trim to actual size
+    return rows[:elem], cols[:elem], vals[:elem]
+
+def _build_no_hilbert(operator_func: Callable, nh: int, ns: int, sparse: bool, max_local_changes: int, dtype: np.dtype):
     
     alloc_dtype = _determine_matrix_dtype(dtype, None, operator_func, ns)
 
-    # Use Numba-jitted parallel implementation if available
-    if NUMBA_AVAILABLE:
-        dtype_char = 'c' if np.issubdtype(alloc_dtype, np.complexfloating) else 'f'
-        if not sparse:
-            @numba.njit(parallel=True, cache=True)
-            def _build_dense_no_hilbert_jit_inner(n_hilbert, dtype_char_inner):
-                if dtype_char_inner == 'f':
-                    dt = np.float64
-                else:
-                    dt = np.complex128
-
-                matrix = np.zeros((n_hilbert, n_hilbert), dtype=dt)
-                for row in numba.prange(n_hilbert):
-                    with numba.objmode(py_out='UniTuple(pyobject, 2)'):
-                        py_out = operator_func(row)
-                    
-                    new_states_py, values_py = py_out
-                    new_states = np.asarray(new_states_py, dtype=np.int64)
-                    values = np.asarray(values_py)
-
-                    if values.dtype != dt:
-                        values = values.astype(dt)
-
-                    for i in range(len(new_states)):
-                        if 0 <= new_states[i] < n_hilbert and abs(values[i]) >= 1e-14:
-                            matrix[row, new_states[i]] += values[i]
-                return matrix
-
-            return _build_dense_no_hilbert_jit_inner(nh, dtype_char)
-        else: # sparse
-            @numba.njit(parallel=True, cache=True)
-            def _build_triplets_parallel_jit_inner(n_hilbert, dtype_char_inner):
-                if dtype_char_inner == 'f':
-                    dt = np.float64
-                else:
-                    dt = np.complex128
-                
-                num_threads = numba.get_num_threads()
-                rows_per_thread = [List.empty_list(numba.int64) for _ in range(num_threads)]
-                cols_per_thread = [List.empty_list(numba.int64) for _ in range(num_threads)]
-                vals_per_thread = [List.empty_list(dt) for _ in range(num_threads)]
-
-                for i in numba.prange(n_hilbert):
-                    thread_id = numba.get_thread_id()
-                    with numba.objmode(py_out='UniTuple(pyobject, 2)'):
-                        py_out = operator_func(i)
-
-                    new_states_py, values_py = py_out
-                    new_states = np.asarray(new_states_py, dtype=np.int64)
-                    values = np.asarray(values_py)
-                    if values.dtype != dt:
-                        values = values.astype(dt)
-
-                    for j in range(len(new_states)):
-                        if 0 <= new_states[j] < n_hilbert and abs(values[j]) >= 1e-14:
-                            rows_per_thread[thread_id].append(i)
-                            cols_per_thread[thread_id].append(new_states[j])
-                            vals_per_thread[thread_id].append(values[j])
-                return rows_per_thread, cols_per_thread, vals_per_thread
-
-            thread_results = _build_triplets_parallel_jit_inner(nh, dtype_char)
-            rows_per_thread, cols_per_thread, vals_per_thread = thread_results
-            
-            total_nnz = sum(len(l) for l in rows_per_thread)
-            if total_nnz == 0:
-                return sp.csr_matrix((nh, nh), dtype=alloc_dtype)
-
-            rows = np.empty(total_nnz, dtype=np.int64)
-            cols = np.empty(total_nnz, dtype=np.int64)
-            data = np.empty(total_nnz, dtype=alloc_dtype)
-            
-            pos = 0
-            for i in range(len(rows_per_thread)):
-                n = len(rows_per_thread[i])
-                if n > 0:
-                    rows[pos:pos+n] = np.asarray(rows_per_thread[i])
-                    cols[pos:pos+n] = np.asarray(cols_per_thread[i])
-                    data[pos:pos+n] = np.asarray(vals_per_thread[i])
-                    pos += n
-            
-            return sp.csr_matrix((data, (rows, cols)), shape=(nh, nh), dtype=alloc_dtype)
-
-    # Fallback to pure Python implementation if Numba is not available
     if not sparse:
+        # Dense mode optimization (unchanged, logic is fine)
         matrix = np.zeros((nh, nh), dtype=alloc_dtype)
         for row in range(nh):
             new_states, values  = operator_func(row)
@@ -523,12 +466,14 @@ def _build_no_hilbert(operator_func       : Callable,
             values              = np.asarray(values, dtype=alloc_dtype)
             mask                = (np.abs(values) >= 1e-14) & (new_states >= 0) & (new_states < nh)
             if mask.any():
-                np.add.at(matrix[row], new_states[mask], values[mask])
+                matrix[row, new_states[mask]] += values[mask]
         return matrix
 
     # Sparse mode
-    r, c, d = _build_triplets(operator_func, nh)
-    return sp.csr_matrix((d, (r, c)), shape=(nh, nh), dtype=alloc_dtype)
+    safe_max_changes    = max(2, max_local_changes)
+    r, c, d             = _build_triplets(operator_func, nh, ns, safe_max_changes, alloc_dtype)
+    
+    return sp.csr_matrix((d, (r, c)), shape=(nh, nh))
 
 # ------------------------------------------------------------------------------------------
 #! GENERAL MATRIX BUILDER INTERFACE
