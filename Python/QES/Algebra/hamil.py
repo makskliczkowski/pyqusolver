@@ -23,7 +23,7 @@ import time
 
 ###################################################################################################
 from QES.Algebra.hilbert import HilbertSpace, HilbertConfig, Logger, Lattice
-from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_add_operator
+from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_add_operator, OperatorFunction
 from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
 from QES.Algebra.Hamil.hamil_types import *
 from QES.Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wrap
@@ -59,7 +59,7 @@ else:
 #! Hamiltonian class - abstract class
 ####################################################################################################
 
-class Hamiltonian(ABC):
+class Hamiltonian(Operator):
     '''
     A general Hamiltonian class. This class is used to define the Hamiltonian of a system. It may be 
     either a Many-Body Quantum Mechanics Hamiltonian or a non-interacting system Hamiltonian. It may 
@@ -298,7 +298,15 @@ class Hamiltonian(ABC):
         #! general Hamiltonian info
         self._name                  = "Hamiltonian"
         
-        self._handle_system(ns, hilbert_space, lattice, logger, **kwargs)        
+        self._handle_system(ns, hilbert_space, lattice, logger, **kwargs)
+        
+        # Initialize Operator base class
+        Operator.__init__(self, 
+                          ns        =   self.ns, 
+                          name      =   self._name,
+                          backend   =   backend,
+                          modifies  =   True,
+                          quadratic =   not is_manybody)        
                 
         # if the Hilbert space is provided, get the number of sites
         self._lattice               = self._hilbert_space.lattice
@@ -2441,6 +2449,16 @@ class Hamiltonian(ABC):
                                                                         max(len(op) for op in self._ops_mod_nosites)    + \
                                                                         max(len(op) for op in self._ops_nmod_sites)     + \
                                                                         max(len(op) for op in self._ops_nmod_nosites))
+        
+        # Set the OperatorFunction for Operator inheritance
+        self._fun = OperatorFunction(
+            fun_int         =   self._loc_energy_int_fun,
+            fun_np          =   self._loc_energy_np_fun,
+            fun_jax         =   self._loc_energy_jax_fun,
+            modifies_state  =   True,
+            necessary_args  =   0
+        )
+        
         self._log(f"Max local changes set to {self._max_local_ch_o}", lvl=2, color="green", log='debug')
         self._log("Successfully set local energy functions...", lvl=2, log ='debug')
 

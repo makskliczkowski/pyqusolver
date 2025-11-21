@@ -22,6 +22,8 @@ Author  : Maksymilian Kliczkowski, WUST, Poland
 -----------------------------------------------------------------
 """
 
+from __future__ import annotations
+
 import numpy as np
 import copy                  
 import time
@@ -1059,6 +1061,11 @@ class Operator(ABC):
             The backend for the operator (default is 'default').
         - backend_sp (str):
             The backend for the operator (default is 'default').
+    Examples:
+        >>> op = Operator(fun_int=my_operator_function, ns=4, name='MyOperator')
+        >>> print(op)
+        Operator(MyOperator, type_acting=Global, eigval=1.0, type=Other)
+        >>> op_result = op.op_fun.apply(state)
     """
 
     _INVALID_OPERATION_TYPE_ERROR = "Invalid type for function. Expected a callable function."
@@ -1192,7 +1199,10 @@ class Operator(ABC):
             self._necessary_args    = op_fun.necessary_args
         else:
             if fun_int is None:
-                raise ValueError(self._INVALID_FUNCTION_NONE)
+                # Allow initialization without function (e.g. for Hamiltonian base class)
+                # The function must be set later before use.
+                self._fun = None
+                return
             
             # get the necessary args
             self._necessary_args    = fun_int.__code__.co_argcount - 1
@@ -1759,12 +1769,12 @@ class Operator(ABC):
             dim1, dim2      = dim, dim
             matrix_hilbert  = 'None'
 
-        verbose      = kwargs.get('verbose', False)
+        verbose         = kwargs.get('verbose', False)
         
         # check if there are functions from the Hilbert space
-        jax_maybe_av = JAX_AVAILABLE and self._backend != np
-        is_sparse    = (matrix_type == 'sparse')
-        use_numpy    = use_numpy or (not jax_maybe_av)
+        jax_maybe_av    = JAX_AVAILABLE and self._backend != np
+        is_sparse       = (matrix_type == 'sparse')
+        use_numpy       = use_numpy or (not jax_maybe_av)
         
         # check if the matrix function is provided and skips kwargs if unnecessary
         if self._matrix_fun is not None:
@@ -1774,15 +1784,33 @@ class Operator(ABC):
                 return self._backend.asarray(self._matrix_fun(dim1, matrix_type, *args))
         
         # wrap the function
-        wrapped_fun  = self._fun.wrap(*args)
-        dtype        = kwargs.get('dtype', self._backend.float64 if not use_numpy else np.float64)
-        max_loc_upd  = kwargs.get('max_loc_upd', 1)
+        wrapped_fun     = self._fun.wrap(*args)
+        dtype           = kwargs.get('dtype', self._backend.float64 if not use_numpy else np.float64)
+        max_loc_upd     = kwargs.get('max_loc_upd', 1)
+
+        # Create JIT wrapper for matrix builder
+        # This ensures we pass a JIT-compiled function to the JIT-compiled builder
+        op_int_jit      = self._fun._fun_int
+        
+        # Check cache first
+        cache_key       = args if not any(isinstance(a, (np.ndarray, list, dict)) for a in args) else None
+        op_wrapper_jit  = None
+        
+        if cache_key is not None and cache_key in self._jit_wrapper_cache:
+            op_wrapper_jit = self._jit_wrapper_cache[cache_key]
+        else:
+            @numba.njit
+            def op_wrapper_jit(state):
+                return op_int_jit(state, *args)
+            
+            if cache_key is not None:
+                self._jit_wrapper_cache[cache_key] = op_wrapper_jit
 
         # Case1: easiest case - no Hilbert space provided
         if matrix_hilbert == 'None':
             # maximum local updates - how many states does the operator create - for sparse
             if not jax_maybe_av or use_numpy:
-                return self._matrix_no_hilbert_np(dim1, is_sparse, wrapped_fun, dtype, max_loc_upd, verbose, **kwargs)
+                return self._matrix_no_hilbert_np(dim1, is_sparse, op_wrapper_jit, dtype, max_loc_upd, verbose, **kwargs)
             else:
                 return self._matrix_no_hilbert_jax(dim1, is_sparse, wrapped_fun, dtype, max_loc_upd)
         # Case2: one Hilbert space provided
@@ -1792,11 +1820,9 @@ class Operator(ABC):
                 if verbose:
                     hilbert_1.log(f"Calculating the operator matrix {self._name} using NumPy with single Hilbert space...", lvl=2)
                 
-                # wrapped_cmp_fun = numba.njit(wrapped_fun)
-                wrapped_cmp_fun = wrapped_fun
                 t1              = time.time()
                 matrix          = build_operator_matrix(
-                    operator_func       = wrapped_cmp_fun,
+                    operator_func       = op_wrapper_jit,
                     hilbert_space       = hilbert_1,
                     sparse              = is_sparse,
                     max_local_changes   = max_loc_upd,
@@ -1821,7 +1847,7 @@ class Operator(ABC):
                         
                 t1      = time.time()
                 matrix  = build_operator_matrix(
-                    operator_func       = wrapped_fun,
+                    operator_func       = op_wrapper_jit,
                     hilbert_space       = hilbert_1,
                     hilbert_space_out   = hilbert_2,
                     sparse              = is_sparse,
@@ -1871,26 +1897,84 @@ class Operator(ABC):
     
     #################################
     
-    def matvec(self, vecs: Array, hilbert: Any, *args, **kwargs) -> Array:
+    def matvec(self, vecs: Array, hilbert: HilbertSpace, *args, **kwargs) -> Array:
         """
         Apply the operator matrix to a vector.
         
+        If Hilbert space is not provided and **kwargs does not have mb=True, 
+        the single particle picture is assumed. 
+        
+        Otherwise, the matrix is generated using the provided Hilbert space.
+        We don't want to create matrix explicitly but that can be done using this function...
+        
         Parameters:
-            vec (Array): The input vector to which the operator is applied.
-            hilbert (Any): The Hilbert space associated with the vector.
-            *args: Additional arguments for the operator function.
-            **kwargs: Additional keyword arguments for the operator function.
+            vecs (Array): 
+                The input vectors to which the operator is applied. Shape (vec_size, n_vecs).
+                
+                vec_size can be:
+                    - 1, nstates:           -> n integer states
+                    - ns * nloc, n_vecs:    -> local Hilbert space vectors - usually basis vectors
+                    - hilbert.nh, n_vecs:   -> full Hilbert space vectors
+            hilbert (HilbertSpace): 
+                The Hilbert space used to generate the operator matrix.
+            *args: 
+                Additional arguments for the operator function.
+            **kwargs: 
+                Additional keyword arguments for the operator function.
+                Can include 'mb' to force many-body picture.
         
         Returns:
-            Array: The resulting vector after applying the operator.
+            Array: The resulting vectors after applying the operator.
+            
+            or 
+            
+            list of values, states if single particle picture is used.
         """
-        matrix = self.matrix(hilbert_1 = hilbert, use_numpy = True, *args, **kwargs)
-        if matrix is None:
-            raise ValueError("Matrix representation could not be generated.")
         
-        result = matrix.dot(vec)
-        return result
-    
+        if hilbert is None or kwargs.get('mb', False) or hilbert.nh != len(vecs):
+            # use single particle picture and act with self function
+            if self._fun._fun_int is None:
+                raise ValueError("Integer function for the operator is not defined.")
+            
+            if isinstance(vecs, list):
+                result = self.apply(vecs, *args)
+            elif isinstance(vecs, np.ndarray):
+                result = self.apply([int(v) for v in vecs.flatten()], *args)
+            return result
+
+        # use manybody picture -> we must use int function
+        if self._fun._fun_int is None:
+            raise ValueError("Integer function for the operator is not defined.")
+        
+        # act on states using the Hilbert space and the operator function
+        from QES.Algebra.Hilbert.matrix_builder import apply_operator_to_vector
+        
+        # Create a JIT-compatible wrapper for the operator function
+        op_int              = self._fun._fun_int
+        
+        @numba.njit
+        def op_wrapper(state):
+            return op_int(state, *args)
+            
+        # Extract Hilbert space arrays
+        basis = getattr(hilbert, 'basis', None)
+        if basis is not None and not isinstance(basis, np.ndarray):
+            basis = np.array(basis)
+            
+        representative_list = getattr(hilbert, 'representative_list', None)
+        normalization       = getattr(hilbert, 'normalization', None)
+        repr_idx            = getattr(hilbert, 'repr_idx', None)
+        repr_phase          = getattr(hilbert, 'repr_phase', None)
+        
+        return apply_operator_to_vector(
+            vecs.flatten(), # Ensure 1D
+            op_wrapper,
+            basis               =   basis,
+            representative_list =   representative_list,
+            normalization       =   normalization,
+            repr_idx            =   repr_idx,
+            repr_phase          =   repr_phase
+        )
     
 
     #################################
@@ -2485,6 +2569,11 @@ def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
     * For **integer states** we reproduce the coefficient table you had before.
     * For **array states** (NumPy / JAX) we show only the *first* non-zero
         coefficient returned by the operator.  Adjust if you need more detail.
+    
+    Examples
+    --------
+    >>> test_operator_on_state(op, state, lat, ns=16, op_acting=OperatorTypeActing.Local)
+    >>> test_operator_on_state(op, state, lat, just_time=True)
     """
     
     from QES.general_python.common.timer import Timer

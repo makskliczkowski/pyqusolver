@@ -124,8 +124,104 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
     return alloc_dtype
 
 # -----------------------------------------------------------------------------------------------
-#! NOT JITTED FUNCTIONS
+#! JITTED FUNCTIONS
 # -----------------------------------------------------------------------------------------------
+
+@numba.njit(cache=True, nogil=True)
+def _build_sparse_same_sector_jit(
+                representative_list : np.ndarray,
+                normalization       : np.ndarray,
+                repr_idx            : np.ndarray,
+                repr_phase          : np.ndarray,
+                operator_func       : Callable,
+                rows                : np.ndarray,
+                cols                : np.ndarray,
+                data                : np.ndarray,
+                data_idx            : int
+            ):
+    """
+    Jitted builder for same-sector operators using precomputed arrays.
+    """
+    nh = len(representative_list)
+    for k in range(nh):
+        state               = representative_list[k]
+        norm_k              = normalization[k]
+        new_states, values  = operator_func(state)
+
+        for i in range(len(new_states)):
+            new_state = new_states[i]
+            value     = values[i]
+            
+            if np.abs(value) < 1e-14:
+                continue
+
+            # Use precomputed lookup
+            idx = repr_idx[new_state]
+            
+            # Check if state is in this sector (idx == -1 means not in sector)
+            if idx < 0:
+                continue
+                
+            phase       = repr_phase[new_state]
+            norm_idx    = normalization[idx]
+            sym_factor  = np.conj(phase) * norm_idx / norm_k
+
+            matrix_elem = value * sym_factor
+            if np.abs(matrix_elem) > 1e-14:
+                rows[data_idx]  = idx
+                cols[data_idx]  = k
+                data[data_idx]  = matrix_elem
+                data_idx       += 1
+
+    return data_idx
+
+@numba.njit(cache=True, nogil=True)
+def _build_sparse_same_sector_no_symmetry_jit(
+                basis               : Optional[np.ndarray],
+                operator_func       : Callable,
+                rows                : np.ndarray,
+                cols                : np.ndarray,
+                data                : np.ndarray,
+                data_idx            : int,
+                nh                  : int
+            ):
+    """
+    Jitted builder for no-symmetry case.
+    """
+    for k in range(nh):
+        if basis is not None:
+            state = basis[k]
+        else:
+            state = k
+            
+        new_states, values = operator_func(state)
+
+        for i in range(len(new_states)):
+            new_state = new_states[i]
+            value     = values[i]
+            
+            if np.abs(value) < 1e-14:
+                continue
+
+            # For no-symmetry, the index is the state itself if basis is None
+            # If basis is present, we need to find the index of new_state in basis.
+            # Assuming basis is sorted, we can use binary search.
+            # If basis is None, idx = new_state.
+            
+            if basis is not None:
+                # Binary search
+                idx = _binary_search_representative_list(basis, new_state)
+            else:
+                idx = new_state
+            
+            if idx < 0 or idx >= nh:
+                continue
+            
+            rows[data_idx] = k
+            cols[data_idx] = idx
+            data[data_idx] = value
+            data_idx      += 1            
+    return data_idx
 
 def _build_sparse_same_sector_py(
                 hilbert_space       : HilbertSpace,
@@ -295,23 +391,44 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
         return _build_dense_same_sector_py(hilbert_space, normalization, operator_func, ns, matrix)
     
     # Sparse matrix
-    max_nnz         = nh * max_local_changes * (ns) # estimate
-    rows            = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
-    cols            = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
-    data            = np.zeros(max_nnz, dtype=alloc_dtype)
+    max_nnz                 = nh * max_local_changes * (ns) # estimate
+    rows                    = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
+    cols                    = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
+    data                    = np.zeros(max_nnz, dtype=alloc_dtype)
 
     # If there are no symmetries present (no representative_list/repr arrays and no
     # symmetry group), use a simple optimized builder that iterates the
     # HilbertSpace directly (no representative_list allocation). Otherwise use the
     # Python assembly that uses HilbertSpace.find_representative
-    has_symmetry    = representative_list is not None
+    has_symmetry            = representative_list is not None
 
     if not has_symmetry:
-        # Optimized no-symmetry pure-Python builder — iterate hilbert_space directly
-        data_idx    = _build_sparse_same_sector_no_symmetry_py(hilbert_space, operator_func, rows, cols, data, 0)
+        # Optimized no-symmetry builder
+        # Note: 'basis' here refers to the constrained basis (e.g. particle conservation)
+        # which is distinct from 'representative_list' used for symmetry reduction.
+        basis = getattr(hilbert_space, 'basis', None)
+        # If basis is not an array (e.g. None or list), convert or handle
+        if basis is not None and not isinstance(basis, np.ndarray):
+             basis = np.array(basis)
+             
+        data_idx = _build_sparse_same_sector_no_symmetry_jit(basis, operator_func, rows, cols, data, 0, nh)
     else:
-        # Python assembly that uses HilbertSpace.find_representative
-        data_idx    = _build_sparse_same_sector_py(hilbert_space, representative_list, normalization, operator_func, rows, cols, data, 0)
+        # Check if we have precomputed arrays for JIT
+        # 'representative_list' here implies symmetry reduction is active.
+        # If 'repr_idx' (lookup table) is available, we use the fast JIT path.
+        # Otherwise, we must calculate representatives on the fly (slow Python path).
+        repr_idx = getattr(hilbert_space, 'repr_idx', None)
+        repr_phase = getattr(hilbert_space, 'repr_phase', None)
+        
+        if repr_idx is not None and repr_phase is not None:
+             data_idx = _build_sparse_same_sector_jit(
+                 representative_list, normalization, repr_idx, repr_phase,
+                 operator_func, rows, cols, data, 0
+             )
+        else:
+            # Python assembly that uses HilbertSpace.find_representative
+            # This is necessary when the lookup table is too large to store.
+            data_idx    = _build_sparse_same_sector_py(hilbert_space, representative_list, normalization, operator_func, rows, cols, data, 0)
 
     return sp.csr_matrix((data[:data_idx], (rows[:data_idx], cols[:data_idx])),shape=(nh, nh), dtype=alloc_dtype)
 
@@ -404,7 +521,6 @@ def _build_sector_change(hilbert_in         : object,
 
 # ------------------------------------------------------------------------------------------
 
-# @numba.njit
 @numba.njit(cache=True, nogil=True)
 def _fill_row_kernel(row_idx, ns_arr, vs_arr, rows, cols, vals, current_ptr, max_len, nh):
     added_count = 0
@@ -564,6 +680,167 @@ def build_operator_matrix(
         return _build_same_sector(hilbert_space, operator_func, sparse, max_local_changes, dtype)
     else:
         return _build_sector_change(hilbert_space, hilbert_space_out, operator_func, sparse, max_local_changes, dtype)
+
+# -------------------------------------------------------------------------------
+#! Matrix-Free Operator Application
+# -------------------------------------------------------------------------------
+
+@numba.njit(cache=True)
+def _apply_op_jit(
+    vec_in              : np.ndarray,
+    operator_func       : Callable,
+    basis               : Optional[np.ndarray],
+    representative_list : Optional[np.ndarray],
+    normalization       : Optional[np.ndarray],
+    repr_idx            : Optional[np.ndarray],
+    repr_phase          : Optional[np.ndarray]) -> np.ndarray:
+    """
+    Jitted kernel for applying operator to vector.
+    """
+    nh              = len(vec_in)
+    vec_out         = np.zeros_like(vec_in)
+    
+    has_symmetry    = representative_list is not None
+    has_basis       = basis is not None
+    
+    for k in range(nh):
+        coeff = vec_in[k]
+        if abs(coeff) < 1e-14:
+            continue
+            
+        # Get the state integer
+        if has_symmetry:
+            state   = representative_list[k]
+            norm_k  = normalization[k]
+        elif has_basis:
+            state   = basis[k]
+        else:
+            state   = k
+            
+        # Apply operator
+        new_states, values = operator_func(state)
+        
+        # Accumulate results
+        for i in range(len(new_states)):
+            new_state   = new_states[i]
+            val         = values[i]
+            
+            if abs(val) < 1e-14:
+                continue
+                
+            if has_symmetry:
+                # Symmetry case - requires lookup table
+                if repr_idx is not None:
+                    idx = repr_idx[new_state]
+                    if idx >= 0:
+                        phase           = repr_phase[new_state]
+                        norm_idx        = normalization[idx]
+                        sym_factor      = np.conj(phase) * norm_idx / norm_k
+                        vec_out[idx]   += val * sym_factor * coeff
+            else:
+                # No symmetry case
+                if has_basis:
+                    # For constrained basis without symmetry, we need to find the index of new_state.
+                    # Assuming basis is sorted (standard for QES basis)
+                    idx = np.searchsorted(basis, new_state)
+                    if idx < len(basis) and basis[idx] == new_state:
+                        vec_out[idx]   += val * coeff
+                else:
+                    # Direct mapping
+                    idx = new_state
+                    if idx >= 0 and idx < nh:
+                        vec_out[idx] += val * coeff
+                        
+    return vec_out
+
+def _apply_op_sym_py(
+    vec_in              : np.ndarray,
+    hilbert_space       : HilbertSpace,
+    operator_func       : Callable) -> np.ndarray:
+    """
+    Python fallback for applying operator with symmetries but no precomputed mapping.
+    """
+    nh                  = len(vec_in)
+    vec_out             = np.zeros_like(vec_in)
+    representative_list = hilbert_space.representative_list
+    normalization       = hilbert_space.normalization
+    
+    for k in range(nh):
+        coeff = vec_in[k]
+        if abs(coeff) < 1e-14: continue
+        
+        state               = representative_list[k]
+        norm_k              = normalization[k] if normalization is not None else 1.0
+        new_states, values  = operator_func(state)
+        
+        for new_state, val in zip(new_states, values):
+            if abs(val) < 1e-14: continue
+            
+            # Find representative using Python method
+            rep, sym_factor = hilbert_space.find_sym_repr(int(new_state), norm_k)
+            
+            # Find index of representative
+            idx = _binary_search_representative_list(representative_list, rep)
+            
+            if idx >= 0:
+                vec_out[idx] += val * sym_factor * coeff
+                
+    return vec_out
+
+def apply_operator_to_vector(
+        vec_in              : np.ndarray,
+        operator_func       : Callable,
+        hilbert_space       : Optional[HilbertSpace] = None,
+        basis               : Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+    """
+    Apply operator to a vector without constructing the matrix: v_out = H * v_in.
+    
+    Parameters:
+    -----------
+    vec_in : np.ndarray
+        Input vector.
+    operator_func : Callable
+        Jitted function (state) -> (new_states, values).
+    hilbert_space : HilbertSpace, optional
+        Hilbert space context (required for symmetries).
+    basis : np.ndarray, optional
+        Basis states for no-symmetry case.
+        
+    Returns:
+    --------
+    vec_out : np.ndarray
+        Resulting vector.
+    """
+    # Extract Hilbert space properties if provided
+    representative_list = None
+    normalization       = None
+    repr_idx            = None
+    repr_phase          = None
+    
+    if hilbert_space is not None:
+        representative_list = getattr(hilbert_space, 'representative_list', None)
+        normalization       = getattr(hilbert_space, 'normalization', None)
+        repr_idx            = getattr(hilbert_space, 'repr_idx', None)
+        repr_phase          = getattr(hilbert_space, 'repr_phase', None)
+        if basis is None:
+            basis = getattr(hilbert_space, 'basis', None)
+            
+    has_symmetry = representative_list is not None
+    
+    # Decide implementation
+    if has_symmetry and (repr_idx is None or repr_phase is None):
+        # Fallback to Python if symmetries exist but no lookup table
+        if hilbert_space is None:
+             raise ValueError("HilbertSpace required for symmetry operations without precomputed tables.")
+        return _apply_op_sym_py(vec_in, hilbert_space, operator_func)
+    else:
+        # Use JIT kernel
+        # Ensure basis is array
+        if basis is not None and not isinstance(basis, np.ndarray):
+            basis = np.array(basis)
+            
+        return _apply_op_jit(vec_in, operator_func, basis, representative_list, normalization, repr_idx, repr_phase)
 
 # -------------------------------------------------------------------------------
 #! Symmetry rotation matrix construction

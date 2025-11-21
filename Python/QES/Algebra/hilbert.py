@@ -332,23 +332,23 @@ class HilbertSpace(ABC):
             self._log(f"Initialized HilbertSpace in many-body mode: Ns={self._ns}, initial Nh={self._nh} (potentially reducible).", color='green', log='debug', lvl=1)
 
         #! Initialize the symmetries    
-        self.representative_list    = None                          # List of representatives
-        self.representative_norms   = None                          # normalization of the states - how to return to the representative
-        self.full_to_representative_idx = None                      # full to representative index mapping
-        self.full_to_representative_phase = None                    # full to representative phase mapping
-        self.full_to_global_map      = None                         # full to global map
-        self._sym_group             = []                            # main symmetry group (will be populated later)
-        self._sym_basic_info        = HilbertSpace.SymBasicInfo()   # basic symmetry info container
-        self._global_syms           = global_syms if global_syms is not None else []
-        self._particle_conserving   = part_conserv
+        self.representative_list            = None                          # List of representatives
+        self.representative_norms           = None                          # normalization of the states - how to return to the representative
+        self.full_to_representative_idx     = None                          # full to representative index mapping
+        self.full_to_representative_phase   = None                          # full to representative phase mapping
+        self.full_to_global_map             = None                          # full to global map
+        self._sym_group                     = []                            # main symmetry group (will be populated later)
+        self._sym_basic_info                = HilbertSpace.SymBasicInfo()   # basic symmetry info container
+        self._global_syms                   = global_syms if global_syms is not None else []
+        self._particle_conserving           = part_conserv
 
         # Symmetry container
-        self._sym_container         = None                          # Will be initialized in _init_representatives
-        self._has_complex_symmetries= False                         # Cached flag indicating whether any configured symmetry eigenvalues
-                                                                    # jittable arrays (repr_idx, repr_phase) may be created when mapping is generated
+        self._sym_container                 = None                          # Will be initialized in _init_representatives
+        self._has_complex_symmetries        = False                         # Cached flag indicating whether any configured symmetry eigenvalues
+                                                                            # jittable arrays (repr_idx, repr_phase) may be created when mapping is generated
 
         # setup the logger instance for the Hilbert space
-        self._threadnum             = kwargs.get('threadnum', 1)    # number of threads to use
+        self._threadnum                     = kwargs.get('threadnum', 1)    # number of threads to use
 
         if self._is_many_body:
             if gen_mapping:

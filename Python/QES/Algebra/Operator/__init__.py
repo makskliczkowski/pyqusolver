@@ -29,7 +29,7 @@ MODULE_DESCRIPTION = "Operator classes and concrete operators (spin, fermions) w
 try:
     from .catalog import OPERATOR_CATALOG, register_local_operator
     from .operator import Operator, SymmetryGenerators, operator_from_local
-    from .operator_matrix import *
+    # from .operator_matrix import *
     from .operators_spin import *
     from .operators_spin import sig_plus, sig_minus
     from .operators_spinless_fermions import *

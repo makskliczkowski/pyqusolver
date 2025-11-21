@@ -214,7 +214,7 @@ def sigma_x(state,
 #! Sigma-Y (\sigma _y) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit
+@numba.njit(cache=True)
 def sigma_y_int_np_real(state, 
                         ns, 
                         sites,
