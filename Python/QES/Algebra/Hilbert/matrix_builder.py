@@ -13,14 +13,20 @@ description : Optimized matrix construction for symmetry-reduced Hilbert spaces
 author      : Maksymilian Kliczkowski
 email       : maksymilian.kliczkowski@pwr.edu.pl
 date        : 2025-10-29
-version     : 2.0.0
+version     : 2.2.0
 --------------------------------------------------------------------------------------------
 """
 from __future__ import annotations
 import numpy as np
 import scipy.sparse as sp
-import numba
 from typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
+
+try:
+    import numba
+    from numba.typed import List
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
 
 # ------------------------------------------------------------------------------------------
 
