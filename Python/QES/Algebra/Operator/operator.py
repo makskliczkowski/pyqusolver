@@ -15,29 +15,38 @@ Enumerations:
     
 This module is under constant development and is intended to be expanded for more complex operators and functionalities.
 
+-----------------------------------------------------------------
+File    : Algebra/Operator/operator.py
 Date    : April 2025
 Author  : Maksymilian Kliczkowski, WUST, Poland
+-----------------------------------------------------------------
 """
 
+import numpy as np
 import copy                  
 import time
-import numpy as np
+import numbers
 import numba
 from numba.core.registry import CPUDispatcher
-import numbers
 
 #####################################################################################################
 from abc import ABC
 from enum import Enum, auto, unique
-from typing import Optional, Callable, Union, Sequence, Any, Set
+from typing import Optional, Callable, Union, Sequence, Any, Set, TYPE_CHECKING
 from typing import Union, Tuple, List               # type hints for the functions and methods
 from functools import partial                       # partial function application for operator composition
 ####################################################################################################
-from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, LocalOperator, StateTypes, LocalOpKernels
-from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
-from QES.general_python.lattices import Lattice
 
-# from Algebra.hilbert import HilbertSpace
+try:
+    if TYPE_CHECKING:
+        from QES.Algebra.hilbert import HilbertSpace
+    
+    from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, LocalOperator, StateTypes, LocalOpKernels
+    from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
+    from QES.general_python.lattices import Lattice
+except ImportError as e:
+    raise ImportError("QES modules are required for this module to function properly. Please ensure QES is installed.") from e
+
 ####################################################################################################
 
 if JAX_AVAILABLE:
@@ -86,7 +95,7 @@ if JAX_AVAILABLE:
             return op_func_jax(state, static_sites, *static_args, *kwarg_vals)
 
         return jax.jit(compiled_op)
-    
+
 else:
     jax                         = None
     jnp                         = np
@@ -1144,7 +1153,7 @@ class Operator(ABC):
         String representation of the operator.
         """
         return f"Operator({self._name}, type_acting={self.type_acting.name}, eigval={self._eigval}, type={self._type.name})"
-        
+    
     #################################
     #! Initialize functions
     #################################
@@ -1436,7 +1445,7 @@ class Operator(ABC):
     @eigval.setter
     def eigval(self, val):
         self._eigval = val
-        
+    
     # -------------------------------
     
     @property
@@ -1538,7 +1547,7 @@ class Operator(ABC):
         Override the matrix function of the operator.
         """
         self._matrix_fun = function
-        
+    
     #################################
     #! Apply the operator
     #################################
@@ -1613,7 +1622,7 @@ class Operator(ABC):
         results     = [self._fun(state, i, j) for state in states]
         out, val    = zip(*results) if results else ([], [])
         return (self._backend.stack(list(out)), self._backend.stack([v * self._eigval for v in val])) if list(out) else (self._backend.array([]), self._backend.array([]))
-        
+    
     def apply(self, states : list | Array, *args):
         """
         Apply the operator to the state. 
@@ -1633,7 +1642,7 @@ class Operator(ABC):
         else:
             raise NotImplementedError("Invalid operator acting type.")
         return [None], [0.0]
-        
+    
     # -------------------------------
     
     def __call__(self, states: list | Array, *args):
@@ -1705,7 +1714,7 @@ class Operator(ABC):
         if verbose:
             dummy_hilbert.log(f"Time taken to create the matrix {self._name}: {time_taken:.2e} seconds", lvl=2)
         return matrix
-        
+    
     def _matrix_no_hilbert_jax(self, dim: int, is_sparse: bool, wrapped_funct, dtype, max_loc_upd:int = 1):
         """
         Generate the matrix form of the operator without Hilbert space.
@@ -1717,7 +1726,7 @@ class Operator(ABC):
         dummy_hilbert.log("Calculating the Hamiltonian matrix using JAX...", lvl = 2)
         #!TODO: Implement the JAX version of the matrix function
         return None
-        
+    
     def matrix(self, *args, dim = None, matrix_type = 'sparse',
             hilbert_1 = None, hilbert_2 = None, use_numpy: bool = True, **kwargs) -> Array | None:
         """
@@ -1831,7 +1840,7 @@ class Operator(ABC):
         else:
             raise ValueError("Invalid Hilbert space provided.")
         return None
-        
+    
     #################################
     
     def standardize_matrix(self, matrix):
@@ -1862,6 +1871,30 @@ class Operator(ABC):
     
     #################################
     
+    def matvec(self, vecs: Array, hilbert: Any, *args, **kwargs) -> Array:
+        """
+        Apply the operator matrix to a vector.
+        
+        Parameters:
+            vec (Array): The input vector to which the operator is applied.
+            hilbert (Any): The Hilbert space associated with the vector.
+            *args: Additional arguments for the operator function.
+            **kwargs: Additional keyword arguments for the operator function.
+        
+        Returns:
+            Array: The resulting vector after applying the operator.
+        """
+        matrix = self.matrix(hilbert_1 = hilbert, use_numpy = True, *args, **kwargs)
+        if matrix is None:
+            raise ValueError("Matrix representation could not be generated.")
+        
+        result = matrix.dot(vec)
+        return result
+    
+    
+
+    #################################
+
 ####################################################################################################
 
 def operator_identity(backend : str = 'default') -> Operator:
