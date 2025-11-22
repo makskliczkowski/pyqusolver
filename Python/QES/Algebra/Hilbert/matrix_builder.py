@@ -682,33 +682,29 @@ def build_operator_matrix(
         return _build_sector_change(hilbert_space, hilbert_space_out, operator_func, sparse, max_local_changes, dtype)
 
 # -------------------------------------------------------------------------------
-#! Matrix-Free Operator Application
+#! Matrix-Free Operator Application (optimized!)
 # -------------------------------------------------------------------------------
 
-@numba.njit(cache=True)
-def _apply_op_jit(
-    vec_in              : np.ndarray,
-    operator_func       : Callable,
+@numba.njit(fastmath=True, parallel=False) # Serial is often faster here to avoid race conditions on write
+def _apply_op_batch_jit(
+    vecs_in             : np.ndarray,
+    vecs_out            : np.ndarray,
+    op_func             : Callable,
+    op_args             : Tuple,
     basis               : Optional[np.ndarray],
     representative_list : Optional[np.ndarray],
     normalization       : Optional[np.ndarray],
     repr_idx            : Optional[np.ndarray],
-    repr_phase          : Optional[np.ndarray]) -> np.ndarray:
-    """
-    Jitted kernel for applying operator to vector.
-    """
-    nh              = len(vec_in)
-    vec_out         = np.zeros_like(vec_in)
+    repr_phase          : Optional[np.ndarray]) -> None:
     
+    nh, n_batch     = vecs_in.shape
     has_symmetry    = representative_list is not None
     has_basis       = basis is not None
-    
+
+    # Loop over the Hilbert space (Rows)
     for k in range(nh):
-        coeff = vec_in[k]
-        if abs(coeff) < 1e-14:
-            continue
-            
-        # Get the state integer
+        
+        # 1. Identify the state integer (Do this ONCE per row)
         if has_symmetry:
             state   = representative_list[k]
             norm_k  = normalization[k]
@@ -717,130 +713,121 @@ def _apply_op_jit(
         else:
             state   = k
             
-        # Apply operator
-        new_states, values = operator_func(state)
+        # 2. Compute Operator Action (Do this ONCE per row)
+        new_states, values = op_func(state, *op_args)
         
-        # Accumulate results
+        # 3. Map back to indices and apply to the WHOLE BATCH
         for i in range(len(new_states)):
             new_state   = new_states[i]
             val         = values[i]
             
-            if abs(val) < 1e-14:
+            if abs(val) < 1e-15:
                 continue
-                
+            
+            target_idx  = -1
+            sym_factor  = 1.0 + 0j
+            
+            # Find target index
             if has_symmetry:
-                # Symmetry case - requires lookup table
                 if repr_idx is not None:
-                    idx = repr_idx[new_state]
-                    if idx >= 0:
-                        phase           = repr_phase[new_state]
-                        norm_idx        = normalization[idx]
-                        sym_factor      = np.conj(phase) * norm_idx / norm_k
-                        vec_out[idx]   += val * sym_factor * coeff
+                    target_idx = repr_idx[new_state]
+                    if target_idx >= 0:
+                        phase       = repr_phase[new_state]
+                        norm_idx    = normalization[target_idx]
+                        sym_factor  = np.conj(phase) * (norm_idx / norm_k)
+            elif has_basis:
+                # Binary Search
+                found_idx = np.searchsorted(basis, new_state)
+                if found_idx < nh and basis[found_idx] == new_state:
+                    target_idx = found_idx
             else:
-                # No symmetry case
-                if has_basis:
-                    # For constrained basis without symmetry, we need to find the index of new_state.
-                    # Assuming basis is sorted (standard for QES basis)
-                    idx = np.searchsorted(basis, new_state)
-                    if idx < len(basis) and basis[idx] == new_state:
-                        vec_out[idx]   += val * coeff
+                target_idx = new_state
+
+            # 4. Vectorized Update (SIMD)
+            # Instead of looping over 'b', we update the whole row slice.
+            # This removes the Python-loop overhead for the batch dimension.
+            if 0 <= target_idx < nh:
+                # vecs_in[k, :] is shape (n_batch,)
+                # vecs_out[target_idx, :] is shape (n_batch,)
+                if has_symmetry:
+                    # Complex multiplication with symmetry factor
+                    factor                      = val * sym_factor
+                    vecs_out[target_idx, :]    += factor * vecs_in[k, :]
                 else:
-                    # Direct mapping
-                    idx = new_state
-                    if idx >= 0 and idx < nh:
-                        vec_out[idx] += val * coeff
-                        
-    return vec_out
+                    vecs_out[target_idx, :]    += val * vecs_in[k, :]
 
-def _apply_op_sym_py(
-    vec_in              : np.ndarray,
-    hilbert_space       : HilbertSpace,
-    operator_func       : Callable) -> np.ndarray:
-    """
-    Python fallback for applying operator with symmetries but no precomputed mapping.
-    """
-    nh                  = len(vec_in)
-    vec_out             = np.zeros_like(vec_in)
-    representative_list = hilbert_space.representative_list
-    normalization       = hilbert_space.normalization
+@numba.njit(parallel=False, fastmath=True)
+def _apply_fourier_batch_jit(
+    vecs_in             : np.ndarray,
+    vecs_out            : np.ndarray,
+    phases              : np.ndarray,
+    op_func             : Callable,
+    base_args           : Tuple, 
+    basis               : Optional[np.ndarray],
+    representative_list : Optional[np.ndarray],
+    normalization       : Optional[np.ndarray],
+    repr_idx            : Optional[np.ndarray],
+    repr_phase          : Optional[np.ndarray]) -> None:
     
+    nh, n_batch     = vecs_in.shape
+    n_sites         = len(phases)
+    
+    has_symmetry    = representative_list is not None
+    has_basis       = basis is not None
+
+    # Loop Hilbert Space
     for k in range(nh):
-        coeff = vec_in[k]
-        if abs(coeff) < 1e-14: continue
-        
-        state               = representative_list[k]
-        norm_k              = normalization[k] if normalization is not None else 1.0
-        new_states, values  = operator_func(state)
-        
-        for new_state, val in zip(new_states, values):
-            if abs(val) < 1e-14: continue
-            
-            # Find representative using Python method
-            rep, sym_factor = hilbert_space.find_sym_repr(int(new_state), norm_k)
-            
-            # Find index of representative
-            idx = _binary_search_representative_list(representative_list, rep)
-            
-            if idx >= 0:
-                vec_out[idx] += val * sym_factor * coeff
-                
-    return vec_out
+        # Optimization: Skip empty input rows if using iterative solvers on sparse states
+        # if np.abs(vecs_in[k, 0]) < 1e-15: continue 
 
-def apply_operator_to_vector(
-        vec_in              : np.ndarray,
-        operator_func       : Callable,
-        hilbert_space       : Optional[HilbertSpace] = None,
-        basis               : Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-    """
-    Apply operator to a vector without constructing the matrix: v_out = H * v_in.
-    
-    Parameters:
-    -----------
-    vec_in : np.ndarray
-        Input vector.
-    operator_func : Callable
-        Jitted function (state) -> (new_states, values).
-    hilbert_space : HilbertSpace, optional
-        Hilbert space context (required for symmetries).
-    basis : np.ndarray, optional
-        Basis states for no-symmetry case.
-        
-    Returns:
-    --------
-    vec_out : np.ndarray
-        Resulting vector.
-    """
-    # Extract Hilbert space properties if provided
-    representative_list = None
-    normalization       = None
-    repr_idx            = None
-    repr_phase          = None
-    
-    if hilbert_space is not None:
-        representative_list = getattr(hilbert_space, 'representative_list', None)
-        normalization       = getattr(hilbert_space, 'normalization', None)
-        repr_idx            = getattr(hilbert_space, 'repr_idx', None)
-        repr_phase          = getattr(hilbert_space, 'repr_phase', None)
-        if basis is None:
-            basis = getattr(hilbert_space, 'basis', None)
+        # Decode State (Once per basis state)
+        if has_symmetry:
+            state   = representative_list[k]
+            norm_k  = normalization[k]
+        elif has_basis:
+            state   = basis[k]
+        else:
+            state   = k
+
+        # Loop Sites (Accumulate operator terms)
+        for site_idx in range(n_sites):
+            c_site              = phases[site_idx]
+            new_states, values  = op_func(state, site_idx, *base_args)
             
-    has_symmetry = representative_list is not None
-    
-    # Decide implementation
-    if has_symmetry and (repr_idx is None or repr_phase is None):
-        # Fallback to Python if symmetries exist but no lookup table
-        if hilbert_space is None:
-             raise ValueError("HilbertSpace required for symmetry operations without precomputed tables.")
-        return _apply_op_sym_py(vec_in, hilbert_space, operator_func)
-    else:
-        # Use JIT kernel
-        # Ensure basis is array
-        if basis is not None and not isinstance(basis, np.ndarray):
-            basis = np.array(basis)
-            
-        return _apply_op_jit(vec_in, operator_func, basis, representative_list, normalization, repr_idx, repr_phase)
+            for j in range(len(new_states)):
+                new_state       = new_states[j]
+                val             = values[j]
+                
+                # Combined factor
+                factor          = val * c_site 
+                if abs(factor) < 1e-15: continue
+
+                # Find Target
+                target_idx      = -1
+                sym_factor      = 1.0 + 0j
+
+                if has_symmetry:
+                    if repr_idx is not None:
+                        target_idx = repr_idx[new_state]
+                        if target_idx >= 0:
+                            ph          = repr_phase[new_state]
+                            norm_new    = normalization[target_idx]
+                            sym_factor  = np.conj(ph) * (norm_new / norm_k)
+                elif has_basis:
+                    # Binary Search
+                    target_idx = np.searchsorted(basis, new_state)
+                    if target_idx >= nh or basis[target_idx] != new_state:
+                        target_idx = -1
+                else:
+                    target_idx = new_state
+
+                # Vectorized Batch Update
+                if 0 <= target_idx < nh:
+                    if has_symmetry:
+                        # vecs_in[k] is a contiguous view of the batch row
+                        vecs_out[target_idx] += (factor * sym_factor) * vecs_in[k]
+                    else:
+                        vecs_out[target_idx] += factor * vecs_in[k]
 
 # -------------------------------------------------------------------------------
 #! Symmetry rotation matrix construction

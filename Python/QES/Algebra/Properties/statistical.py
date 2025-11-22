@@ -6,16 +6,14 @@ email   : maksymilian.kliczkowski@pwr.edu.pl
 This module contains functions for calculating statistical properties of quantum systems.
 '''
 
-
-from typing import Callable
+from enum import Enum
+from typing import Tuple, Union, Optional, List, Callable
+from functools import partial
 import numpy as np
 import numba
 import math
 
 try:
-    from enum import Enum
-    from typing import Tuple, Union, Optional
-    from functools import partial
     
     from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
 except ImportError:
@@ -556,6 +554,112 @@ def fidelity_susceptibility(energies: Array, V: Array, mu: float, idx: Optional[
         V2      = np.abs(V)**2
         np.fill_diagonal(V2, 0.0)      # eliminate diagonal contribution explicitly
         return np.sum(V2 * omm / denom2, axis=1)
+
+def fidelity_susceptibility_low_rank(energies   : np.ndarray, 
+                                    V_overlaps  : np.ndarray, 
+                                    mu          : float, 
+                                    idx         : Union[int, List[int], None] = None) -> Union[float, np.ndarray]:
+    r"""
+    Compute fidelity susceptibility using only a subset of energies and 
+    projection vectors (overlaps). Useful when N_hilbert is too large.
+
+    .. math::
+        \chi_k = \sum_{n} \frac{|\langle n | V | k \rangle|^2\,(E_n - E_k)^2}
+                {\bigl[(E_n - E_k)^2 + \mu^2\bigr]^2}
+
+    Parameters
+    ----------
+    energies : np.ndarray
+        1D array of eigenenergies \(E_n\) (size M) to sum over.
+    V_overlaps : np.ndarray
+        - If `idx` is an **int**: 1D array (size M) containing \(\langle n | V | k \rangle\).
+        - If `idx` is a **list**: 2D array (size M, len(idx)) containing columns of overlaps.
+        - If `idx` is **None**: 2D array (size M, M) (square matrix of the subspace).
+    mu : float
+        Broadening parameter \(\mu\).
+    idx : int, list of ints, or None
+        The index of the reference state(s) \(k\) within the `energies` array.
+        
+        - If `int`: Calculates scalar \(\chi_{idx}\).
+        - If `list`: Calculates array of \(\chi\) for those specific indices.
+        - If `None`: Calculates array of \(\chi\) for all M states (assumes V is square).
+
+    Returns
+    -------
+    float or np.ndarray
+        The fidelity susceptibility (or array of them).
+    """
+    
+    energies    = np.asarray(energies)
+    V_overlaps  = np.asarray(V_overlaps)
+    mu2         = mu**2
+    
+    # if full ED
+    if len(V_overlaps.shape) == 2 and V_overlaps.shape[0] == V_overlaps.shape[1] and V_overlaps.shape[0] == len(energies):
+        return fidelity_susceptibility(energies, V_overlaps, mu, idx)
+
+    # helper to compute one column
+    def _compute_column(target_idx, overlap_col):
+        E_k                 = energies[target_idx]
+        dE                  = energies - E_k
+        omm                 = dE**2
+        
+        # Numerator: |<n|V|k>|^2 * (En - Ek)^2
+        numerator           = (np.abs(overlap_col)**2) * omm
+        
+        # Denominator: ((En - Ek)^2 + mu^2)^2
+        denom               = (omm + mu2)**2
+        
+        # Handle the singularity/self-contribution (n=k)
+        # Analytically this term is 0, numerically we force it to avoid 0/0 or noise
+        # We use a mask instead of slicing to keep array shapes aligned
+        mask                = np.ones(len(energies), dtype=bool)
+        mask[target_idx]    = False
+        
+        return np.sum(numerator[mask] / denom[mask])
+
+    # Single Target State (idx is int)
+    if isinstance(idx, (int, np.integer)):
+        if V_overlaps.ndim != 1:
+            # Allow (M, 1) but flatten it
+            if V_overlaps.ndim == 2 and V_overlaps.shape[1] == 1:
+                V_overlaps = V_overlaps.flatten()
+            else:
+                V_overlaps = V_overlaps[:, idx]
+        
+        return _compute_column(idx, V_overlaps)
+
+    # Specific Subset of States (idx is list)
+    elif isinstance(idx, (list, tuple, np.ndarray)):
+        idx = np.asarray(idx)
+        if V_overlaps.ndim != 2 or V_overlaps.shape[1] != len(idx):
+            raise ValueError(f"V_overlaps shape {V_overlaps.shape} must match (len(energies), len(idx))")
+        # 
+        results = []
+        for i, target_k in enumerate(idx):
+            col = V_overlaps[:, i]
+            chi = _compute_column(target_k, col)
+            results.append(chi)
+        return np.array(results)
+
+    # All States in subspace (idx is None)
+    else:
+        if V_overlaps.ndim != 2 or V_overlaps.shape[0] != V_overlaps.shape[1]:
+            raise ValueError("If idx is None, V_overlaps must be a square matrix (M, M).")
+            
+        # Vectorized implementation for square matrix
+        dE          = energies[:, None] - energies[None, :] # (n, k) matrix
+        omm         = dE**2
+        
+        numerator   = (np.abs(V_overlaps)**2) * omm
+        denom       = (omm + mu2)**2
+        
+        # Clean diagonal
+        np.fill_diagonal(numerator, 0.0)
+        np.fill_diagonal(denom, 1.0) # Avoid div by zero
+        
+        # Sum over n (rows), producing result for each k (columns)
+        return np.sum(numerator / denom, axis=0)
 
 # -----------------------------------------------------------------------------
 #! State information

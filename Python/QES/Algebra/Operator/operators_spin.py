@@ -15,7 +15,7 @@ Version     : 1.0
 import os 
 import numpy as np
 import numba
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Callable, Tuple
 
 ################################################################################
 
@@ -28,13 +28,15 @@ except ImportError as e:
     raise ImportError("Failed to import required modules. Ensure that the QES package is correctly installed.") from e
 
 ################################################################################
-import QES.general_python.common.binary as _binary
-from QES.general_python.common.tests import GeneralAlgebraicTest
-from QES.general_python.lattices.lattice import Lattice
-from QES.general_python.algebra.utils import DEFAULT_BACKEND, get_backend, maybe_jit
-from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
-from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN
-from QES.general_python.common.binary import flip, flip_all, check, base2int, int2base, int2binstr
+
+try:
+    import QES.general_python.common.binary as _binary
+    from QES.general_python.lattices.lattice import Lattice
+    from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
+    from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN
+    from QES.general_python.common.binary import flip, check
+except ImportError as e:
+    raise ImportError("Failed to import required QES general Python modules.") from e
 
 ################################################################################
 JAX_AVAILABLE = os.getenv("PY_JAX_AVAILABLE", "0") == "1"
@@ -62,7 +64,6 @@ if JAX_AVAILABLE:
     from QES.Algebra.Operator.operators_spin_jax import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
     # sigma z total
     from QES.Algebra.Operator.operators_spin_jax import sigma_z_total_int_jnp, sigma_z_total_jnp
-from typing import Callable, Tuple
 else:
     print("JAX is not available. JAX-based implementations of spin operators will not be accessible.")
     sigma_x_int_jnp         = sigma_x_jnp       = None
@@ -80,6 +81,7 @@ else:
     sigma_k_int_jnp         = sigma_k_jnp       = None
     sigma_k_inv_jnp         = None
     sigma_z_total_int_jnp   = sigma_z_total_jnp = None
+    
 #! Standard Pauli matrices
 ################################################################################
 
@@ -1061,8 +1063,9 @@ def sig_y( lattice     : Optional[Lattice]     = None,
     Operator
         The \sigma _y operator.
     """
+    is_real = type_act == OperatorTypeActing.Correlation or (sites is not None and isinstance(sites, list) and len(sites) % 2 == 0)
     
-    int_fun = sigma_y_int_np if len(sites) % 2 != 0 else sigma_y_int_np_real
+    int_fun = sigma_y_int_np if not is_real else sigma_y_int_np_real
     np_fun  = sigma_y_np
     jnp_fun = sigma_y_jnp
     
@@ -1298,17 +1301,28 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
 #? Int
 
 def create_sigma_mixed_int(op1_fun: Callable, op2_fun: Callable):
-    @numba.njit(cache=True)
-    def sigma_mixed_int_np(state: int, ns: int, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
+    
+    @numba.njit
+    def sigma_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
         if sites is None or len(sites) < 2:
-            raise ValueError("sigma_mixed_int_np requires at least two sites.")
+            s_dumb, c_dumb = op1_fun(state, ns, sites, spin, spin_value)
+            return s_dumb, c_dumb.astype(np.complex128)
+
+        # Apply Op 1
         s_arr1, c_arr1  = op1_fun(state, ns, [sites[0]], spin, spin_value)
         coeff1          = c_arr1[0]
+        
         if coeff1 == 0.0 or (coeff1 == 0.0 + 0.0j):
-            return s_arr1, c_arr1 * 0.0
+            #! Force cast to complex so this branch matches the other branch
+            #! even if op1 is purely real (like Sigma X or Z)
+            return s_arr1, c_arr1.astype(np.complex128) * 0.0
+            
         s_int           = s_arr1[0]
         s_arr2, c_arr2  = op2_fun(s_int, ns, [sites[1]], spin, spin_value)
-        return s_arr2, c_arr1 * c_arr2
+        
+        # Explicitly cast both to complex before multiplying to be 100% safe
+        return s_arr2, c_arr1.astype(np.complex128) * c_arr2.astype(np.complex128)
+    
     return sigma_mixed_int_np
 
 def create_sigma_mixed_np(op1_fun: Callable, op2_fun: Callable):
@@ -1349,106 +1363,37 @@ def create_sigma_mixed_jnp(op1_fun: Callable, op2_fun: Callable):
         )
     return sigma_mixed_jnp
 
-@numba.njit
-def sigma_xy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_x_int_np, sigma_y_int_np)(state, ns, sites, spin, spin_value)
-
-@numba.njit
-def sigma_yx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_y_int_np, sigma_x_int_np)(state, ns, sites, spin, spin_value)
-
-@numba.njit
-def sigma_yz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_y_int_np, sigma_z_int_np)(state, ns, sites, spin, spin_value)
-
-@numba.njit
-def sigma_zx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_z_int_np, sigma_x_int_np)(state, ns, sites, spin, spin_value)
-
-@numba.njit
-def sigma_xz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_x_int_np, sigma_z_int_np)(state, ns, sites, spin, spin_value)
-
-@numba.njit
-def sigma_zy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_z_int_np, sigma_y_int_np)(state, ns, sites, spin, spin_value)
+sigma_xy_mixed_int_np   = create_sigma_mixed_int(sigma_x_int_np, sigma_y_int_np)
+sigma_yx_mixed_int_np   = create_sigma_mixed_int(sigma_y_int_np, sigma_x_int_np)
+sigma_yz_mixed_int_np   = create_sigma_mixed_int(sigma_y_int_np, sigma_z_int_np)
+sigma_zx_mixed_int_np   = create_sigma_mixed_int(sigma_z_int_np, sigma_x_int_np)
+sigma_xz_mixed_int_np   = create_sigma_mixed_int(sigma_x_int_np, sigma_z_int_np)
+sigma_zy_mixed_int_np   = create_sigma_mixed_int(sigma_z_int_np, sigma_y_int_np)
 
 #? NP
-@numba.njit
-def sigma_xy_mixed_np(state, sites, spin=True, spin_value=0.5):
-    """ Applies Sigma_X to sites[0] and Sigma_Y to sites[1] """
-    s_arr, c1_arr       = sigma_x_np(state, [sites[0]], spin, spin_value)
-    s_final_arr, c2_arr = sigma_y_np(s_arr, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
+sigma_xy_mixed_np       = create_sigma_mixed_np(sigma_x_np, sigma_y_np)
+sigma_yx_mixed_np       = create_sigma_mixed_np(sigma_y_np, sigma_x_np)
+sigma_yz_mixed_np       = create_sigma_mixed_np(sigma_y_np, sigma_z_np)
+sigma_zx_mixed_np       = create_sigma_mixed_np(sigma_z_np, sigma_x_np)
+sigma_xz_mixed_np       = create_sigma_mixed_np(sigma_x_np, sigma_z_np)
+sigma_zy_mixed_np       = create_sigma_mixed_np(sigma_z_np, sigma_y_np)
 
-@numba.njit
-def sigma_yx_mixed_np(state, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = sigma_y_np(state, [sites[0]], spin, spin_value)
-    s_final_arr, c2_arr = sigma_x_np(s_arr, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_yz_mixed_np(state, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = sigma_y_np(state, [sites[0]], spin, spin_value)
-    s_final_arr, c2_arr = sigma_z_np(s_arr, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_zx_mixed_np(state, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = sigma_z_np(state, [sites[0]], spin, spin_value)
-    s_final_arr, c2_arr = sigma_x_np(s_arr, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_xz_mixed_np(state, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = sigma_x_np(state, [sites[0]], spin, spin_value)
-    s_final_arr, c2_arr = sigma_z_np(s_arr, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_zy_mixed_np(state, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = sigma_z_np(state, [sites[0]], spin, spin_value)
-    s_final_arr, c2_arr = sigma_y_np(s_arr, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
+#? JNP
 if JAX_AVAILABLE:
-    @jax.jit
-    def sigma_xy_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
-        """ Applies Sigma_X to sites[0] and Sigma_Y to sites[1] """
-        s_arr, c1_arr       = sigma_x_jnp(state, ns, [sites[0]], spin, spin_value)
-        s_int               = s_arr[0]
-        s_final_arr, c2_arr = sigma_y_jnp(s_int, ns, [sites[1]], spin, spin_value)
-        return s_final_arr, c1_arr * c2_arr
-
-    @jax.jit
-    def sigma_yx_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
-        s_arr, c1_arr       = sigma_y_jnp(state, ns, [sites[0]], spin, spin_value)
-        s_int               = s_arr[0]
-        s_final_arr, c2_arr = sigma_x_jnp(s_int, ns, [sites[1]], spin, spin_value)
-        return s_final_arr, c1_arr * c2_arr
-
-    @jax.jit
-    def sigma_yz_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
-        s_arr, c1_arr       = sigma_y_jnp(state, ns, [sites[0]], spin, spin_value)
-        s_int               = s_arr[0]
-        s_final_arr, c2_arr = sigma_z_jnp(s_int, ns, [sites[1]], spin, spin_value)
-        return s_final_arr, c1_arr * c2_arr
-
-    @jax.jit
-    def sigma_zx_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
-        s_arr, c1_arr       = sigma_z_jnp(state, ns, [sites[0]], spin, spin_value)
-        s_int               = s_arr[0]
-        s_final_arr, c2_arr = sigma_x_jnp(s_int, ns, [sites[1]], spin, spin_value)
-        return s_final_arr, c1_arr * c2_arr
-
-    @jax.jit
-    def sigma_xz_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
-        s_arr, c1_arr       = sigma_x_jnp(state, ns, [sites[0]], spin, spin_value)
-        s_int               = s_arr[0]
-        s_final_arr, c2_arr = sigma_z_jnp(s_int, ns, [sites[1]], spin, spin_value)
-        return s_final_arr, c1_arr * c2_arr
+    sigma_xy_mixed_jnp  = create_sigma_mixed_jnp(sigma_x_jnp, sigma_y_jnp)
+    sigma_yx_mixed_jnp  = create_sigma_mixed_jnp(sigma_y_jnp, sigma_x_jnp)
+    sigma_yz_mixed_jnp  = create_sigma_mixed_jnp(sigma_y_jnp, sigma_z_jnp)
+    sigma_zx_mixed_jnp  = create_sigma_mixed_jnp(sigma_z_jnp, sigma_x_jnp)
+    sigma_xz_mixed_jnp  = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
+    sigma_zy_mixed_jnp  = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
+else:
+    sigma_xy_mixed_jnp  = None
+    sigma_yx_mixed_jnp  = None
+    sigma_yz_mixed_jnp  = None
+    sigma_zx_mixed_jnp  = None
+    sigma_xz_mixed_jnp  = None
+    sigma_zy_mixed_jnp  = None
     
-    @jax.jit
-    def sigma_zy_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
-        s_arr, c1_arr       = sigma_z_jnp(state, ns, [sites[0]], spin, spin_value)
-        s_int               = s_arr[0]
-        s_final_arr, c2_arr = sigma_y_jnp(s_int, ns, [sites[1]], spin, spin_value)
-        return s_final_arr, c1_arr * c2_arr
-
 def make_sigma_mixed(name, lattice=None):
     
     if name == 'xy':

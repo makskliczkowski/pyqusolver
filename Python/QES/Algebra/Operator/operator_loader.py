@@ -230,7 +230,6 @@ class OperatorModule:
         print("  matrix = op.matrix")
         print("=" * 70)
 
-
 def get_operator_module(local_space_type: Optional[LocalSpaceTypes] = None) -> OperatorModule:
     """
     Get an OperatorModule for the specified local space type.

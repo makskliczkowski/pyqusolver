@@ -191,6 +191,36 @@ class OperatorTypeActing(Enum):
     Correlation = auto()    # Correlation operator - acts on the correlation space (needs additional argument - 2).
     # -----------
     
+    @staticmethod
+    def from_string(name: str) -> 'OperatorTypeActing':
+        """
+        Create an OperatorTypeActing from a string representation.
+        
+        Parameters
+        ----------
+        name : str
+            The string representation of the operator type.
+            
+        Returns
+        -------
+        OperatorTypeActing
+            The corresponding OperatorTypeActing enum member.
+            
+        Raises
+        ------
+        ValueError
+            If the provided name does not correspond to any OperatorTypeActing member.
+        """
+        name = name.lower()
+        if name == 'global':
+            return OperatorTypeActing.Global
+        elif name == 'local':
+            return OperatorTypeActing.Local
+        elif name == 'correlation':
+            return OperatorTypeActing.Correlation
+        else:
+            raise ValueError(f"Unknown OperatorTypeActing name: {name}")
+    
     def is_global(self):
         """
         Check if the operator is a global operator.
@@ -1741,32 +1771,28 @@ class Operator(ABC):
             list of values, states if single particle picture is used.
         """
         
-        if hilbert is None or kwargs.get('mb', False) or hilbert.nh != len(vecs):
-            # use single particle picture and act with self function
-            if self._fun._fun_int is None:
-                raise ValueError("Integer function for the operator is not defined.")
+        if hilbert is None or kwargs.get('mb', False) is False:
             
-            if isinstance(vecs, list):
-                result = self.apply(vecs, *args)
-            elif isinstance(vecs, np.ndarray):
-                result = self.apply([int(v) for v in vecs.flatten()], *args)
-            return result
-
+            # Simple mapping for integer states
+            if isinstance(vecs, list) or (isinstance(vecs, np.ndarray) and vecs.ndim == 1 and 'int' in str(vecs.dtype)):
+                # Assuming vecs are state INDICES, not amplitudes
+                return self.apply(vecs, *args)
+            
+            # Fallback warning/error if we get amplitudes but no Hilbert space?
+            # For now assuming the user knows what they are doing.
+            pass
+        
         # use manybody picture -> we must use int function
         if self._fun._fun_int is None:
             raise ValueError("Integer function for the operator is not defined.")
         
         # act on states using the Hilbert space and the operator function
-        from QES.Algebra.Hilbert.matrix_builder import apply_operator_to_vector
+        try:
+            from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_jit
+        except ImportError:
+            raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
         
-        # Create a JIT-compatible wrapper for the operator function
-        op_int              = self._fun._fun_int
-        
-        @numba.njit
-        def op_wrapper(state):
-            return op_int(state, *args)
-            
-        # Extract Hilbert space arrays
+        # Extract Hilbert Space Data
         basis = getattr(hilbert, 'basis', None)
         if basis is not None and not isinstance(basis, np.ndarray):
             basis = np.array(basis)
@@ -1774,18 +1800,92 @@ class Operator(ABC):
         representative_list = getattr(hilbert, 'representative_list', None)
         normalization       = getattr(hilbert, 'normalization', None)
         repr_idx            = getattr(hilbert, 'repr_idx', None)
-        repr_phase          = getattr(hilbert, 'repr_phase', None)
+        repr_phase          = getattr(hilbert, 'repr_phase', None)        
+
+        # Prepare Inputs
+        # Ensure 2D shape for batch kernel: (N_hilbert, N_batch)
+        is_1d = vecs.ndim == 1
+        if is_1d:
+            vecs_in = vecs[:, np.newaxis]
+        else:
+            vecs_in = vecs
         
-        return apply_operator_to_vector(
-            vecs.flatten(), # Ensure 1D
-            op_wrapper,
-            basis               =   basis,
-            representative_list =   representative_list,
-            normalization       =   normalization,
-            repr_idx            =   repr_idx,
-            repr_phase          =   repr_phase
+        vecs_out            = np.zeros_like(vecs_in, dtype=np.complex128)
+        
+        # 3. Call Optimized Kernel
+        # CRITICAL FIX: Pass the function and args directly. Do not define a wrapper.
+        op_func             = self._fun._fun_int
+        
+        _apply_op_batch_jit(
+            vecs_in, 
+            vecs_out, 
+            op_func, 
+            args,           # Pass tuple of args directly
+            basis, 
+            representative_list, 
+            normalization, 
+            repr_idx, 
+            repr_phase
         )
+
+        if is_1d:
+            return vecs_out.flatten() # Return in original shape
+        return vecs_out
     
+    def matvec_fourier(self, phases: np.ndarray, hilbert: HilbertSpace, vec: np.ndarray, *args) -> np.ndarray:
+        """
+        Computes |out> = O_q |in> without constructing the matrix O_q.
+        
+        O_q = (1/sqrt(N)) * sum_j exp(i * k * r_j) * sigma_j
+        If dagger=True, computes O_q^dagger (conjugates the phase).
+        
+        Parameters:
+        -----------
+        lattice (Lattice)         : The lattice object containing site positions.
+        hilbert (HilbertSpace)    : The Hilbert space for the system.
+        vec (np.ndarray)          : The input state vector |in>.
+        k_vec (np.ndarray)        : The momentum vector k.
+        dagger (bool)             : If True, computes the Hermitian conjugate O_q^dagger.
+        """
+
+        try:
+            from QES.Algebra.Hilbert.matrix_builder import _apply_fourier_batch_jit
+        except ImportError:
+            raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
+
+        is_1d = vec.ndim == 1
+        if is_1d:
+            vecs_in = vec[:, np.newaxis]
+        else:
+            vecs_in = vec
+            
+        vecs_out                = np.zeros_like(vecs_in, dtype=np.complex128)
+        basis                   = getattr(hilbert, 'basis', None)
+        if basis is not None:   basis = np.array(basis)
+        
+        representative_list     = getattr(hilbert, 'representative_list', None)
+        normalization           = getattr(hilbert, 'normalization', None)
+        repr_idx                = getattr(hilbert, 'repr_idx', None)
+        repr_phase              = getattr(hilbert, 'repr_phase', None)
+
+        # This function must have signature (state, site_idx, *args)
+        op_func                 = self._fun._fun_int
+        _apply_fourier_batch_jit(
+                                    vecs_in,
+                                    vecs_out,
+                                    phases,
+                                    op_func,
+                                    args,   # Pass the tuple of args directly
+                                    basis,
+                                    representative_list,
+                                    normalization,
+                                    repr_idx,
+                                    repr_phase,
+                                )
+        
+        if is_1d:
+            return vecs_out.flatten()
+        return vecs_out
 
     #################################
 
@@ -1880,6 +1980,9 @@ def create_operator(type_act        : int                   | OperatorTypeActing
     else:
         assert ns is not None, "Either lattice or ns must be provided."
     
+    if isinstance(type_act, str):
+        type_act = OperatorTypeActing.from_string(type_act)
+            
     #! Global operator: the operator acts on a specified set of sites (or all if sites is None)
     if type_act == OperatorTypeActing.Global.value or sites is not None:
         
