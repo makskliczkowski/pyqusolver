@@ -40,7 +40,6 @@ from QES.general_python.common.binary import flip, flip_all, check, base2int, in
 JAX_AVAILABLE = os.getenv("PY_JAX_AVAILABLE", "0") == "1"
 ################################################################################
 
-
 if JAX_AVAILABLE:
     import jax
     # import Algebra.Operator.operators_spin_jax as jaxpy
@@ -63,6 +62,7 @@ if JAX_AVAILABLE:
     from QES.Algebra.Operator.operators_spin_jax import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
     # sigma z total
     from QES.Algebra.Operator.operators_spin_jax import sigma_z_total_int_jnp, sigma_z_total_jnp
+from typing import Callable, Tuple
 else:
     print("JAX is not available. JAX-based implementations of spin operators will not be accessible.")
     sigma_x_int_jnp         = sigma_x_jnp       = None
@@ -1062,8 +1062,8 @@ def sig_y( lattice     : Optional[Lattice]     = None,
         The \sigma _y operator.
     """
     
+    int_fun = sigma_y_int_np if len(sites) % 2 != 0 else sigma_y_int_np_real
     np_fun  = sigma_y_np
-    int_fun = sigma_y_int_np
     jnp_fun = sigma_y_jnp
     
     return create_operator(
@@ -1292,511 +1292,209 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
     )
 
 # -----------------------------------------------------------------------------
+#! Most common mixtures
+# -----------------------------------------------------------------------------
+
+#? Int
+
+def create_sigma_mixed_int(op1_fun: Callable, op2_fun: Callable):
+    @numba.njit(cache=True)
+    def sigma_mixed_int_np(state: int, ns: int, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
+        if sites is None or len(sites) < 2:
+            raise ValueError("sigma_mixed_int_np requires at least two sites.")
+        s_arr1, c_arr1  = op1_fun(state, ns, [sites[0]], spin, spin_value)
+        coeff1          = c_arr1[0]
+        if coeff1 == 0.0 or (coeff1 == 0.0 + 0.0j):
+            return s_arr1, c_arr1 * 0.0
+        s_int           = s_arr1[0]
+        s_arr2, c_arr2  = op2_fun(s_int, ns, [sites[1]], spin, spin_value)
+        return s_arr2, c_arr1 * c_arr2
+    return sigma_mixed_int_np
+
+def create_sigma_mixed_np(op1_fun: Callable, op2_fun: Callable):
+    @numba.njit(cache=True)
+    def sigma_mixed_np(state, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
+        if sites is None or len(sites) < 2:
+            raise ValueError("sigma_mixed_np requires at least two sites.")
+        s_arr1, c_arr1 = op1_fun(state, [sites[0]], spin, spin_value)
+        coeff1 = c_arr1[0] if c_arr1.shape[0] == 1 else c_arr1
+        if coeff1 == 0.0 or (coeff1 == 0.0 + 0.0j):
+            return s_arr1, c_arr1 * 0.0
+        s_arr2, c_arr2 = op2_fun(s_arr1, [sites[1]], spin, spin_value)
+        return s_arr2, c_arr1 * c_arr2
+    return sigma_mixed_np
+
+def create_sigma_mixed_jnp(op1_fun: Callable, op2_fun: Callable):
+    if not JAX_AVAILABLE:
+        def _stub(*args, **kwargs):
+            raise RuntimeError("JAX not available for sigma mixed operator.")
+        return _stub
+
+    @jax.jit
+    def sigma_mixed_jnp(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
+        if (sites is None) or (len(sites) < 2):
+            raise ValueError("sigma_mixed_jnp requires at least two sites.")
+        s_arr1, c_arr1  = op1_fun(state, ns, [sites[0]], spin, spin_value)
+        coeff1          = c_arr1[0]
+        def _apply_second(s_arr1, c_arr1):
+            s_int           = s_arr1[0]
+            s_arr2, c_arr2  = op2_fun(s_int, ns, [sites[1]], spin, spin_value)
+            return s_arr2, c_arr1 * c_arr2
+        # Branch: if first coeff zero skip second op
+        return jax.lax.cond(
+            (coeff1 == 0.0) | (coeff1 == 0.0 + 0.0j),
+            lambda _: (s_arr1, c_arr1 * 0.0),
+            lambda _: _apply_second(s_arr1, c_arr1),
+            operand = None
+        )
+    return sigma_mixed_jnp
+
+@numba.njit
+def sigma_xy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_x_int_np, sigma_y_int_np)(state, ns, sites, spin, spin_value)
+
+@numba.njit
+def sigma_yx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_y_int_np, sigma_x_int_np)(state, ns, sites, spin, spin_value)
+
+@numba.njit
+def sigma_yz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_y_int_np, sigma_z_int_np)(state, ns, sites, spin, spin_value)
+
+@numba.njit
+def sigma_zx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_z_int_np, sigma_x_int_np)(state, ns, sites, spin, spin_value)
+
+@numba.njit
+def sigma_xz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_x_int_np, sigma_z_int_np)(state, ns, sites, spin, spin_value)
+
+@numba.njit
+def sigma_zy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5): return create_sigma_mixed_int(sigma_z_int_np, sigma_y_int_np)(state, ns, sites, spin, spin_value)
+
+#? NP
+@numba.njit
+def sigma_xy_mixed_np(state, sites, spin=True, spin_value=0.5):
+    """ Applies Sigma_X to sites[0] and Sigma_Y to sites[1] """
+    s_arr, c1_arr       = sigma_x_np(state, [sites[0]], spin, spin_value)
+    s_final_arr, c2_arr = sigma_y_np(s_arr, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_yx_mixed_np(state, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = sigma_y_np(state, [sites[0]], spin, spin_value)
+    s_final_arr, c2_arr = sigma_x_np(s_arr, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_yz_mixed_np(state, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = sigma_y_np(state, [sites[0]], spin, spin_value)
+    s_final_arr, c2_arr = sigma_z_np(s_arr, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_zx_mixed_np(state, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = sigma_z_np(state, [sites[0]], spin, spin_value)
+    s_final_arr, c2_arr = sigma_x_np(s_arr, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_xz_mixed_np(state, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = sigma_x_np(state, [sites[0]], spin, spin_value)
+    s_final_arr, c2_arr = sigma_z_np(s_arr, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+@numba.njit
+def sigma_zy_mixed_np(state, sites, spin=True, spin_value=0.5):
+    s_arr, c1_arr       = sigma_z_np(state, [sites[0]], spin, spin_value)
+    s_final_arr, c2_arr = sigma_y_np(s_arr, [sites[1]], spin, spin_value)
+    return s_final_arr, c1_arr * c2_arr
+
+if JAX_AVAILABLE:
+    @jax.jit
+    def sigma_xy_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
+        """ Applies Sigma_X to sites[0] and Sigma_Y to sites[1] """
+        s_arr, c1_arr       = sigma_x_jnp(state, ns, [sites[0]], spin, spin_value)
+        s_int               = s_arr[0]
+        s_final_arr, c2_arr = sigma_y_jnp(s_int, ns, [sites[1]], spin, spin_value)
+        return s_final_arr, c1_arr * c2_arr
+
+    @jax.jit
+    def sigma_yx_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
+        s_arr, c1_arr       = sigma_y_jnp(state, ns, [sites[0]], spin, spin_value)
+        s_int               = s_arr[0]
+        s_final_arr, c2_arr = sigma_x_jnp(s_int, ns, [sites[1]], spin, spin_value)
+        return s_final_arr, c1_arr * c2_arr
+
+    @jax.jit
+    def sigma_yz_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
+        s_arr, c1_arr       = sigma_y_jnp(state, ns, [sites[0]], spin, spin_value)
+        s_int               = s_arr[0]
+        s_final_arr, c2_arr = sigma_z_jnp(s_int, ns, [sites[1]], spin, spin_value)
+        return s_final_arr, c1_arr * c2_arr
+
+    @jax.jit
+    def sigma_zx_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
+        s_arr, c1_arr       = sigma_z_jnp(state, ns, [sites[0]], spin, spin_value)
+        s_int               = s_arr[0]
+        s_final_arr, c2_arr = sigma_x_jnp(s_int, ns, [sites[1]], spin, spin_value)
+        return s_final_arr, c1_arr * c2_arr
+
+    @jax.jit
+    def sigma_xz_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
+        s_arr, c1_arr       = sigma_x_jnp(state, ns, [sites[0]], spin, spin_value)
+        s_int               = s_arr[0]
+        s_final_arr, c2_arr = sigma_z_jnp(s_int, ns, [sites[1]], spin, spin_value)
+        return s_final_arr, c1_arr * c2_arr
+    
+    @jax.jit
+    def sigma_zy_mixed_jnp(state, ns, sites, spin=True, spin_value=0.5):
+        s_arr, c1_arr       = sigma_z_jnp(state, ns, [sites[0]], spin, spin_value)
+        s_int               = s_arr[0]
+        s_final_arr, c2_arr = sigma_y_jnp(s_int, ns, [sites[1]], spin, spin_value)
+        return s_final_arr, c1_arr * c2_arr
+
+def make_sigma_mixed(name, lattice=None):
+    
+    if name == 'xy':
+        int_func = sigma_xy_mixed_int_np
+        np_func  = sigma_xy_mixed_np
+        jnp_func = sigma_xy_mixed_jnp if JAX_AVAILABLE else None
+    elif name == 'yx':
+        int_func = sigma_yx_mixed_int_np
+        np_func  = sigma_yx_mixed_np
+        jnp_func = sigma_yx_mixed_jnp if JAX_AVAILABLE else None
+    elif name == 'yz':
+        int_func = sigma_yz_mixed_int_np
+        np_func  = sigma_yz_mixed_np
+        jnp_func = sigma_yz_mixed_jnp if JAX_AVAILABLE else None
+    elif name == 'zx':
+        int_func = sigma_zx_mixed_int_np
+        np_func  = sigma_zx_mixed_np
+        jnp_func = sigma_zx_mixed_jnp if JAX_AVAILABLE else None
+    elif name == 'xz':
+        int_func = sigma_xz_mixed_int_np
+        np_func  = sigma_xz_mixed_np
+        jnp_func = sigma_xz_mixed_jnp if JAX_AVAILABLE else None
+    elif name == 'zy':
+        int_func = sigma_zy_mixed_int_np
+        np_func  = sigma_zy_mixed_np
+        jnp_func = sigma_zy_mixed_jnp if JAX_AVAILABLE else None
+    else:
+        raise ValueError(f"Unknown mixed sigma operator name: {name}")
+    
+    return create_operator(
+        type_act    = OperatorTypeActing.Correlation,
+        op_func_int = int_func,
+        op_func_np  = np_func,
+        op_func_jnp = jnp_func,
+        lattice     = lattice,
+        name        = name,
+        modifies    = True
+    )
+
+# -----------------------------------------------------------------------------
 #! Finalize
 # -----------------------------------------------------------------------------
 
 # Aliases for legacy/test compatibility
 sig_plus    = sig_p
 sig_minus   = sig_m
-
-def test_spin_operator_matrices(nh = 4, site = 0):
-    """
-    Test the equality between built-in operator matrices and explicitly constructed matrices
-    using Kronecker products for spin operators.
-    This function constructs representations for Pauli spin operators (sig_x, sig_y, and sig_z)
-    using both the operator's built-in methods and explicit Kronecker product expansion.
-    It then compares these two implementations for consistency.
-    Parameters:
-        nh (int, optional): The Hilbert space dimension for the subsystem.
-            Typically, nh should be a power of 2 (e.g., 4 represents a two-qubit system).
-            Default is 4.
-        site (int, optional): The index (position) of the site where the active spin operator
-            is applied, with all other sites receiving the identity operator.
-            Default is 0.
-    Functionality:
-        - Constructs a dense identity matrix for the first subsystem.
-        - Computes the number of sites (ns) as the logarithm base 2 of nh.
-        - Generates operator matrices for sig_x, sig_y, and sig_z using built-in methods.
-        - Constructs explicit matrix representations of the operators using successive Kronecker products:
-            * For the target site, the appropriate Pauli matrix (scaled by 0.5) is used.
-            * For non-target sites, the identity matrix (_SIG_0) is used.
-            * Note: The sign for sig_z is inverted (i.e., -_SIG_Z * 0.5) at the active site.
-        - Compares the built-in and explicit matrices using numpy.allclose.
-        - Prints whether the matrices are equal.
-        - If the Hilbert space is small (nh < 64), prints both sets of matrices for visual verification,
-            using a MatrixPrinter utility if available.
-    Returns:
-        None
-    """
-    
-    from QES.general_python.common.plot import MatrixPrinter
-    
-    # Set the Hilbert space dimension (for example, 4) and construct an identity.
-    # Create a dense identity for the first subsystem.
-    ns                  = np.log2(nh)
-    # Build the operator matrices via the operator's built-in method.
-    sig_x_op            = sig_x(ns = ns, type_act = OperatorTypeActing.Global, sites = [0])
-    sig_y_op            = sig_y(ns = ns, type_act = OperatorTypeActing.Global, sites = [0])
-    sig_z_op            = sig_z(ns = ns, type_act = OperatorTypeActing.Global, sites = [0])
-    sig_x_op_mat        = sig_x_op.matrix(dim=nh, matrix_type='sparse', use_numpy=True)
-    sig_y_op_mat        = sig_y_op.matrix(dim=nh, matrix_type='sparse', use_numpy=True)
-    sig_z_op_mat        = sig_z_op.matrix(dim=nh, matrix_type='sparse', use_numpy=True)
-    
-    # Build the same matrices via explicit Kronecker products.
-    # Note: The Kronecker product is not the most efficient way to build these matrices,
-    # but it is useful for testing purposes.
-    
-    out_sig_x           = _SIG_X * 0.5 if site == 0 else _SIG_0
-    out_sig_y           = _SIG_Y * 0.5 if site == 0 else _SIG_0
-    out_sig_z           = -_SIG_Z * 0.5 if site == 0 else _SIG_0
-    for i in range(1, int(ns)):
-        if i == site:
-            out_sig_x = np.kron(out_sig_x, _SIG_X * 0.5)
-            out_sig_y = np.kron(out_sig_y, _SIG_Y * 0.5)
-            out_sig_z = np.kron(out_sig_z, -_SIG_Z * 0.5)
-        else:
-            out_sig_x = np.kron(out_sig_x, _SIG_0)
-            out_sig_y = np.kron(out_sig_y, _SIG_0)
-            out_sig_z = np.kron(out_sig_z, _SIG_0)
-    
-    # For this test we compare the operator's built-in result to one of the explicit ones.
-    # (Choose which one matches your intended ordering.)
-    is_equal_x = np.allclose(sig_x_op_mat.todense(), out_sig_x)
-    print("Are the two matrices (sig_x) equal?", is_equal_x)
-    is_equal_y = np.allclose(sig_y_op_mat.todense(), out_sig_y)
-    print("Are the two matrices (sig_y) equal?", is_equal_y)
-    is_equal_z = np.allclose(sig_z_op_mat.todense(), out_sig_z)
-    print("Are the two matrices (sig_z) equal?", is_equal_z)
-    
-    # If the dimension is small, print out the matrices.
-    if nh < 64:
-        try:
-            
-            print("Matrix from operator (sig_x):")
-            MatrixPrinter.print_matrix(out_sig_x.todense())
-            print("Matrix from tensor (sig_x):")
-            MatrixPrinter.print_matrix(sig_x_op_mat.todense())
-            print("Matrix from operator (sig_y):")
-            MatrixPrinter.print_matrix(out_sig_y.todense())
-            print("Matrix from tensor (sig_y):")
-            MatrixPrinter.print_matrix(sig_y_op_mat.todense())
-            print("Matrix from operator (sig_z):")
-            MatrixPrinter.print_matrix(out_sig_z.todense())
-            print("Matrix from tensor (sig_z):")
-            MatrixPrinter.print_matrix(sig_z_op_mat.todense())
-        except ImportError:
-            print("Matrix from operator (sig_x):")
-            print(out_sig_x)
-            print("Matrix from tensor (sig_x):")
-            print(sig_x_op_mat.todense())
-            print("Matrix from operator (sig_y):")
-            print(out_sig_y)
-            print("Matrix from tensor (sig_y):")
-            print(sig_y_op_mat.todense())
-            print("Matrix from operator (sig_z):")
-            print(out_sig_z)
-            print("Matrix from tensor (sig_z):")
-            print(sig_z_op_mat.todense())
-
-# -----------------------------------------------------------------------------
-#! Test Class for Spin Operators
-# -----------------------------------------------------------------------------
-
-class SpinOperatorTests(GeneralAlgebraicTest):
-    r"""
-    A class that implements tests for the spin operators.
-    """
-
-    def __init__(self, lattice: Optional[Lattice] = None, ns: Optional[int] = 4, backend='default'):
-        super().__init__(backend)
-        self.test_count = 1
-        if lattice is not None:
-            self.lattice = lattice
-            self.ns = lattice.ns
-        elif ns is not None:
-            self.lattice = None
-            self.ns = ns
-
-    def change_backend(self, backend: str):
-        """ Change the backend. """
-        if isinstance(backend, str):
-            self.backendstr = backend
-            self.backend = get_backend(backend)
-        else:
-            self.backend = backend
-            self.backendstr = 'np' if backend == np else 'jnp'
-        raise NotImplementedError("Changing backend not implemented for SpinOperatorTests")
-    
-    # -------------------------------
-    
-    def test_sig_x_global_int(self, state = 0b0101, ns = 4, sites = 2):
-        r"""
-        Test Global \sigma _x on an integer state.
-        For ns=4 and state=0b0101, applying \sigma _x at site 2 (i.e. flip bit at pos=1)
-        should change the state from 0b0101 to 0b0111.
-        """
-        # state: 0b0101 (bits: [0,1,0,1])
-        if not isinstance(state, (int, np.integer)):
-            state = base2int(state, spin = BACKEND_DEF_SPIN, spin_value = _SPIN)
-        elif state is None:
-            state = 0b0101
-            ns    = 4
-            sites = [2]
-            
-        if isinstance(sites, int):
-            sites = [sites]
-        
-        # For site 2: pos = ns - 1 - 2 = 1. Flipping bit1: 0b0101 -> 0b0111 (decimal 7)
-        op      = sig_x(lattice = self.lattice,
-                    ns          = ns,
-                    type_act    = OperatorTypeActing.Global,
-                    sites       = sites,
-                    spin        = BACKEND_DEF_SPIN,
-                    spin_value  = _SPIN,
-                    backend     = self.backend)
-        
-        new_state, coeff = op(state)
-        self.__log(f"sig_x_global: {state:04b} -> {new_state:04b}, coeff: {coeff}", self.test_count, color="cyan")
-        
-        if state == 0b0101:
-            expected_state = 7
-            expected_coeff = -_SPIN
-            assert new_state == expected_state, f"Expected {expected_state}, got {new_state}"
-            assert coeff == expected_coeff, f"Expected {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    
-    def test_sig_x_global_np(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sigma _x on a NumPy array state.
-        Convert an integer state to a binary vector, apply the operator,
-        then convert back to an integer.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        # Convert integer state to a binary vector (using spin convention)
-        if isinstance(state, (int, np.integer)):
-            base_state = int2base(state, ns, spin=True, spin_value=_SPIN)
-        else:
-            base_state = state
-            
-        op = sig_x(lattice       = self.lattice,
-                    ns           = ns,
-                    type_act     = OperatorTypeActing.Global,
-                    sites        = sites,
-                    spin         = BACKEND_DEF_SPIN,
-                    spin_value   = _SPIN,
-                    backend      = self.backend)
-        new_base, coeff = op(base_state)
-        self._log(f"sig_x_global_np: {base_state} -> {new_base}, coeff: {coeff}", self.test_count, color="cyan")
-        
-        if base_state == [0, 1, 0, 1]:
-            expected_state = [0, 1, 1, 1]
-            expected_coeff = -_SPIN
-            assert new_base == expected_state, f"Expected {expected_state}, got {new_base}"
-            assert coeff == expected_coeff, f"Expected {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_y_global_int(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sigma _y on an integer state.
-        For ns=4 and state=0b0101, applying \sigma _y at site 2 (flip bit at pos=1)
-        should change the state and yield a coefficient of -I * _SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        op = sig_y(lattice=self.lattice,
-                   ns=ns,
-                   type_act=OperatorTypeActing.Global,
-                   sites=sites,
-                   spin=BACKEND_DEF_SPIN,
-                   spin_value=_SPIN,
-                   backend=self.backend)
-        new_state, coeff = op(state)
-        self.__log(f"sig_y_global_int: {state:04b} -> {new_state:04b}, coeff: {coeff}",
-                   self.test_count, color="cyan")
-        if state == 0b0101:
-            expected_state = 7
-            expected_coeff = -1j * _SPIN
-            assert new_state == expected_state, f"Expected {expected_state}, got {new_state}"
-            assert coeff == expected_coeff, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_y_global_np(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sigma _y on a NumPy array state.
-        Convert an integer state to a binary array, apply \sigma _y, then convert back.
-        For state [0,1,0,1] and site 2, expected new base is [0,1,1,1] and coefficient is -1j*_SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        if isinstance(state, (int, np.integer)):
-            base_state = int2base(state, ns, spin=True, spin_value=_SPIN)
-        else:
-            base_state = state
-        op = sig_y(lattice=self.lattice,
-                   ns=ns,
-                   type_act=OperatorTypeActing.Global,
-                   sites=sites,
-                   spin=BACKEND_DEF_SPIN,
-                   spin_value=_SPIN,
-                   backend=self.backend)
-        new_base, coeff = op(base_state)
-        new_state = base2int(new_base, spin=True, spin_value=_SPIN)
-        self._log(f"sig_y_global_np: {base_state} -> {new_base}, coeff: {coeff}",
-                  self.test_count, color="cyan")
-        if base_state == [0, 1, 0, 1]:
-            expected_state = [0, 1, 1, 1]
-            expected_coeff = -1j * _SPIN
-            assert new_base == expected_state, f"Expected {expected_state}, got {new_base}"
-            assert coeff == expected_coeff, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_z_global_int(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sum _z on an integer state.
-        For ns=4 and state=0b0101, applying \sum _z at site 2 does not change the state.
-        For state 0b0101, at pos=ns-1-2 the bit is 0 so the coefficient is -_SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        op = sig_z(lattice=self.lattice,
-                   ns=ns,
-                   type_act=OperatorTypeActing.Global,
-                   sites=sites,
-                   spin=BACKEND_DEF_SPIN,
-                   spin_value=_SPIN)
-        new_state, coeff = op(state)
-        self.__log(f"sig_z_global_int: {state:04b} -> {new_state:04b}, coeff: {coeff}",
-                   self.test_count, color="cyan")
-        if state == 0b0101:
-            expected_state = state
-            expected_coeff = -_SPIN
-            assert new_state == expected_state, f"Expected state {expected_state}, got {new_state}"
-            assert coeff == expected_coeff, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_z_global_np(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sum _z on a NumPy array state.
-        Convert an integer state to a binary array, apply \sum _z (which should not flip bits),
-        and then convert back.
-        For state [0,1,0,1] at site 2, expected new base remains [0,1,0,1] and coefficient is -_SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        if isinstance(state, (int, np.integer)):
-            base_state = int2base(state, ns, spin=True, spin_value=_SPIN)
-        else:
-            base_state = state
-        op = sig_z(lattice=self.lattice,
-                   ns=ns,
-                   type_act=OperatorTypeActing.Global,
-                   sites=sites,
-                   spin=BACKEND_DEF_SPIN,
-                   spin_value=_SPIN)
-        new_base, coeff = op(base_state)
-        self._log(f"sig_z_global_np: {base_state} -> {new_base}, coeff: {coeff}",
-                  self.test_count, color="cyan")
-        if base_state == [0, 1, 0, 1]:
-            expected_state = [0, 1, 0, 1]
-            expected_coeff = -_SPIN
-            assert new_base == expected_state, f"Expected {expected_state}, got {new_base}"
-            assert coeff == expected_coeff, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_plus_global_int(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sigma ^+ on an integer state.
-        For ns=4 and state=0b0101, applying \sigma ^+ at site 2 should flip the bit if it is 0.
-        For state 0b0101, flipping bit at pos=ns-1-2 yields 0b0111 (decimal 7) with coefficient _SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        op = sig_plus(lattice=self.lattice,
-                      ns=ns,
-                      type_act=OperatorTypeActing.Global,
-                      sites=sites,
-                      spin=BACKEND_DEF_SPIN,
-                      spin_value=_SPIN,
-                      backend=self.backend)
-        new_state, coeff = op(state)
-        self.__log(f"sig_plus_global_int: {state:04b} -> {new_state:04b}, coeff: {coeff}",
-                   self.test_count, color="cyan")
-        if state == 0b0101:
-            expected_state = 7
-            expected_coeff = _SPIN
-            assert new_state == expected_state, f"Expected {expected_state}, got {new_state}"
-            assert coeff == expected_coeff, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_plus_global_np(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sigma ^+ on a NumPy array state.
-        Convert an integer state to a binary array, apply \sigma ^+, then convert back.
-        For state [0,1,0,1] and site 2, expected new base is [0,1,1,1] and coefficient _SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        if isinstance(state, (int, np.integer)):
-            base_state = int2base(state, ns, spin=True, spin_value=_SPIN)
-        else:
-            base_state = state
-        op = sig_plus(lattice=self.lattice,
-                      ns=ns,
-                      type_act=OperatorTypeActing.Global,
-                      sites=sites,
-                      spin=BACKEND_DEF_SPIN,
-                      spin_value=_SPIN,
-                      backend=self.backend)
-        new_base, coeff = op(base_state)
-        self._log(f"sig_plus_global_np: {base_state} -> {new_base}, coeff: {coeff}",
-                  self.test_count, color="cyan")
-        if base_state == [0, 1, 0, 1]:
-            expected_state = [0, 1, 1, 1]
-            expected_coeff = _SPIN
-            assert new_base == expected_state, f"Expected {expected_state}, got {new_base}"
-            assert coeff == expected_coeff, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_minus_global_int(self, state: Optional[int] = 0b0111, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sigma ^ - on an integer state.
-        For ns=4 and state=0b0111, applying \sigma ^ - at site 2 should flip the bit if it is 1.
-        For state 0b0111, flipping bit at pos=ns-1-2 yields 0b0101 (decimal 5) with coefficient _SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        op = sig_minus(lattice=self.lattice,
-                       ns=ns,
-                       type_act=OperatorTypeActing.Global,
-                       sites=sites,
-                       spin=BACKEND_DEF_SPIN,
-                       spin_value=_SPIN,
-                       backend=self.backend)
-        new_state, coeff = op(state)
-        self.__log(f"sig_minus_global_int: {state:04b} -> {new_state:04b}, coeff: {coeff}",
-                   self.test_count, color="cyan")
-        if state == 0b0111:
-            expected_state = 5
-            expected_coeff = _SPIN
-            assert new_state == expected_state, f"Expected {expected_state}, got {new_state}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_minus_global_np(self, state: Optional[int] = 0b0111, ns: Optional[int] = 4, sites: Union[int, List[int]] = 2):
-        r"""
-        Test Global \sigma ^ - on a NumPy array state.
-        Convert an integer state to a binary array, apply \sigma ^ -, then convert back.
-        For state [0,1,1,1] and site 2, expected new base is [0,1,0,1] and coefficient _SPIN.
-        """
-        if isinstance(sites, int):
-            sites = [sites]
-        if isinstance(state, (int, np.integer)):
-            base_state = int2base(state, ns, spin=True, spin_value=_SPIN)
-        else:
-            base_state = state
-        op = sig_minus(lattice=self.lattice,
-                       ns=ns,
-                       type_act=OperatorTypeActing.Global,
-                       sites=sites,
-                       spin=BACKEND_DEF_SPIN,
-                       spin_value=_SPIN,
-                       backend=self.backend)
-        new_base, coeff = op(base_state)
-        self._log(f"sig_minus_global_np: {base_state} -> {new_base}, coeff: {coeff}",
-                  self.test_count, color="cyan")
-        if base_state == [0, 1, 1, 1]:
-            expected_state = [0, 1, 0, 1]
-            expected_coeff = _SPIN
-            assert new_base == expected_state, f"Expected {expected_state}, got {new_base}"
-            assert coeff == expected_coeff, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_k_global_int(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Optional[List[int]] = None, k: float = 0.0):
-        r"""
-        Test Global \sigma _k on an integer state.
-        For ns=4 and state=0b0101 over sites [0,1,2,3] with k=0,
-        the operator does not change the state but produces a coefficient.
-        For state 0b0101, expected coefficient (for k=0) is (1j - 1.0) (normalized by sqrt(4)=2).
-        """
-        if sites is None:
-            sites = list(range(ns))
-        op = sig_k(lattice=self.lattice,
-                   ns=ns,
-                   type_act=OperatorTypeActing.Global,
-                   sites=sites,
-                   k=k,
-                   spin=BACKEND_DEF_SPIN,
-                   spin_value=_SPIN,
-                   backend=self.backend)
-        new_state, coeff = op(state)
-        self.__log(f"sig_k_global_int: {state:04b} -> {new_state:04b}, coeff: {coeff}",
-                   self.test_count, color="cyan")
-        if state == 0b0101:
-            expected_state = state
-            expected_coeff = 1j - 1.0  # For k=0, normalized by sqrt(4)=2; adjust as needed.
-            assert new_state == expected_state, f"Expected state {expected_state}, got {new_state}"
-            assert abs(coeff - expected_coeff) < 1e-6, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def test_sig_k_global_np(self, state: Optional[int] = 0b0101, ns: Optional[int] = 4, sites: Optional[List[int]] = None, k: float = 0.0):
-        r"""
-        Test Global \sigma _k on a NumPy array state.
-        Convert an integer state to a binary array, apply \sigma _k, then convert back.
-        For state [0,1,0,1] over sites [0,1,2,3] with k=0, the coefficient should be (1j - 1.0).
-        """
-        if sites is None:
-            sites = list(range(ns))
-        if isinstance(state, (int, np.integer)):
-            base_state = int2base(state, ns, spin=True, spin_value=_SPIN)
-        else:
-            base_state = state
-        op = sig_k(lattice=self.lattice,
-                   ns=ns,
-                   type_act=OperatorTypeActing.Global,
-                   sites=sites,
-                   k=k,
-                   spin=BACKEND_DEF_SPIN,
-                   spin_value=_SPIN,
-                   backend=self.backend)
-        new_base, coeff = op(base_state)
-        self._log(f"sig_k_global_np: {base_state} -> {new_base}, coeff: {coeff}",
-                  self.test_count, color="cyan")
-        if base_state == [0, 1, 0, 1]:
-            expected_state = base_state
-            expected_coeff = 1j - 1.0  # adjust as needed
-            assert new_base == expected_state, f"Expected {expected_state}, got {new_base}"
-            assert abs(coeff - expected_coeff) < 1e-6, f"Expected coeff {expected_coeff}, got {coeff}"
-        self.test_count += 1
-
-    # -------------------------------
-    def add_tests(self):
-        r"""
-        Adds all spin operator tests.
-        """
-        self.tests.append(self.test_sig_x_global_int)
-        self.tests.append(self.test_sig_x_global_np)
-        self.tests.append(self.test_sig_y_global_int)
-        self.tests.append(self.test_sig_y_global_np)
-        self.tests.append(self.test_sig_z_global_int)
-        self.tests.append(self.test_sig_z_global_np)
-        self.tests.append(self.test_sig_plus_global_int)
-        self.tests.append(self.test_sig_plus_global_np)
-        self.tests.append(self.test_sig_minus_global_int)
-        self.tests.append(self.test_sig_minus_global_np)
-        self.tests.append(self.test_sig_k_global_int)
-        self.tests.append(self.test_sig_k_global_np)
 
 # -----------------------------------------------------------------------------
 

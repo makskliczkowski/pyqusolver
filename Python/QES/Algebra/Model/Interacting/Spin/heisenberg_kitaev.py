@@ -32,60 +32,6 @@ try:
 except ImportError as e:
     raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 
-@numba.njit
-def sigma_xy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
-    """ Applies Sigma_X to sites[0] and Sigma_Y to sites[1] """
-    s_arr, c1_arr       = operators_spin_module.sigma_x_int_np(state, ns, [sites[0]], spin, spin_value)
-    s_int               = s_arr[0] 
-    s_final_arr, c2_arr = operators_spin_module.sigma_y_int_np(s_int, ns, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_yx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = operators_spin_module.sigma_y_int_np(state, ns, [sites[0]], spin, spin_value)
-    s_int               = s_arr[0]
-    s_final_arr, c2_arr = operators_spin_module.sigma_x_int_np(s_int, ns, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_yz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = operators_spin_module.sigma_y_int_np(state, ns, [sites[0]], spin, spin_value)
-    s_int               = s_arr[0]
-    s_final_arr, c2_arr = operators_spin_module.sigma_z_int_np(s_int, ns, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_zx_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = operators_spin_module.sigma_z_int_np(state, ns, [sites[0]], spin, spin_value)
-    s_int               = s_arr[0]
-    s_final_arr, c2_arr = operators_spin_module.sigma_x_int_np(s_int, ns, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_xz_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = operators_spin_module.sigma_x_int_np(state, ns, [sites[0]], spin, spin_value)
-    s_int               = s_arr[0]
-    s_final_arr, c2_arr = operators_spin_module.sigma_z_int_np(s_int, ns, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-@numba.njit
-def sigma_zy_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
-    s_arr, c1_arr       = operators_spin_module.sigma_z_int_np(state, ns, [sites[0]], spin, spin_value)
-    s_int               = s_arr[0]
-    s_final_arr, c2_arr = operators_spin_module.sigma_y_int_np(s_int, ns, [sites[1]], spin, spin_value)
-    return s_final_arr, c1_arr * c2_arr
-
-def make_mixed(name, int_func, lattice=None):
-    return operators_spin_module.create_operator(
-        type_act    = operators_spin_module.OperatorTypeActing.Correlation,
-        op_func_int = int_func,
-        op_func_np  = None,
-        op_func_jnp = None,
-        lattice     = lattice,
-        name        = name,
-        modifies    = True
-    )
-
 ##########################################################################################
 #! IMPORTS
 ##########################################################################################
@@ -377,20 +323,20 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         op_sz_sz_c      =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
         
         # Create Gamma operators as products of correlation operators
-        op_sx_sy_c      =   make_mixed("SxSy", sigma_xy_mixed_int_np, lattice=lattice)
-        op_sy_sx_c      =   make_mixed("SySx", sigma_yx_mixed_int_np, lattice=lattice)
+        op_sx_sy_c      =   operators_spin_module.make_sigma_mixed("xy", lattice=lattice)
+        op_sy_sx_c      =   operators_spin_module.make_sigma_mixed("yx", lattice=lattice)
         
-        op_sz_sx_c      =   make_mixed("SzSx", sigma_zx_mixed_int_np, lattice=lattice)
-        op_sx_sz_c      =   make_mixed("SxSz", sigma_xz_mixed_int_np, lattice=lattice)
+        op_sz_sx_c      =   operators_spin_module.make_sigma_mixed("zx", lattice=lattice)
+        op_sx_sz_c      =   operators_spin_module.make_sigma_mixed("xz", lattice=lattice)
         
-        op_sy_sz_c      =   make_mixed("SySz", sigma_yz_mixed_int_np, lattice=lattice)
-        op_sz_sy_c      =   make_mixed("SzSy", sigma_zy_mixed_int_np, lattice=lattice)
+        op_sy_sz_c      =   operators_spin_module.make_sigma_mixed("yz", lattice=lattice)
+        op_sz_sy_c      =   operators_spin_module.make_sigma_mixed("zy", lattice=lattice)
 
         nn_nums         =   [lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else \
                             [lattice.get_nn_num(i) for i in range(self.ns)]
 
         #! iterate over all the sites
-        elems           = 0   
+        elems           =   0
         for i in range(self.ns):
             self._log(f"Starting i: {i}", lvl = 1, log = 'debug')
             
@@ -398,26 +344,26 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
             if self._hz is not None and not np.isclose(self._hz[i], 0.0, rtol=1e-10):
                 z_field = SINGLE_TERM_MULT * self._hz[i]
                 self.add(op_sz_l, multiplier = z_field, modifies = False, sites = [i])
-                # self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
+                self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
 
             #? y-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if self._hy is not None and not np.isclose(self._hy[i], 0.0, rtol=1e-10):
                 y_field = SINGLE_TERM_MULT * self._hy[i]
                 self.add(op_sy_l, multiplier = y_field, modifies = True, sites = [i])
-                # self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl = 2, log = 'debug')
+                self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl = 2, log = 'debug')
 
             #? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if self._hx is not None and not np.isclose(self._hx[i], 0.0, rtol=1e-10):
                 x_field = SINGLE_TERM_MULT * self._hx[i]
                 self.add(op_sx_l, multiplier = x_field, modifies = True, sites = [i])
-                # self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = 'debug')
+                self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = 'debug')
             
             #? impurities
             for (imp_site, imp_strength) in self._impurities:
                 if imp_site == i:
                     imp_field = SINGLE_TERM_MULT * imp_strength
                     self.add(op_sz_l, multiplier = imp_field, modifies = False, sites = [i])
-                    # self._log(f"Adding impurity Sz at {i} with value {imp_field:.2f}", lvl = 2, log = 'debug')
+                    self._log(f"Adding impurity Sz at {i} with value {imp_field:.2f}", lvl = 2, log = 'debug')
 
             #? now check the correlation operators
             nn_num = nn_nums[i]
@@ -451,13 +397,13 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 if True:
                     if not np.isclose(sz_sz, 0.0, rtol=1e-10):
                         self.add(op_sz_sz_c, sites = [i, nei], multiplier = sz_sz, modifies = False)
-                        # self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
                     if not np.isclose(sx_sx, 0.0, rtol=1e-10):
                         self.add(op_sx_sx_c, sites = [i, nei], multiplier = sx_sx, modifies = True)
-                        # self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
                     if not np.isclose(sy_sy, 0.0, rtol=1e-10):
                         self.add(op_sy_sy_c, sites = [i, nei], multiplier = sy_sy, modifies = True)
-                        # self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
                 
                 elems += 1
                 
@@ -491,4 +437,5 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
 
     # ----------------------------------------------------------------------------------------------
 
-####################################################################################################
+##########################################################################################
+#! EOF
