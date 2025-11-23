@@ -519,83 +519,122 @@ def _build_sector_change(hilbert_in         : object,
 
     return sp.csr_matrix((data[:data_idx], (rows[:data_idx], cols[:data_idx])), shape=(nh_out, nh_in), dtype=alloc_dtype)
 
+############################################################################################
+#! WITHOUT HILBERT SPACE SUPPORT
+############################################################################################
+
+# ------------------------------------------------------------------------------------------
+# 1. DENSE KERNEL (Fastest for small systems)
 # ------------------------------------------------------------------------------------------
 
-# @numba.njit(cache=True, nogil=True)
-def _fill_row_kernel(row_idx, ns_arr, vs_arr, rows, cols, vals, current_ptr, max_len, nh):
-    added_count = 0
-    n_items     = len(ns_arr)
-    
-    for j in range(n_items):
-        # Bounds check for the buffer
-        if current_ptr + added_count >= max_len:
-            return -1 # Signal that we ran out of space
-            
-        col = ns_arr[j]
-        val = vs_arr[j]
-        
-        # The logic from your original loop
-        if (0 <= col < nh) and (np.abs(val) >= 1e-14):
-            rows[current_ptr + added_count] = row_idx
-            cols[current_ptr + added_count] = col
-            vals[current_ptr + added_count] = val
-            added_count += 1
-            
-    return added_count
-
-def _build_triplets(operator_func, nh, ns, max_local_changes=4, dtype=np.float64):
-    # FIX: Allocation size must depend on Hilbert dimension (nh), not System size (ns)
-    # We use a multiplier (e.g., 1.2) to be safe against rows with extra connections
-    buffer_size = int(ns * max_local_changes * 1.2)
-    rows        = np.empty(buffer_size, dtype=np.int64)
-    cols        = np.empty(buffer_size, dtype=np.int64)
-    vals        = np.empty(buffer_size, dtype=dtype)
-    elem        = 0
+# @numba.njit(nogil=True) # nogil for thread safety -> allows multi-threading if needed, stands for "no global interpreter lock"
+def _fill_dense_kernel(matrix, operator_func, nh):
+    """
+    Fills a dense matrix entirely within Numba.
+    """
     
     for row in range(nh):
-        # 1. Call the slow Python operator
-        curr_ns, curr_vs    = operator_func(row)
-        curr_ns             = np.asarray(curr_ns)
-        curr_vs             = np.asarray(curr_vs)
-        added               = _fill_row_kernel(row, curr_ns, curr_vs, rows, cols, vals, elem, buffer_size, nh)
-        
-        # 4. Handle Buffer Overflow (Dynamic Resizing)
-        if added == -1:
-            # Double the buffer size
-            new_size = buffer_size * 2
-            rows.resize(new_size, refcheck=False)
-            cols.resize(new_size, refcheck=False)
-            vals.resize(new_size, refcheck=False)
-            buffer_size = new_size
-            # Retry the current row
-            added = _fill_row_kernel(row, curr_ns, curr_vs, rows, cols, vals, elem, buffer_size, nh)
+        # Call the operator directly inside the loop
+        out_states, out_vals    = operator_func(row)
+        n_items                 = len(out_states)
+        for k in range(n_items):
+            col                 = out_states[k]
+            val                 = out_vals[k]
             
-        elem += added
+            # Bounds check and threshold check
+            if (0 <= col < nh) and (np.abs(val) >= 1e-14):
+                matrix[row, col] += val
 
-    # Trim to actual size
-    return rows[:elem], cols[:elem], vals[:elem]
+# ------------------------------------------------------------------------------------------
+# 2. SPARSE KERNEL (The "Pause and Resume" Engine)
+# ------------------------------------------------------------------------------------------
+
+# @numba.njit(nogil=True)
+def _fill_sparse_kernel(
+    start_row,                  # Where to start/resume
+    nh,                         # Total rows
+    rows, cols, vals,           # The buffers
+    current_ptr,                # Where to write in buffer
+    max_len,                    # Buffer limit
+    operator_func               # The JIT-compiled operator
+):
+    """
+    Iterates rows and fills buffers. 
+    Returns: (next_row_to_process, new_buffer_pointer, is_finished)
+    """
+    ptr = current_ptr
+    
+    for row in range(start_row, nh):
+        out_states, out_vals    = operator_func(row)
+        n_items                 = len(out_states)
+        
+        # Check if we have space for this entire batch of connections
+        # (Conservative check: if this row fits, we process it. If not, we pause).
+        if ptr + n_items >= max_len:
+            return row, ptr, False # Signal: Paused, buffer full
+            
+        for k in range(n_items):
+            col = out_states[k]
+            val = out_vals[k]
+            
+            if (0 <= col < nh) and (np.abs(val) >= 1e-14):
+                rows[ptr] = row
+                cols[ptr] = col
+                vals[ptr] = val
+                ptr += 1
+                
+    return nh, ptr, True # Signal: Finished all rows
 
 def _build_no_hilbert(operator_func: Callable, nh: int, ns: int, sparse: bool, max_local_changes: int, dtype: np.dtype):
-    
-    alloc_dtype = _determine_matrix_dtype(dtype, None, operator_func, ns)
 
+    # Determine precision
+    alloc_dtype = dtype
+    
+    # Dense path
     if not sparse:
-        # Dense mode optimization (unchanged, logic is fine)
         matrix = np.zeros((nh, nh), dtype=alloc_dtype)
-        for row in range(nh):
-            new_states, values  = operator_func(row)
-            new_states          = np.asarray(new_states)
-            values              = np.asarray(values, dtype=alloc_dtype)
-            mask                = (np.abs(values) >= 1e-14) & (new_states >= 0) & (new_states < nh)
-            if mask.any():
-                matrix[row, new_states[mask]] += values[mask]
+        _fill_dense_kernel(matrix, operator_func, nh)   # Note: operator_func MUST be jitted for this to work efficiently
         return matrix
-
-    # Sparse mode
-    safe_max_changes    = max(2, max_local_changes)
-    r, c, d             = _build_triplets(operator_func, nh, ns, safe_max_changes, alloc_dtype)
+        
+    # Initial Allocation
+    # Estimate size: nh * max_changes * safety_factor
+    # We use a chunk-based approach to be memory safe.
+    estimated_nnz   = int(nh * max(2, max_local_changes) * 1.2)     # Initial estimate
+    buffer_size     = max(1024, estimated_nnz)                      # Minimum size to prevent excessive resizing on tiny systems
     
-    return sp.csr_matrix((d, (r, c)), shape=(nh, nh))
+    rows            = np.empty(buffer_size, dtype=np.int64)
+    cols            = np.empty(buffer_size, dtype=np.int64)
+    vals            = np.empty(buffer_size, dtype=alloc_dtype)
+    
+    curr_row        = 0
+    curr_ptr        = 0
+    finished        = False
+    
+    # The "Pump" Loop
+    while not finished:
+        # Call the kernel. It runs until it finishes OR runs out of space.
+        next_row, next_ptr, finished = _fill_sparse_kernel(curr_row, nh, rows, cols, vals, curr_ptr, buffer_size, operator_func)
+        
+        curr_row    = next_row
+        curr_ptr    = next_ptr
+        
+        if not finished:
+            # Strategy: Double the buffer size (Exponential growth)
+            # This amortizes the cost of copying to O(1) per element
+            new_size = buffer_size * 2
+            
+            # Resize checks
+            try:
+                rows.resize(new_size, refcheck=False)
+                cols.resize(new_size, refcheck=False)
+                vals.resize(new_size, refcheck=False)
+            except MemoryError:
+                raise MemoryError(f"Failed to allocate sparse buffer of size {new_size}")
+                
+            buffer_size = new_size
+            
+    # Shrink to fit exact number of elements
+    return sp.csr_matrix((vals[:curr_ptr], (rows[:curr_ptr], cols[:curr_ptr])), shape=(nh, nh))
 
 # ------------------------------------------------------------------------------------------
 #! GENERAL MATRIX BUILDER INTERFACE
@@ -685,7 +724,7 @@ def build_operator_matrix(
 #! Matrix-Free Operator Application (optimized!)
 # -------------------------------------------------------------------------------
 
-@numba.njit(fastmath=True, parallel=False) # Serial is often faster here to avoid race conditions on write
+# @numba.njit(fastmath=True, parallel=False) # Serial is often faster here to avoid race conditions on write
 def _apply_op_batch_jit(
     vecs_in             : np.ndarray,
     vecs_out            : np.ndarray,
@@ -756,7 +795,7 @@ def _apply_op_batch_jit(
                 else:
                     vecs_out[target_idx, :]    += val * vecs_in[k, :]
 
-@numba.njit(parallel=False, fastmath=True)
+# @numba.njit(parallel=False, fastmath=True)
 def _apply_fourier_batch_jit(
     vecs_in             : np.ndarray,
     vecs_out            : np.ndarray,

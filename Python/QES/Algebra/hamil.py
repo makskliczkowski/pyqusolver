@@ -2441,14 +2441,14 @@ class Hamiltonian(Operator):
                 self._log(f"Failed to set JAX local energy functions: {e}", lvl=3, color="red", log='error')
         else:
             self._log("JAX is not available, skipping JAX local energy function setup.", lvl=3, color="yellow", log='debug')
-            self._loc_energy_jax_fun   = None
+            self._loc_energy_jax_fun = None
 
         # log success
         
-        self._max_local_ch_o              = max(self._max_local_ch_o,   max(len(op) for op in self._ops_mod_sites)      + \
-                                                                        max(len(op) for op in self._ops_mod_nosites)    + \
-                                                                        max(len(op) for op in self._ops_nmod_sites)     + \
-                                                                        max(len(op) for op in self._ops_nmod_nosites))
+        self._max_local_ch_o = max(self._max_local_ch_o,max(len(op) for op in self._ops_mod_sites)      + \
+                                                        max(len(op) for op in self._ops_mod_nosites)    + \
+                                                        max(len(op) for op in self._ops_nmod_sites)     + \
+                                                        max(len(op) for op in self._ops_nmod_nosites))
         
         # Set the OperatorFunction for Operator inheritance
         self._fun = OperatorFunction(
@@ -2462,30 +2462,6 @@ class Hamiltonian(Operator):
         self._log(f"Max local changes set to {self._max_local_ch_o}", lvl=2, color="green", log='debug')
         self._log("Successfully set local energy functions...", lvl=2, log ='debug')
 
-    def _local_energy_test(self, k_map = 0, i = 0):
-        '''
-        Tests the local energy calculation.
-        
-        Args:
-            k_map (int) : The mapping of the k'th element.
-            i (int)     : The i'th site.
-        '''
-        
-        # integer function
-        if self._loc_energy_int_fun is not None:
-            idx, val = self._loc_energy_int_fun(k_map, i)
-            self._log(f"{self._name} test_int({k_map},{i}): idx={idx}, vals={val}", lvl = 2, log = 'debug')
-        
-        # array functions
-        if self._loc_energy_np_fun is not None:
-            input_vec   = np.ones(self._ns, dtype = np.float32)
-            idx, val    = self._loc_energy_np_fun(input_vec)
-            self._log(f"{self._name} test_np({input_vec}): idx={idx}, vals={val}", lvl = 2, log = 'debug')
-        if self._loc_energy_jax_fun is not None:
-            input_vec   = jnp.ones(self._ns, dtype = jnp.float32)
-            idx, val    = self._loc_energy_jax_fun(input_vec)
-            self._log(f"{self._name} test_jax({input_vec}): idx={idx}, vals={val}", lvl = 2, log = 'debug')
-    
     # ----------------------------------------------------------------------------------------------
     #! Other helpers
     

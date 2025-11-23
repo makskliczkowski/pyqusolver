@@ -147,11 +147,11 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         # Initialize the Hamiltonian
         self._lattice                   = lattice
         super().__init__(is_manybody    = True, 
-                         hilbert_space  = hilbert_space,
-                         lattice        = lattice, 
-                         is_sparse      = True,
-                         dtype          = dtype if hy is None else np.complex128, # enforce complex dtype if hy field is used
-                         backend=backend, logger=logger, use_forward=use_forward, **kwargs)
+                        hilbert_space   = hilbert_space,
+                        lattice         = lattice, 
+                        is_sparse       = True,
+                        dtype           = dtype if hy is None else np.complex128, # enforce complex dtype if hy field is used
+                        backend=backend, logger=logger, use_forward=use_forward, **kwargs)
 
         # Initialize the Hamiltonian
         if hilbert_space is None:
@@ -246,7 +246,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
     # ----------------------------------------------------------------------------------------------
     #! INIT
     # ----------------------------------------------------------------------------------------------
-     
+    
     def set_couplings(self,
                         hx      : Union[List[float], None, float]       = None,
                         hz      : Union[List[float], None, float]       = None,
