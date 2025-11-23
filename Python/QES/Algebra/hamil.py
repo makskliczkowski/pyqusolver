@@ -2141,9 +2141,6 @@ class Hamiltonian(Operator):
             
             hermitian       = kwargs.get("hermitian", True)
             if hermitian in kwargs: kwargs.pop("hermitian")
-            
-            max_iter        = kwargs.get("max_iter", None)
-            if max_iter in kwargs: kwargs.pop("max_iter")
 
         # Determine backend
         if backend_str is None:
@@ -2175,7 +2172,7 @@ class Hamiltonian(Operator):
         
         # Prepare solver kwargs (remove our custom parameters)
         solver_kwargs   = {key: val for key, val in kwargs.items() 
-                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which', 'max_iter']}
+                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which']}
         
         matrix_to_diag  = self._hamil
 

@@ -555,7 +555,7 @@ def sigma_z_total_np(state      : np.ndarray,
         bit     = _binary.check_arr_np(state, site)
         coeff  += (2 * bit - 1.0) * spin_value
     return ensure_operator_output_shape_numba(state, coeff)
-        
+
 # -----------------------------------------------------------------------------
 #! Sigma-Plus (\sigma ^+) operator
 # -----------------------------------------------------------------------------
@@ -1393,7 +1393,7 @@ else:
     sigma_zx_mixed_jnp  = None
     sigma_xz_mixed_jnp  = None
     sigma_zy_mixed_jnp  = None
-    
+
 def make_sigma_mixed(name, lattice=None):
     
     if name == 'xy':

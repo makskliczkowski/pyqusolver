@@ -1995,7 +1995,7 @@ def create_operator(type_act        : int                   | OperatorTypeActing
         sites_np        = np.array(sites, dtype = np.int32)
         
         if isinstance(op_func_int, CPUDispatcher):
-            @numba.njit
+            # @numba.njit
             def fun_int(state):
                 return op_func_int(state, ns, sites, *extra_args)
         else:
@@ -2027,7 +2027,7 @@ def create_operator(type_act        : int                   | OperatorTypeActing
     elif type_act == OperatorTypeActing.Local.value:
         
         if isinstance(op_func_int, CPUDispatcher):
-            @numba.njit
+            # @numba.njit
             def fun_int(state, i):
                 sites_1 = np.array([i], dtype=np.int32)
                 return op_func_int(state, ns, sites_1, *extra_args)
@@ -2066,7 +2066,7 @@ def create_operator(type_act        : int                   | OperatorTypeActing
     elif type_act == OperatorTypeActing.Correlation.value:
         
         if isinstance(op_func_int, CPUDispatcher):
-            @numba.njit
+            # @numba.njit
             def fun_int(state, i, j):
                 sites_2 = np.array([i, j], dtype=np.int32)
                 return op_func_int(state, ns, sites_2, *extra_args)
