@@ -410,21 +410,21 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 #! Gamma terms
                 if True:
                     #? Gamma_x terms
-                    if self._gx is not None and not np.isclose(self._gx, 0.0, rtol=1e-10):
+                    if self._gx is not None and not np.isclose(self._gx, 0.0, rtol=1e-10) and nn == HEI_KIT_X_BOND_NEI:
                         val = self._gx * phase * CORR_TERM_MULT
                         self.add(op_sy_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sz_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
 
                     # #? Gamma_y terms
-                    if self._gy is not None and not np.isclose(self._gy, 0.0, rtol=1e-10):
+                    if self._gy is not None and not np.isclose(self._gy, 0.0, rtol=1e-10) and nn == HEI_KIT_Y_BOND_NEI:
                         val = self._gy * phase * CORR_TERM_MULT
                         self.add(op_sz_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sx_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
 
                     # #? Gamma_z terms
-                    if self._gz is not None and not np.isclose(self._gz, 0.0, rtol=1e-10):
+                    if self._gz is not None and not np.isclose(self._gz, 0.0, rtol=1e-10) and nn == HEI_KIT_Z_BOND_NEI:
                         val = self._gz * phase * CORR_TERM_MULT
                         self.add(op_sx_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sy_sx_c, sites = [i, nei], multiplier = val, modifies = True)
