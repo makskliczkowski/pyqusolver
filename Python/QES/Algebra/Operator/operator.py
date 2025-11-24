@@ -993,6 +993,8 @@ class Operator(ABC):
         self._necessary_args    = kwargs.get("necessary_args", 0)   # number of necessary arguments for the operator function
         self._fun               = None                              # the function that defines the operator - it is set to None if not provided
         self._jit_wrapper_cache = {}                                # cache for JIT wrappers
+        
+        self._instr_code        = kwargs.get("instr_code", None)    # instruction code for the operator - used in operator builder - linear algebraic operations
         self._init_functions(op_fun, fun_int, fun_np, fun_jnp)      # initialize the operator function
     
     def __repr__(self):
@@ -1288,113 +1290,96 @@ class Operator(ABC):
     #################################
     
     @property
-    def eigval(self):
-        '''Eigenvalue of the operator.'''
-        return self._eigval
+    def eigval(self):           return self._eigval
     
     @eigval.setter
-    def eigval(self, val):
-        self._eigval = val
+    def eigval(self, val):      self._eigval = val
     
     # -------------------------------
     
     @property
-    def name(self):
-        '''Name of the operator.'''
-        return self._name
+    def name(self):             return self._name
     
     @name.setter
-    def name(self, val):
-        self._name = val
+    def name(self, val):        self._name = val
         
     # -------------------------------
     
     @property
-    def type(self):
-        '''Type of the operator.'''
-        return self._type
+    def type(self):             return self._type
     
     @type.setter
-    def type(self, val):
-        self._type = val
+    def type(self, val):        self._type = val
         
     # -------------------------------
     
     @property
-    def quadratic(self):
-        '''Quadratic property of the operator.'''
-        return self._quadratic
+    def code(self):             return self._instr_code
+    @code.setter
+    def code(self, val):        self._instr_code = val
+    
+    # -------------------------------
+    
+    @property
+    def quadratic(self):        return self._quadratic
     
     @quadratic.setter
-    def quadratic(self, val):
-        self._quadratic = val
+    def quadratic(self, val):   self._quadratic = val
         
     # -------------------------------
     
     @property
-    def acton(self):
-        ''' Flag for the action of the operator on the local physical space. '''
-        return self._acton
+    def acton(self):            return self._acton
     
     @acton.setter
-    def acton(self, val):
-        self._acton = val
+    def acton(self, val):       self._acton = val
     
     # -------------------------------
     
     @property
-    def modifies(self):
-        ''' Flag for the operator that modifies the state. '''
-        return self._modifies
+    def modifies(self):         return self._modifies
     
     @modifies.setter
-    def modifies(self, val):
-        self._modifies = val
+    def modifies(self, val):    self._modifies = val
     
     # -------------------------------
     
     @property
-    def type_acting(self):
-        ''' Type of the operator acting on the system. '''
-        return self._type_acting
+    def type_acting(self):      return self._type_acting
     
-    def get_acting_type(self):
-        """
-        Get the acting type of the operator.
-        """
-        return self._type_acting
+    def get_acting_type(self):  return self._type_acting
 
     # -------------------------------
     
     @property
-    def fun(self):
-        ''' Set the function that defines the operator '''
-        return self._fun
+    def fun(self):              return self._fun
     
     @fun.setter
-    def fun(self, val):
-        self._fun = val
+    def fun(self, val):         self._fun = val
     
     @property
-    def int(self):
-        ''' Set the function that defines the operator '''
-        return self._fun.fun
+    def int(self):              return self._fun.fun
     
     @property
-    def npy(self):
-        ''' Set the function that defines the operator '''
-        return self._fun.npy
+    def npy(self):              return self._fun.npy
     
     @property
-    def jax(self):
-        ''' Set the function that defines the operator '''
-        return self._fun.jax
+    def jax(self):              return self._fun.jax
     
     # -------------------------------
     
     def override_matrix_function(self, function : Callable):
         """
         Override the matrix function of the operator.
+        
+        Args:
+            function (Callable): The new matrix function to set.
+            
+        Example:
+            >>> def new_matrix_fun(state):
+            >>>     # Define the new matrix function here
+            >>>     pass
+            >>> op.override_matrix_function(new_matrix_fun)        
         """
         self._matrix_fun = function
     
@@ -1923,7 +1908,9 @@ def create_operator(type_act        : int                   | OperatorTypeActing
                     sites           : Optional[List[int]]   = None,
                     extra_args      : Tuple[Any, ...]       = (),
                     name            : Optional[str]         = None,
-                    modifies        : bool                  = True) -> Operator:
+                    modifies        : bool                  = True,
+                    code            : Optional[int]         = None,
+                    ) -> Operator:
     """
     Create a general operator that distinguishes the type of operator action (global, local, correlation)
     and wraps the provided operator functions for int, NumPy, and JAX. The operator functions must have
@@ -1991,6 +1978,7 @@ def create_operator(type_act        : int                   | OperatorTypeActing
             sites = [sites]
         if sites is None or len(sites) == 0:
             sites = list(range(ns))
+            
         sites           = tuple(sites) if isinstance(sites, list) else sites
         sites_np        = np.array(sites, dtype = np.int32)
         
@@ -2021,7 +2009,8 @@ def create_operator(type_act        : int                   | OperatorTypeActing
                         ns          = ns,
                         name        = op_name,
                         typek       = SymmetryGenerators.Other,
-                        modifies    = modifies)
+                        modifies    = modifies,
+                        instr_code  = code)
     
     #! Local operator: the operator acts on one specific site. The returned functions expect an extra site argument.
     elif type_act == OperatorTypeActing.Local.value:
@@ -2045,22 +2034,20 @@ def create_operator(type_act        : int                   | OperatorTypeActing
             def fun_jnp(state, i):
                 sites_jnp = jnp.array([i], dtype = jnp.int32)
                 return op_func_jnp(state, sites_jnp, *extra_args)
-                # sites_jnp = tuple([i])
-                # op = make_op_jnp([i])
-                # return op(state)
         else:
             def fun_jnp(state, i):
                 return state, 0.0
         op_name = (name if name is not None else op_func_int.__name__) + "/L"
-        return Operator(fun_int = fun_int,
-                        fun_np  = fun_np,
-                        fun_jnp = fun_jnp,
-                        eigval  = 1.0,
-                        lattice = lattice,
-                        ns      = ns,
-                        name    = op_name,
-                        typek   = SymmetryGenerators.Other,
-                        modifies= modifies)
+        return Operator(fun_int     = fun_int,
+                        fun_np      = fun_np,
+                        fun_jnp     = fun_jnp,
+                        eigval      = 1.0,
+                        lattice     = lattice,
+                        ns          = ns,
+                        name        = op_name,
+                        typek       = SymmetryGenerators.Other,
+                        modifies    = modifies,
+                        instr_code  = code)
     
     #! Correlation operator: the operator acts on a pair of sites.
     elif type_act == OperatorTypeActing.Correlation.value:
@@ -2084,21 +2071,20 @@ def create_operator(type_act        : int                   | OperatorTypeActing
             def fun_jnp(state, i, j):
                 sites_jnp = jnp.array([i, j], dtype = jnp.int32)
                 return op_func_jnp(state, sites_jnp, *extra_args)
-                # op = make_op_jnp([i, j])
-                # return op(state)
         else:
             def fun_jnp(state, i, j):
                 return state, 0.0
         op_name = (name if name is not None else op_func_int.__name__) + "/C"
-        return Operator(fun_int = fun_int,
-                        fun_np  = fun_np,
-                        fun_jnp = fun_jnp,
-                        eigval  = 1.0,
-                        lattice = lattice,
-                        ns      = ns,
-                        name    = op_name,
-                        typek   = SymmetryGenerators.Other,
-                        modifies= modifies)
+        return Operator(fun_int     = fun_int,
+                        fun_np      = fun_np,
+                        fun_jnp     = fun_jnp,
+                        eigval      = 1.0,
+                        lattice     = lattice,
+                        ns          = ns,
+                        name        = op_name,
+                        typek       = SymmetryGenerators.Other,
+                        modifies    = modifies,
+                        instr_code  = code)
     
     else:
         raise ValueError("Invalid OperatorTypeActing")
@@ -2127,7 +2113,7 @@ def operator_from_local(local_op: LocalOperator,
             f"JAX backend not available for operator '{local_op.key}'."
         )
 
-    fun_np = kernels.fun_np if kernels.fun_np is not None else _missing_np_kernel
+    fun_np  = kernels.fun_np if kernels.fun_np is not None else _missing_np_kernel
     fun_jnp = kernels.fun_jax if kernels.fun_jax is not None else _missing_jax_kernel
 
     type_map = {
@@ -2138,15 +2124,15 @@ def operator_from_local(local_op: LocalOperator,
     type_act = type_override or type_map.get(kernels.site_parity, OperatorTypeActing.Local)
 
     return create_operator(
-        type_act=type_act,
-        op_func_int=kernels.fun_int,
-        op_func_np=fun_np,
-        op_func_jnp=fun_jnp,
-        lattice=lattice,
-        ns=ns,
-        extra_args=kernels.default_extra_args,
-        name=name or local_op.key,
-        modifies=kernels.modifies_state,
+        type_act        =   type_act,
+        op_func_int     =   kernels.fun_int,
+        op_func_np      =   fun_np,
+        op_func_jnp     =   fun_jnp,
+        lattice         =   lattice,
+        ns              =   ns,
+        extra_args      =   kernels.default_extra_args,
+        name            =   name or local_op.key,
+        modifies        =   kernels.modifies_state,
     )
 
 # Example usage:

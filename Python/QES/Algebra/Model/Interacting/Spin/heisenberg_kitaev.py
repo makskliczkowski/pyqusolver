@@ -195,6 +195,9 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         
         # functions for local energy calculation in a jitted way (numpy and jax)
         self._set_local_energy_operators()
+        self._lookup_codes              = operators_spin_module.SPIN_LOOKUP_CODES.to_dict()
+        self._instr_function            = operators_spin_module.sigma_composition_integer(is_complex = self._iscpx)
+        self._instr_max_out             = len(self._instr_codes) + 1
         self._set_local_energy_functions()
     
     # ----------------------------------------------------------------------------------------------
@@ -432,9 +435,10 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
 
                 #! Finalize the operator addition for this neighbor
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
+        
         self._log(f"Total NN elements added: {elems}", color='red')
         self._log("Successfully set local energy operators...", lvl=1, log='info')
-
+        
     # ----------------------------------------------------------------------------------------------
 
 ##########################################################################################

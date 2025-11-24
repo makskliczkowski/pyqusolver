@@ -17,6 +17,7 @@ version     : 2.2.0
 --------------------------------------------------------------------------------------------
 """
 from __future__ import annotations
+import time
 import numpy as np
 import scipy.sparse as sp
 from typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
@@ -527,7 +528,7 @@ def _build_sector_change(hilbert_in         : object,
 # 1. DENSE KERNEL (Fastest for small systems)
 # ------------------------------------------------------------------------------------------
 
-# @numba.njit(nogil=True) # nogil for thread safety -> allows multi-threading if needed, stands for "no global interpreter lock"
+@numba.njit(nogil=True) # nogil for thread safety -> allows multi-threading if needed, stands for "no global interpreter lock"
 def _fill_dense_kernel(matrix, operator_func, nh):
     """
     Fills a dense matrix entirely within Numba.
@@ -549,7 +550,7 @@ def _fill_dense_kernel(matrix, operator_func, nh):
 # 2. SPARSE KERNEL (The "Pause and Resume" Engine)
 # ------------------------------------------------------------------------------------------
 
-# @numba.njit(nogil=True)
+@numba.njit(nogil=True)
 def _fill_sparse_kernel(
     start_row,                  # Where to start/resume
     nh,                         # Total rows
@@ -586,12 +587,18 @@ def _fill_sparse_kernel(
     return nh, ptr, True # Signal: Finished all rows
 
 def _build_no_hilbert(operator_func: Callable, nh: int, ns: int, sparse: bool, max_local_changes: int, dtype: np.dtype):
-
-    # Determine precision
-    alloc_dtype = dtype
+    ''' 
+    This function builds the operator matrix without Hilbert space support.
+    It supports both sparse and dense formats.
     
+    Compilation takes 0.3s - 0.5s depending on operator complexity     
+    '''
+    
+    # Determine precision
+    alloc_dtype     = dtype
+
     # Dense path
-    if not sparse:
+    if not sparse:        
         matrix = np.zeros((nh, nh), dtype=alloc_dtype)
         _fill_dense_kernel(matrix, operator_func, nh)   # Note: operator_func MUST be jitted for this to work efficiently
         return matrix

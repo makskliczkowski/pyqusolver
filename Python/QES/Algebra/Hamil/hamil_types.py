@@ -5,10 +5,15 @@ A Hamiltonian model is defined as a class of Hamiltonians that share a common st
 
 Date: 2025-02-01
 '''
-from QES.general_python.algebra.utils import distinguish_type
-from enum import Enum, unique
-import numba
+import numpy as np
+try:
+    from QES.general_python.algebra.utils import distinguish_type
+except ImportError:
+    raise ImportError("Could not import 'distinguish_type' from 'QES.general_python.algebra.utils'. Please ensure the module is available.")
 
+from enum import Enum, unique
+            
+###########################################################################
 # ED limits (using hexadecimal where applicable)
 UI_LIMITS_MAXFULLED             = 0x40000
 UI_LIMITS_MAXPRINT              = 0x8

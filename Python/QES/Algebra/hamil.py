@@ -15,11 +15,13 @@ Changes :
     2025-02-01 (1.0.0) : First implementation of the Hamiltonian class. - MK
 """
 
+import time
+import numba
 import numpy as np
 import scipy as sp
+from numba.typed import List as NList
 from typing import List, Tuple, Union, Optional, Callable, Dict, Any
 from abc import ABC
-import time
 
 ###################################################################################################
 from QES.Algebra.hilbert import HilbertSpace, HilbertConfig, Logger, Lattice
@@ -208,18 +210,25 @@ class Hamiltonian(Operator):
         '''
         if dtype is not None:
             self._dtype = dtype
+            if self._is_jax:
+                self._iscpx = jnp.issubdtype(jnp.dtype(self._dtype), jnp.complexfloating)
+            elif self._is_numpy:
+                self._iscpx = np.issubdtype(np.dtype(self._dtype), np.complexfloating)
+            
         else:
             if self._hilbert_space is not None:
                 try:
                     hs_dtype = getattr(self._hilbert_space, 'dtype', None)
                     if getattr(self._hilbert_space, 'has_complex_symmetries', False):
                         self._dtype = np.complex128
+                        self._iscpx = True
                     else:
                         # fall back to the Hilbert's dtype when present
                         self._dtype = hs_dtype if hs_dtype is not None else np.float64
                         try:
                             if np.issubdtype(np.dtype(self._dtype), np.complexfloating):
                                 self._dtype = np.complex128
+                                self._iscpx = True
                         except Exception:
                             pass
                 except Exception:
@@ -372,13 +381,19 @@ class Hamiltonian(Operator):
         self._loc_energy_int_fun    : Optional[Callable]    = None
         self._loc_energy_np_fun     : Optional[Callable]    = None
         self._loc_energy_jax_fun    : Optional[Callable]    = None
+            
+        #! FOR MATRIX BUILDING    
+        self._lookup_codes          : Dict[str, int]        = {}  # lookup codes for operators -> we will make numba friendly piece of junk
+        self._instr_codes           : List[int]             = []  # instruction codes for building the Hamiltonian matrix
+        self._instr_coeffs          : List[complex]         = []  # instruction coefficients for building the Hamiltonian matrix
+        self._instr_max_arity       : int                   = 2   # maximum arity of the instructions -> 1 (local), 2 (correlation), etc.
+        self._instr_sites           : List[List[int]]       = []  # instruction sites for building the Hamiltonian matrix
         
-        #! determine if complex dtype
-        if self._is_jax:
-            self._iscpx = jnp.iscomplexobj(self._dtype)
-        else:
-            self._iscpx = np.iscomplexobj(self._dtype)        
-
+        # set by the subclass
+        self._instr_function        : Callable              = None          # fun(state, noperators, codes, sites, coeffs, ns) -> new_state, coeff
+        self._instr_max_out         : int                   = self.ns + 1   # maximum number of output states from the instruction function
+        self._instr_buffers         : Any                   = None          # buffers for instruction function to avoid reallocation
+        
     # ----------------------------------------------------------------------------------------------
     #! Representation - helpers
     ################################################################################################
@@ -843,7 +858,6 @@ class Hamiltonian(Operator):
     @property
     def quadratic(self):                return self._is_quadratic
     def is_quadratic(self):             return self._is_quadratic
-    
     
     @property
     def manybody(self):                 return self._is_manybody
@@ -2234,40 +2248,7 @@ class Hamiltonian(Operator):
             self._log(f"  Ground state energy: {self._eig_val[0]:.10f}", lvl=2, log='debug')
 
     # ----------------------------------------------------------------------------------------------
-    #! Setters
-    # ----------------------------------------------------------------------------------------------
-    
-    def _set_hamil_elem(self, k, val, newk):
-        '''
-        Sets the element of the Hamiltonian matrix.
-        
-        Args:
-            k (int) : The row index.
-            val     : The value to set.
-            newk    : The column index.
-            
-        We acted on the k'th state with the Hamiltonian which in turn gave us the newk'th state
-        First, we need to check the mapping of the k'th state as it may be the same as the newk'th state
-        through the symmetries...
-        
-        After that, we check if they are the same and if they are we add the value to the diagonal element
-        (k'th, not kMap as it only checks the representative).
-        For instance, the mapping can be (0, 3, 5, 7) and k = 1, so mapping of 1 is 3 - we don't want to
-        add the value to the 3'rd element of the Hamiltonian matrix but to the 1'st element.
-        
-        Otherwise, we need to find the representative of the newk'th state and add the value to the newk'th
-        element of the Hamiltonian matrix. This is also used with the norm of a given state k as we need to 
-        check in how many ways we can get to the newk'th state.
-        '''
-        pass
-        #TODO: Re-implement this method
-        # try:
-            # set_operator_elem(self._hamil, self._hilbert_space, k, val, newk)
-        # except Exception as e:
-            # print(f"Error in _set_hamil_elem: Failed to set element at <newk(idx)|H|k>, newk={newk},k={k},value: {val}. Please verify that the indices and value are correct. Exception details: {e}")
-
-    # ----------------------------------------------------------------------------------------------
-    #! Energy related methods
+    #! Energy related methods -> building the Hamiltonian
     # ----------------------------------------------------------------------------------------------
     
     def reset_operators(self):
@@ -2319,10 +2300,11 @@ class Hamiltonian(Operator):
         >> This would add the operator 'sig_x' to the local operator list at site 0 with a multiplier of 1.0.
         """
         
-        # if isinstance(operator, Callable):
-            # if the operator is callable, we try to create the operator from it
-            # raise ValueError("The operator is callable, but it should be an Operator object. TODO: implement this...")
-    
+        if abs(multiplier) < 1e-15:
+            self._log(f"Skipping addition of operator {operator} with negligible multiplier {multiplier}", lvl = 3, log = 'debug')
+            return
+        
+         # Ensure the Hamiltonian is many-body
         if not self._is_manybody:
             raise TypeError("Method 'add' is intended for Many-Body Hamiltonians to define local energy terms.")
         
@@ -2345,6 +2327,22 @@ class Hamiltonian(Operator):
             else:
                 self._ops_mod_sites[i].append((op_tuple))
                 self._log(f"Adding modifying operator {operator} at site {i} (sites: {str(op_tuple[1])}) with multiplier {op_tuple[2]}", lvl = 2, log = 'debug')
+                
+        #! handle the codes for the local energy functions - this is critical for building the Hamiltonian
+        if not hasattr(operator, 'code'):
+             # Fallback mapping based on name
+             op_code = self._lookup_codes[operator.name]
+        else:
+             op_code = operator.code
+             
+        # Store Data, flattened
+        self._instr_codes.append(op_code)
+        self._instr_coeffs.append(multiplier)
+        
+        # Pad sites to to self._instr_max_arity
+        s_list                                      = list(sites) if sites else [0] 
+        while len(s_list) < self._instr_max_arity:  s_list.append(-1)
+        self._instr_sites.append(s_list)
 
     def _set_local_energy_operators(self):
         '''
@@ -2354,6 +2352,20 @@ class Hamiltonian(Operator):
             It is the internal function that knows about the structure of the Hamiltonian.
         '''
         self.reset_operators()
+    
+    def _set_local_energy_finalize_arrays(self):
+        """Call this before creating the JIT wrapper"""
+        n_ops       = len(self._instr_codes)
+        max_arity   = self._instr_max_arity
+        
+        # Create rectangular array filled with -1
+        sites_arr   = np.full((n_ops, max_arity), -1, dtype=np.int32)
+        
+        # Fill it (this Python loop is fast enough as it runs once per build)
+        for k, s_list in enumerate(self._instr_sites):
+            sites_arr[k, :len(s_list)] = s_list
+            
+        return sites_arr, np.array(self._instr_coeffs), np.array(self._instr_codes)
     
     def _set_local_energy_functions(self):
         """
@@ -2386,21 +2398,42 @@ class Hamiltonian(Operator):
             self._log("Skipping local energy function setup for Quadratic Hamiltonian.", log='debug')
             return
         
-        # set the integer functions
         try:
-            operators_mod_int           =  [[(op.int, sites, vals) for (op, sites, vals) in self._ops_mod_sites[i]] for i in range(self.ns)]
-            operators_mod_int_nsites    =  [[(op.int, sites, vals) for (op, sites, vals) in self._ops_mod_nosites[i]] for i in range(self.ns)]
-            operators_nmod_int          =  [[(op.int, sites, vals) for (op, sites, vals) in self._ops_nmod_sites[i]] for i in range(self.ns)]
-            operators_nmod_int_nsites   =  [[(op.int, sites, vals) for (op, sites, vals) in self._ops_nmod_nosites[i]] for i in range(self.ns)]
-            self._loc_energy_int_fun    = local_energy_int_wrap(self.ns,
-                                                    _op_mod_sites                   = operators_mod_int,
-                                                    _op_mod_nosites                 = operators_mod_int_nsites,
-                                                    _op_nmod_sites                  = operators_nmod_int,
-                                                    _op_nmod_nosites                = operators_nmod_int_nsites,
-                                                    dtype                           = self._dtype)
+            compile_start                       = time.perf_counter()
+            nops_val                            = len(self._instr_codes)
+            sites_arr, coeffs_arr, codes_arr    = self._set_local_energy_finalize_arrays()
+            ns_val                              = self.ns
+            instr_function                      = self._instr_function
+            
+            # Create unique buffer ID for this instance
+            max_out                             = self._instr_max_out
+            use_complex                         = self._iscpx
+
+            if use_complex:
+                @numba.njit(nogil=True, inline='always')
+                def wrapper(k: int):
+                    # Allocate inside - unavoidable with current Numba limitations
+                    # Using inline='always' reduces function call overhead
+                    states_buf  = np.empty(max_out, dtype=np.int64)
+                    vals_buf    = np.empty(max_out, dtype=np.complex128)
+                    return instr_function(k, nops_val, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
+            else:
+                @numba.njit(nogil=True, inline='always')
+                def wrapper(k: int):
+                    states_buf  = np.empty(max_out, dtype=np.int64)
+                    vals_buf    = np.empty(max_out, dtype=np.float64)
+                    return instr_function(k, nops_val, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
+            _           = wrapper(0)
+            compile_end = time.perf_counter()
+            self._log(f"Local energy function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="red")
+            self._loc_energy_int_fun = wrapper
+
         except Exception as e:
-            self._log(f"Failed to set integer local energy functions: {e}", lvl=3, color="red", log='error')
-            self._loc_energy_int_fun = None
+            self._log(f"Failed to set integer local energy function: {e}", lvl=3, color="red", log='error')
+            self._loc_energy_int_fun            = None
+            return
+            
+        #! LOCAL ENERGY FUNCTION FOR INTEGER IS SET BY THE CHILDREN CLASS
         
         # set the NumPy functions
         try:
