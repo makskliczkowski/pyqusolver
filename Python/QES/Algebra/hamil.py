@@ -28,7 +28,7 @@ from QES.Algebra.hilbert import HilbertSpace, HilbertConfig, Logger, Lattice
 from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_add_operator, OperatorFunction
 from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
 from QES.Algebra.Hamil.hamil_types import *
-from QES.Algebra.Hamil.hamil_energy import local_energy_int_wrap, local_energy_np_wrap
+from QES.Algebra.Hamil.hamil_energy import local_energy_np_wrap
 import QES.Algebra.Hamil.hamil_jit_methods as hjm
 
 from QES.Algebra.hamil_config import (
