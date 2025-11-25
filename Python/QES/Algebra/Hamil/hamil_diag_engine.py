@@ -161,6 +161,7 @@ class DiagonalizationEngine:
                     hermitian       : bool                                                  = True,
                     which           : Union[str, Literal['smallest', 'largest', 'both']]    = 'smallest',
                     store_basis     : bool                                                  = True,
+                    dtype           : Optional[np.dtype]                                    = None,
                     **kwargs)       -> EigenResult:
         r"""
         Diagonalize a matrix using the specified or auto-selected method.
@@ -250,6 +251,7 @@ class DiagonalizationEngine:
                 which       = which,
                 backend     = self.backend,
                 use_scipy   = self.use_scipy,
+                dtype       = dtype,
                 **kwargs
             )
         except Exception as e:

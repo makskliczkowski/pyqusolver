@@ -2209,6 +2209,7 @@ class Hamiltonian(Operator):
                 hermitian       = hermitian,
                 which           = which,
                 store_basis     = store_basis,
+                dtype           = self._dtype,
                 **solver_kwargs
             )
         except Exception as e:
