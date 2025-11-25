@@ -943,25 +943,19 @@ class Hamiltonian(Operator):
     def krylov(self):                   return self._krylov
 
     @property
-    def hamil(self) -> Union[np.ndarray, sp.sparse.spmatrix]: 
-        return self._hamil
+    def hamil(self)                     -> Union[np.ndarray, sp.sparse.spmatrix]: return self._hamil
     @hamil.setter
-    def hamil(self, hamil):
-        self._hamil = hamil
+    def hamil(self, hamil):             self._hamil = hamil
 
     @property
-    def hamil_transformed(self):        
-        return self._hamil_transformed
+    def hamil_transformed(self):        return self._hamil_transformed
     @hamil_transformed.setter
-    def hamil_transformed(self, hamil_transformed):
-        self._hamil_transformed = hamil_transformed
+    def hamil_transformed(self, hamil_transformed): self._hamil_transformed = hamil_transformed
         
     @property
-    def grid_transformed(self):        
-        return self._transformed_grid
+    def grid_transformed(self):         return self._transformed_grid
     @grid_transformed.setter
-    def grid_transformed(self, grid_transformed):
-        self._transformed_grid = grid_transformed
+    def grid_transformed(self, grid_transformed): self._transformed_grid = grid_transformed
 
     @property
     def matrix(self):
@@ -972,8 +966,18 @@ class Hamiltonian(Operator):
         constructed yet, providing a convenient way to access the matrix.
         '''
         if self._hamil is None:
-            self.build()
+            raise ValueError("Hamiltonian matrix not built yet. Please call the build() method first.")
         return self._hamil
+
+    @property
+    def matvec_fun(self):
+        '''
+        Returns the matrix-vector multiplication function for the Hamiltonian.
+        This is useful for iterative diagonalization methods.
+        '''        
+        def _matvec(x, *args):
+            return self.matvec(x, *args, hilbert=self._hilbert_space)
+        return _matvec
 
     @property
     def diag(self):
@@ -2025,6 +2029,14 @@ class Hamiltonian(Operator):
         - 'auto'            : Automatically select method based on matrix size/properties
         - 'exact'           : Full diagonalization (all eigenvalues)
         - 'lanczos'         : Lanczos iteration for sparse symmetric matrices
+            - 'nh'              : Hamiltonian size threshold for auto Lanczos
+            - 'k'               : Number of eigenvalues to compute
+            - 'which'           : Which eigenvalues to find
+            - 'tol'             : Convergence tolerance
+            - 'max_iter'        : Maximum iterations
+            - 'sigma'           : Shift for shift-invert mode
+        -----------
+        Additional iterative methods:
         - 'block_lanczos'   : Block Lanczos for multiple eigenpairs
         - 'arnoldi'         : Arnoldi iteration for general matrices
         - 'shift-invert'    : Shift-invert mode for interior eigenvalues
@@ -2203,7 +2215,7 @@ class Hamiltonian(Operator):
         try:
             result = self._diag_engine.diagonalize(
                 A               = matrix_to_diag,
-                matvec          = self._matvec_fun,
+                matvec          = self.matvec_fun,
                 n               = self._nh, 
                 k               = k,
                 hermitian       = hermitian,
@@ -2429,14 +2441,6 @@ class Hamiltonian(Operator):
             compile_end = time.perf_counter()
             self._log(f"Local energy function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="red")
             self._loc_energy_int_fun = wrapper
-            
-            #! TODO - fix this for matrix free
-            @numba.njit(nogil=True, inline='always')
-            def _matvec(vec: np.ndarray):
-                return self.matvec(vec, hilbert=self._hilbert_space)
-            self._matvec_fun = _matvec
-            # call to compile
-            # _ = self._matvec_fun(np.zeros(self._nh, dtype=self._dtype))
 
         except Exception as e:
             self._log(f"Failed to set integer local energy function: {e}", lvl=3, color="red", log='error')
