@@ -436,7 +436,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 #! Finalize the operator addition for this neighbor
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
         
-        self._log(f"Total NN elements added: {elems}", color='red')
+        self._log(f"Total NN elements added: {elems}", color='red', lvl=4)
         self._log("Successfully set local energy operators...", lvl=1, log='info')
         
     # ----------------------------------------------------------------------------------------------

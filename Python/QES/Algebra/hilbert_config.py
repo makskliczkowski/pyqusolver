@@ -34,9 +34,7 @@ class SymmetrySpec:
     def as_tuple(self) -> Tuple[SymmetryGenerators, Union[int, float, complex]]:
         return self.generator, self.sector
 
-
 StateFilter = Callable[[int], bool]
-
 
 @dataclass(frozen=True)
 class HilbertConfig:

@@ -731,12 +731,12 @@ def build_operator_matrix(
 #! Matrix-Free Operator Application (optimized!)
 # -------------------------------------------------------------------------------
 
-# @numba.njit(fastmath=True, parallel=False) # Serial is often faster here to avoid race conditions on write
+@numba.njit(fastmath=True, parallel=False) # Serial is often faster here to avoid race conditions on write
 def _apply_op_batch_jit(
     vecs_in             : np.ndarray,
     vecs_out            : np.ndarray,
     op_func             : Callable,
-    op_args             : Tuple,
+    args                : Tuple,
     basis               : Optional[np.ndarray],
     representative_list : Optional[np.ndarray],
     normalization       : Optional[np.ndarray],
@@ -750,7 +750,7 @@ def _apply_op_batch_jit(
     # Loop over the Hilbert space (Rows)
     for k in range(nh):
         
-        # 1. Identify the state integer (Do this ONCE per row)
+        # Identify the state integer (Do this ONCE per row)
         if has_symmetry:
             state   = representative_list[k]
             norm_k  = normalization[k]
@@ -759,10 +759,10 @@ def _apply_op_batch_jit(
         else:
             state   = k
             
-        # 2. Compute Operator Action (Do this ONCE per row)
-        new_states, values = op_func(state, *op_args)
+        # Compute Operator Action (Do this ONCE per row)
+        new_states, values = op_func(state, *args)
         
-        # 3. Map back to indices and apply to the WHOLE BATCH
+        # Map back to indices and apply to the WHOLE BATCH
         for i in range(len(new_states)):
             new_state   = new_states[i]
             val         = values[i]
@@ -802,13 +802,12 @@ def _apply_op_batch_jit(
                 else:
                     vecs_out[target_idx, :]    += val * vecs_in[k, :]
 
-# @numba.njit(parallel=False, fastmath=True)
+@numba.njit(parallel=False, fastmath=True)
 def _apply_fourier_batch_jit(
     vecs_in             : np.ndarray,
     vecs_out            : np.ndarray,
     phases              : np.ndarray,
     op_func             : Callable,
-    base_args           : Tuple, 
     basis               : Optional[np.ndarray],
     representative_list : Optional[np.ndarray],
     normalization       : Optional[np.ndarray],
@@ -838,7 +837,7 @@ def _apply_fourier_batch_jit(
         # Loop Sites (Accumulate operator terms)
         for site_idx in range(n_sites):
             c_site              = phases[site_idx]
-            new_states, values  = op_func(state, site_idx, *base_args)
+            new_states, values  = op_func(state, site_idx)
             
             for j in range(len(new_states)):
                 new_state       = new_states[j]

@@ -1726,7 +1726,7 @@ class Operator(ABC):
     
     #################################
     
-    def matvec(self, vecs: Array, hilbert: HilbertSpace, *args, **kwargs) -> Array:
+    def matvec(self, vecs: Array, *args, hilbert: HilbertSpace = None, **kwargs) -> Array:
         """
         Apply the operator matrix to a vector.
         
@@ -1800,16 +1800,13 @@ class Operator(ABC):
             vecs_in = vecs
         
         vecs_out            = np.zeros_like(vecs_in, dtype=np.complex128)
-        
-        # 3. Call Optimized Kernel
-        # CRITICAL FIX: Pass the function and args directly. Do not define a wrapper.
         op_func             = self._fun._fun_int
         
         _apply_op_batch_jit(
             vecs_in, 
             vecs_out, 
             op_func, 
-            args,           # Pass tuple of args directly
+            args,           # Pass tuple of args (e.g., (site_i,) or (site_i, site_j))
             basis, 
             representative_list, 
             normalization, 
@@ -1821,7 +1818,7 @@ class Operator(ABC):
             return vecs_out.flatten() # Return in original shape
         return vecs_out
     
-    def matvec_fourier(self, phases: np.ndarray, hilbert: HilbertSpace, vec: np.ndarray, *args) -> np.ndarray:
+    def matvec_fourier(self, phases: np.ndarray, vec: np.ndarray, hilbert: HilbertSpace) -> np.ndarray:
         """
         Computes |out> = O_q |in> without constructing the matrix O_q.
         
@@ -1836,6 +1833,9 @@ class Operator(ABC):
         k_vec (np.ndarray)        : The momentum vector k.
         dagger (bool)             : If True, computes the Hermitian conjugate O_q^dagger.
         """
+
+        if hilbert is None:
+            raise ValueError("Hilbert space must be provided for Fourier operator application.")
 
         try:
             from QES.Algebra.Hilbert.matrix_builder import _apply_fourier_batch_jit
@@ -1858,13 +1858,15 @@ class Operator(ABC):
         repr_phase              = getattr(hilbert, 'repr_phase', None)
 
         # This function must have signature (state, site_idx, *args)
-        op_func                 = self._fun._fun_int
+
+        if not self.type_acting.is_local():
+            raise ValueError("Fourier operator application requires a local operator.")
+
         _apply_fourier_batch_jit(
                                     vecs_in,
                                     vecs_out,
                                     phases,
-                                    op_func,
-                                    args,   # Pass the tuple of args directly
+                                    self._fun._fun_int,
                                     basis,
                                     representative_list,
                                     normalization,
@@ -1902,6 +1904,100 @@ def operator_identity(backend : str = 'default') -> Operator:
                     quadratic=False)
 
 ####################################################################################################
+
+def _make_global_closure(op, ns_val, sites_val, args):
+    # Unpack args in Python to avoid Numba unpacking/branching issues
+    n = len(args)
+    if n == 2:
+        a0, a1 = args
+        @numba.njit
+        def impl(state): 
+            return op(state, ns_val, sites_val, a0, a1)
+        return impl
+    elif n == 3:
+        a0, a1, a2 = args
+        @numba.njit
+        def impl(state): 
+            return op(state, ns_val, sites_val, a0, a1, a2)
+        return impl
+    elif n == 1:
+        a0 = args[0]
+        @numba.njit
+        def impl(state): 
+            return op(state, ns_val, sites_val, a0)
+        return impl
+    elif n == 0:
+        @numba.njit
+        def impl(state): 
+            return op(state, ns_val, sites_val)
+        return impl
+    else:
+        # Fallback for unusual cases (might fail in njit if *args not supported)
+        @numba.njit
+        def impl(state): return op(state, ns_val, sites_val, *args)
+        return impl
+
+def _make_local_closure(op, ns_val, args):
+    n = len(args)
+    if n == 2:
+        a0, a1 = args
+        @numba.njit
+        def impl(state, i): 
+            return op(state, ns_val, np.array([i], dtype=np.int32), a0, a1)
+        return impl
+    elif n == 3:
+        a0, a1, a2 = args
+        @numba.njit
+        def impl(state, i): 
+            return op(state, ns_val, np.array([i], dtype=np.int32), a0, a1, a2)
+        return impl
+    elif n == 1:
+        a0 = args[0]
+        @numba.njit
+        def impl(state, i): 
+            return op(state, ns_val, np.array([i], dtype=np.int32), a0)
+        return impl
+    elif n == 0:
+        @numba.njit
+        def impl(state, i): 
+            return op(state, ns_val, np.array([i], dtype=np.int32))
+        return impl
+    else:
+        @numba.njit
+        def impl(state, i): 
+            return op(state, ns_val, np.array([i], dtype=np.int32), *args)
+        return impl
+
+def _make_corr_closure(op, ns_val, args):
+    n = len(args)
+    if n == 2:
+        a0, a1 = args
+        @numba.njit
+        def impl(state, i, j): 
+            return op(state, ns_val, np.array([i, j], dtype=np.int32), a0, a1)
+        return impl
+    elif n == 3:
+        a0, a1, a2 = args
+        @numba.njit
+        def impl(state, i, j): 
+            return op(state, ns_val, np.array([i, j], dtype=np.int32), a0, a1, a2)
+        return impl
+    elif n == 1:
+        a0 = args[0]
+        @numba.njit
+        def impl(state, i, j): 
+            return op(state, ns_val, np.array([i, j], dtype=np.int32), a0)
+        return impl
+    elif n == 0:
+        @numba.njit
+        def impl(state, i, j): 
+            return op(state, ns_val, np.array([i, j], dtype=np.int32))
+        return impl
+    else:
+        @numba.njit
+        def impl(state, i, j): 
+            return op(state, ns_val, np.array([i, j], dtype=np.int32), *args)
+        return impl
 
 def create_operator(type_act        : int                   | OperatorTypeActing,
                     op_func_int     : Callable,
@@ -1987,12 +2083,9 @@ def create_operator(type_act        : int                   | OperatorTypeActing
         sites_np        = np.array(sites, dtype = np.int32)
         
         if isinstance(op_func_int, CPUDispatcher):
-            # @numba.njit
-            def fun_int(state):
-                return op_func_int(state, ns, sites, *extra_args)
+            fun_int = _make_global_closure(op_func_int, ns, sites, extra_args)
         else:
-            def fun_int(state):
-                return op_func_int(state, ns, sites, *extra_args)
+            def fun_int(state): return op_func_int(state, ns, sites, *extra_args)
 
         def fun_np(state):
             return op_func_np(state, sites_np, *extra_args)
@@ -2020,10 +2113,7 @@ def create_operator(type_act        : int                   | OperatorTypeActing
     elif type_act == OperatorTypeActing.Local.value:
         
         if isinstance(op_func_int, CPUDispatcher):
-            # @numba.njit
-            def fun_int(state, i):
-                sites_1 = np.array([i], dtype=np.int32)
-                return op_func_int(state, ns, sites_1, *extra_args)
+            fun_int = _make_local_closure(op_func_int, ns, extra_args)
         else:
             def fun_int(state, i):
                 sites_1 = np.array([i], dtype=np.int32)
@@ -2057,10 +2147,7 @@ def create_operator(type_act        : int                   | OperatorTypeActing
     elif type_act == OperatorTypeActing.Correlation.value:
         
         if isinstance(op_func_int, CPUDispatcher):
-            # @numba.njit
-            def fun_int(state, i, j):
-                sites_2 = np.array([i, j], dtype=np.int32)
-                return op_func_int(state, ns, sites_2, *extra_args)
+            fun_int = _make_corr_closure(op_func_int, ns, extra_args)
         else:
             def fun_int(state, i, j):
                 sites_2 = np.array([i, j], dtype=np.int32)
@@ -2092,52 +2179,6 @@ def create_operator(type_act        : int                   | OperatorTypeActing
     
     else:
         raise ValueError("Invalid OperatorTypeActing")
-
-def operator_from_local(local_op: LocalOperator,
-                        *,
-                        lattice: Optional[Lattice] = None,
-                        ns: Optional[int] = None,
-                        name: Optional[str] = None,
-                        type_override: Optional[OperatorTypeActing] = None) -> Operator:
-    """
-    Convert a catalogued :class:`LocalOperator` into a concrete :class:`Operator`.
-    """
-
-    kernels = local_op.kernels
-    if kernels.fun_int is None:
-        raise ValueError(f"Integer backend not available for operator '{local_op.key}'.")
-
-    def _missing_np_kernel(*_args, **_kwargs):
-        raise NotImplementedError(
-            f"NumPy backend not available for operator '{local_op.key}'."
-        )
-
-    def _missing_jax_kernel(*_args, **_kwargs):
-        raise NotImplementedError(
-            f"JAX backend not available for operator '{local_op.key}'."
-        )
-
-    fun_np  = kernels.fun_np if kernels.fun_np is not None else _missing_np_kernel
-    fun_jnp = kernels.fun_jax if kernels.fun_jax is not None else _missing_jax_kernel
-
-    type_map = {
-        0: OperatorTypeActing.Global,
-        1: OperatorTypeActing.Local,
-        2: OperatorTypeActing.Correlation,
-    }
-    type_act = type_override or type_map.get(kernels.site_parity, OperatorTypeActing.Local)
-
-    return create_operator(
-        type_act        =   type_act,
-        op_func_int     =   kernels.fun_int,
-        op_func_np      =   fun_np,
-        op_func_jnp     =   fun_jnp,
-        lattice         =   lattice,
-        ns              =   ns,
-        extra_args      =   kernels.default_extra_args,
-        name            =   name or local_op.key,
-        modifies        =   kernels.modifies_state,
-    )
 
 # Example usage:
 # (Assume sigma_x_int_np, sigma_x_np, sigma_x_jnp are defined elsewhere and JAX_AVAILABLE is set.)

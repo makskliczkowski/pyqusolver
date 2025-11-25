@@ -2194,12 +2194,17 @@ class Hamiltonian(Operator):
                 if verbose:
                     self._log("Converting JAX sparse Hamiltonian to dense array for exact diagonalization.", lvl=2, color="yellow")
                 matrix_to_diag = np.asarray(matrix_to_diag.todense())
+            elif sp.sparse.issparse(matrix_to_diag):
+                if verbose:
+                    self._log("Converting SciPy sparse Hamiltonian to dense array for exact diagonalization.", lvl=2, color="yellow")
+                matrix_to_diag = matrix_to_diag.toarray()
 
         # Perform diagonalization
         try:
             result = self._diag_engine.diagonalize(
                 A               = matrix_to_diag,
                 matvec          = self._matvec_fun,
+                n               = self._nh, 
                 k               = k,
                 hermitian       = hermitian,
                 which           = which,
@@ -2424,9 +2429,13 @@ class Hamiltonian(Operator):
             self._log(f"Local energy function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="red")
             self._loc_energy_int_fun = wrapper
             
+            #! TODO - fix this for matrix free
+            @numba.njit(nogil=True, inline='always')
             def _matvec(vec: np.ndarray):
                 return self.matvec(vec, hilbert=self._hilbert_space)
             self._matvec_fun = _matvec
+            # call to compile
+            # _ = self._matvec_fun(np.zeros(self._nh, dtype=self._dtype))
 
         except Exception as e:
             self._log(f"Failed to set integer local energy function: {e}", lvl=3, color="red", log='error')
@@ -2488,6 +2497,7 @@ class Hamiltonian(Operator):
             modifies_state  =   True,
             necessary_args  =   0
         )
+        self._type_acting   = OperatorTypeActing.Global
         
         self._log(f"Max local changes set to {self._max_local_ch_o}", lvl=2, color="green", log='debug')
         self._log("Successfully set local energy functions...", lvl=2, log ='debug')

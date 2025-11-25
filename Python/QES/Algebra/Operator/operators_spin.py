@@ -105,7 +105,7 @@ _SIG_M = np.array([[0, 0],
 #! Sigma-X (\sigma _x) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit
+@numba.njit(inline='always', cache=True)
 def sigma_x_int_np(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value=_SPIN):
     r"""
     Apply the Pauli-X (\sigma _x) operator on the given sites.
@@ -147,7 +147,7 @@ def sigma_x_int(state  : int,
     """
     return sigma_x_int_np(state, ns, sites, BACKEND_DEF_SPIN, spin_value)
 
-@numba.njit
+@numba.njit(inline='always', cache=True)
 def sigma_x_np(state    : np.ndarray,
             sites       : Union[List[int], None],
             spin        : bool  = BACKEND_DEF_SPIN,
@@ -218,7 +218,7 @@ def sigma_x(state,
 #! Sigma-Y (\sigma _y) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit(cache=True)
+@numba.njit(cache=True, inline='always')
 def sigma_y_int_np_real(state, 
                         ns, 
                         sites,
@@ -245,7 +245,7 @@ def sigma_y_int_np_real(state,
     # return ensure_operator_output_shape_numba(out_state, out_coeff)
     return out_state, out_coeff
 
-@numba.njit
+@numba.njit(inline='always', cache=True)
 def sigma_y_int_np(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value=_SPIN):
     r"""
     \sigma _y on an integer state.
@@ -380,7 +380,7 @@ def sigma_y(state,
 #! Sigma-Z (\sum _z) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit
+@numba.njit(inline='always', cache=True)
 def sigma_z_int_np(state     : int,
                 ns           : int,
                 sites        : Union[List[int], None],
@@ -432,7 +432,7 @@ def sigma_z_int(state       : int,
         return sigma_z_int_jnp(state, ns, sites, spin_value)
     return sigma_z_int_np(state, ns, sites, spin_value)
 
-@numba.njit
+@numba.njit(inline='always', cache=True)
 def sigma_z_np(state        : np.ndarray,
                 sites       : Union[List[int], None],
                 spin        : bool  = BACKEND_DEF_SPIN,
@@ -499,7 +499,7 @@ def sigma_z(state,
 #! Sigma-Z total (\sum _z total) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_z_total_int_np(state        : int,
                           ns          : int,
                           sites       : Union[List[int], None],
@@ -528,7 +528,7 @@ def sigma_z_total_int_np(state        : int,
     # return ensure_operator_output_shape_numba(out_state, out_coeff)
     return out_state, out_coeff
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_z_total_np(state      : np.ndarray,
                     sites       : Union[List[int], None],
                     spin        : bool  = BACKEND_DEF_SPIN,
@@ -562,7 +562,7 @@ def sigma_z_total_np(state      : np.ndarray,
 #! Sigma-Plus (\sigma ^+) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_plus_int_np(state         : int,
                     ns              : int,
                     sites           : List[int],
@@ -589,7 +589,7 @@ def sigma_plus_int_np(state         : int,
     # return ensure_operator_output_shape_numba(out_state, out_coeff)
     return out_state, out_coeff
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_plus_np(state         : np.ndarray,
                 sites           : List[int],
                 spin            : bool  = BACKEND_DEF_SPIN,
@@ -626,7 +626,7 @@ def sigma_plus(state,
 #! Sigma-Minus (\sigma ^-) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_minus_int_np(state        : int,
                     ns              : int,
                     sites           : List[int],
@@ -674,7 +674,7 @@ def sigma_minus_int_np(state        : int,
     # return ensure_operator_output_shape_numba(out_state, out_coeff)
     return out_state, out_coeff
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_minus_np(state        : np.ndarray,
                 sites           : List[int],
                 spin            : bool  = BACKEND_DEF_SPIN,
@@ -733,7 +733,7 @@ def sigma_minus(state,
 #! Sigma_pm (\sigma ^+ then \sigma ^-) operator and Sigma_mp (\sigma ^- then \sigma ^+) operator
 # -----------------------------------------------------------------------------
 
-@numba.njit
+@numba.njit(inline='always')
 def _sigma_pm_int_core(state        : int,
                         ns          : int,
                         sites       : List[int],
@@ -765,7 +765,7 @@ def _sigma_pm_int_core(state        : int,
         coeff *= spin_val
     return new_state, coeff
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_pm_int_np(state       : int,
                     ns          : int,
                     sites       : List[int],
@@ -789,15 +789,15 @@ def sigma_pm_int_np(state       : int,
             - out_state: A NumPy array containing the new state(s) as integer(s) after applying the operator.
             - out_coeff: A NumPy array containing the corresponding coefficient(s) for each new state.
     """
-    new_state, coeff     = _sigma_pm_int_core(state, ns, sites, True, spin, spin_val)
-    out_state            = np.empty((1,1), dtype=DEFAULT_NP_INT_TYPE)
-    out_coeff            = np.empty(1, dtype=DEFAULT_NP_FLOAT_TYPE)
-    out_state[0,0]       = new_state
-    out_coeff[0]         = coeff
+    new_state, coeff        = _sigma_pm_int_core(state, ns, sites, True, spin, spin_val)
+    out_state               = np.empty(1, dtype=DEFAULT_NP_INT_TYPE)
+    out_coeff               = np.empty(1, dtype=DEFAULT_NP_FLOAT_TYPE)
+    out_state[0]            = new_state
+    out_coeff[0]            = coeff
     # return ensure_operator_output_shape_numba(out_state, out_coeff)
     return out_state, out_coeff
 
-@numba.njit
+@numba.njit(inline='always')
 def _sigma_pm_np_core(state     : np.ndarray,
                     sites       : List[int],
                     start_up    : bool,
@@ -1432,7 +1432,7 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
 
 def create_sigma_mixed_int(op1_fun: Callable, op2_fun: Callable):
     
-    @numba.njit
+    @numba.njit(cache=True, inline='always')
     def sigma_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
         if sites is None or len(sites) < 2:
             s_dumb, c_dumb = op1_fun(state, ns, sites, spin, spin_value)
@@ -1585,7 +1585,7 @@ def sigma_composition_integer(is_complex: bool):
     '''
     dtype = np.complex128 if is_complex else np.float64
     
-    @numba.njit(nogil=True)
+    @numba.njit(nogil=True, cache=True) # compile separately for real/complex
     def sigma_operator_composition_int(state: int, nops: int, codes, sites, coeffs, ns: int, out_states, out_vals):
         ''' Creates a combined operator based on this list of codes. '''
         ptr         = 0
@@ -1600,6 +1600,10 @@ def sigma_composition_integer(is_complex: bool):
             current_s   = state
             current_c   = 1.0 + 0.0j
             is_diagonal = False
+            # Helper tuple for single-site calls
+            sites_1     = (s1,)
+            # Helper tuple for two-site calls
+            sites_2     = (s1, s2)
             
             #! 1) GLOBAL OPERATORS ARE NOT ALLOWED, WE DON'T WANT CLOSURES!
             if code <= 10:
@@ -1607,85 +1611,86 @@ def sigma_composition_integer(is_complex: bool):
             
             #! 2) LOCAL OPERATORS
             if code == SPIN_LOOKUP_CODES.sig_x_local:
-                s_arr, c_arr    = sigma_x_int_np(state, ns, sites=[s1])
+                s_arr, c_arr    = sigma_x_int_np(state, ns, sites=sites_1)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_y_local:
-                s_arr, c_arr    = sigma_y_int_np(state, ns, sites=[s1])
+                s_arr, c_arr    = sigma_y_int_np(state, ns, sites=sites_1)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_z_local:
-                s_arr, c_arr    = sigma_z_int_np(state, ns, sites=[s1])
+                s_arr, c_arr    = sigma_z_int_np(state, ns, sites=sites_1)
                 is_diagonal     = True
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_p_local:
-                s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=[s1])
+                s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_1)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_m_local:
-                s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=[s1])
+                s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_1)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             #! 3) CORRELATION OPERATORS
             elif code == SPIN_LOOKUP_CODES.sig_x_corr:
-                s_arr, c_arr    = sigma_x_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_x_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_y_corr:
-                s_arr, c_arr    = sigma_y_int_np_real(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_y_int_np_real(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_z_corr:
-                s_arr, c_arr    = sigma_z_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_z_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
                 is_diagonal     = True
             elif code == SPIN_LOOKUP_CODES.sig_p_corr:
-                s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_m_corr:
-                s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_xy_corr:
-                s_arr, c_arr    = sigma_xy_mixed_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_xy_mixed_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_yx_corr:
-                s_arr, c_arr    = sigma_yx_mixed_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_yx_mixed_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_xz_corr:
-                s_arr, c_arr    = sigma_xz_mixed_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_xz_mixed_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_zx_corr:
-                s_arr, c_arr    = sigma_zx_mixed_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_zx_mixed_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_yz_corr:
-                s_arr, c_arr    = sigma_yz_mixed_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_yz_mixed_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_zy_corr:
-                s_arr, c_arr    = sigma_zy_mixed_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_zy_mixed_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_pm_corr:
-                s_arr, c_arr    = sigma_pm_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_pm_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_mp_corr:
-                s_arr, c_arr    = sigma_mp_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_mp_int_np(state, ns, sites=sites_2)
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             else:
                 continue #! ONE CAN IMPLEMENT MORE OPERATORS -> JUST CALL THIS FUNCTION AND EXTEND WITH YOUR OWN
             
             # Multiply by coefficient
-            final_val = current_c * coeff
+            final_val                   = current_c * coeff
+            if abs(final_val) < 1e-15:  continue
             
             # Accumulate results
             if is_diagonal:

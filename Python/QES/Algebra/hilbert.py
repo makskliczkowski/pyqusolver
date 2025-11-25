@@ -39,7 +39,7 @@ try:
         LocalSpace, LocalSpaceTypes, 
         StateTypes,      
         SymmetryGenerators, GlobalSymmetries, OperatorTypeActing,
-        operator_identity, operator_from_local
+        operator_identity
     )
     
     from QES.Algebra.globals                        import GlobalSymmetry
