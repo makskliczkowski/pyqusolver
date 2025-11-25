@@ -1993,7 +1993,7 @@ def _make_corr_closure(op, ns_val, args):
             return op(state, ns_val, np.array([i, j], dtype=np.int32), *args)
         return impl
 
-def create_operator(type_act        : int                   | OperatorTypeActing,
+def create_operator(type_act        : int | OperatorTypeActing,
                     op_func_int     : Callable,
                     op_func_np      : Callable,
                     op_func_jnp     : Callable,
