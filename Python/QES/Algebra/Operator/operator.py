@@ -915,7 +915,7 @@ class Operator(ABC):
     
     def __init__(self,
                 op_fun      : OperatorFunction              = None,
-                fun_int     : Callable                      = None,        
+                fun_int     : Callable                      = None,
                 fun_np      : Optional[Callable]            = None,
                 fun_jnp     : Optional[Callable]            = None,
                 eigval                                      = 1.0,
@@ -995,6 +995,8 @@ class Operator(ABC):
         self._jit_wrapper_cache = {}                                # cache for JIT wrappers
         
         self._instr_code        = kwargs.get("instr_code", None)    # instruction code for the operator - used in operator builder - linear algebraic operations
+        self._matvec_fun        = None                              # the function that defines the matrix-vector product for the operator - if not provided, the matrix-vector product is generated from the function fun
+        
         self._init_functions(op_fun, fun_int, fun_np, fun_jnp)      # initialize the operator function
     
     def __repr__(self):
@@ -1353,16 +1355,18 @@ class Operator(ABC):
     
     @property
     def fun(self):              return self._fun
-    
     @fun.setter
     def fun(self, val):         self._fun = val
     
     @property
-    def int(self):              return self._fun.fun
+    def matrix_fun(self):       return self._matrix_fun
+    @matrix_fun.setter
+    def matrix_fun(self, val):  self._matrix_fun = val
     
     @property
+    def int(self):              return self._fun.fun
+    @property
     def npy(self):              return self._fun.npy
-    
     @property
     def jax(self):              return self._fun.jax
     

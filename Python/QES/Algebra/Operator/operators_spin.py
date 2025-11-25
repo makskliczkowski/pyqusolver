@@ -1023,6 +1023,8 @@ class SpinLookupCodes(IntEnum):
     sig_zx_corr:    int = 28
     sig_yz_corr:    int = 29
     sig_zy_corr:    int = 30
+    sig_pm_corr:    int = 31
+    sig_mp_corr:    int = 32
     
     @staticmethod
     def to_dict() -> Dict[str, int]:
@@ -1044,8 +1046,8 @@ class SpinLookupCodes(IntEnum):
             'Sz/L'          : SpinLookupCodes.sig_z_local,
             'Sp/L'          : SpinLookupCodes.sig_p_local,
             'Sm/L'          : SpinLookupCodes.sig_m_local,
-            'Sx/Sy'         : SpinLookupCodes.sig_x_corr,
             # corr
+            'Sx/C'          : SpinLookupCodes.sig_x_corr,
             'Sy/C'          : SpinLookupCodes.sig_y_corr,
             'Sz/C'          : SpinLookupCodes.sig_z_corr,
             'Sp/C'          : SpinLookupCodes.sig_p_corr,
@@ -1055,7 +1057,9 @@ class SpinLookupCodes(IntEnum):
             'SxSz/C'        : SpinLookupCodes.sig_xz_corr,
             'SzSx/C'        : SpinLookupCodes.sig_zx_corr,
             'SySz/C'        : SpinLookupCodes.sig_yz_corr,
-            'SzSy/C'        : SpinLookupCodes.sig_zy_corr
+            'SzSy/C'        : SpinLookupCodes.sig_zy_corr,
+            'Spm/C'         : SpinLookupCodes.sig_pm_corr,
+            'Smp/C'         : SpinLookupCodes.sig_mp_corr,
         }
     
 SPIN_LOOKUP_CODES = SpinLookupCodes
@@ -1310,6 +1314,11 @@ def sig_pm( lattice     : Optional[Lattice]     = None,
     Factory for the alternating operator: even-indexed sites \sigma ^+, odd-indexed \sigma ^ -.
     """
 
+    if type_act == OperatorTypeActing.Global or sites is not None:
+        code = SPIN_LOOKUP_CODES.sig_pm_corr
+    else:
+        code = SPIN_LOOKUP_CODES.sig_pm_corr
+
     return create_operator(
         type_act    = type_act,
         op_func_int = sigma_pm_int_np,
@@ -1320,7 +1329,8 @@ def sig_pm( lattice     : Optional[Lattice]     = None,
         sites       = sites,
         extra_args  = (spin, spin_value),
         name        = "Spm",
-        modifies    = True
+        modifies    = True,
+        code        = code
     )
     
 # -----------------------------------------------------------------------------
@@ -1334,8 +1344,13 @@ def sig_mp( lattice     : Optional[Lattice]     = None,
             spin        : bool                  = BACKEND_DEF_SPIN,
             spin_value  : float                 = _SPIN) -> Operator:
     r"""
-    Factory for the alternating operator: even-indexed sites \sigma ^ -, odd-indexed \sigma ^+.
+    Factory for the alternating operator: even-indexed sites \sigma ^ -, odd-indexed \sigma ^+.
     """
+
+    if type_act == OperatorTypeActing.Global or sites is not None:
+        code = SPIN_LOOKUP_CODES.sig_mp_corr
+    else:
+        code = SPIN_LOOKUP_CODES.sig_mp_corr
 
     return create_operator(
         type_act    = type_act,
@@ -1347,7 +1362,8 @@ def sig_mp( lattice     : Optional[Lattice]     = None,
         sites       = sites,
         extra_args  = (spin, spin_value),
         name        = "Smp",
-        modifies    = True
+        modifies    = True,
+        code        = code
     )
 
 # -----------------------------------------------------------------------------
@@ -1529,6 +1545,11 @@ def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
         np_func     = sigma_yz_mixed_np
         jnp_func    = sigma_yz_mixed_jnp if JAX_AVAILABLE else None
         code        = SPIN_LOOKUP_CODES.sig_yz_corr if sites is None else SPIN_LOOKUP_CODES.sig_yz_global
+    elif name == 'zy':
+        int_func    = sigma_zy_mixed_int_np
+        np_func     = sigma_zy_mixed_np
+        jnp_func    = sigma_zy_mixed_jnp if JAX_AVAILABLE else None
+        code        = SPIN_LOOKUP_CODES.sig_zy_corr if sites is None else SPIN_LOOKUP_CODES.sig_zy_global
     elif name == 'zx':
         int_func    = sigma_zx_mixed_int_np
         np_func     = sigma_zx_mixed_np
@@ -1539,11 +1560,6 @@ def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
         np_func     = sigma_xz_mixed_np
         jnp_func    = sigma_xz_mixed_jnp if JAX_AVAILABLE else None
         code        = SPIN_LOOKUP_CODES.sig_xz_corr if sites is None else SPIN_LOOKUP_CODES.sig_xz_global
-    elif name == 'zy':
-        int_func    = sigma_zy_mixed_int_np
-        np_func     = sigma_zy_mixed_np
-        jnp_func    = sigma_zy_mixed_jnp if JAX_AVAILABLE else None
-        code        = SPIN_LOOKUP_CODES.sig_zy_corr if sites is None else SPIN_LOOKUP_CODES.sig_zy_global
     else:
         raise ValueError(f"Unknown mixed sigma operator name: {name}")
     
@@ -1617,7 +1633,7 @@ def sigma_composition_integer(is_complex: bool):
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_y_corr:
-                s_arr, c_arr    = sigma_y_int_np(state, ns, sites=[s1, s2])
+                s_arr, c_arr    = sigma_y_int_np_real(state, ns, sites=[s1, s2])
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_z_corr:
@@ -1655,6 +1671,14 @@ def sigma_composition_integer(is_complex: bool):
                 current_c       = dtype(c_arr[0])
             elif code == SPIN_LOOKUP_CODES.sig_zy_corr:
                 s_arr, c_arr    = sigma_zy_mixed_int_np(state, ns, sites=[s1, s2])
+                current_s       = s_arr[0]
+                current_c       = dtype(c_arr[0])
+            elif code == SPIN_LOOKUP_CODES.sig_pm_corr:
+                s_arr, c_arr    = sigma_pm_int_np(state, ns, sites=[s1, s2])
+                current_s       = s_arr[0]
+                current_c       = dtype(c_arr[0])
+            elif code == SPIN_LOOKUP_CODES.sig_mp_corr:
+                s_arr, c_arr    = sigma_mp_int_np(state, ns, sites=[s1, s2])
                 current_s       = s_arr[0]
                 current_c       = dtype(c_arr[0])
             else:

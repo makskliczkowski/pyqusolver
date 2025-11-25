@@ -1797,7 +1797,6 @@ class Hamiltonian(Operator):
             raise ValueError(f"{Hamiltonian._ERR_HAMILTONIAN_BUILD} : {str(e)}") from e
         ham_duration = time.perf_counter() - ham_start
         
-        
         if (self._hamil is not None and self._hamil.size > 0) or (self._hamil_sp is not None and self._hamil_sp.size > 0):
             if verbose:
                 self._log(f"Hamiltonian matrix built in {ham_duration:.6f} seconds.", lvl = 1)
@@ -2171,9 +2170,9 @@ class Hamiltonian(Operator):
         # Log start
         if verbose:
             self._log(f"Diagonalization started using method='{method}'...", lvl=1)
-            if k is not None:
-                self._log(f"  Computing {k} eigenvalues", lvl=2)
-            self._log(f"  Backend: {backend_str}", lvl=2)
+            if k is not None and kwargs.get('method', 'exact') != 'exact':
+                self._log(f"Computing {k} eigenvalues", lvl=2)
+            self._log(f"Backend: {backend_str}", lvl=2)
         
         # Initialize or reuse diagonalization engine
         if self._diag_engine is None or self._diag_engine.method != method:
@@ -2181,7 +2180,8 @@ class Hamiltonian(Operator):
                                         method      = method,
                                         backend     = backend_str,
                                         use_scipy   = use_scipy,
-                                        verbose     = verbose
+                                        verbose     = verbose,
+                                        logger      = self._logger
                                     )
         
         # Prepare solver kwargs (remove our custom parameters)
@@ -2189,13 +2189,8 @@ class Hamiltonian(Operator):
                         if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which']}
         
         matrix_to_diag  = self._hamil
-
         if method == 'exact':
-            if sp.sparse.issparse(matrix_to_diag):
-                if verbose:
-                    self._log("Converting sparse Hamiltonian to dense array for exact diagonalization.", lvl=2, color="yellow")
-                matrix_to_diag = matrix_to_diag.toarray()
-            elif JAX_AVAILABLE and BCOO is not None and isinstance(matrix_to_diag, BCOO):
+            if JAX_AVAILABLE and BCOO is not None and isinstance(matrix_to_diag, BCOO):
                 if verbose:
                     self._log("Converting JAX sparse Hamiltonian to dense array for exact diagonalization.", lvl=2, color="yellow")
                 matrix_to_diag = np.asarray(matrix_to_diag.todense())
@@ -2204,6 +2199,7 @@ class Hamiltonian(Operator):
         try:
             result = self._diag_engine.diagonalize(
                 A               = matrix_to_diag,
+                matvec          = self._matvec_fun,
                 k               = k,
                 hermitian       = hermitian,
                 which           = which,
@@ -2427,6 +2423,10 @@ class Hamiltonian(Operator):
             compile_end = time.perf_counter()
             self._log(f"Local energy function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="red")
             self._loc_energy_int_fun = wrapper
+            
+            def _matvec(vec: np.ndarray):
+                return self.matvec(vec, hilbert=self._hilbert_space)
+            self._matvec_fun = _matvec
 
         except Exception as e:
             self._log(f"Failed to set integer local energy function: {e}", lvl=3, color="red", log='error')
