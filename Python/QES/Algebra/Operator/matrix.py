@@ -15,20 +15,18 @@ from __future__ import annotations
 import numpy as np
 
 import time
-import numba
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
-from typing import TYPE_CHECKING, Optional, Union, Callable, Any
+from typing import Optional, Union, Callable, Any
 
 try:
     from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
-    if TYPE_CHECKING:
-        from QES.Algebra.Hamil.hamil_diag_engine import DiagonalizationEngine
-        from QES.general_python.common.flog import Logger
-        import QES.Algebra.Hamil.hamil_diag_helpers as diag_helpers
-        
-except ImportError:
-    raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.")
+    from QES.general_python.common.flog import Logger
+    from QES.Algebra.Hamil.hamil_diag_engine import DiagonalizationEngine
+    import QES.Algebra.Hamil.hamil_diag_helpers as diag_helpers
+
+except ImportError as exc:
+    raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.") from exc
 
 # -------------------------------
 
@@ -190,596 +188,524 @@ class DummyVector:
 ##################################################################################
 
 class GeneralMatrix(spla.LinearOperator):
-    ''' General matrix representation for operators. '''
-    
+    """Generic linear-algebra helper providing matrix storage, diagonalization, and logging."""
+
     _ERR_MATRIX_NOT_BUILT        = "Matrix representation has not been built. Call build() first."
     _ERR_INVALID_BACKEND         = "Invalid backend specified."
     _ERR_UNSUPPORTED_OPERATION   = "The requested operation is not supported for this matrix type."
-    
-    def __init__(self, 
-                shape           : tuple[int, int],
-                *,
-                matvec          : Optional[Callable[[np.ndarray], np.ndarray]]  = None,
-                is_sparse       : bool                                          = True,
-                backend         : str                                           = 'default',
-                logger          : Optional[Logger]                              = None,
-                seed            : Optional[int]                                 = None,
-                dtype           : Optional[Union[str, np.dtype]]                = None,
-            ) -> None:
-        
-        (self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k)) = GeneralMatrix._set_backend(backend, seed)        
 
-        self._dim               = shape[0]
-        self._is_jax            = JAX_AVAILABLE and self._backend != np
-        self._is_numpy          = not self._is_jax
-        self._is_sparse         = is_sparse
-        self._shape             = shape
-        
-        self._dtypeint          = self._backend.int64
-        self._dtype             = dtype if dtype is not None else self._backend.float64
-        
-        self._logger: Logger    = logger
-        
-        self._name              = "GeneralMatrix"
+    def __init__(self,
+                 shape              : Optional[tuple[int, int]]                         = None,
+                 *,
+                 matvec             : Optional[Callable[[np.ndarray], np.ndarray]]      = None,
+                 is_sparse          : bool                                              = True,
+                 backend            : str                                               = 'default',
+                 backend_components : Optional[tuple[Any, Any, Any, tuple[Any, Any]]]   = None,
+                 logger             : Optional[Logger]                                  = None,
+                 seed               : Optional[int]                                     = None,
+                 dtype              : Optional[Union[str, np.dtype]]                    = None) -> None:
+
+        self._shape = tuple(shape) if shape is not None else (0, 0)
+        self._dim   = self._shape[0]
+
+        if backend_components is not None:
+            (self._backendstr,
+             self._backend,
+             self._backend_sp,
+             (self._rng, self._rng_k)) = backend_components
+        else:
+            (self._backendstr,
+             self._backend,
+             self._backend_sp,
+             (self._rng, self._rng_k)) = GeneralMatrix._set_backend(backend, seed)
+
+        self._is_jax       = JAX_AVAILABLE and self._backend is not np
+        self._is_numpy     = not self._is_jax
+        self._is_sparse    = is_sparse
+        self._dtypeint     = self._backend.int64
+        self._logger       = logger
+        self._name         = "GeneralMatrix"
+        self._custom_matvec= matvec
+
+        self._matrix       : Optional[Union[np.ndarray, Any]] = None
+        self._is_built                                              = False
+        self._eig_vec           : Optional[Union[np.ndarray, Any]]  = None
+        self._eig_val           : Optional[Union[np.ndarray, Any]]  = None
+        self._krylov            : Optional[Any]                     = None
+        self._max_local_ch = 1
+        self._max_local_ch_o = 1
+
+        self._diag_engine       : Optional[DiagonalizationEngine]   = None
+        self._diag_method       : str                               = 'exact'
+
+        self._original_basis    : Optional[Any]                     = None
+        self._current_basis     : Optional[Any]                     = None
+        self._basis_metadata    : dict                              = {}
+        self._is_transformed    : bool                              = False
+        self._transformed_grid  : Optional[Any]                     = None
+        self._symmetry_info     : dict                              = {}
+
         self._handle_dtype(dtype)
-        
-        # This sets self.shape and self.dtype for SciPy's internals
-        super().__init__(dtype=self._dtype, shape=shape)
-        
-        # If a fast matvec kernel (Numba wrapper) is provided, store it.
-        self._custom_matvec     = matvec
-        
-        # Storage - cache if built
-        self._is_built          = False
-        self._matrix            : Optional[Union[np.ndarray, Any]] = None # Could be jax array or scipy sparse matrix
-        self._eigvecs           : Optional[Union[np.ndarray, Any]] = None
-        self._eigval            : Optional[np.ndarray]             = None
-        self._krylov            : Optional[Any]                    = None
-        self._max_local_ch      : Optional[int]                    = 1
-        self._max_local_ch_o    : Optional[int]                    = 1
-        
-        # Diagonalization engine 
-        self._diag_engine       : Optional[Any]                    = None
-        self._diag_method       : Optional[str]                    = 'exact'
-        
-        # Basis tracking
-        # These attributes enable flexible basis transformations for any Hamiltonian subclass
-        # (Quadratic, ManyBody, etc.) and any basis type (REAL, KSPACE, FOCK, etc.)
-        self._original_basis    : Optional[Any] = None
-        self._current_basis     : Optional[Any] = None
-        self._basis_metadata    : dict = {}
-        self._is_transformed    = False
-        self._transformed_grid  : Optional[Any] = None
-        self._symmetry_info     : dict = {}
-        
+        super().__init__(dtype=self._dtype, shape=self._shape)
+
     # -------------------------------------------------------
-    # SciPy LinearOperator Interface Implementation
+    # SciPy LinearOperator Interface
     # -------------------------------------------------------
-    
+
+    def _matvec_context(self) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        """Arguments passed to matvec closures. Subclasses can override."""
+        return (), {}
+
     def _matvec(self, x: np.ndarray) -> np.ndarray:
-        """
-        The method SciPy calls when doing A @ x.
-        """
-        
         if self._custom_matvec is not None:
-            
             if self._is_numpy:
                 x_in = np.ascontiguousarray(x, dtype=self._dtype)
                 return self._custom_matvec(x_in)
-            else:
-                return self._custom_matvec(x)
-        else:
-            raise NotImplementedError("Matrix-vector product not defined. Call build() or provide matvec.")
+            return self._custom_matvec(x)
+
+        matvec_impl = getattr(self, "matvec", None)
+        if matvec_impl is None:
+            raise NotImplementedError("Matrix-vector product not defined. Provide a matvec implementation.")
+
+        args, kwargs = self._matvec_context()
+        return matvec_impl(x, *args, **kwargs)
 
     def _adjoint(self):
-        """ One can implement Hermitian conjugate logic. """
-        # For real symmetric operators, self.H == self.H
         return self
 
     # -------------------------------------------------------
-    #! VIRTUAL
+    # Helpers / backend
     # -------------------------------------------------------
-    
+
     @staticmethod
-    def _set_backend(backend: str, seed = None):
-        '''
-        Get the backend, scipy, and random number generator for the backend.
-        
-        Parameters:
-        -----------
-            backend (str):
-                The backend to use.
-            seed (int, optional):
-                The seed for the random number generator.
-        
-        Returns:
-            tuple : 
-                The backend, scipy, and random number generator for the backend.
-                
-        Examples:
-        ---------
-            >>> GeneralMatrix._set_backend('np')
-            ('np', <module 'numpy' from '...'>, None, (None, None))
-            >>> GeneralMatrix._set_backend('jax', seed=42)
-            ('jax', <module 'jax.numpy' from '...'>, None, (<jax.random.PRNGKey object at ...>, None))
-        '''
+    def _set_backend(backend: str, seed: Optional[int] = None):
         if isinstance(backend, str):
             bck = get_backend(backend, scipy=True, random=True, seed=seed)
             if isinstance(bck, tuple):
-                _backend, _backend_sp = bck[0], bck[1]
+                module, module_sp = bck[0], bck[1]
                 if isinstance(bck[2], tuple):
-                    _rng, _rng_k = bck[2][0], bck[2][1]
+                    _rng, _rng_k = bck[2]
                 else:
                     _rng, _rng_k = bck[2], None
             else:
-                _backend, _backend_sp   = bck, None
-                _rng, _rng_k            = None, None
-            return backend, _backend, _backend_sp, (_rng, _rng_k)
-        if JAX_AVAILABLE and backend == 'default':
-            _backendstr = 'jax'
-        else:
-            _backendstr = 'np'
-        return GeneralMatrix._set_backend(_backendstr)    
-    
-    def _handle_dtype(self, dtype: Optional[Union[str, np.dtype]]) -> np.dtype:
-        ''' Handle dtype selection based on backend and user input. '''
+                module, module_sp = bck, None
+                _rng, _rng_k      = None, None
+            return backend, module, module_sp, (_rng, _rng_k)
+
+        target = 'jax' if JAX_AVAILABLE and backend == 'default' else 'np'
+        return GeneralMatrix._set_backend(target)
+
+    def _handle_dtype(self, dtype: Optional[Union[str, np.dtype]]) -> None:
         if dtype is not None:
             self._dtype = dtype
-            
             if self._is_jax:
                 self._iscpx = jnp.issubdtype(jnp.dtype(self._dtype), jnp.complexfloating)
-            elif self._is_numpy:
+            else:
                 self._iscpx = np.issubdtype(np.dtype(self._dtype), np.complexfloating)
-        else:
-            self._dtype = self._backend.float64
-            self._iscpx = False
-        
-    def _log(self, msg : str, log : str = 'info', lvl : int = 0, color : str = "white"):
-        """
-        Log the message.
-        
-        Args:
-            msg (str) : The message to log.
-            log (str) : The logging level. Default is 'info'.
-            lvl (int) : The level of the message.
-        """
-        if self._logger is not None:
-            msg = f"[{self.name}] {msg}"
-            self._logger.info(msg, lvl=lvl, log=log, color=color)
-            
-    # -------------------------------------------------------
-    #! BUILD        
-    # -------------------------------------------------------
-    
-    def build(self) -> None:
-        ''' Build the matrix representation. '''
-        raise NotImplementedError("The build method must be implemented in subclasses of GeneralMatrix.")
-    
-    # -------------------------------------------------------
-    #! CLEAR
-    # -------------------------------------------------------
-    
-    def clear(self) -> None:
-        ''' Clear the built matrix and eigen decomposition. '''
-        self._log("Clearing the built matrix and eigen decomposition...", lvl=2, log='debug')
-        self._is_built      = False
-        self._matrix        = None
-        self._eigvecs       = None
-        self._eigval        = None
-        self._krylov        = None
-        self._diag_engine   = None
-        self._diag_method   = None
-        
-    # -------------------------------------------------------
-    #! DIAGONALIZE
-    # -------------------------------------------------------
-    
-    def diagonalize(self, verbose: bool = False, **kwargs) -> None:
-        ''' Diagonalize the matrix representation. '''
-        raise NotImplementedError("The diagonalize method must be implemented in subclasses of GeneralMatrix.")
-    
-    # -------------------------------------------------------
-    #! Properties
-    # -------------------------------------------------------
-    
-    @property
-    def name(self) -> str:              return self._name
-    @name.setter
-    def name(self, value: str) -> None: self._name = value
-    
-    @property
-    def dtype(self):                    return self._dtype
-    @property
-    def dtypeint(self):                 return self._dtypeint
-    @property
-    def inttype(self):                  return self._dtypeint
-    
-    @property
-    def backend(self):                  return self._backendstr
-    
-    @property
-    def sparse(self):                   return self._is_sparse
-    def is_sparse(self):                return self._is_sparse
-    
-    @property
-    def max_local_changes(self):        return self._max_local_ch
-    @property
-    def max_local(self):                return self.max_local_changes    
-    @property
-    def max_operator_changes(self):     return self._max_local_ch_o
-    @property
-    def max_operator(self):             return self.max_operator_changes
+            return
 
-    @property
-    def energies(self):                 return self._eig_val
-    @property
-    def eigenvalues(self):              return self._eig_val
-    @property
-    def eig_val(self):                  return self._eig_val
-    @property
-    def eigenvals(self):                return self._eig_val
-    @property
-    def eig_vals(self):                 return self._eig_val
-    @property
-    def eigen_vals(self):               return self._eig_val
-    @property 
-    def energies(self):                 return self._eig_val
+        self._dtype = self._backend.float64
+        self._iscpx = False
 
-    @property
-    def eig_vec(self):                  return self._eig_vec
-    @property
-    def eigenvectors(self):             return self._eig_vec
-    @property
-    def eigenvecs(self):                return self._eig_vec
-    @property
-    def krylov(self):                   return self._krylov
+    def _log(self, msg: str, log: str = 'info', lvl: int = 0, color: str = "white") -> None:
+        if self._logger is None:
+            return
+        self._logger.info(f"[{self.name}] {msg}", lvl=lvl, log=log, color=color)
 
-    @property
-    def matrix(self)                    -> Union[np.ndarray, Any]:
-        ''' Get the Hamiltonian matrix representation. '''
-        if not self._is_built or self._matrix is None:
-            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+    # -------------------------------------------------------
+    # Matrix storage
+    # -------------------------------------------------------
+
+    def set_matrix_shape(self, shape: tuple[int, int]) -> None:
+        self._shape     = tuple(shape)
+        self._dim       = self._shape[0]
+        self.shape      = self._shape
+
+    def _get_matrix_reference(self):
         return self._matrix
 
-    @property
-    def diag(self)                      -> Optional[Union[np.ndarray, Any]]:
-        '''
-        Returns the diagonal of the matrix.
-        Distinguish between JAX and NumPy/SciPy. 
-        '''
-        
-        target = self._matrix
-        if target is None:
-            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-    
-        if JAX_AVAILABLE and self._backend != np:
-            if isinstance(target, BCOO):
-                return target.diagonal()
-            elif jnp is not None and isinstance(target, jnp.ndarray):
-                return jnp.diag(target)
-            else:
-                # dunnno what to do here
-                return None
-        elif sp.sparse.issparse(target):
-            return target.diagonal()
-        elif isinstance(target, np.ndarray):
-            return target.diagonal()
-        else:
-            return None
+    def _set_matrix_reference(self, matrix: Optional[Any]) -> None:
+        self._matrix    = matrix
+        self._is_built  = matrix is not None
 
     @property
-    def mat_memory(self)                -> float:
-        ''' Estimate the memory used by the Hamiltonian matrix in bytes. '''
-        
-        matrix_to_check = self.hamil if (self._is_manybody) else self.hamil_sp
-        if matrix_to_check is None:
+    def matrix_data(self) -> Union[np.ndarray, Any]:
+        matrix = self._get_matrix_reference()
+        if matrix is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-        
-        # Dense matrix: use nbytes if available, otherwise compute from shape.
-        # self._log(f"Checking the memory used by the Hamiltonian matrix of type {type(self._hamil)}", lvl=1)
-        memory = 0
-        
+        return matrix
+
+    # -------------------------------------------------------
+    # Abstract build
+    # -------------------------------------------------------
+
+    def build(self) -> None:
+        raise NotImplementedError("Subclasses must implement build().")
+
+    def clear(self) -> None:
+        self._log("Clearing cached matrix and eigen-decomposition...", lvl=2, log='debug')
+        self._is_built    = False
+        self._matrix      = None
+        self._eig_vec     = None
+        self._eig_val     = None
+        self._krylov      = None
+        self._diag_engine = None
+        self._diag_method = 'exact'
+
+    # -------------------------------------------------------
+    # Properties
+    # -------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._name = value
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @property
+    def dtypeint(self):
+        return self._dtypeint
+
+    @property
+    def backend(self):
+        return self._backendstr
+
+    @property
+    def sparse(self) -> bool:
+        return self._is_sparse
+
+    def is_sparse(self) -> bool:
+        return self._is_sparse
+
+    @property
+    def max_local_changes(self):
+        return self._max_local_ch
+
+    @property
+    def max_operator_changes(self):
+        return self._max_local_ch_o
+
+    @property
+    def energies(self):
+        return self._eig_val
+
+    @property
+    def eigenvalues(self):
+        return self._eig_val
+
+    @property
+    def eig_val(self):
+        return self._eig_val
+
+    @property
+    def eigenvals(self):
+        return self._eig_val
+
+    @property
+    def eig_vals(self):
+        return self._eig_val
+
+    @property
+    def eigen_vals(self):
+        return self._eig_val
+
+    @property
+    def eig_vec(self):
+        return self._eig_vec
+
+    @property
+    def eigenvectors(self):
+        return self._eig_vec
+
+    @property
+    def eigenvecs(self):
+        return self._eig_vec
+
+    @property
+    def krylov(self):
+        return self._krylov
+
+    # -------------------------------------------------------
+    # Diagonalization
+    # -------------------------------------------------------
+
+    def _prepare_diagonalization(self, **kwargs) -> None:
+        """Hook executed before running the diagonalization engine."""
+
+    def _get_diagonalization_matrix(self):
+        return self.matrix_data
+
+    def _default_diagonalization_backend(self, use_scipy: bool = True) -> str:
+        if self._is_jax:
+            return 'jax'
+        return 'scipy' if use_scipy else 'numpy'
+
+    def _ensure_diag_engine(self, method: str, backend: str, use_scipy: bool, verbose: bool) -> DiagonalizationEngine:
+        if self._diag_engine is not None and self._diag_engine.method == method:
+            return self._diag_engine
+
+        self._diag_engine = DiagonalizationEngine(
+            method    = method,
+            backend   = backend,
+            use_scipy = use_scipy,
+            verbose   = verbose,
+            logger    = self._logger,
+        )
+        return self._diag_engine
+
+    def _on_diagonalized(self, result: Any, diag_duration: float, verbose: bool) -> None:
+        """Hook executed after diagonalization to allow subclasses to log extra info."""
+        if verbose:
+            method_used = self.get_diagonalization_method()
+            self._log(f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds.", lvl=2, color="green")
+
+    def diagonalize(self, verbose: bool = False, **kwargs) -> None:
+        diag_start = time.perf_counter()
+
+        method      = kwargs.pop("method", self._diag_method)
+        backend_str = kwargs.pop("backend", None)
+        use_scipy   = kwargs.pop("use_scipy", True)
+        store_basis = kwargs.pop("store_basis", True)
+        k           = kwargs.pop("k", None)
+        which       = kwargs.pop("which", "smallest")
+        hermitian   = kwargs.pop("hermitian", True)
+
+        if backend_str is None:
+            backend_str = self._default_diagonalization_backend(use_scipy=use_scipy)
+
+        self._prepare_diagonalization(method=method, backend=backend_str, **kwargs)
+
+        matrix_to_diag = self._get_diagonalization_matrix()
+        if matrix_to_diag is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+
+        if method == 'exact':
+            if JAX_AVAILABLE and BCOO is not None and isinstance(matrix_to_diag, BCOO):
+                if verbose:
+                    self._log("Converting JAX sparse matrix to dense for exact diagonalization.", lvl=2, color="yellow")
+                matrix_to_diag = np.asarray(matrix_to_diag.todense())
+            elif sp.sparse.issparse(matrix_to_diag):
+                if verbose:
+                    self._log("Converting SciPy sparse matrix to dense for exact diagonalization.", lvl=2, color="yellow")
+                matrix_to_diag = matrix_to_diag.toarray()
+
+        engine          = self._ensure_diag_engine(method=method, backend=backend_str, use_scipy=use_scipy, verbose=verbose)
+        solver_kwargs   = {key: val for key, val in kwargs.items()
+                        if key not in {'method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which'}}
+
+        matvec_callable = None
+        try:
+            matvec_callable = self.matvec_fun
+        except NotImplementedError:
+            pass
+
+        size = getattr(matrix_to_diag, 'shape', (self._dim, self._dim))[0]
+
+        try:
+            result = engine.diagonalize(
+                A           = matrix_to_diag,
+                matvec      = matvec_callable,
+                n           = size,
+                k           = k,
+                hermitian   = hermitian,
+                which       = which,
+                store_basis = store_basis,
+                dtype       = self._dtype,
+                **solver_kwargs,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Diagonalization failed with method '{method}': {exc}") from exc
+
+        self._diag_method   = method
+        self._eig_val       = result.eigenvalues
+        self._eig_vec       = result.eigenvectors
+
+        if store_basis and engine.has_krylov_basis():
+            self._krylov    = engine.get_krylov_basis()
+        else:
+            self._krylov    = None
+
+        if JAX_AVAILABLE:
+            if hasattr(self._eig_val, "block_until_ready"):
+                self._eig_val = self._eig_val.block_until_ready()
+            if hasattr(self._eig_vec, "block_until_ready"):
+                self._eig_vec = self._eig_vec.block_until_ready()
+
+        diag_duration = time.perf_counter() - diag_start
+        self._on_diagonalized(result, diag_duration, verbose)
+
+    # -------------------------------------------------------
+    # Matrix/vector helpers
+    # -------------------------------------------------------
+
+    @property
+    def matvec_fun(self):
+        matvec_impl = getattr(self, "matvec", None)
+        if matvec_impl is None:
+            raise NotImplementedError("Subclasses must implement matvec() to use matvec_fun.")
+
+        args, kwargs = self._matvec_context()
+
+        def _matvec(x):
+            return matvec_impl(x, *args, **kwargs)
+
+        return _matvec
+
+    @property
+    def diag(self) -> Optional[Union[np.ndarray, Any]]:
+        target = self._get_matrix_reference()
+        if target is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+
+        if JAX_AVAILABLE and self._backend is not np:
+            if isinstance(target, BCOO):
+                return target.diagonal()
+            if jnp is not None and isinstance(target, jnp.ndarray):
+                return jnp.diag(target)
+            return None
+
+        if sp.issparse(target):
+            return target.diagonal()
+        if isinstance(target, np.ndarray):
+            return target.diagonal()
+        return None
+
+    # -------------------------------------------------------
+    # Memory helpers
+    # -------------------------------------------------------
+
+    def _estimate_matrix_memory(self, matrix: Any) -> float:
+        if matrix is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+
         if not self._is_sparse:
-            if hasattr(matrix_to_check, "nbytes"):
-                return matrix_to_check.nbytes
-            else:
-                return int(np.prod(matrix_to_check.shape)) * matrix_to_check.dtype.itemsize
-        else:
-            self._log("It is not a dense matrix...", lvl=2, log='debug')
-            
-            # Sparse matrix:
-            # For NumPy (or when JAX is unavailable) we assume a scipy sparse matrix (e.g. CSR)
-            if self._is_numpy:
-                memory = 0
-                for attr in ('data', 'indices', 'indptr'):
-                    if hasattr(matrix_to_check, attr):
-                        arr = getattr(matrix_to_check, attr)
-                        if hasattr(arr, 'nbytes'):
-                            memory += arr.nbytes
-                        else:
-                            memory += int(np.prod(arr.shape)) * arr.dtype.itemsize
-            elif self._is_jax:
-                # For JAX sparse matrices (e.g. BCOO), we assume they have data and indices attributes.
-                data_arr        = matrix_to_check.data
-                indices_arr     = matrix_to_check.indices
-                if hasattr(data_arr, 'nbytes'):
-                    data_bytes  = data_arr.nbytes
-                else:
-                    data_bytes  = int(np.prod(data_arr.shape)) * data_arr.dtype.itemsize
-                if hasattr(indices_arr, 'nbytes'):
-                    indices_bytes = indices_arr.nbytes
-                else:
-                    indices_bytes = int(np.prod(indices_arr.shape)) * indices_arr.dtype.itemsize
-                memory = data_bytes + indices_bytes
-            else:
-                return 0 # Unknown type, return 0
-        return memory # for BdG Hamiltonian        
-        
+            if hasattr(matrix, 'nbytes'):
+                return matrix.nbytes
+            return int(np.prod(matrix.shape)) * matrix.dtype.itemsize
+
+        if self._is_numpy:
+            memory = 0
+            for attr in ('data', 'indices', 'indptr'):
+                if hasattr(matrix, attr):
+                    arr = getattr(matrix, attr)
+                    if hasattr(arr, 'nbytes'):
+                        memory += arr.nbytes
+                    else:
+                        memory += int(np.prod(arr.shape)) * arr.dtype.itemsize
+            return memory
+
+        if self._is_jax and hasattr(matrix, 'data') and hasattr(matrix, 'indices'):
+            data_arr    = matrix.data
+            indices_arr = matrix.indices
+            data_bytes  = data_arr.nbytes if hasattr(data_arr, 'nbytes') else int(np.prod(data_arr.shape)) * data_arr.dtype.itemsize
+            ind_bytes   = indices_arr.nbytes if hasattr(indices_arr, 'nbytes') else int(np.prod(indices_arr.shape)) * indices_arr.dtype.itemsize
+            return data_bytes + ind_bytes
+
+        return 0.0
+
     @property
-    def eigvec_memory(self)             -> float:
-        ''' Estimate the memory used by the eigenvectors in bytes. '''
-        if self._eigvecs is None:
-            return 0
-        if hasattr(self._eigvecs, "nbytes"):
-            return self._eigvecs.nbytes
-        else:
-            return int(np.prod(self._eigvecs.shape)) * self._eigvecs.dtype.itemsize
-    
+    def mat_memory(self) -> float:
+        return self._estimate_matrix_memory(self._get_matrix_reference())
+
     @property
-    def eigval_memory(self)             -> float:
-        ''' Estimate the memory used by the eigenvalues in bytes. '''
-        if self._eigval is None:
-            return 0
-        if hasattr(self._eigval, "nbytes"):
-            return self._eigval.nbytes
-        else:
-            return int(np.prod(self._eigval.shape)) * self._eigval.dtype.itemsize    
-        
+    def eigvec_memory(self) -> float:
+        if self._eig_vec is None:
+            return 0.0
+        if hasattr(self._eig_vec, 'nbytes'):
+            return self._eig_vec.nbytes
+        return int(np.prod(self._eig_vec.shape)) * self._eig_vec.dtype.itemsize
+
     @property
-    def mat_memory_mb(self):            return self.mat_memory      / (1024 ** 2)    
+    def eigval_memory(self) -> float:
+        if self._eig_val is None:
+            return 0.0
+        if hasattr(self._eig_val, 'nbytes'):
+            return self._eig_val.nbytes
+        return int(np.prod(self._eig_val.shape)) * self._eig_val.dtype.itemsize
+
     @property
-    def eigvec_memory_mb(self):         return self.eigvec_memory   / (1024 ** 2)    
+    def mat_memory_mb(self) -> float:
+        return self.mat_memory / (1024 ** 2)
+
     @property
-    def eigval_memory_mb(self):         return self.eigval_memory   / (1024 ** 2)    
+    def eigvec_memory_mb(self) -> float:
+        return self.eigvec_memory / (1024 ** 2)
+
     @property
-    def mat_memory_gb(self):            return self.mat_memory      / (1024 ** 3)
+    def eigval_memory_mb(self) -> float:
+        return self.eigval_memory / (1024 ** 2)
+
     @property
-    def eigvec_memory_gb(self):         return self.eigvec_memory   / (1024 ** 3)
+    def mat_memory_gb(self) -> float:
+        return self.mat_memory / (1024 ** 3)
+
     @property
-    def eigval_memory_gb(self):         return self.eigval_memory   / (1024 ** 3)
-    
+    def eigvec_memory_gb(self) -> float:
+        return self.eigvec_memory / (1024 ** 3)
+
     @property
-    def memory(self):                   return self.mat_memory + self.eigvec_memory + self.eigval_memory
+    def eigval_memory_gb(self) -> float:
+        return self.eigval_memory / (1024 ** 3)
+
     @property
-    def memory_mb(self):                return self.memory          / (1024 ** 2)
+    def memory(self) -> float:
+        return self.mat_memory + self.eigvec_memory + self.eigval_memory
+
     @property
-    def memory_gb(self):                return self.memory          / (1024 ** 3)
-    
+    def memory_mb(self) -> float:
+        return self.memory / (1024 ** 2)
+
+    @property
+    def memory_gb(self) -> float:
+        return self.memory / (1024 ** 3)
+
     # -------------------------------------------------------
-    #! Basis 
+    # Krylov helpers
     # -------------------------------------------------------
-    
+
     def has_krylov_basis(self) -> bool:
-        """
-        Check if a Krylov basis is available from the last diagonalization.
-        
-        The Krylov basis is available when using iterative methods (Lanczos,
-        Block Lanczos, Arnoldi, Shift-Invert) with store_basis=True.
-        
-        Returns:
-        --------
-            bool : True if Krylov basis is available, False otherwise.
-        
-        Example:
-        --------
-            >>> hamil.diagonalize(method='lanczos', k=10, store_basis=True)
-            >>> if hamil.has_krylov_basis():
-            ...     print("Krylov basis available for transformations")
-        """
         return diag_helpers.has_krylov_basis(self._diag_engine, self._krylov)
-    
+
     def get_krylov_basis(self) -> Optional[Array]:
-        """
-        Get the Krylov basis from the last diagonalization.
-        This corespons to the matrix V whose columns are the Krylov basis vectors.
-        
-        To be available, the Krylov basis must have been stored during
-        diagonalization (store_basis=True) using an iterative method.
-        
-        Returns:
-        --------
-            ndarray or None : 
-                Krylov basis matrix V (shape n x k), or None if not available.
-        
-        Example:
-        --------
-            >>> V = hamil.get_krylov_basis()
-            >>> if V is not None:
-            ...     print(f"Krylov basis shape: {V.shape}")
-            
-            >>> # Manual transformation
-            >>> v_krylov    = np.array([1, 0, 0, ...])  # First Ritz vector
-            >>> v_original  = V @ v_krylov              # Transform to original basis
-            >>> print(f"Original vector: {v_original}")
-            
-            >>> # Matrix reconstruction
-            >>> H_reconstructed = V @ np.diag(hamil.energies) @ V.T
-            >>> print(f"Reconstructed Hamiltonian shape: {H_reconstructed.shape}")
-        """
         return diag_helpers.get_krylov_basis(self._diag_engine, self._krylov)
-    
+
     def to_original_basis(self, vec: Array) -> Array:
-        """
-        Transform a vector from Krylov/computational basis to original basis.
-        
-        For exact diagonalization, this is a no-op (returns the same vector).
-        For iterative methods with Krylov basis V: returns V @ vec.
-        
-        This is useful when working with Ritz vectors or when projecting
-        computations done in the reduced Krylov subspace back to the full
-        Hilbert space.
-        
-        Parameters:
-        -----------
-            vec : ndarray
-                Vector(s) in Krylov/computational basis.
-                - 1D array of shape (k,): single vector
-                - 2D array of shape (k, m): m vectors as columns
-        
-        Returns:
-        --------
-            ndarray : Vector(s) in original Hilbert space basis.
-        
-        Examples:
-        ---------
-            >>> # Diagonalize using Lanczos
-            >>> hamil.diagonalize(method='lanczos', k=10)
-            >>> 
-            >>> # Get first Ritz vector (in Krylov basis)
-            >>> ritz_vec = np.zeros(10)
-            >>> ritz_vec[0] = 1.0  # First Ritz vector
-            >>> 
-            >>> # Transform to original basis
-            >>> state = hamil.to_original_basis(ritz_vec)
-            >>> print(f"State in full Hilbert space: shape {state.shape}")
-        
-        See Also:
-        ---------
-            to_krylov_basis : Inverse transformation
-            has_krylov_basis : Check if basis is available
-        """
         return diag_helpers.to_original_basis(vec, self._diag_engine, self.get_diagonalization_method())
 
     def to_krylov_basis(self, vec: Array) -> Array:
-        """
-        Transform a vector from original basis to Krylov/computational basis.
-        
-        For exact diagonalization, this is a no-op (returns the same vector).
-        For iterative methods with Krylov basis V: returns V.H @ vec (or V.T for real).
-        
-        This is useful for projecting states from the full Hilbert space onto
-        the reduced Krylov subspace for efficient computations.
-        
-        Parameters:
-        -----------
-            vec : ndarray
-                Vector(s) in original Hilbert space basis.
-                - 1D array of shape (n,): single vector
-                - 2D array of shape (n, m): m vectors as columns
-        
-        Returns:
-        --------
-            ndarray : Vector(s) in Krylov basis.
-        
-        Examples:
-        ---------
-            >>> # Diagonalize using Lanczos
-            >>> hamil.diagonalize(method='lanczos', k=10)
-            >>> 
-            >>> # Create a random state in full Hilbert space
-            >>> state = np.random.randn(hamil.nh)
-            >>> state /= np.linalg.norm(state)
-            >>> 
-            >>> # Project onto Krylov subspace
-            >>> krylov_coeffs = hamil.to_krylov_basis(state)
-            >>> print(f"Krylov coefficients: shape {krylov_coeffs.shape}")
-        
-        Raises:
-        -------
-            ValueError : If no Krylov basis is available.
-        
-        See Also:
-        ---------
-            to_original_basis : Inverse transformation
-            has_krylov_basis : Check if basis is available
-        """
         return diag_helpers.to_krylov_basis(vec, self._diag_engine)
 
     def get_basis_transform(self) -> Optional[Array]:
-        """
-        Get the transformation matrix from Krylov to original basis.
-        
-        Returns the Krylov basis matrix V such that:
-            v_original = V @ v_krylov
-        
-        Returns:
-        --------
-            ndarray or None : 
-                Transformation matrix V (shape n x k), or None if not applicable.
-        
-        Example:
-        --------
-            >>> V = hamil.get_basis_transform()
-            >>> if V is not None:
-            ...     # Manual transformation
-            ...     v_krylov = np.array([1, 0, 0, ...])  # First Ritz vector
-            ...     v_original = V @ v_krylov
-        """
         return diag_helpers.get_basis_transform(self._diag_engine, self._krylov)
-    
+
     def get_diagonalization_method(self) -> Optional[str]:
-        """
-        Get the diagonalization method used in the last diagonalize() call.
-        
-        Returns:
-        --------
-            str or None : 
-                Method name ('exact', 'lanczos', 'block_lanczos', 'arnoldi', 'shift-invert'),
-                or None if not yet diagonalized.
-        
-        Example:
-        --------
-            >>> hamil.diagonalize(method='auto', k=10)
-            >>> method = hamil.get_diagonalization_method()
-            >>> print(f"Used method: {method}")
-        """
         return diag_helpers.get_diagonalization_method(self._diag_engine)
-    
+
     def get_diagonalization_info(self) -> dict:
-        """
-        Get detailed information about the last diagonalization.
-        
-        Returns:
-        --------
-            dict : Dictionary containing:
-                - method            : str - Method used
-                - converged         : bool - Convergence status
-                - iterations        : int - Number of iterations (if applicable)
-                - residual_norms    : ndarray - Residual norms (if available)
-                - has_krylov_basis  : bool - Whether Krylov basis is available
-                - num_eigenvalues   : int - Number of computed eigenvalues
-        
-        Example:
-        --------
-            >>> hamil.diagonalize(method='lanczos', k=10)
-            >>> info = hamil.get_diagonalization_info()
-            >>> print(f"Method: {info['method']}")
-            >>> print(f"Converged: {info['converged']}")
-        """
         return diag_helpers.get_diagonalization_info(self._diag_engine, self._eig_val, self._krylov)
-        
+
     # -------------------------------------------------------
-    
-    def to_dense(self):
-        '''
-        Converts the Hamiltonian matrix to a dense matrix.
-        '''
+    # Sparsity controls
+    # -------------------------------------------------------
+
+    def to_dense(self) -> None:
         self._is_sparse = False
-        self._log("Converting the Hamiltonian matrix to a dense matrix... Run build...", lvl = 1)
+        self._log("Switching to dense representation; clearing cached data.", lvl=1)
         self.clear()
-        
-    def to_sparse(self):
-        '''
-        Converts the Hamiltonian matrix to a sparse matrix.
-        '''
+
+    def to_sparse(self) -> None:
         self._is_sparse = True
-        self._log("Converting the Hamiltonian matrix to a sparse matrix... Run build...", lvl = 1)
+        self._log("Switching to sparse representation; clearing cached data.", lvl=1)
         self.clear()
-    
-        # ----------------------------------------------------------------------------------------------
-    
+
     # -------------------------------------------------------
-    #! FORMATTING
+    # Formatting helpers
     # -------------------------------------------------------
     
     @staticmethod
@@ -821,19 +747,19 @@ class GeneralMatrix(spla.LinearOperator):
                 - Otherwise, returns 'name[min=..., max=...]' with specified precision.
         """
         if isinstance(arr, DummyVector):
-            return Hamiltonian._fmt_scalar(name, arr[0])
+            return GeneralMatrix._fmt_scalar(name, arr[0])
         
         arr = np.asarray(arr, dtype=float)
         if arr.size == 0:
             return f"{name}=[]"
         if np.allclose(arr, arr.flat[0], atol=tol, rtol=0):
-            return Hamiltonian._fmt_scalar(name, float(arr.flat[0]), prec=prec)
+            return GeneralMatrix._fmt_scalar(name, float(arr.flat[0]), prec=prec)
         return f"{name}[min={arr.min():.{prec}f},max={arr.max():.{prec}f}]"
 
     @staticmethod
     def fmt(name, value, prec=1):
         """Choose scalar vs array formatter."""
-        return Hamiltonian._fmt_scalar(name, value, prec=prec) if np.isscalar(value) else Hamiltonian._fmt_array(name, value, prec=prec)
+        return GeneralMatrix._fmt_scalar(name, value, prec=prec) if np.isscalar(value) else GeneralMatrix._fmt_array(name, value, prec=prec)
         
 # -------------------------------------------------------
 #! EOF
