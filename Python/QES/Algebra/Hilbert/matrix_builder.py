@@ -731,7 +731,7 @@ def build_operator_matrix(
 #! Matrix-Free Operator Application (optimized!)
 # -------------------------------------------------------------------------------
 
-@numba.njit(fastmath=True, parallel=False) # Serial is often faster here to avoid race conditions on write
+@numba.njit(fastmath=True, parallel=False, cache=True) # Serial is often faster here to avoid race conditions on write
 def _apply_op_batch_jit(
     vecs_in             : np.ndarray,
     vecs_out            : np.ndarray,
@@ -802,7 +802,7 @@ def _apply_op_batch_jit(
                 else:
                     vecs_out[target_idx, :]    += val * vecs_in[k, :]
 
-@numba.njit(parallel=False, fastmath=True)
+@numba.njit(parallel=False, fastmath=True, cache=True)
 def _apply_fourier_batch_jit(
     vecs_in             : np.ndarray,
     vecs_out            : np.ndarray,
