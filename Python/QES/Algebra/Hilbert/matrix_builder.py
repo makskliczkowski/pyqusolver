@@ -731,7 +731,7 @@ def build_operator_matrix(
 #! Matrix-Free Operator Application (optimized!)
 # -------------------------------------------------------------------------------
 
-@numba.njit(fastmath=True, parallel=False) # Serial is often faster here to avoid race conditions on write
+@numba.njit(fastmath=True, parallel=True)
 def _apply_op_batch_jit(
     vecs_in             : np.ndarray,
     vecs_out            : np.ndarray,
@@ -747,33 +747,38 @@ def _apply_op_batch_jit(
     has_symmetry    = representative_list is not None
     has_basis       = basis is not None
 
-    # Loop over the Hilbert space (Rows)
-    for k in range(nh):
+    n_threads       = numba.get_num_threads()
+    # Create a buffer for EACH thread to write to safely
+    # Shape: (n_threads, nh, n_batch)
+    thread_buffers  = np.zeros((n_threads, nh, n_batch), dtype=vecs_out.dtype)
+
+    # Parallel Loop
+    for k in numba.prange(nh):
+        tid         = numba.get_thread_id()
         
-        # Identify the state integer (Do this ONCE per row)
+        # --- [State Decoding] ---
         if has_symmetry:
-            state   = representative_list[k]
+            # Ensure integer!
+            state   = np.int64(representative_list[k])
             norm_k  = normalization[k]
         elif has_basis:
-            state   = basis[k]
+            state   = np.int64(basis[k])
         else:
-            state   = k
-            
-        # Compute Operator Action (Do this ONCE per row)
+            state   = np.int64(k)
+                
+        # [Compute]
         new_states, values = op_func(state, *args)
         
-        # Map back to indices and apply to the WHOLE BATCH
+        # [Map & Write]
         for i in range(len(new_states)):
             new_state   = new_states[i]
             val         = values[i]
             
-            if abs(val) < 1e-15:
-                continue
+            if abs(val) < 1e-15: continue
             
             target_idx  = -1
             sym_factor  = 1.0 + 0j
             
-            # Find target index
             if has_symmetry:
                 if repr_idx is not None:
                     target_idx = repr_idx[new_state]
@@ -782,25 +787,23 @@ def _apply_op_batch_jit(
                         norm_idx    = normalization[target_idx]
                         sym_factor  = np.conj(phase) * (norm_idx / norm_k)
             elif has_basis:
-                # Binary Search
-                found_idx = np.searchsorted(basis, new_state)
-                if found_idx < nh and basis[found_idx] == new_state:
-                    target_idx = found_idx
+                idx = np.searchsorted(basis, new_state)
+                if idx < nh and basis[idx] == new_state:
+                    target_idx = idx
             else:
                 target_idx = new_state
 
-            # 4. Vectorized Update (SIMD)
-            # Instead of looping over 'b', we update the whole row slice.
-            # This removes the Python-loop overhead for the batch dimension.
+            # WRITE TO PRIVATE THREAD BUFFER
             if 0 <= target_idx < nh:
-                # vecs_in[k, :] is shape (n_batch,)
-                # vecs_out[target_idx, :] is shape (n_batch,)
                 if has_symmetry:
-                    # Complex multiplication with symmetry factor
-                    factor                      = val * sym_factor
-                    vecs_out[target_idx, :]    += factor * vecs_in[k, :]
+                    thread_buffers[tid, target_idx, :] += val * sym_factor * vecs_in[k, :]
                 else:
-                    vecs_out[target_idx, :]    += val * vecs_in[k, :]
+                    thread_buffers[tid, target_idx, :] += val * vecs_in[k, :]
+
+    # Reduction (Sum all thread buffers into final output)
+    # This sequential sum is very fast compared to the physics calculation
+    for t in range(n_threads):
+        vecs_out += thread_buffers[t]
 
 @numba.njit(parallel=False, fastmath=True)
 def _apply_fourier_batch_jit(
