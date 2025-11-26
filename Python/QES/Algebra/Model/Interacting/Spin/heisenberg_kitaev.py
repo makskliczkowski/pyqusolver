@@ -150,7 +150,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                         hilbert_space   = hilbert_space,
                         lattice         = lattice, 
                         is_sparse       = True,
-                        dtype           = dtype if hy is None else np.complex128, # enforce complex dtype if hy field is used
+                        dtype           = dtype if (hy is None and Gamma is None) else np.complex128, # enforce complex dtype if hy field is used
                         backend=backend, logger=logger, use_forward=use_forward, **kwargs)
 
         # Initialize the Hamiltonian
@@ -252,6 +252,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
     
     def set_couplings(self,
                         hx      : Union[List[float], None, float]       = None,
+                        hy      : Union[List[float], None, float]       = None,
                         hz      : Union[List[float], None, float]       = None,
                         kx      : Union[List[float], None, float]       = None,
                         ky      : Union[List[float], None, float]       = None,
@@ -265,6 +266,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         Sets the couplings based on their initial value (list, string, value)
         '''
         self._hx            = self._set_some_coupling(self._hx  if hx  is None else hx ) if hx is not None else self._hx
+        self._hy            = self._set_some_coupling(self._hy  if hy  is None else hy ) if hy is not None else self._hy
         self._hz            = self._set_some_coupling(self._hz  if hz  is None else hz ) if hz is not None else self._hz
         self._kx            = self._set_some_coupling(self._kx  if kx  is None else kx ) if kx is not None else self._kx
         self._ky            = self._set_some_coupling(self._ky  if ky  is None else ky ) if ky is not None else self._ky
