@@ -2413,7 +2413,7 @@ class Hamiltonian(Operator):
             return
         
         try:
-            compile_start                       = time.perf_counter()
+            # compile_start                       = time.perf_counter()
             nops_val                            = len(self._instr_codes)
             sites_arr, coeffs_arr, codes_arr    = self._set_local_energy_finalize_arrays()
             ns_val                              = self.ns
@@ -2437,9 +2437,9 @@ class Hamiltonian(Operator):
                     states_buf  = np.empty(max_out, dtype=np.int64)
                     vals_buf    = np.empty(max_out, dtype=np.float64)
                     return instr_function(k, nops_val, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
-            _           = wrapper(0)
-            compile_end = time.perf_counter()
-            self._log(f"Local energy function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="red")
+            # _           = wrapper(0)
+            # compile_end = time.perf_counter()
+            # self._log(f"Local energy function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="red")
             self._loc_energy_int_fun = wrapper
 
         except Exception as e:

@@ -818,20 +818,32 @@ def sigma_pm(state,
         return sigma_pm_np(state, sites, spin, spin_value)
     return sigma_pm_jnp(state, ns, sites, spin, spin_value)
 
-@numba.njit
+@numba.njit(inline='always')
 def sigma_mp_int_np(state      : int,
                     ns         : int,
                     sites      : List[int],
                     spin       : bool  = BACKEND_DEF_SPIN,
                     spin_val   : float = _SPIN):
     r"""Alternating \sigma ^ - \sigma ^+ starting with \sigma ^ - on even index (integer state)."""
-    new_state, coeff     = _sigma_pm_int_core(state, ns, sites, False, spin, spin_val)
-    out_state            = np.empty(1, dtype=DEFAULT_NP_INT_TYPE)
-    out_coeff            = np.empty(1, dtype=DEFAULT_NP_FLOAT_TYPE)
-    out_state[0]         = new_state
-    out_coeff[0]         = coeff
-    # return ensure_operator_output_shape_numba(out_state, out_coeff)
-    return out_state, out_coeff
+    new_state   = state
+    coeff       = 1.0
+    for i, site in enumerate(sites):
+        pos     = ns - 1 - site
+        bit     = _binary.check_int(new_state, pos)
+        need_up = (i % 2 != 0)  # even index -> \sigma ^-
+
+        if need_up: # \sigma ^+
+            if bit == 1:
+                coeff *= 0.0
+                break
+            new_state = _binary.flip_int(new_state, pos)
+        else:       # \sigma ^ -
+            if bit == 0:
+                coeff *= 0.0
+                break
+            new_state = _binary.flip_int(new_state, pos)
+        coeff *= spin_val
+    return (new_state,), (coeff,)
 
 @numba.njit
 def sigma_mp_np(state       : np.ndarray,
