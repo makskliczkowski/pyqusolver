@@ -55,17 +55,3 @@ class TrainingArtifact:
     observables: Dict[str, Any]
     network_state: Dict[str, Any]
     extras: Dict[str, Any] = field(default_factory=dict)
-
-
-class NeuralAnsatz(Protocol):
-    """
-    Minimal protocol that every ansatz implementation must satisfy.
-    """
-
-    name: str
-
-    def create_solver(self, hamiltonian, hilbert_space, config: NQSTrainingConfig):
-        ...
-
-    def snapshot(self) -> Dict[str, Any]:
-        ...

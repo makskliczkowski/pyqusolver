@@ -29,15 +29,15 @@ try:
     JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
     
     # Common utilities
-    from QES.general_python.common.timer import timeit
-    from QES.general_python.algebra.utils import get_backend, Array
+    from QES.general_python.common.timer                        import timeit
+    from QES.general_python.algebra.utils                       import get_backend, Array
     
     # Stochastic reconfiguration for TDVP
-    import QES.general_python.algebra.solvers.stochastic_rcnfg as sr
+    import QES.general_python.algebra.solvers.stochastic_rcnfg  as sr
     
     # Preconditioners and Solvers for A * x = b ; used in TDVP
-    import QES.general_python.algebra.preconditioners as precond
-    import QES.general_python.algebra.solvers as solvers
+    import QES.general_python.algebra.preconditioners           as precond
+    import QES.general_python.algebra.solvers                   as solvers
     
 except ImportError:
     raise ImportError("Please install the 'general_python' package...")
@@ -881,14 +881,18 @@ class TDVP:
         
         # Compute global phase evolution $\dot{\theta}_0$
         # $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
-        if solution is not None and self.rhs_prefactor != complex(0, 1):
+        if solution is not None and self.rhs_prefactor:
             param_derivatives           = solution.x if hasattr(solution, 'x') else solution
-            log_derivatives_centered    = vd_c  # centered log derivatives
+            log_derivatives_centered    = vd_c # centered log derivatives
             self._theta0_dot            = self.compute_global_phase_evolution(self._e_local_mean, param_derivatives, log_derivatives_centered)
             
         #! save the solution
         self._solution = solution
         return solution
+    
+    #########################
+    #! Representation
+    #########################    
     
     def __call__(self, net_params, t, *, est_fn, configs, configs_ansatze, probabilities, **kwargs):
         '''
@@ -962,10 +966,6 @@ class TDVP:
             )
         
         return None, self.meta, (shapes, sizes, iscpx)
-    
-    #########################
-    #! Representation
-    #########################
     
     def __repr__(self):
         return f'TDVP(backend={self.backend_str},use_sr={self.use_sr},use_minsr={self.use_minsr},rhs_prefactor={self.rhs_prefactor},sr_snr_tol={self.sr_snr_tol},sr_pinv_tol={self.sr_pinv_tol},sr_diag_shift={self.sr_diag_shift},sr_maxiter={self.sr_maxiter})'

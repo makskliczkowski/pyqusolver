@@ -17,7 +17,7 @@ Architecture:
 
 Key Methods:
     - compute_local_energy(): 
-        Compute H*ψ/ψ
+        Compute H*psi/psi
     - compute_observables(): 
         Evaluate multiple observables
     - compute_statistics(): 
@@ -32,6 +32,7 @@ Date            : 2025-11-01
 License         : MIT
 ------------------------------------------------
 """
+
 from typing import TYPE_CHECKING
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, List, Dict, Tuple, Any
@@ -47,10 +48,9 @@ except ImportError:
 
 try:
     from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
-    from .nqs_general_engine import UnifiedEvaluationEngine, EvaluationConfig, EvaluationResult, create_evaluation_engine
+    from .general.nqs_general_engine import UnifiedEvaluationEngine, EvaluationConfig, EvaluationResult, create_evaluation_engine
 except:
-    raise RuntimeError("QES.general_python.algebra.utils could not be imported. "
-                       "Ensure QES is properly installed.")
+    raise RuntimeError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.")
 
 if JAX_AVAILABLE:
     import jax
@@ -69,23 +69,37 @@ __all__ = [
 #####################################################################################################
 
 @dataclass
-class NQSStatistics:
+class NQSEnergyResult(EvaluationResult):
     """Statistics about local energy computations."""
     
-    local_energies      : np.ndarray  # Local energy for each sample
-    mean_energy         : float
-    std_energy          : float
-    min_energy          : float
-    max_energy          : float
-    n_samples           : int
-    variance            : float = field(init=False)
-    error_of_mean       : float = field(init=False)
-
-    def __post_init__(self):
-        """Compute derived statistics."""
-        self.variance       = self.std_energy ** 2
-        self.error_of_mean  = self.std_energy / np.sqrt(max(self.n_samples - 1, 1))
+    @property
+    def local_energies(self)                -> Array: return self.values
+    @local_energies.setter
+    def local_energies(self, v: Array):     self.values = v
     
+    @property
+    def mean_energy(self)                   -> float: return self.mean
+    @mean_energy.setter
+    def mean_energy(self, v: float):        self.mean = v
+    
+    @property
+    def std_energy(self)                    -> float: return self.std
+    @std_energy.setter
+    def std_energy(self, v: float):         self.std = v
+    
+    @property
+    def min_energy(self)                    -> float: return self.min_val
+    @min_energy.setter
+    def min_energy(self, v: float):         self.min_val = v
+
+    @property
+    def max_energy(self)                    -> float: return self.max_val
+    @max_energy.setter
+    def max_energy(self, v: float):         self.max_val = v
+    
+    variance            : float = field(init=False)     # Variance of energy
+    error_of_mean       : float = field(init=False)     # Error of the mean
+
     def summary(self) -> Dict[str, float]:
         """Get a summary of energy statistics."""
         return {
@@ -99,41 +113,49 @@ class NQSStatistics:
         }
 
 @dataclass
-class ObservableResult:
-    """Result from observable evaluation."""
+class ObservableResult(EvaluationResult):
+    """
+    Result from observable evaluation.
+    
+    The observable is defined by a function O(s) that computes the local value
+    for a given state configuration s. Namely, given a set of samples {s_i}, we compute:
+        - Local values: O(s_i)
+        - Expectation value: <O> = (1/N) * sum_i O(s_i)
+        - Sampled with respect to |psi(s_i)|^2
+    
+    This can be used to evaluate arbitrary observables on the NQS wavefunction, such as:
+        - Spin correlations
+        - Magnetization
+        - Custom operators
+        - Energy
+    """
     
     observable_name     : str               # Name of the observable
-    expectation_value   : Optional[float]   # <ψ|O|ψ>
-    local_values        : np.ndarray        # Local values O(s) for each sample
-    mean_local_value    : float             # Mean of local values
-    std_local_value     : float             # Std of local values
-    metadata            : Dict[str, Any] = field(default_factory=dict)
-    
+
     def summary(self) -> Dict[str, Any]:
-        """Get a summary of the observable result."""
+        """Get a summary of the observable evaluation."""
         return {
-            'observable'            : self.observable_name,
-            'expectation_value'     : self.expectation_value,
-            'mean_local_value'      : self.mean_local_value,
-            'std_local_value'       : self.std_local_value,
-            'n_samples'             : len(self.local_values),
+            'observable_name'       : self.observable_name,
+            'expectation'           : self.mean,
+            'std'                   : self.std,
+            'n_samples'             : self.n_samples,
         }
 
 #####################################################################################################
 #! COMPUTE LOCAL ENERGY CLASS
 #####################################################################################################
 
-class NQSEvalEngine:
+class NQSEvalEngine(UnifiedEvaluationEngine):
     """
     High-level interface for NQS energy and observable computations.
     
     This class provides methods for:
     - Computing local energies 
-        E_loc(s) = <s|H|ψ>/<s|ψ>
+        E_loc(s) = <s|H|psi>/<s|psi>
     - Evaluating observables 
-        <ψ|O|ψ>
+        <psi|O|psi>
     - Getting energy statistics
-    - Evaluating the NQS ansatz log|ψ(s)|
+    - Evaluating the NQS ansatz log|psi(s)|
     - Efficient batch processing
     
     Example:
@@ -142,7 +164,7 @@ class NQSEvalEngine:
         >>> print(f"E = {energy_stats.mean_energy:.6f} ± {energy_stats.std_energy:.6f}")
     """
     
-    def __init__(self, nqs: NQS, backend: str = 'auto',  batch_size: Optional[int] = None, jit_compile: bool = True):
+    def __init__(self, nqs: 'NQS', backend: str = 'auto',  batch_size: Optional[int] = None, jit_compile: bool = True):
         """
         Initialize ComputeLocalEnergy.
         
@@ -156,8 +178,8 @@ class NQSEvalEngine:
             jit_compile: 
                 Whether to JIT compile (JAX backend only)
         """
+        super().__init__(backend=backend, batch_size=batch_size, jit_compile=jit_compile)
         self.nqs                = nqs
-        self.engine             = create_evaluation_engine(backend=backend, batch_size=batch_size, jit_compile=jit_compile)
         self._cached_results    = {}
     
     #####################################################################################################
@@ -169,7 +191,7 @@ class NQSEvalEngine:
                        params       : Optional[Any] = None,
                        batch_size   : Optional[int] = None) -> EvaluationResult:
         """
-        Evaluate the NQS ansatz log|ψ(s)| on states.
+        Evaluate the NQS ansatz log|psi(s)| on states.
         
         Comments:
             This consolidates the old _eval_jax, _eval_np, and ansatz methods.
@@ -190,15 +212,15 @@ class NQSEvalEngine:
             params = self.nqs.get_params()
         
         # Set batch size if override provided
-        old_batch_size = self.engine.config.batch_size
+        old_batch_size = self.config.batch_size
         if batch_size is not None:
-            self.engine.set_batch_size(batch_size)
+            self.set_batch_size(batch_size)
         
         try:
-            result = self.engine.evaluate_ansatz(self.nqs._ansatz_func, states, params)
+            result = self.evaluate_ansatz(self.nqs._ansatz_func, states, params)
         finally:
             if batch_size is not None:
-                self.engine.set_batch_size(old_batch_size)
+                self.set_batch_size(old_batch_size)
         
         return result
     
@@ -207,16 +229,16 @@ class NQSEvalEngine:
     #####################################################################################################
     
     def compute_local_energy(self,
-                            states          : np.ndarray,
+                            states          : Array,
                             ham_action_func : Callable,
-                            params          : Optional[Any] = None,
-                            probabilities   : Optional[np.ndarray] = None,
-                            batch_size      : Optional[int] = None,
+                            params          : Optional[Any]         = None,
+                            probabilities   : Optional[np.ndarray]  = None,
+                            batch_size      : Optional[int]         = None,
                             *,
-                            return_stats    : bool = True
-                            ) -> NQSStatistics:
+                            return_stats    : bool                  = True
+                            ) -> NQSEnergyResult:
         """
-        Compute local energies E_loc(s) = <s|H|ψ>/<s|ψ>.
+        Compute local energies E_loc(s) = <s|H|psi>/<s|psi>.
         
         This consolidates the old _single_step_groundstate and energy evaluation logic.
         
@@ -240,39 +262,32 @@ class NQSEvalEngine:
             params = self.nqs.get_params()
         
         # Set batch size if override provided
-        old_batch_size = self.engine.config.batch_size
+        old_batch_size = self.config.batch_size
         if batch_size is not None:
-            self.engine.set_batch_size(batch_size)
+            self.set_batch_size(batch_size)
         
         try:
             # Compute local energies using the engine
-            result = self.engine.evaluate_function(
-                ham_action_func,
-                states,
-                self.nqs._ansatz_func,
-                params,
-                probabilities=probabilities
-            )
-            
+            result = self.evaluate_function(
+                        ham_action_func,
+                        states,
+                        self.nqs._ansatz_func,
+                        params,
+                        probabilities=probabilities
+                    )
+                    
             # Convert to EnergyStatistics
             local_energies = np.asarray(result.values)
             
             if not return_stats:
                 return local_energies
             
-            return NQSStatistics(
-                local_energies  = local_energies,
-                mean_energy     = float(result.mean),
-                std_energy      = float(result.std),
-                min_energy      = float(result.min_val),
-                max_energy      = float(result.max_val),
-                n_samples       = result.n_samples
-            )
+            return result
             
         finally:
             # Restore original batch size
             if batch_size is not None:
-                self.engine.set_batch_size(old_batch_size)
+                self.set_batch_size(old_batch_size)
     
     #####################################################################################################
     #! OBSERVABLE EVALUATION
@@ -281,12 +296,12 @@ class NQSEvalEngine:
     def compute_observable(self,
                           observable_func       : Callable,
                           states                : np.ndarray,
-                          observable_name       : str = "Observable",
-                          params                : Optional[Any] = None,
-                          compute_expectation   : bool = False,
-                          batch_size            : Optional[int] = None,
+                          observable_name       : str                   = "Observable",
+                          params                : Optional[Any]         = None,
+                          batch_size            : Optional[int]         = None,
+                          probabilities         : Optional[np.ndarray]  = None,
                           *,
-                          return_stats          : bool = False
+                          return_stats          : bool                  = False
                           ) -> Union[Array, ObservableResult]:
         """
         Evaluate an observable O on states.
@@ -303,7 +318,7 @@ class NQSEvalEngine:
             params: 
                 Network parameters. If None, uses current NQS parameters
             compute_expectation: 
-                If True, compute <ψ|O|ψ> (requires specialized impl)
+                If True, compute <psi|O|psi> (requires specialized impl)
             batch_size: 
                 Optional batch size override
 
@@ -314,17 +329,17 @@ class NQSEvalEngine:
             params = self.nqs.get_params()
         
         # Set batch size if override provided
-        old_batch_size = self.engine.config.batch_size
+        old_batch_size = self.config.batch_size
         if batch_size is not None:
-            self.engine.set_batch_size(batch_size)
+            self.set_batch_size(batch_size)
         
         try:
-            result = self.engine.evaluate_function(
+            result = super().evaluate_function(
                 observable_func,
                 states,
                 self.nqs._ansatz_func,
                 params,
-                probabilities=None
+                probabilities=probabilities
             )
             
             local_values = np.asarray(result.values)
@@ -334,19 +349,19 @@ class NQSEvalEngine:
             
             return ObservableResult(
                 observable_name     = observable_name,
-                expectation_value   = float(result.mean) if compute_expectation else None,
-                local_values        = local_values,
-                mean_local_value    = float(result.mean),
-                std_local_value     = float(result.std),
-                metadata            = {
-                                        'n_samples'     : result.n_samples,
-                                        'backend_used'  : result.backend_used,
-                                    }
+                values              = local_values,
+                mean                = float(result.mean),
+                std                 = float(result.std),
+                min_val             = float(result.min_val),
+                max_val             = float(result.max_val),
+                n_samples           = result.n_samples,
+                backend_used        = result.backend_used,
+                metadata            = result.metadata,
             )
         finally:
             # Restore original batch size
             if batch_size is not None:
-                self.engine.set_batch_size(old_batch_size)
+                self.set_batch_size(old_batch_size)
     
     def compute_observables(self,
                             observable_funcs     : Dict[str, Callable],
@@ -354,7 +369,7 @@ class NQSEvalEngine:
                             params               : Optional[Any] = None,
                             batch_size           : Optional[int] = None,
                             *,
-                             return_stats        : bool = True
+                            return_stats        : bool = True
                             ) -> Dict[str, ObservableResult]:
         """
         Evaluate multiple observables efficiently.
@@ -378,8 +393,7 @@ class NQSEvalEngine:
         results = {}
         for name, func in observable_funcs.items():
             results[name] = self.compute_observable(
-                func, states, name, params, 
-                compute_expectation=True, batch_size=batch_size,
+                func, states, name, params, batch_size=batch_size,
                 return_stats=return_stats
             )
         return results
@@ -390,10 +404,10 @@ class NQSEvalEngine:
     
     def evaluate_function(self,
                          func           : Callable,
-                         states         : np.ndarray,
-                         params         : Optional[Any] = None,
-                         probabilities  : Optional[np.ndarray] = None,
-                         batch_size     : Optional[int] = None) -> EvaluationResult:
+                         states         : Array,
+                         probabilities  : Optional[Array]       = None,
+                         params         : Optional[Any]         = None,
+                         batch_size     : Optional[int]         = None) -> EvaluationResult:
         """
         General-purpose function evaluation on state batches.
         
@@ -418,19 +432,15 @@ class NQSEvalEngine:
             params = self.nqs.get_params()
         
         # Set batch size if override provided
-        old_batch_size = self.engine.config.batch_size
+        old_batch_size = self.config.batch_size
         if batch_size is not None:
-            self.engine.set_batch_size(batch_size)
+            self.set_batch_size(batch_size)
         
         try:
-            return self.engine.evaluate_function(
-                func, states, self.nqs._ansatz_func, params,
-                probabilities=probabilities
-            )
+            return super().evaluate_function(func, states, self.nqs._ansatz_func, params, probabilities=probabilities)
         finally:
-            # Restore original batch size
             if batch_size is not None:
-                self.engine.set_batch_size(old_batch_size)
+                self.set_batch_size(old_batch_size)
     
     #####################################################################################################
     #! CONFIGURATION MANAGEMENT
@@ -443,19 +453,19 @@ class NQSEvalEngine:
         Parameters:
             backend: 'jax', 'numpy', or 'auto'
         """
-        self.engine.set_backend(backend)
+        super().set_backend(backend)
     
     def set_batch_size(self, batch_size: Optional[int]):
         """Set batch size for evaluation."""
-        self.engine.set_batch_size(batch_size)
+        super().set_batch_size(batch_size)
     
     def get_config(self) -> EvaluationConfig:
         """Get current evaluation configuration."""
-        return self.engine.get_config()
+        return super().get_config()
     
     def get_backend_name(self) -> str:
         """Get name of currently active backend."""
-        return self.engine.get_backend_name()
+        return super().get_backend_name()
     
     #####################################################################################################
     #! UTILITIES
@@ -467,7 +477,7 @@ class NQSEvalEngine:
     
     def get_summary(self) -> Dict[str, Any]:
         """Get a summary of the compute engine configuration."""
-        config = self.engine.get_config()
+        config = self.get_config()
         return {
             'backend'           : config.backend,
             'actual_backend'    : self.get_backend_name(),
@@ -476,12 +486,11 @@ class NQSEvalEngine:
             'cached_results'    : len(self._cached_results),
         }
 
-
 #####################################################################################################
 #! FACTORY FUNCTION
 #####################################################################################################
 
-def create_compute_local_energy(nqs         : NQS,
+def create_compute_local_energy(nqs         : 'NQS',
                                backend      : str = 'auto',
                                batch_size   : Optional[int] = None) -> NQSEvalEngine:
     """

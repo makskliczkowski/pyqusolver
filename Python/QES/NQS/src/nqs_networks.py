@@ -1,5 +1,11 @@
 '''
 Handles the network implementations and utilities for Neural Quantum States (NQS).
+
+--------------------------------------------------------------
+File                : NQS/nqs_networks.py
+Author              : Maksymilian Kliczkowski
+Email               : maksymilian.kliczkowski@pwr.edu.pl
+--------------------------------------------------------------
 '''
 from .nqs_backend import *
 
@@ -7,11 +13,10 @@ from .nqs_backend import *
 #! Gradients and network utilities
 #########################################
 
-def nqs_choose_network(net_spec         : Any,
-                        input_shape     : tuple,
-                        backend         : BackendInterface,
-                        **kwargs
-                    ) -> Networks.GeneralNet:
+def nqs_choose_network(net_spec     : Any,
+                    input_shape     : tuple,
+                    backend         : BackendInterface,
+                    **kwargs) -> Networks.GeneralNet:
     """
     Select, instantiate, and initialize a network object for NQS.
     Parameters:

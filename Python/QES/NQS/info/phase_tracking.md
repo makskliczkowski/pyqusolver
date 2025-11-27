@@ -103,7 +103,7 @@ theta0     : Optional[Array]  # Current global phase parameter θ₀
 2. **Compute global phase evolution** (automatic in `solve()`)
 
    ```python
-   theta0_dot = -i⟨H⟩ - θ̇_k ⟨∂_θk ψ⟩_c
+   theta0_dot = -i⟨H⟩ - θ̇_k ⟨∂_θk psi⟩_c
    ```
 
 3. **Update parameters and phase**
@@ -174,7 +174,7 @@ def compute_dsf(snapshot_i, snapshot_j, observable_op):
     """
     Compute correlation function accounting for relative phase.
     
-    ⟨ϕ_\alpha(t_i)|O|ϕ_β(t_j)⟩ = e^{i(θ0_i - θ0_j)} ⟨ψ(t_i)|O|ψ(t_j)⟩
+    ⟨ϕ_\alpha(t_i)|O|ϕ_β(t_j)⟩ = e^{i(θ0_i - θ0_j)} ⟨psi(t_i)|O|psi(t_j)⟩
     """
     phase_factor = jnp.exp(1j * (snapshot_i['theta0'] - snapshot_j['theta0']))
     

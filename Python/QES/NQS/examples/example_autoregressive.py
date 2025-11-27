@@ -14,7 +14,7 @@ Key Features:
 
 The autoregressive ansatz factorizes the wavefunction as:
 
-    ψ(s₁, s₂, ..., sₙ) = p(s₁) times  p(s₂|s₁) times  p(s₃|s₁,s₂) times  ... 
+    psi(s₁, s₂, ..., sₙ) = p(s₁) times  p(s₂|s₁) times  p(s₃|s₁,s₂) times  ... 
 
 where each conditional probability is computed by a neural network.
 
@@ -35,7 +35,7 @@ if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
 try:
-    from QES.NQS.src.network_integration import NetworkFactory, NetworkSelector
+    from QES.NQS.src.nqs_network_integration import NetworkFactory, NetworkSelector
     from QES.Algebra.hilbert import HilbertSpace
 except ImportError as e:
     print(f"Error importing modules: {e}")
@@ -121,7 +121,7 @@ def main():
     
     print_section("AUTOREGRESSIVE NEURAL NETWORKS FOR QUANTUM STATES", width=80)
     print("\nKey Concepts:")
-    print("  • Factorization: ψ(s) = ∏ᵢ p(sᵢ | s₁...sᵢ₋₁)")
+    print("  • Factorization: psi(s) = ∏ᵢ p(sᵢ | s₁...sᵢ₋₁)")
     print("  • Conditioning: Each factor depends on previous qubits")
     print("  • Efficiency: Parameter count ≈ N times  (hidden_layers)")
     print("  • Applications: Large systems, state generation, density estimation")
@@ -166,7 +166,7 @@ def main():
   │ ...                                                     │
   │                                                         │
   │ Total log probability:                                 │
-  │ log ψ(s) = Σᵢ log p(sᵢ|s₁,...,sᵢ₋₁)                    │
+  │ log psi(s) = Σᵢ log p(sᵢ|s₁,...,sᵢ₋₁)                    │
   │                                                         │
   └─────────────────────────────────────────────────────────┘
     """)
@@ -182,7 +182,7 @@ def main():
   ├─ Position 4: Input=[s₁,s₂,s₃], Output=log p(s₄|s₁,s₂,s₃)
   └─ ...
   
-  Total: log ψ(s) = Σ outputs
+  Total: log psi(s) = Σ outputs
     """)
     
     # =========================================================================
@@ -313,7 +313,7 @@ def main():
     print_section("SUMMARY")
     
     print("\n(ok) Key Takeaways:")
-    print("  1. Autoregressive models factorize: ψ = ∏ᵢ p(sᵢ|s₁...sᵢ₋₁)")
+    print("  1. Autoregressive models factorize: psi = ∏ᵢ p(sᵢ|s₁...sᵢ₋₁)")
     print("  2. Each conditional probability is computed by a neural network")
     print("  3. Sequential evaluation allows exact likelihood computation")
     print("  4. Parameter efficient: scales as O(N times  hidden_layers)")

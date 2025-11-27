@@ -21,7 +21,7 @@ from QES.NQS.src.nqs_engine import (
     EnergyStatistics, 
     ObservableResult
 )
-from QES.NQS.src.nqs_general_engine import (
+from QES.NQS.src.general.nqs_general_engine import (
     create_evaluation_engine,
     EvaluationConfig,
     EvaluationResult,
@@ -85,7 +85,7 @@ def example_1_basic_ansatz_evaluation():
 
 def example_2_local_energy_computation():
     """
-    Example 2: Compute local energies E_loc(s) = <s|H|ψ>/<s|ψ>
+    Example 2: Compute local energies E_loc(s) = <s|H|psi>/<s|psi>
     
     This shows the new unified energy computation interface, which replaces:
         nqs.step()  [old, multi-purpose]

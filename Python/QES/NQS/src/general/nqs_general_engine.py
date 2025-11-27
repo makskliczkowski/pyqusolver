@@ -92,14 +92,23 @@ class EvaluationConfig:
 class EvaluationResult:
     """Result of an evaluation operation."""
     
-    values          : Array                     # Computed values array
-    mean            : Optional[float] = None    # Mean of values
-    std             : Optional[float] = None    # Standard deviation of values
-    min_val         : Optional[float] = None    # Minimum value
-    max_val         : Optional[float] = None    # Maximum value
-    n_samples       : int = 0                   # Number of samples evaluated
-    backend_used    : str = 'unknown'           # Backend used for evaluation
-    metadata        : Dict[str, Any] = field(default_factory=dict)
+    values          : Array                         # Computed values array
+    mean            : Optional[float] = None        # Mean of values
+    std             : Optional[float] = None        # Standard deviation of values
+    min_val         : Optional[float] = None        # Minimum value
+    max_val         : Optional[float] = None        # Maximum value
+    n_samples       : int             = 0           # Number of samples evaluated
+    
+    variance        : Optional[float] = None        # Variance of values
+    error_of_mean   : Optional[float] = None        # Error of the mean    
+    
+    backend_used    : str             = 'unknown'   # Backend used for evaluation
+    metadata        : Dict[str, Any]  = field(default_factory=dict)
+
+    def __post_init__(self):
+        """Compute derived statistics."""
+        self.variance       = self.std ** 2                                  # Variance
+        self.error_of_mean  = self.std / np.sqrt(max(self.n_samples - 1, 1)) # Monte Carlo error
 
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the evaluation results."""
@@ -112,6 +121,13 @@ class EvaluationResult:
             'max'           : self.max_val,
             'backend'       : self.backend_used,
         }
+        
+    def __str__(self) -> str:
+        ''' As a single line summary '''
+        return ','.join([f"{k}={v}" for k, v in self.summary().items()])
+    
+    def __repr__(self) -> str:
+        return self.__str__()
 
 #####################################################################################################
 #! BATCH PROCESSOR
@@ -277,7 +293,7 @@ class JAXBackend(EvaluationBackend):
             single_eval = jit(single_eval)
         
         # Vectorize over batch dimension
-        vmapped_eval = vmap(single_eval)
+        vmapped_eval    = vmap(single_eval)
         
         # Handle batching
         if batch_size is None or len(states) <= batch_size:
@@ -437,7 +453,6 @@ class UnifiedEvaluationEngine:
     modular interface. It handles:
     - Ansatz evaluation (log-wavefunction)
     - Arbitrary function application
-    - Energy computation
     - Batch processing
     - Automatic backend dispatch
     
@@ -476,7 +491,7 @@ class UnifiedEvaluationEngine:
                        return_stats : bool = True
                        ) -> Union[Array, EvaluationResult]:
         """
-        Evaluate log-ansatz log|ψ(s)| on states.
+        Evaluate log-ansatz log|psi(s)| on states.
         
         Parameters:
             ansatz_func: 
@@ -519,7 +534,7 @@ class UnifiedEvaluationEngine:
                         states         : Array,
                         ansatz_func    : Callable,
                         params         : Any,
-                        probabilities  : Optional[Array] = None,
+                        probabilities  : Optional[Array],
                         *,
                         return_stats   : bool = True
                         ) -> Union[Array, EvaluationResult]:
@@ -552,16 +567,19 @@ class UnifiedEvaluationEngine:
         # Compute statistics
         mean, std, min_val, max_val = BatchProcessor.compute_statistics(values, return_stats=self.config.return_stats)
         
-        return EvaluationResult(
-            values          =   values,
-            mean            =   mean,
-            std             =   std,
-            min_val         =   min_val,
-            max_val         =   max_val,
-            n_samples       =   len(states),
-            backend_used    =   self.backend.name,
-            metadata        =   {'type': 'function_evaluation', 'func': func.__name__ if hasattr(func, '__name__') else 'lambda'}
-        )
+        if return_stats:        
+            return EvaluationResult(
+                values          =   values,
+                mean            =   mean,
+                std             =   std,
+                min_val         =   min_val,
+                max_val         =   max_val,
+                n_samples       =   len(states),
+                backend_used    =   self.backend.name,
+                metadata        =   {'type': 'function_evaluation', 'func': func.__name__ if hasattr(func, '__name__') else 'lambda'}
+            )
+        
+        return values
     
     # ----------------------------------
     

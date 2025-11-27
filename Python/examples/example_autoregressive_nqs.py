@@ -6,7 +6,7 @@ This example demonstrates how to use the Autoregressive (AR) neural network
 for quantum state representation with the Neural Quantum State (NQS) solver.
 
 The autoregressive architecture factorizes the wavefunction as:
-    ψ(s₁, s₂, ..., sₙ) = p(s₁) times  p(s₂|s₁) times  p(s₃|s₁,s₂) times  ... times  p(sₙ|s₁,...,sₙ₋₁)
+    psi(s₁, s₂, ..., sₙ) = p(s₁) times  p(s₂|s₁) times  p(s₃|s₁,s₂) times  ... times  p(sₙ|s₁,...,sₙ₋₁)
 
 This allows for exact sampling through sequential generation, making it
 particularly suitable for high-probability sampling in NQS training.
@@ -25,7 +25,7 @@ import numpy as np
 from typing import Tuple
 
 # Import QES modules
-from QES.NQS.src.network_integration import NetworkFactory
+from QES.NQS.src.nqs_network_integration import NetworkFactory
 from QES.Algebra.hilbert import HilbertSpace
 from QES.Algebra.hamil import Hamiltonian
 

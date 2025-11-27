@@ -1,12 +1,20 @@
 '''
 Backend interface for Neural Quantum States (NQS) implementations.
+
+This module defines an abstract backend interface and concrete implementations
+for different computational backends such as NumPy and JAX.
+
+--------------------------------------------------------------
+File                : NQS/src/nqs_backend.py
+Author              : Maksymilian Kliczkowski
+--------------------------------------------------------------
 '''
 import os
 import warnings
 import numpy as np
+from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Union
-from enum import Enum
 
 #! -------------------------------------------------------------
 JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
@@ -26,8 +34,8 @@ except ImportError as e:
 # --------------------------------------------------------------
 
 try:
-    from QES.Algebra.hamil import Hamiltonian
-    from QES.general_python.algebra.utils import Array
+    from QES.Algebra.hamil                  import Hamiltonian
+    from QES.general_python.algebra.utils   import Array
 except ImportError as e:
     warnings.warn("Could not import Hamiltonian from QES.Algebra.hamil. Ensure QES is installed correctly.", ImportWarning)
     raise e
@@ -43,12 +51,8 @@ try:
     if JAX_AVAILABLE:
         import QES.general_python.ml.net_impl.interface_net_flax as net_flax
 
-    # schedulers and preconditioners and solvers
-    # import QES.general_python.ml.schedulers as scheduler_mod
-    # import QES.general_python.algebra.solvers as solvers_mod
 except ImportError as e:
-    warnings.warn("Some general_python.ml modules could not be imported. Ensure general_python.ml is installed correctly.", ImportWarning)
-    raise e
+    raise ImportError("Could not import general_python.ml.networks modules. Make sure general_python.ml is installed correctly.") from e
 
 # Different backends imports
 try:
@@ -78,6 +82,9 @@ except ImportError as e:
     warnings.warn("JAX or Flax could not be imported. Ensure they are installed correctly.", ImportWarning)
     raise e
 
+# --------------------------------------------------------------
+#! Backend Interface
+# --------------------------------------------------------------
 
 class BackendInterface(ABC):
     """Abstract backend (NumPy, JAX, etc.)."""
@@ -116,15 +123,15 @@ class BackendInterface(ABC):
     def prepare_gradients(self, net):
         """
         Returns a dict with:
-        - flat_grad_func            -> function to compute flattened gradients (log psi)
-        - dict_grad_types           -> dict with gradient types per parameter
-        - slice_metadata            -> metadata for slicing gradients - e.g. information about the structure of the gradients
-        - leaf_info                 -> information about leaves in the parameter pytree
-        - tree_def                  -> definition of the parameter pytree
-        - shapes                    -> shapes of the parameters
-        - sizes                     -> sizes of the parameters - useful for flattening
-        - is_complex_per_leaf       -> whether each leaf is complex - helpful for complex differentiation
-        - total_size                -> total size of the parameter pytree - useful for flattening
+        - flat_grad_func                -> function to compute flattened gradients (log psi)
+        - dict_grad_types               -> dict with gradient types per parameter
+        - slice_metadata                -> metadata for slicing gradients - e.g. information about the structure of the gradients
+        - leaf_info                     -> information about leaves in the parameter pytree
+        - tree_def                      -> definition of the parameter pytree
+        - shapes                        -> shapes of the parameters
+        - sizes                         -> sizes of the parameters - useful for flattening
+        - is_complex_per_leaf           -> whether each leaf is complex - helpful for complex differentiation
+        - total_size                    -> total size of the parameter pytree - useful for flattening
         """
         pass
 
@@ -248,6 +255,7 @@ class JAXBackend(BackendInterface):
             dict_grad_type      = dict_grad_type,
             slice_metadata      = slice_metadata,
             leaf_info           = leaf_info,
+            leaves              = leaves,
             tree_def            = tree_def,
             shapes              = shapes,
             sizes               = sizes,
@@ -306,28 +314,3 @@ def nqs_get_backend(backend_type: Union[NQSBackendType, str]) -> BackendInterfac
 # --------------------------------------------------------------
 #! EOF
 # --------------------------------------------------------------
-
-# ---
-
-# def init_state(self):
-#     '''
-#     Initialize the state of the network. This is done by creating a new
-#     TrainState object with the network's parameters and the provided shape.
-#     Returns:
-#         flax.training.train_state.TrainState
-#             The initialized TrainState object.
-#     Note:
-#         This method is only applicable if the backend is JAX and the network
-#         is a Flax network. If the backend is not JAX, this method will return None.
-        
-#     '''
-
-#     if JAX_AVAILABLE and self._isjax and issubclass(type(self._net), net_flax.FlaxInterface):
-#         params   = self._net.init(self._rng_k, jnp.ones(self._shape, dtype=jnp.int32))
-#         return flax.training.train_state.TrainState.create(
-#             apply_fn = self._ansatz_func,
-#             params   = params,
-#             tx       = None
-#         )
-#     else:
-#         return None

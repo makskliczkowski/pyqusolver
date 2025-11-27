@@ -2,7 +2,7 @@
 Shared observable computation utilities for both NQS and ED methods.
 
 Key Pattern:
-- ED: Use operator.matrix() to create full matrix, then compute <ψ|O|ψ>
+- ED: Use operator.matrix() to create full matrix, then compute <psi|O|psi>
 - NQS: Use operator.jax for Monte Carlo sampling of local observables
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ def compute_spin_expectations_from_state(state_vector: np.ndarray, lattice, hilb
         # Check if matrices were created successfully
         if mat_sx is not None and mat_sy is not None and mat_sz is not None:
             # For local operators, we sum over all sites
-            # <S^α_total> = <ψ|Σ_i S^α_i|ψ>
+            # <S^α_total> = <psi|Σ_i S^α_i|psi>
             sx_vals[0] = np.real(state_vector.conj() @ mat_sx @ state_vector)
             sy_vals[0] = np.real(state_vector.conj() @ mat_sy @ state_vector)
             sz_vals[0] = np.real(state_vector.conj() @ mat_sz @ state_vector)
@@ -256,7 +256,7 @@ def compute_local_energy_nqs(
     use_jax: bool = True
 ) -> float:
     """
-    Compute local energy E_loc(s) = Σ_s' <s'|H|s> ψ(s')/ψ(s) for a single sample.
+    Compute local energy E_loc(s) = Σ_s' <s'|H|s> psi(s')/psi(s) for a single sample.
     
     Uses Hamiltonian's built-in loc_energy functions (already JIT-compiled!).
     The Hamiltonian already has all operators set up - no need to extract terms.
@@ -318,7 +318,7 @@ def compute_operator_expectation_nqs(
     use_jax: bool = True
 ) -> float:
     """
-    Compute expectation value <O> = Σ_s |ψ(s)|² <s|O|s> using Monte Carlo sampling.
+    Compute expectation value <O> = Σ_s |psi(s)|² <s|O|s> using Monte Carlo sampling.
     
     FULLY GENERAL - works for ANY operator with .jax property!
     Examples: spin operators, density, number operators, correlation functions, etc.
@@ -349,7 +349,7 @@ def compute_operator_expectation_nqs(
         else:
             return float('nan')
         
-        # Sample from |ψ|²
+        # Sample from |psi|²
         samples = nqs_model.sample(n_samples)
         
         expectation = 0.0
@@ -430,7 +430,7 @@ def compute_observables_nqs_jax(
         import jax
         import jax.numpy as jnp
         
-        # Sample from |ψ|²
+        # Sample from |psi|²
         samples = nqs_model.sample(n_samples)
         
         # Compute local energy samples

@@ -14,7 +14,7 @@ import sys
 # from your_setup import SimulationParams, train_single_step, prepare_nqs, etc.
 
 # Add learning phases import
-from QES.NQS.src.learning_phases import (
+from QES.general_python.ml.training_phases import (
     LearningPhase, 
     PhaseType, 
     LearningPhaseScheduler,

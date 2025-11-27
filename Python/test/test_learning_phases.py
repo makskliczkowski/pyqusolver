@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from QES.NQS.nqs import NQS
-from QES.NQS.src.learning_phases import (
+from QES.general_python.ml.training_phases import (
     LearningPhase,
     LearningPhaseScheduler,
     PhaseType,

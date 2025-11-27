@@ -1,5 +1,11 @@
 '''
 Implementation of various physical problem layers for Neural Quantum States (NQS).
+
+--------------------------------------------------------------
+File                : NQS/nqs_physics.py
+Author              : Maksymilian Kliczkowski
+Email               : maksymilian.kliczkowski@pwr.edu.pl
+--------------------------------------------------------------
 '''
 import inspect
 import numpy as np
@@ -20,6 +26,7 @@ class PhysicsInterface(ABC):
     def __init__(self, backend: BackendInterface):
         self.backend    = backend
         self.net        = None # Neural network ansatz
+        self.name       = self.__class__.__name__
 
     @abstractmethod
     def setup(self, model, net):
@@ -78,7 +85,9 @@ class WavefunctionPhysics(PhysicsInterface):
                 "Must be a Hamiltonian instance or a callable(state).")
 
         # Store reference to the network (may be useful for later extensions)
-        self.net = net
+        self.net    = net
+        self.name   = "WavefunctionPhysics"
+        self.typ    = 'wavefunction'
 
     def loss(self, params, states):
         return self.local_energy_fn(states, params)
@@ -90,6 +99,8 @@ class DensityMatrixPhysics(PhysicsInterface):
         # Model could be Lindbladian or other operator
         self.operator = model
         self.net      = net
+        self.name     = "DensityMatrixPhysics"
+        self.typ      = 'density_matrix'
 
     def loss(self, params, states):
         pass
@@ -99,8 +110,10 @@ class DensityMatrixPhysics(PhysicsInterface):
 class TomographyPhysics(PhysicsInterface):
     def setup(self, model, net):
         # Model is experimental data (probabilities)
-        self.data = model
-        self.net = net
+        self.data   = model
+        self.net    = net
+        self.name   = "TomographyPhysics"
+        self.typ    = 'tomography'
 
     def loss(self, params, measurements):
         # Negative log-likelihood for observed measurements

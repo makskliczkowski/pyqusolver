@@ -968,7 +968,7 @@ $$\langle k,r|\hat{H}|k,s\rangle = h_{rs} \cdot \chi_k(g_s)^* \cdot \frac{\mathc
 **Implementation Details**:
 
 - Character formula: `χ_k(T^n) = exp(2πi * k * n / L)` where k=sector, n=count, L=lattice size
-- Normalization: `N = sqrt(Σ_{g$\in$stabilizer} χ(g)* ⟨ψ|g|ψ⟩)` (no division by |G|)
+- Normalization: `N = sqrt(Σ_{g$\in$stabilizer} χ(g)* ⟨psi|g|psi⟩)` (no division by |G|)
 - Matrix elements: `⟨k,r|H|k,s⟩ = Σ_t ⟨r|H|t⟩ \cdot  conj(χ_k(g_t)) \cdot  N_r / N_k`
   where `g_t` maps representative `s` to state `t`
 

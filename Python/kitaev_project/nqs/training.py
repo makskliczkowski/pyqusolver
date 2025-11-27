@@ -15,7 +15,7 @@ from .types import NeuralAnsatz, NQSTrainingConfig, TrainingArtifact
 
 if TYPE_CHECKING:
     from QES.NQS.nqs import NQS
-    from QES.NQS.tdvp import TDVP
+    from QES.NQS.src.tdvp import TDVP
     from QES.Solver.MonteCarlo.sampler import MCSampler
 
 
@@ -113,7 +113,7 @@ class NQSTrainer:
 
     def _create_tdvp(self, config: NQSTrainingConfig):
         """Create TDVP integrator."""
-        from QES.NQS.tdvp import TDVP
+        from QES.NQS.src.tdvp import TDVP
         import QES.general_python.algebra.solvers as solvermodule
         import QES.general_python.algebra.preconditioners as precondmodule
         

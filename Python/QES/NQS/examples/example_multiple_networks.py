@@ -34,7 +34,7 @@ if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
 try:
-    from QES.NQS.src.network_integration import NetworkFactory, NetworkSelector
+    from QES.NQS.src.nqs_network_integration import NetworkFactory, NetworkSelector
     from QES.Algebra.hilbert import HilbertSpace
 except ImportError as e:
     print(f"Error importing modules: {e}")
