@@ -93,9 +93,9 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         self._name          = "Transverse Field Ising Model"
 
         # Store model-specific parameters
-        self._j             = None # Initialize before setting
-        self._hx            = None
-        self._hz            = None
+        self._j             = None                  # Initialize before setting
+        self._hx            = None                  # Initialize before setting
+        self._hz            = None                  # Initialize before setting
         # Set Hamiltonian attributes
         self._is_sparse     = True
         self._is_manybody   = True
@@ -105,6 +105,9 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         #! Build the Hamiltonian Terms
         self.set_couplings(j=j, hx=hx, hz=hz)
         self._set_local_energy_operators()
+        self._lookup_codes              = operators_spin_module.SPIN_LOOKUP_CODES.to_dict()
+        self._instr_function            = operators_spin_module.sigma_composition_integer(is_complex = self._iscpx)
+        self._instr_max_out             = len(self._instr_codes) + 1
         self._set_local_energy_functions()
         self._log(f"TFIM Hamiltonian initialized for {self.ns} sites.", lvl=1, log='debug')
 
