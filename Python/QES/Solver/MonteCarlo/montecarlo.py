@@ -17,12 +17,10 @@ from dataclasses import dataclass
 
 # from algebra
 try:
-    from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
-    from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
-    from QES.general_python.common.directories import Directories
-    from QES.general_python.common.flog import get_global_logger, Logger
-    from QES.general_python.common.timer import Timer
-    import QES.general_python.common.binary as Binary
+    from QES.general_python.algebra.utils       import JAX_AVAILABLE, get_backend
+    from QES.general_python.common.directories  import Directories
+    from QES.general_python.common.flog         import get_global_logger, Logger
+    from QES.general_python.common.timer        import Timer
 except ImportError as e:
     raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
@@ -37,12 +35,13 @@ if JAX_AVAILABLE:
     import jax
     import jax.numpy as jnp
     import jax.random as random
-    from jax import vmap
+    from   jax import vmap
 
 ###################################
 try:
-    from QES.Solver.solver import Solver
-    from QES.Solver.MonteCarlo.sampler import Sampler, get_sampler, SolverInitState
+    from QES.Solver.solver              import Solver
+    from QES.Solver.MonteCarlo.sampler  import Sampler, SolverInitState
+    from QES.Solver.MonteCarlo.vmc      import get_sampler
 except ImportError as e:
     raise ImportError("Failed to import Solver modules. Ensure QES package is correctly installed.") from e
 ###################################

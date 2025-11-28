@@ -1,4 +1,3 @@
-
 """
 QES.NQS.nqs
 ===========
@@ -43,7 +42,7 @@ except ImportError as e:
 # import physical problems
 try:
     from .src.nqs_physics import *
-    from .src.nqs_networks import *
+    from .src.nqs_network_integration import *
     from .src.nqs_engine import NQSEvalEngine
 except ImportError as e:
     raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
@@ -60,15 +59,20 @@ try:
     from QES.general_python.common.flog import Logger
     
     #! Monte Carlo
-    from QES.Solver.MonteCarlo.montecarlo import MonteCarloSolver, Sampler
+    from QES.Solver.MonteCarlo.vmc import VMCSampler, get_sampler
+    from QES.Solver.MonteCarlo.montecarlo import MonteCarloSolver
     
     #! Hilbert space
     from QES.Algebra.hilbert import HilbertSpace
+    
+    #! Choose network
+    from QES.general_python.ml.networks import choose_network as nqs_choose_network
     
 except ImportError as e:
     warnings.warn("Some QES.general_python modules could not be imported. Ensure QES.general_python is installed correctly.", ImportWarning)
     raise e
 
+# ----------------------------------------------------------
 AnsatzFunctionType      = Callable[[Callable, Array, int, Any], Array]               # func, states, batch_size, params -> Array [log ansatz values]
 ApplyFunctionType       = Callable[[Callable, Array, Array, Array, int, Any], Array] # func, states, probs, params, batch_size -> Array [sampled/evaluated values]
 
@@ -112,10 +116,11 @@ class NQS(MonteCarloSolver):
     def __init__(self,
                 # information on the NQS
                 net         : Union[Callable, str, net_general.GeneralNet],
-                sampler     : Union[Callable, str, Sampler],
+                sampler     : Union[Callable, str, VMCSampler],
                 model       : Hamiltonian,
                 # information on the Monte Carlo solver
                 batch_size  : Optional[int]                             = 1,
+                *,
                 # information on the NQS
                 nparticles  : Optional[int]                             = None,
                 # information on the Monte Carlo solver     
@@ -137,39 +142,44 @@ class NQS(MonteCarloSolver):
         
         Parameters:
             net:
-                The neural network to be used.
+                The neural network to be used. This can be specified in several ways:
+                - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
+                - As a pre-initialized network object (must be a subclass of `GeneralNet`).
+                - As a raw Flax module class for custom networks. The factory will wrap it automatically.
+                  See the documentation of `QES.general_python.ml.networks.choose_network` for details
+                  on custom module requirements.
             sampler:
                 The sampler to be used.
-            hamiltonian:
-                The Hamiltonian to be used.
+            model:
+                The physical model (e.g., Hamiltonian) for the NQS.
+                - If physics is 'wavefunction', this must provide a `local_energy_fn`.
+                - For other physics types, refer to the specific requirements.
             batch_size:
                 The batch size for training.
-            lower_states:
-                The lower states for the NQS.
-            lower_betas:
-                The lower betas for the NQS.
-            nparticles:
-                The number of particles in the system.
+            nparticles [Optional]:
+                The number of particles in the system. If not provided, defaults to system size.
             seed:
                 Random seed for initialization.
             beta:
-                Beta parameter for the NQS.
+                Inverse temperature for Monte Carlo sampling.
             mu:
                 Mu parameter for the NQS.
             replica:
-                Number of replicas in the system.
+                Number of replicas for parallel tempering.
             shape:
-                Shape of the input data.
+                Shape of the input data, e.g., `(n_spins,)`.
             hilbert:
                 Hilbert space object (optional).
             modes:
-                Number of modes in the system.
+                Number of local modes per site (e.g., 2 for spin-1/2).
             directory:
-                Directory for saving results (default: MonteCarloSolver.defdir).
+                Directory for saving results.
             backend:
-                Backend to be used ('default', 'jax', etc.).
-            nthreads:
-                Number of threads to use (default: 1).
+                Computational backend ('jax' or 'numpy').
+            problem:
+                The physics problem to solve (e.g., 'wavefunction').
+            **kwargs:
+                Additional keyword arguments passed to the network constructor.
         '''
         super().__init__(sampler    =   sampler,
                         seed        =   seed,
@@ -260,7 +270,7 @@ class NQS(MonteCarloSolver):
         #! Initialize unified evaluation engine
         # --------------------------------------------------
         if self._nqsproblem.typ == 'wavefunction':
-            self._eval_engine = NQSEvalEngine(self, backend='auto', batch_size=batch_size, jit_compile=True)
+            self._eval_engine = NQSEvalEngine(self, backend='auto', batch_size=batch_size, jit_compile=True, **kwargs)
         else:
             raise ValueError(self._ERROR_INVALID_PHYSICS)
 
@@ -625,7 +635,7 @@ class NQS(MonteCarloSolver):
     
     @staticmethod
     def _apply_fun_s(func   : list[Callable],
-                sampler     : Sampler,
+                sampler     : VMCSampler,
                 num_samples : int,
                 num_chains  : int,
                 logproba_fun: Callable,
@@ -722,8 +732,7 @@ class NQS(MonteCarloSolver):
             # get other parameters from kwargs
             num_samples = kwargs.get('num_samples', self._sampler.numsamples)
             num_chains  = kwargs.get('num_chains', self._sampler.numchains)
-            _, (states, ansatze), probabilities = self._sampler.sample(parameters=params,
-                                                        num_samples=num_samples, num_chains=num_chains)
+            _, (states, ansatze), probabilities = self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains)
             
         # check if the probabilities are provided
         if probabilities is None:
@@ -859,7 +868,7 @@ class NQS(MonteCarloSolver):
     #! SAMPLE
     #####################################
     
-    def sample(self, num_samples = None, num_chains = None, reset: bool = True, *, params = None, **kwargs):
+    def sample(self, num_samples = None, num_chains = None, reset: bool = False, *, params = None, **kwargs):
         '''
         Sample the NQS using the provided sampler. This will return
         the sampled states and the corresponding probabilities.
@@ -976,7 +985,7 @@ class NQS(MonteCarloSolver):
     
     @staticmethod
     def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
-        '''
+        r'''
         !TODO: Add the precomputed gradient vector - memory efficient
         '''
         sb = net_utils.numpy.create_batches_np(states, batch_size)
@@ -988,7 +997,7 @@ class NQS(MonteCarloSolver):
         return g
     
     def log_derivative(self, states, batch_size = None, params = None, *args, **kwargs) -> Array:
-        '''
+        r'''
         Compute the gradients of the ansatz logarithmic wave-function using JAX or NumPy.
         We assume that the log ansatz function is used here and therefore it 
         computes :math:`O_k = \\partial_{W_k} \\log \\psi(s) = \\partial_{W_k} \\psi(s) / \\psi(s)`.
@@ -1551,69 +1560,82 @@ class NQS(MonteCarloSolver):
         Returns:
             Full path to the saved weights file.
         """
+        
+        import os
+        from pathlib import Path
+        
         # determine filename
         if filename is None:
             base_name = f"{type(self._net).__name__}_weights"
             filename  = f"{base_name}.{fmt}"
+        
+        # Resolve Path
+        if absolute:
+            path = Path(filename)
+        else:
+            # Fallback to internal dir logic if needed
+            base = Path(self._dir_detailed) # Assuming this attribute exists
+            path = base / filename
+            
+        # ensure directory exists
+        path.parent.mkdir(parents=True, exist_ok=True)
 
+        if path.exists() and not overwrite:
+            print(f"Checkpoint {path} exists, skipping.")
+            return
+
+        # get current parameters
         params = self._net.get_params()
 
         if self._use_orbax and self._ckpt_manager:
             if step is None:
                 step = 0
                 
-            #! Optionally override keep parameter
+            # Optionally override keep parameter
             if max_to_keep is not None:
                 self._ckpt_manager.max_to_keep = max_to_keep
 
             self._ckpt_manager.save(
-                step      = step,
-                items     = { 'params': params },
-                overwrite = overwrite
-            )
+                        step        = step,
+                        items       = { 'params': params },
+                        overwrite   = overwrite
+                    )
             out_path = self._ckpt_manager.directory
             info     = {
-                'path'      : out_path,
-                'step'      : step,
-                'max_kept'  : self._ckpt_manager.max_to_keep
-            }
+                        'path'      : out_path,
+                        'step'      : step,
+                        'max_kept'  : self._ckpt_manager.max_to_keep
+                    }
         else:
-            # construct path
-            if absolute:
-                path = Directories(filename)
-                path.parent().mkdir(parents=True, exist_ok=True)
-            else:
-                base = Directories(self._dir_detailed)
-                path = Path(str(base.join(filename)))
-
-            # avoid overwrite if disabled
-            if path.exists() and not overwrite:
-                raise FileExistsError(f"File already exists: {path}")
-
+            import h5py
+            
             if fmt == 'h5':
                 with h5py.File(path, 'w') as f:
-                    def write_tree(node, tree):
-                        for k, v in tree.items():
-                            if isinstance(v, dict):
-                                grp = node.create_group(k)
-                                write_tree(grp, v)
+                    # Recursively write PyTree (Dict of Arrays)
+                    def write_group(h5_group, py_dict):
+                        for k, v in py_dict.items():
+                            if isinstance(v, dict) or hasattr(v, 'items'):
+                                sub_group = h5_group.create_group(k)
+                                write_group(sub_group, v)
                             else:
-                                node.create_dataset(k, data=np.array(v))
-                    write_tree(f, params)
+                                h5_group.create_dataset(k, data=np.array(v))
+                    
+                    write_group(f, params)
+                    
+                    # Save Metadata inside H5 (Cleaner than separate JSON)
+                    if save_metadata and isinstance(save_metadata, dict):
+                        for k, v in save_metadata.items():
+                            # HDF5 attributes must be primitive types
+                            try:
+                                f.attrs[k] = v
+                            except TypeError:
+                                f.attrs[k] = str(v)
             elif fmt == 'npz':
                 flat = {k: np.array(v) for k, v in params.items()}
                 np.savez(path, **flat)
             else:
                 raise ValueError(f"Unsupported format: {fmt}")
-
-            out_path = str(path)
-            info     = {'path': out_path, 'step': None, 'max_kept': 1}
-
-        if save_metadata:
-            meta = Path(info['path']).with_suffix('.json')
-            with open(meta, 'w') as mf:
-                json.dump({'nqs_repr': repr(self), 'checkpoint': info}, mf, indent=2)
-
+            
     def load_weights(
         self,
         filename : Optional[str] = None,

@@ -13,17 +13,132 @@ Key Components:
 
 Usage Example:
 --------------
-    >>> from QES.NQS import NQS, NQSTrainer, NetworkFactory
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> from QES.NQS import NQS, NQSTrainer, NetworkFactory, VMCSampler
+    >>> 
+    >>> # Mock Hamiltonian (replace with your actual model)
+    >>> class MockHamiltonian:
+    ...     def __init__(self, ns): self.ns = ns
+    ...     def local_energy_fn(self, state, params, log_psi_func): return jnp.array(0.0) # Placeholder
+    ...     @property
+    ...     def shape(self): return (16,)
+    >>> model = MockHamiltonian(ns=16)
     >>> 
     >>> # 1. Create Network (RBM)
-    >>> net = NetworkFactory.create('rbm', input_shape=(100,), alpha=2.0)
+    >>> net = NetworkFactory.create('rbm', input_shape=(model.ns,), alpha=2.0)
     >>> 
-    >>> # 2. Define Physics
-    >>> psi = NQS(ansatz=net, hamiltonian=my_hamiltonian)
+    >>> # 2. Create Sampler
+    >>> sampler = VMCSampler(
+    ...     net         =   net, 
+    ...     shape       =   (model.ns,), 
+    ...     rng         =   jax.random, 
+    ...     rng_k       =   jax.random.PRNGKey(0), 
+    ...     numchains   =   1, 
+    ...     numsamples  =   10, 
+    ...     therm_steps =   100, 
+    ...     sweep_steps =   1, 
+    ...     backend     =   'jax'
+    ... )
     >>> 
-    >>> # 3. Train (using 'kitaev' preset for frustrated systems)
-    >>> trainer = NQSTrainer(psi, phases="kitaev")
-    >>> trainer.train()
+    >>> # 3. Define NQS Physics
+    >>> psi = NQS(net=net, sampler=sampler, model=model)
+    >>> 
+    >>> # 4. Train (using 'kitaev' preset for frustrated systems)
+    >>> trainer = NQSTrainer(nqs=psi, phases="kitaev")
+    >>> # trainer.train() # Uncomment to run actual training
+
+Ground State Optimization Example:
+----------------------------------
+    import jax
+    import jax.numpy as jnp
+    from QES.NQS import NQS, NQSTrainer, NetworkFactory, VMCSampler
+
+    # Define Hamiltonian (must provide local_energy_fn)
+    model = Hamiltonian(...)  # Replace with actual Hamiltonian
+
+    # 1. Create Network
+    net = NetworkFactory.create('rbm', input_shape=(16,), alpha=1.0)
+
+    # 2. Create Sampler
+    sampler = VMCSampler(
+        net         =   net,
+        shape       =   (16,),
+        rng         =   jax.random,
+        rng_k       =   jax.random.PRNGKey(0),
+        numchains   =   1,
+        numsamples  =   10,
+        therm_steps =   100,
+        sweep_steps =   1,
+        backend     =   'jax'
+    )
+
+    # 3. Initialize NQS
+    psi = NQS(net=net, sampler=sampler, model=model, shape=(16,)) # Sampler is now included
+
+    # 4. Initialize Trainer
+    trainer = NQSTrainer(nqs=psi, phases="kitaev", n_batch=1024, ode_solver="rk4")
+
+    # 5. Run
+    print("Starting Ground State Optimization...")
+    # stats = trainer.train() # Uncomment to run actual training
+    # print(f"Final Energy: {stats.history[-1]:.5f}")
+
+Excited State Optimization Example:
+-----------------------------------
+    import jax
+    import jax.numpy as jnp
+    from QES.NQS import NQS, NQSTrainer, NetworkFactory, VMCSampler
+
+    # Mock Hamiltonian (replace with your actual model)
+    model = Hamiltonian(...)  # Replace with actual Hamiltonian
+    
+    # 1. Load/Create Ground State (The Lower State)
+    #    In practice, you would load weights: psi_ground.load("ground_weights.h5")
+    net_g       = NetworkFactory.create('rbm', input_shape=(16,), alpha=1.0)
+    sampler_g   = VMCSampler(
+        net         =   net_g,
+        shape       =   (16,),
+        rng         =   jax.random,
+        rng_k       =   jax.random.PRNGKey(0),
+        numchains   =   1,
+        numsamples  =   10,
+        therm_steps =   100,
+        sweep_steps =   1,
+        backend     =   'jax'
+    )
+    psi_ground              = NQS(net=net_g, sampler=sampler_g, model=model, shape=(16,))
+    psi_ground.beta_penalty = 10.0 
+
+    # 2. Create New State (The Excited State)
+    #    Usually a different architecture or larger alpha
+    net_e       = NetworkFactory.create('cnn', input_shape=(16,), features=(8, 8))
+    sampler_e   = VMCSampler(
+        net         =   net_e,
+        shape       =   (16,),
+        rng         =   jax.random,
+        rng_k       =   jax.random.PRNGKey(1), # Use a different key for the excited state sampler
+        numchains   =   1,
+        numsamples  =   10,
+        therm_steps =   100,
+        sweep_steps =   1,
+        backend     =   'jax'
+    )
+    psi_excited = NQS(net=net_e, sampler=sampler_e, model=model, shape=(16,))
+
+    # 3. Initialize Trainer with Lower States
+    #    The trainer will automatically compute overlaps and add penalty forces.
+    trainer     = NQSTrainer(
+                nqs             =   psi_excited,
+                lower_states    =   [psi_ground],  # <--- Critical for excited states
+                phases          =   "kitaev",
+                n_batch         =   2048
+                )
+
+    # 4. Run
+    print("Starting Excited State Optimization...")
+    # stats = trainer.train() # Uncomment to run actual training
+    # print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
 
 ---------------------------------------------------------------------
 File        : QES/NQS/__init__.py
@@ -34,12 +149,17 @@ Date        : 2025-11-01
 
 import sys
 
-# 1. Core Imports (Expose the API)
+# Core Imports (Expose the API)
 # We use try-except blocks to handle partial installations or lazy loading issues
 try:
     from .nqs import NQS
 except ImportError as e:
     raise ImportError(f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}")
+
+try:
+    from QES.Solver.MonteCarlo.vmc import VMCSampler
+except ImportError:
+    pass
 
 try:
     # Direct access to the Trainer (The main entry point for users)
@@ -48,7 +168,7 @@ except ImportError:
     pass
 
 try:
-    from .src.nqs_network_integration import NetworkFactory, NetworkSelector
+    from .src.nqs_network_integration import NetworkFactory
 except ImportError:
     pass
 
@@ -58,13 +178,13 @@ try:
 except ImportError:
     pass
 
-# 2. Metadata
+# Metadata
 MODULE_DESCRIPTION  = "Neural Quantum States (NQS) with TDVP and Adaptive Scheduling."
 __version__         = "2.0.0"
 
-# 3. Helper Functions
+# Helper Functions
 
-def help():
+def info():
     """Prints the library capability summary."""
     print(__doc__)
 
@@ -154,7 +274,7 @@ print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
 
 # --------------------------------------------------------------
 
-# 5. Export
+# Export
 __all__ = [
     "NQS",
     "NQSTrainer",
@@ -162,9 +282,8 @@ __all__ = [
     "TDVP",
     "TDVPStepInfo",
     "NetworkFactory",
-    "NetworkSelector",
     "quick_start",
-    "help"
+    "info"
 ]
 
 # --------------------------------------------------------------

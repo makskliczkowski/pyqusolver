@@ -19,9 +19,4 @@ def __getattr__(name):
     if name == "KitaevModelBuilder":
         from .models.kitaev_model import KitaevModelBuilder
 
-        return KitaevModelBuilder
-    if name == "run_pipeline":
-        from .workflows.pipeline_demo import run_pipeline
-
-        return run_pipeline
     raise AttributeError(name)

@@ -1463,22 +1463,31 @@ def create_sigma_mixed_jnp(op1_fun: Callable, op2_fun: Callable):
         return _stub
 
     @jax.jit
-    def sigma_mixed_jnp(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
+    def sigma_mixed_jnp(state, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
         if (sites is None) or (len(sites) < 2):
             raise ValueError("sigma_mixed_jnp requires at least two sites.")
-        s_arr1, c_arr1  = op1_fun(state, ns, [sites[0]], spin, spin_value)
+        
+        s_arr1, c_arr1  = op1_fun(state, [sites[0]], spin, spin_value)
         coeff1          = c_arr1[0]
         def _apply_second(s_arr1, c_arr1):
             s_int           = s_arr1[0]
-            s_arr2, c_arr2  = op2_fun(s_int, ns, [sites[1]], spin, spin_value)
+            s_arr2, c_arr2  = op2_fun(s_int, [sites[1]], spin, spin_value)
             return s_arr2, c_arr1 * c_arr2
+        
+        # Define the target complex type (usually complex128 for float64 systems)
+        # You can also use c_arr1.dtype if it's already complex, but explicit is safer here.
+        target_dtype = jnp.complex128
+
         # Branch: if first coeff zero skip second op
         return jax.lax.cond(
             (coeff1 == 0.0) | (coeff1 == 0.0 + 0.0j),
-            lambda _: (s_arr1, c_arr1 * 0.0),
-            lambda _: _apply_second(s_arr1, c_arr1),
+            # True Branch: Return zero, explicitly cast to complex
+            lambda _: (s_arr1, (c_arr1 * 0.0).astype(target_dtype)),
+            # False Branch: Apply second op, explicitly cast result to complex
+            lambda _: (lambda res: (res[0], res[1].astype(target_dtype)))(_apply_second(s_arr1, c_arr1)),
             operand = None
         )
+        
     return sigma_mixed_jnp
 
 sigma_xy_mixed_int_np   = create_sigma_mixed_int(sigma_x_int_np, sigma_y_int_np)

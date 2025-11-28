@@ -225,7 +225,7 @@ if __name__ == "__main__":
                     )
     
     # ----------------------- Setup Sampler ---------------------------------
-    sampler         = Sampling.MCSampler(
+    sampler         = Sampling.VMCSampler(
                         net          = net,
                         shape        = st_shape,
                         rng          = rng,

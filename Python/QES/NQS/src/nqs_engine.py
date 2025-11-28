@@ -130,7 +130,7 @@ class ObservableResult(EvaluationResult):
         - Energy
     """
     
-    observable_name     : str               # Name of the observable
+    observable_name : str = ""  # Name of the observable
 
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the observable evaluation."""
@@ -164,7 +164,7 @@ class NQSEvalEngine(UnifiedEvaluationEngine):
         >>> print(f"E = {energy_stats.mean_energy:.6f} ± {energy_stats.std_energy:.6f}")
     """
     
-    def __init__(self, nqs: 'NQS', backend: str = 'auto',  batch_size: Optional[int] = None, jit_compile: bool = True):
+    def __init__(self, nqs: 'NQS', backend: str = 'auto',  batch_size: Optional[int] = None, jit_compile: bool = True, **kwargs):
         """
         Initialize ComputeLocalEnergy.
         

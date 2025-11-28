@@ -16,7 +16,7 @@ from .types import NeuralAnsatz, NQSTrainingConfig, TrainingArtifact
 if TYPE_CHECKING:
     from QES.NQS.nqs import NQS
     from QES.NQS.src.tdvp import TDVP
-    from QES.Solver.MonteCarlo.sampler import MCSampler
+    from QES.Solver.MonteCarlo.sampler import VMCSampler
 
 
 @dataclass
@@ -86,11 +86,11 @@ class NQSTrainer:
 
     def _create_sampler(self, network: Any, config: NQSTrainingConfig):
         """Create Monte Carlo sampler."""
-        from QES.Solver.MonteCarlo.sampler import MCSampler
+        from QES.Solver.MonteCarlo.sampler import VMCSampler
         
         st_shape = (self.lattice.Ns,)
         
-        sampler = MCSampler(
+        sampler = VMCSampler(
             net         = network,
             shape       = st_shape,
             rng         = self.rng,

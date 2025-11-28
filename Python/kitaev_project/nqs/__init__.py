@@ -2,7 +2,7 @@
 Neural-quantum-state utilities for the Kitaev workflow.
 """
 
-from .types import NeuralAnsatz, NQSTrainingConfig, TrainingArtifact
+from .types import NQS, NQSTrainingConfig, TrainingArtifact
 
 # Lazy imports to avoid circular dependencies and heavy QES.NQS imports
 def _get_trainer():

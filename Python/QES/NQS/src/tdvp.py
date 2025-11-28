@@ -240,17 +240,17 @@ class TDVP:
         self.is_np           = not self.is_jax
         self.backend_str     = 'jax' if self.is_jax else 'numpy'
         
-        self.use_sr          = use_sr           # flag to indicate if stochastic reconfiguration is used
-        self.use_minsr       = use_minsr        # flag to indicate if minimal SR is used -> reverse O^+O to O O^+
-        self.rhs_prefactor   = rhs_prefactor    # prefactor for the RHS of the TDVP equation (1 for ground state, i for real time)
-        self.form_matrix     = False            # flag to indicate if the full matrix is formed
+        self.use_sr          = use_sr               # flag to indicate if stochastic reconfiguration is used
+        self.use_minsr       = use_minsr            # flag to indicate if minimal SR is used -> reverse O^+O to O O^+
+        self.rhs_prefactor   = rhs_prefactor        # prefactor for the RHS of the TDVP equation (1 for ground state, i for real time)
+        self.form_matrix     = False                # flag to indicate if the full matrix is formed
         
         #! handle the stochastic reconfiguration parameters
-        self.sr_snr_tol      = sr_snr_tol       # for signal-to-noise ratio
-        self.sr_pinv_tol     = sr_pinv_tol      # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
-        self.sr_pinv_cutoff  = sr_pinv_cutoff   # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
-        self.sr_diag_shift   = sr_diag_shift    # diagonal shift for the covariance matrix in case of ill-conditioning
-        self.sr_maxiter      = sr_maxiter       # maximum number of iterations for the linear solver
+        self.sr_snr_tol      = sr_snr_tol           # for signal-to-noise ratio
+        self.sr_pinv_tol     = sr_pinv_tol          # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
+        self.sr_pinv_cutoff  = sr_pinv_cutoff       # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
+        self.sr_diag_shift   = sr_diag_shift        # diagonal shift for the covariance matrix in case of ill-conditioning
+        self.sr_maxiter      = sr_maxiter           # maximum number of iterations for the linear solver
 
         #! handle the solver
         try:
@@ -327,29 +327,29 @@ class TDVP:
         current backend and configuration.
         """
         
-        self._gradient_fn           = sr.gradient_jax if self.is_jax else sr.gradient_np
-        self._loss_c_fn             = sr.loss_centered_jax if self.is_jax else sr.loss_centered
-        self._deriv_c_fn            = sr.derivatives_centered_jax if self.is_jax else sr.derivatives_centered
+        self._gradient_fn           = sr.gradient_jax               if self.is_jax else sr.gradient_np
+        self._loss_c_fn             = sr.loss_centered_jax          if self.is_jax else sr.loss_centered_np
+        self._deriv_c_fn            = sr.derivatives_centered_jax   if self.is_jax else sr.derivatives_centered_np
         
         # covariance functions - standard and minsr
         if self.use_minsr:
-            self._covariance_fn     = sr.covariance_jax_minsr if self.is_jax else sr.covariance_np_minsr
+            self._covariance_fn     = sr.covariance_jax_minsr       if self.is_jax else sr.covariance_np_minsr
         else:
-            self._covariance_fn     = sr.covariance_jax if self.is_jax else sr.covariance_np
+            self._covariance_fn     = sr.covariance_jax             if self.is_jax else sr.covariance_np
 
         # modified and standard preparation functions
-        self._prepare_fn            = sr.solve_jax_prepare if self.is_jax else sr.solve_numpy_prepare
-        self._prepare_fn_m          = sr.solve_jax_prepare_modified_ratios if self.is_jax else sr.solve_numpy_prepare
+        self._prepare_fn            = sr.solve_jax_prepare                  if self.is_jax else sr.solve_numpy_prepare
+        self._prepare_fn_m          = sr.solve_jax_prepare_modified_ratios  if self.is_jax else sr.solve_numpy_prepare
             
         try:
             #! store the jitted functions
             if self.is_jax:
-                self._gradient_fn_j     = jax.jit(self._gradient_fn)
-                self._loss_c_fn_j       = jax.jit(self._loss_c_fn)
-                self._deriv_c_fn_j      = jax.jit(self._deriv_c_fn)
-                self._covariance_fn_j   = jax.jit(self._covariance_fn)
-                self._prepare_fn_j      = jax.jit(self._prepare_fn)
-                self._prepare_fn_m_j    = jax.jit(self._prepare_fn_m)
+                self._gradient_fn_j     = self._gradient_fn
+                self._loss_c_fn_j       = self._loss_c_fn
+                self._deriv_c_fn_j      = self._deriv_c_fn
+                self._covariance_fn_j   = self._covariance_fn
+                self._prepare_fn_j      = self._prepare_fn
+                self._prepare_fn_m_j    = self._prepare_fn_m
             else:
                 self._gradient_fn_j     = self._gradient_fn
                 self._loss_c_fn_j       = self._loss_c_fn
@@ -636,8 +636,8 @@ class TDVP:
             self._f0 = gradient
         self._s0 = None
         
-        if self.form_matrix:
-            # the function knows if it's minsr or not
+        # MinSR uses T (N_s x N_s), calculating S (N_p x N_p) is wasteful and causes OOM
+        if self.form_matrix and not self.use_minsr: 
             with self._time('covariance', self._covariance_fn_j, var_deriv_c, var_deriv_c_h, self._n_samples) as covariance:
                 self._s0 = covariance
         
@@ -689,16 +689,16 @@ class TDVP:
             The prepared covariance matrix and loss vector.
         """
         if self.use_minsr:
-            # when using the minimum stochastic reconfiguration (minsr) method,
-            # the equation transforms to first calculating the matrix 
-            # :math:`T=\bar O \bar O^\\dagger` and then solving
-            # :math:`d\\theta = \\bar O^\\dagger T^{-1} \\bar E_{loc}`
-            # where :math:`\\bar O` is the centered covariance matrix and :math:`\\bar E_{loc}` is the centered loss vector
-            # therefore, one reduces the computation, usefully in the limit where N_param >> N_samples
-            # afterall, the solution needs to be multiplied by the covariance matrix (conjugate transpose)
-            # :math:`\\tilde {d\\theta} = T^{-1} \\bar E_{loc} \\rightarrow d\\theta = O^\\dagger \\tilde {d\\theta}`
+            # T = O @ O^dag
+            # Solver expects (s, s_p) -> s @ s_p
+            # Scaling: Equation is T * x = E/N. The RHS passed here should be centered loss E_c.
+            # The scaling by 1/N is usually handled inside the solver or covariance func. 
+            # In sr.solve_jax, we handle scaling. Here we just prepare raw inputs.
+            # return (vd_c, vd_c_h), loss_c
             return (vd_c_h, vd_c), loss_c
+        
         # otherwise, standard TDVP equation is solved
+        # return (vd_c_h, vd_c), forces
         return (vd_c, vd_c_h), forces
 
     def _solve_choice(  self, 
@@ -934,38 +934,22 @@ class TDVP:
         )
         
         #! obtain the solution
-        try:
-            solution: solvers.SolverResult = self.solve(loss, log_deriv, **kwargs)
-                        
-            self.meta = TDVPStepInfo(
-                mean_energy     = self._e_local_mean,
-                std_energy      = self._e_local_std,
-                failed          = False,
-                sr_converged    = solution.converged,
-                sr_executed     = True,
-                sr_iterations   = solution.iterations,
-                timings         = self.timings,
-                theta0_dot      = self._theta0_dot,  # Global phase time derivative
-                theta0          = self._theta0       # Current global phase
-            )
-            
-            return solution.x, self.meta, (shapes, sizes, iscpx)
 
-        except Exception as e:
-            print(f"Error during TDVP solve: {e}")
-            self.meta = TDVPStepInfo(
-                mean_energy     = self._e_local_mean,
-                std_energy      = self._e_local_std,
-                failed          = True,
-                sr_converged    = False,
-                sr_executed     = False,
-                sr_iterations   = 0,
-                timings         = self.timings,
-                theta0_dot      = self._theta0_dot,
-                theta0          = self._theta0
-            )
+        solution: solvers.SolverResult = self.solve(loss, log_deriv, **kwargs)
+                    
+        self.meta = TDVPStepInfo(
+            mean_energy     = self._e_local_mean,
+            std_energy      = self._e_local_std,
+            failed          = False,
+            sr_converged    = solution.converged,
+            sr_executed     = True,
+            sr_iterations   = solution.iterations,
+            timings         = self.timings,
+            theta0_dot      = self._theta0_dot,  # Global phase time derivative
+            theta0          = self._theta0       # Current global phase
+        )
         
-        return None, self.meta, (shapes, sizes, iscpx)
+        return solution.x, self.meta, (shapes, sizes, iscpx)
     
     def __repr__(self):
         return f'TDVP(backend={self.backend_str},use_sr={self.use_sr},use_minsr={self.use_minsr},rhs_prefactor={self.rhs_prefactor},sr_snr_tol={self.sr_snr_tol},sr_pinv_tol={self.sr_pinv_tol},sr_diag_shift={self.sr_diag_shift},sr_maxiter={self.sr_maxiter})'

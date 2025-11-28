@@ -45,9 +45,15 @@ except ImportError as e:
 # NQS
 try:
     #! NQS
-    from QES.NQS.nqs                                            import *
+    from QES.NQS                                                import VMCSampler, NQS, NQSTrainer, NQSTrainStats, NetworkFactory, TDVP, info, quick_start 
+    #! SOLVER
+    from QES.general_python.algebra.ode                         import choose_ode
+    from QES.general_python.algebra.solvers                     import SolverType, SolverForm, choose_solver, choose_precond
     #! Models
-    from QES.Algebra.Model.Interacting.Spin.heisenberg_kitaev   import HeisenbergKitaev, HoneycombLattice
+    from QES.Algebra.Model.Interacting.Spin.heisenberg_kitaev   import HeisenbergKitaev, HilbertSpace
+    from QES.Algebra.Model.Interacting.Spin.transverse_ising    import TransverseFieldIsing
+    #! Lattices
+    from QES.general_python.lattices                            import HoneycombLattice, SquareLattice
 
 except ImportError as e:
     raise ImportError(f"Failed to import QES NQS modules. Ensure QES is installed and QES_PYPATH is set correctly.\nOriginal error: {e}")

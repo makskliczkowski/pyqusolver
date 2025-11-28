@@ -224,6 +224,7 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
     # ----------------------------------------------------------------------------------------------
     #! Properties
     # ----------------------------------------------------------------------------------------------
+    
     @property
     def J(self) -> Union[List[float], float]:
         """Ising coupling strength(s) J."""

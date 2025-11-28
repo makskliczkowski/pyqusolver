@@ -150,7 +150,7 @@ class Hamiltonian(Operator):
             self._ns        = ns
             self._lattice   = lattice
             if self._logger and self._hilbert_space is not None:
-                self._log(f"Inferred number of sites ns={self._ns} from provided ns argument.", lvl = 3, color = 'green')
+                self._log(f"Inferred number of sites ns={self._ns} from provided ns argument.", lvl = 3, color = 'green', log='debug')
                 
         elif hilbert_space is not None:
             # if the Hilbert space is provided, get the number of sites
@@ -159,14 +159,14 @@ class Hamiltonian(Operator):
             if self._dtype is None:
                 self._dtype = hilbert_space.dtype
             if self._logger and self._hilbert_space is not None:
-                self._log(f"Inferred number of sites ns={self._ns} from provided Hilbert space.", lvl = 3, color = 'green')
+                self._log(f"Inferred number of sites ns={self._ns} from provided Hilbert space.", lvl = 3, color = 'green', log='debug')
                 
         elif lattice is not None:
             self._ns        = lattice.ns
             self._lattice   = lattice
             
             if self._logger and self._hilbert_space is not None:
-                self._log(f"Inferred number of sites ns={self._ns} from provided lattice.", lvl = 3, color = 'green')
+                self._log(f"Inferred number of sites ns={self._ns} from provided lattice.", lvl = 3, color = 'green', log='debug')
         else:
             # if the number of sites is not provided, raise an error
             raise ValueError(Hamiltonian._ERR_NS_NOT_PROVIDED)
@@ -414,7 +414,7 @@ class Hamiltonian(Operator):
             lvl (int) : The level of the message.
         """
         msg = f"[{self.name}] {msg}"
-        self._hilbert_space._log(msg, log = log, lvl = lvl, color = color)
+        self._hilbert_space._log(msg, log = log, lvl = lvl, color = color, append_msg=False)
     
     def __str__(self):
         '''
@@ -684,7 +684,7 @@ class Hamiltonian(Operator):
             
             default_basis                                   = self._hilbert_space._basis_type
             self._basis_metadata['inherited_from_hilbert']  = True
-            self._log(f"Hamiltonian basis inherited from HilbertSpace: {default_basis}", lvl=2, color="cyan")
+            self._log(f"Hamiltonian basis inherited from HilbertSpace: {default_basis}", lvl=1, color="cyan")
         else:
             # Priority 2: Infer from Hamiltonian properties
             if self._is_quadratic:

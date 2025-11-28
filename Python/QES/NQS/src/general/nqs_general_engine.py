@@ -462,21 +462,26 @@ class UnifiedEvaluationEngine:
         >>> print(result.mean, result.std)
     """
     
-    def __init__(self, config: Optional[EvaluationConfig] = None):
+    def __init__(self, config: Optional[EvaluationConfig] = None, backend: str = 'default', **kwargs):
         """
         Initialize the evaluation engine.
         
         Parameters:
             config: EvaluationConfig instance. If None, uses defaults.
         """
-        self.config = config or EvaluationConfig()
+        self.config = config or EvaluationConfig(backend        =   backend, 
+                                                batch_size      =   kwargs.get('batch_size', None),
+                                                jit_compile     =   kwargs.get('jit_compile', True),
+                                                return_stats    =   kwargs.get('return_stats', True),
+                                                validate_inputs =   kwargs.get('validate_inputs', True),
+                                                verbose         =   kwargs.get('verbose', False))
         self._init_backend()
     
     def _init_backend(self):
         """Initialize the evaluation backend."""
-        if self.config.backend == 'jax':
+        if isinstance(self.config.backend, str) and (self.config.backend.lower() == 'jax') or self.config.backend == jax:
             self.backend = JAXBackend(jit_compile=self.config.jit_compile)
-        elif self.config.backend == 'numpy':
+        elif isinstance(self.config.backend, str) and (self.config.backend.lower() == 'numpy') or self.config.backend == np:
             self.backend = NumpyBackend()
         else:  # 'auto'
             self.backend = AutoBackend()

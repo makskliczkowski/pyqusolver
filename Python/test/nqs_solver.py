@@ -24,7 +24,7 @@ if parent_dir not in sys.path:
 
 # import QuantEvolveStudio methods
 try:
-    from QES.Solver.MonteCarlo.sampler import Sampler, MCSampler, get_backend, JAX_AVAILABLE
+    from QES.Solver.MonteCarlo.sampler import Sampler, VMCSampler, get_backend, JAX_AVAILABLE
     from QES.general_python.ml.net_impl.net_simple import SimpleNet
     from QES.general_python.common.plot import MatrixPrinter
     from QES.general_python.common.flog import Logger, print_arguments, log_timing_summary
@@ -251,7 +251,7 @@ if __name__ == '__main__':
     numtherm                                = args.ntherm
     numtotalsamples                         = args.ntimes
     
-    sampler = MCSampler(        net         = net,              # set the variational model representation
+    sampler = VMCSampler(        net         = net,              # set the variational model representation
                                 shape       = st_shape,         # shape of the input state
                                 rng         = rng,              # random number generator
                                 rng_k       = rng_k,            # random number generator key (if applicable - jax)

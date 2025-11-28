@@ -15,9 +15,9 @@ Email: maksymilian.kliczkowski@pwr.edu.pl
 """
 
 try:
-    from .montecarlo import *
-    from .parallel import *
-    from .sampler import *
+    from .montecarlo    import *
+    from .parallel      import *
+    from .sampler       import *
     
     __all__ = []
 except ImportError:

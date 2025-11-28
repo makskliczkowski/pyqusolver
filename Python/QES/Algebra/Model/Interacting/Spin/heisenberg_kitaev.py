@@ -25,10 +25,10 @@ from typing import List, Tuple, Union, Optional
 
 # QES package imports
 try:
-    import QES.Algebra.hilbert as hilbert_module
-    import QES.Algebra.hamil as hamil_module
-    import QES.Algebra.Operator.operators_spin as operators_spin_module
-    from QES.general_python.lattices.honeycomb import HoneycombLattice, X_BOND_NEI, Y_BOND_NEI, Z_BOND_NEI
+    from QES.Algebra.hilbert                    import HilbertSpace
+    from QES.Algebra.hamil                      import Hamiltonian
+    import QES.Algebra.Operator.operators_spin  as operators_spin_module
+    from QES.general_python.lattices.honeycomb  import HoneycombLattice, X_BOND_NEI, Y_BOND_NEI, Z_BOND_NEI
 except ImportError as e:
     raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 
@@ -59,7 +59,7 @@ CORR_TERM_MULT      = 4.0   # Two-spin correlation terms (σ_i σ_j has eigenval
 #! HAMILTONIAN CLASS
 ##########################################################################################
 
-class HeisenbergKitaev(hamil_module.Hamiltonian):
+class HeisenbergKitaev(Hamiltonian):
     '''
     Hamiltonian for an ergodic quantum dot coupled to an external system.
     The external system is modeled as a quantum spin chain.
@@ -75,7 +75,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                 K                   : Union[List[float], None, float]       = 1.0,
                 logger              : Optional['Logger']                    = None,
                 *,
-                hilbert_space       : Optional[hilbert_module.HilbertSpace] = None,
+                hilbert_space       : Optional[HilbertSpace]                = None,
                 # Heisenberg couplings
                 J                   : Union[List[float], None, float]       = None,
                 dlt                 : Union[List[float], None, float]       = 1.0,
@@ -155,7 +155,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
 
         # Initialize the Hamiltonian
         if hilbert_space is None:
-            self._hilbert_space         = hilbert_module.HilbertSpace(ns=self.ns, backend=backend, dtype=dtype, nhl=2)
+            self._hilbert_space         = HilbertSpace(ns=self.ns, backend=backend, dtype=dtype, nhl=2)
         
         # setup the fields
         self._hx                        = hx    if isinstance(hx, (list, np.ndarray, tuple)) else [hx] * self.ns if hx is not None else None
@@ -223,17 +223,17 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
         parts = [f"Kitaev(Ns={self.ns}"]
 
         parts += [
-            hamil_module.Hamiltonian.fmt("Kx",      self._kx,       prec=prec),
-            hamil_module.Hamiltonian.fmt("Ky",      self._ky,       prec=prec),
-            hamil_module.Hamiltonian.fmt("Kz",      self._kz,       prec=prec),
-            hamil_module.Hamiltonian.fmt("J",       self._j,        prec=prec) if self._j   is not None else "",
-            hamil_module.Hamiltonian.fmt("Gx",      self._gx,       prec=prec) if self._gx  is not None else "",
-            hamil_module.Hamiltonian.fmt("Gy",      self._gy,       prec=prec) if self._gy  is not None else "",
-            hamil_module.Hamiltonian.fmt("Gz",      self._gz,       prec=prec) if self._gz  is not None else "",
-            hamil_module.Hamiltonian.fmt("dlt",     self._dlt,      prec=prec) if self._dlt is not None else "",
-            hamil_module.Hamiltonian.fmt("hz",      self._hz,       prec=prec) if self._hz  is not None else "",
-            hamil_module.Hamiltonian.fmt("hy",      self._hy,       prec=prec) if self._hy  is not None else "",
-            hamil_module.Hamiltonian.fmt("hx",      self._hx,       prec=prec) if self._hx  is not None else "",
+            Hamiltonian.fmt("Kx",      self._kx,       prec=prec),
+            Hamiltonian.fmt("Ky",      self._ky,       prec=prec),
+            Hamiltonian.fmt("Kz",      self._kz,       prec=prec),
+            Hamiltonian.fmt("J",       self._j,        prec=prec) if self._j   is not None else "",
+            Hamiltonian.fmt("Gx",      self._gx,       prec=prec) if self._gx  is not None else "",
+            Hamiltonian.fmt("Gy",      self._gy,       prec=prec) if self._gy  is not None else "",
+            Hamiltonian.fmt("Gz",      self._gz,       prec=prec) if self._gz  is not None else "",
+            Hamiltonian.fmt("dlt",     self._dlt,      prec=prec) if self._dlt is not None else "",
+            Hamiltonian.fmt("hz",      self._hz,       prec=prec) if self._hz  is not None else "",
+            Hamiltonian.fmt("hy",      self._hy,       prec=prec) if self._hy  is not None else "",
+            Hamiltonian.fmt("hx",      self._hx,       prec=prec) if self._hx  is not None else "",
         ]
         
         parts = [p for p in parts if p]
@@ -403,14 +403,16 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                     if not np.isclose(sz_sz, 0.0, rtol=1e-10):
                         self.add(op_sz_sz_c, sites = [i, nei], multiplier = sz_sz, modifies = False)
                         self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
+                        elems += 1
                     if not np.isclose(sx_sx, 0.0, rtol=1e-10):
                         self.add(op_sx_sx_c, sites = [i, nei], multiplier = sx_sx, modifies = True)
                         self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
+                        elems += 1
                     if not np.isclose(sy_sy, 0.0, rtol=1e-10):
                         self.add(op_sy_sy_c, sites = [i, nei], multiplier = sy_sy, modifies = True)
                         self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
+                        elems += 1
                 
-                elems += 1
                 
                 #! Gamma terms
                 if True:
@@ -420,6 +422,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                         self.add(op_sy_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sz_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+                        elems += 2
 
                     # #? Gamma_y terms
                     if self._gy is not None and not np.isclose(self._gy, 0.0, rtol=1e-10) and nn == HEI_KIT_Y_BOND_NEI:
@@ -427,6 +430,7 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                         self.add(op_sz_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sx_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+                        elems += 2
 
                     # #? Gamma_z terms
                     if self._gz is not None and not np.isclose(self._gz, 0.0, rtol=1e-10) and nn == HEI_KIT_Z_BOND_NEI:
@@ -434,11 +438,12 @@ class HeisenbergKitaev(hamil_module.Hamiltonian):
                         self.add(op_sx_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sy_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+                        elems += 2
 
                 #! Finalize the operator addition for this neighbor
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
         
-        self._log(f"Total NN elements added: {elems}", color='red', lvl=4)
+        self._log(f"Total NN elements added: {elems}", color='red', lvl=3)
         self._log("Successfully set local energy operators...", lvl=1, log='info')
         
     # ----------------------------------------------------------------------------------------------
