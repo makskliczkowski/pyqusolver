@@ -1353,7 +1353,8 @@ class NQS(MonteCarloSolver):
                                 flat_grad_fn = flat_grad_fn, apply_fn = apply_fn, batch_size = batch_size, compute_grad_f = compute_grad_f)
 
         #! prepares the wrapped function
-        @partial(jax.jit, static_argnames=('t',))
+        # @partial(jax.jit, static_argnames=('t',))
+        @jax.jit
         def wrapped(y, t, configs, configs_ansatze, probabilities, int_step = 0):
             params = net_utils.jaxpy.transform_flat_params_jit(y, tree_def, slices, flat_size)
             result = single_step_jax(params, configs, configs_ansatze, probabilities, t=t, int_step=int_step)

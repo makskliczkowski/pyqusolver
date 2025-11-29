@@ -16,12 +16,14 @@ Copyright           : (c) 2024-2026 Maksymilian Kliczkowski
 ------------------------------------------------------------------------
 '''
 
+import jax
 import numpy as np
 from contextlib     import contextmanager
 from dataclasses    import dataclass, field, asdict
 from typing         import Any, Callable, List, Optional, Union, Dict
 from pathlib        import Path
 from enum           import Enum
+from functools      import partial
 
 # TQDM for progress bars
 try:
@@ -167,7 +169,7 @@ class NQSTrainer:
         
         if nqs is None:         raise ValueError(self._ERR_NO_NQS)
         self.nqs                = nqs                                           # Most important component
-        self.logger             = logger if logger else Logger("nqs_trainer")   # Logger
+        self.logger             = logger or Logger("nqs_trainer")               # Logger
         self.n_batch            = n_batch
         
         # Validate lower states
@@ -182,6 +184,7 @@ class NQSTrainer:
             try:
                 timing_mode             = NQSTimeModes[timing_mode.upper()]
                 self.timing_mode        = timing_mode
+                self.logger.info(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color='green')
             except KeyError:
                 raise ValueError(self._ERR_INVALID_TIMING_MODE)
             self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
@@ -227,6 +230,27 @@ class NQSTrainer:
         # We pre-compile the sampling and step functions to avoid runtime overhead
         self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
         
+        # Define a function that runs the WHOLE step (ODE + TDVP + Energy)
+        def train_step_logic(f, est_fn, y, t, configs, configs_ansatze, probabilities, lower_states):
+            # We pass them down to the solver's **rhs_args
+            new_params, new_t, (info, meta) = self.ode_solver.step(
+                f               =   f, 
+                t               =   t, 
+                y               =   y, 
+                # These pass into **rhs_args of the solver:
+                est_fn          =   est_fn,
+                configs         =   configs,
+                configs_ansatze =   configs_ansatze,
+                probabilities   =   probabilities,
+                lower_states    =   lower_states
+            )
+            loss_info = (info.mean_energy, info.std_energy)
+            return new_params, new_t, (loss_info, meta)
+        
+        # Compile it
+        self._step_jit          = train_step_logic
+        # self._step_jit          = jax.jit(train_step_logic, static_argnames=['f', 'est_fn', 'lower_states'])
+                    
         # State
         self.stats              = NQSTrainStats()
 
@@ -301,6 +325,8 @@ class NQSTrainer:
             return fn(*args, **kwargs)
         
     # ------------------------------------------------------    
+    #! Hyperparameter Updates
+    # ------------------------------------------------------
         
     def _update_hyperparameters(self, epoch: int, last_loss: float):
         """Syncs schedulers with solvers."""
@@ -359,6 +385,8 @@ class NQSTrainer:
         return lower_contr
 
     # ------------------------------------------------------
+    #! Main Training Loop
+    # ------------------------------------------------------
 
     def train(self, 
             n_epochs            : int   = None, 
@@ -407,7 +435,7 @@ class NQSTrainer:
                 params_flat                     = self.nqs.get_params(unravel=True)
                 step_out                        = self._timed_execute(
                                                     "step", 
-                                                    self.ode_solver.step,
+                                                    self._step_jit,
                                                     f               = self.tdvp,
                                                     y               = params_flat,
                                                     t               = 0.0,
@@ -418,7 +446,7 @@ class NQSTrainer:
                                                     lower_states    = lower_contr,
                                                     epoch           = epoch
                                                 )
-                dparams, _, (info, meta)        = step_out
+                dparams, _, ((mean_loss, std_loss), meta) = step_out
 
                 # 4. Update Weights (Timed)
                 self._timed_execute("update", self.nqs.set_params, dparams, shapes=meta[0], sizes=meta[1], iscpx=meta[2], epoch=epoch)
@@ -429,9 +457,9 @@ class NQSTrainer:
                 self.stats.global_phase.append(self.tdvp.global_phase)
 
                 # 6. Logging & Storage
-                mean_loss   = np.real(info.mean_energy)
+                mean_loss   = np.real(mean_loss)
                 self.stats.history.append(mean_loss)
-                self.stats.history_std.append(np.real(info.std_energy))
+                self.stats.history_std.append(np.real(std_loss))
 
                 # Calculate total time for this epoch
                 t_sample    = self.stats.timings.sample[-1]
@@ -449,9 +477,13 @@ class NQSTrainer:
                     # Only add detailed timings to the bar if they are real numbers
                     if not np.isnan(t_step):
                         postfix["t_step"]  = f"{t_step:.2f}s"
+                        postfix["t_samp"]  = f"{t_sample:.2f}s"
+                        postfix["t_upd"]   = f"{t_update:.2f}s"
                     
-                    if self.timing_mode.value < NQSTimeModes.DETAILED.value:
+                    if self.timing_mode.value <= NQSTimeModes.DETAILED.value:
                         postfix["t_epoch"] = f"{(time.time() - t0) / (epoch + 1):.2f}s"
+                        
+                    pbar.set_postfix(postfix)
                 else:
                     self.logger.info(f"Epoch {epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
 

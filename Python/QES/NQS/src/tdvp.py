@@ -815,14 +815,15 @@ class TDVP:
             The computed time derivative $\dot{\theta}_0$ for the global phase parameter
         """
         # First term: -i * <H> -> average energy
-        term1 = -1j * mean_energy
+        term1       = -1j * mean_energy
         
         # Second term: - <dot{theta}_k * <psi|d_theta_k psi>>
         # This is the contraction of parameter derivatives with log derivatives
-        term2 = -self.backend.sum(param_derivatives * log_derivatives)
+        term2       = -self.backend.sum(param_derivatives * log_derivatives)
         
-        self._theta0_dot = term1 + term2
-        return self._theta0_dot
+        theta0_dot  = term1 + term2
+        # self._theta0_dot = theta0_dot
+        return theta0_dot
 
     ###################
     #! MAIN SOLVE
