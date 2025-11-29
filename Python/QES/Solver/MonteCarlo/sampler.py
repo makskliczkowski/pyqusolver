@@ -907,6 +907,82 @@ class Sampler(ABC):
         pass
 
 #######################################################################
+
+@unique
+class SamplerType(Enum):
+    """
+    Enum class for the sampler types.
+    """
+    MCSampler       = auto()
+    ExactSampler    = auto()
+    
+    @staticmethod
+    def from_str(s: str) -> 'SamplerType':
+        """
+        Convert a string to a SamplerType enum.
+        """
+        try:
+            return SamplerType[s]
+        except KeyError:
+            raise ValueError(f"Invalid SamplerType: {s}") from None
+
+#######################################################################
+
+def get_sampler(typek: Union[str, SamplerType, Sampler], *args, **kwargs) -> Sampler:
+    """
+    Get a sampler of the given type.
+    
+    Parameters:
+    - typek (str, SamplerType, or Sampler): The type of sampler to get or an existing sampler instance
+    - args: Additional arguments for the sampler
+    - kwargs: Additional keyword arguments for the sampler
+    
+    Returns:
+    - Sampler: The requested sampler or the provided sampler instance
+    
+    Raises:
+    - ValueError: If the requested sampler type is not implemented
+    
+    Example:
+    >>> sampler = get_sampler("MCSampler", num_chains=10, num_samples=1000)
+    >>> print(sampler)
+    <__main__.VMCSampler object at 0x...>
+    """
+    from vmc        import VMCSampler
+    from arsampler  import ARSampler
+    
+    if isinstance(typek, str):
+        typek = typek.strip()
+        typek = SamplerType.from_str(typek)
+    
+    # check the type of the sampler
+    if isinstance(typek, Sampler):                  # is already a sampler instance
+        return typek
+    elif issubclass(typek, Sampler):                # is a sampler class
+        return typek(*args, **kwargs)
+    elif isinstance(typek, VMCSampler):             # is a sampler class
+        return typek
+    elif isinstance(typek, ARSampler):              # is a sampler class
+        return typek(*args, **kwargs)
+    elif isinstance(typek, str):                    # is a string to convert to enum
+        typek = SamplerType.from_str(typek)
+    elif typek == SamplerType.MCSampler:            # is a sampler type from the enum
+        typek = SamplerType.MCSampler
+    elif typek == SamplerType.ExactSampler:
+        typek = SamplerType.ExactSampler
+    else:
+        return typek
+    
+    # set from the type enum
+    if typek == SamplerType.MCSampler:
+        return VMCSampler(*args, **kwargs)
+    
+    elif typek == SamplerType.ExactSampler:
+        return ARSampler(*args, **kwargs)
+        
+    raise ValueError(SamplerErrors.NOT_IMPLEMENTED_ERROR)
+
+#######################################################################
 #! EOF
 #######################################################################
 

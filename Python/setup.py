@@ -21,7 +21,6 @@ Dependencies:
 
 Version:
     0.1.0
-
 Author:
     Maksymilian Kliczkowski
 Date:
