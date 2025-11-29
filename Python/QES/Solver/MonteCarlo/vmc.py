@@ -515,7 +515,7 @@ class VMCSampler(Sampler):
             raise ValueError("A network (or callable) must be provided for evaluation.")
 
         # set the network
-        self._net_callable, self._parameters = self._set_net_callable(net)
+        self._net_callable, self._parameters    = self._set_net_callable(net)
 
         # set the parameters - this for modification of the distribution
         self._mu = mu
@@ -827,16 +827,9 @@ class VMCSampler(Sampler):
         logproba_fun        = jax.vmap(lambda x: jnp.real(net_callable_fun(params, x)), in_axes=(0,))
         proposer_fn         = jax.vmap(update_proposer, in_axes=(0, 0))
         
-        # Split the key only once to generate proposal keys for all chains + one carry key
-        total_keys          = steps * (num_chains + 1)
-        keys_flat           = jax.random.split(rng_k_init, total_keys)
-        keys                = keys_flat.reshape(steps, num_chains + 1, 2)
-        
-        # return chain_init, current_val_init, rng_k_init, num_proposed_init, num_accepted_init
-        
         # Define the single-step function *inside* so it closes over the arguments
         def _sweep_chain_jax_step_inner(carry, step_idx):
-            chain_in, current_val_in, current_key, num_prop, num_acc        = carry
+            chain_in, current_val_in, current_key, num_prop, num_acc = carry
             
             # One for this step and one for the next carry
             key_step, next_key_carry    = jax.random.split(current_key)
@@ -847,8 +840,9 @@ class VMCSampler(Sampler):
             #! Single MCMC update step logic
             # Propose update
             new_chain               = proposer_fn(chain_in, chain_prop_keys)    # [num_chains, state_shape]
-            new_val                 = logproba_fun(new_chain)[:,0]              # [num_chains]
-    
+            new_val                 = logproba_fun(new_chain)                   # [num_chains]
+            if new_val.ndim > 1:    new_val = new_val[:, 0]
+            
             #! Calculate the log-probability of the new state - like MCSampler._logprob_jax
             delta                   = new_val - current_val_in                  # [num_chains]
             ratio                   = jnp.exp(beta * mu * delta)                # [num_chains]
@@ -864,6 +858,7 @@ class VMCSampler(Sampler):
             val_out                 = jnp.where(keep, new_val, current_val_in)
             proposed_out            = num_prop + 1
             accepted_out            = num_acc + keep.astype(num_acc.dtype)
+            
             new_carry               = (chain_out, val_out, next_key_carry, proposed_out, accepted_out)
             # We return None as the second element because we are not collecting 
             # intermediate states in this specific loop (this is thermalization/skipping)
@@ -1389,7 +1384,7 @@ class VMCSampler(Sampler):
         return net_callable, current_params
     
     def sample(self, parameters=None, num_samples=None, num_chains=None):
-        '''
+        r'''
         Sample the states from the Hilbert space according to the Born distribution.
         Parameters:
             parameters:

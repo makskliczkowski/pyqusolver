@@ -52,15 +52,15 @@ except ImportError as e:
 # from QES.general_python imports
 try:
     #! Algebra
-    from QES.Algebra.Operator.operator import Operator, OperatorFunction
+    from QES.Algebra.Operator.operator          import Operator, OperatorFunction
     
     #! Randomness
-    from QES.general_python.common.directories import Directories
-    from QES.general_python.common.flog import Logger
+    from QES.general_python.common.directories  import Directories
+    from QES.general_python.common.flog         import Logger
     
     #! Monte Carlo
-    from QES.Solver.MonteCarlo.vmc import VMCSampler, get_sampler
-    from QES.Solver.MonteCarlo.montecarlo import MonteCarloSolver
+    from QES.Solver.MonteCarlo.vmc              import VMCSampler, get_sampler
+    from QES.Solver.MonteCarlo.montecarlo       import MonteCarloSolver
     
     #! Hilbert space
     from QES.Algebra.hilbert import HilbertSpace
@@ -112,61 +112,74 @@ class NQS(MonteCarloSolver):
     _ERROR_INVALID_SAMPLER      = "Invalid sampler type provided."
     _ERROR_INVALID_BATCH_SIZE   = "Batch size must be a positive integer."
     _ERROR_STATES_PSI           = "If providing states and psi, both must be provided as a tuple (states, psi)."
+    _ERROR_SHAPE_HILBERT        = "Either shape or hilbert space must be provided."
     
     def __init__(self,
                 # information on the NQS
-                net         : Union[Callable, str, net_general.GeneralNet],
-                sampler     : Union[Callable, str, VMCSampler],
+                logansatz   : Union[Callable, str, net_general.GeneralNet],
                 model       : Hamiltonian,
                 # information on the Monte Carlo solver
-                batch_size  : Optional[int]                             = 1,
+                sampler     : Optional[Union[Callable, str, VMCSampler]]    =   None,
+                batch_size  : Optional[int]                                 =   1,
                 *,
                 # information on the NQS
-                nparticles  : Optional[int]                             = None,
+                nparticles  : Optional[int]                                 = None,
                 # information on the Monte Carlo solver     
-                seed        : Optional[int]                             = None,
-                beta        : float                                     = 1,
-                mu          : float                                     = 2.0,
-                replica     : int                                       = 1,
+                seed        : Optional[int]                                 = None,
+                beta        : float                                         = 1,
+                mu          : float                                         = 2.0,
+                replica     : int                                           = 1,
                 # information on the NQS - Hilbert space
-                shape       : Union[list, tuple]                        = (1,),
-                hilbert     : Optional[Union[HilbertSpace, list, tuple]] = None,
-                modes       : int                                       = 2,
+                shape       : Optional[Union[list, tuple]]                  = None,
+                hilbert     : Optional[Union[HilbertSpace, list, tuple]]    = None,
+                modes       : int                                           = 2,
                 # information on the Monte Carlo solver
-                directory   : Optional[str]                             = MonteCarloSolver.defdir,
-                backend     : str                                       = 'default',
-                problem     : Optional[Union[str, PhysicsInterface]]    = 'wavefunction',
+                directory   : Optional[str]                                 = MonteCarloSolver.defdir,
+                backend     : str                                           = 'default',
+                dtype       : Optional[Union[type, str]]                    = None,
+                problem     : Optional[Union[str, PhysicsInterface]]        = 'wavefunction',
                 **kwargs):
         '''
         Initialize the NQS solver.
         
         Parameters:
-            net:
-                The neural network to be used. This can be specified in several ways:
+            logansatz [Union[Callable, str, GeneralNet]]:
+                The neural network or callable to be used. This can be specified in several ways:
                 - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
                 - As a pre-initialized network object (must be a subclass of `GeneralNet`).
                 - As a raw Flax module class for custom networks. The factory will wrap it automatically.
                   See the documentation of `QES.general_python.ml.networks.choose_network` for details
                   on custom module requirements.
-            sampler:
-                The sampler to be used.
-            model:
+                - As a callable that returns an ansatz. For example, a function that takes input shape and returns
+                    a network instance or it can be some custom logic to create the wavefunction ansatz:
+                    - PEPS ansatz function
+                    - Custom variational ansatz
+            sampler [Union[Callable, str, VMCSampler]]:
+                The sampler to be used. If None, a default `VMCSampler` will be created.
+                This can be specified in several ways:
+                - As a string (e.g., 'vmc') to use a built-in sampler.
+                - As a pre-initialized sampler object (must be a subclass of `VMCSampler`).
+                - As a callable that returns a sampler instance.
+                - If None, a default `VMCSampler` will be created using the provided network:
+                    - The sampler will be initialized with the network, shape, random number generators, and other parameters.
+            model [Hamiltonian or Operator]:
                 The physical model (e.g., Hamiltonian) for the NQS.
                 - If physics is 'wavefunction', this must provide a `local_energy_fn`.
                 - For other physics types, refer to the specific requirements.
-            batch_size:
+            batch_size [Optional[int]]:
                 The batch size for training.
-            nparticles [Optional]:
+            nparticles [Optional[int]]:
                 The number of particles in the system. If not provided, defaults to system size.
-            seed:
+            seed [Optional[int]]:
                 Random seed for initialization.
-            beta:
+            beta [float]:
                 Inverse temperature for Monte Carlo sampling.
-            mu:
-                Mu parameter for the NQS.
-            replica:
+            mu [float]:
+                Mu parameter for the NQS. This is used for collecting different sampling distribution.
+                By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
+            replica [int]:
                 Number of replicas for parallel tempering.
-            shape:
+            shape [Union[list, tuple]]:
                 Shape of the input data, e.g., `(n_spins,)`.
             hilbert:
                 Hilbert space object (optional).
@@ -176,22 +189,49 @@ class NQS(MonteCarloSolver):
                 Directory for saving results.
             backend:
                 Computational backend ('jax' or 'numpy').
+            dtype:
+                Data type for network parameters (e.g., 'float32', 'complex128').
             problem:
                 The physics problem to solve (e.g., 'wavefunction').
             **kwargs:
                 Additional keyword arguments passed to the network constructor.
+                Including:
+                - seed: 
+                    Seed for network initialization (overrides global seed if provided).
+                - param_dtype:
+                    Data type for network parameters (e.g., 'float32', 'complex128').
+                - beta_penalty: 
+                    Penalty term for particle number conservation (default: 0.0).
+                - use_orbax:
+                    Whether to use Orbax for checkpointing (default: True).
+                - orbax_max_to_keep:
+                    Maximum number of Orbax checkpoints to keep (default: 3).
+                - Sampler-specific parameters:
+                    - s_numchains       : Number of Markov chains (default: 16).
+                    - s_numsamples      : Number of samples per chain (default: 1000).
+                    - s_sweep_steps     : Number of sweep steps between samples (default: 10).
+                    - s_therm_steps     : Number of thermalization steps (burnin) (default: 100).
+                    - s_upd_fun         : Update function for sampler (default: None).
+                    - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
+                    - s_logprob_fact    : Log probability factor (default: 0.5).
+                    - s_makediffer      : Whether to make the sampler differentiable (default: True).
+                    - Other sampler-specific parameters as needed.
         '''
+        
+        if shape is None and hilbert is None:
+            raise ValueError(self._ERROR_SHAPE_HILBERT)
+        
         super().__init__(sampler    =   sampler,
                         seed        =   seed,
                         beta        =   beta,
                         mu          =   mu,
                         replica     =   replica,
-                        shape       =   shape,
+                        shape       =   shape or (hilbert.ns,),
                         hilbert     =   hilbert,
                         modes       =   modes,
                         directory   =   directory,
                         backend     =   backend)
-        
+                
         # --------------------------------------------------
         self._batch_size            = batch_size        
         self._initialized           = False
@@ -225,7 +265,22 @@ class NQS(MonteCarloSolver):
         #! Network 
         # --------------------------------------------------
         
-        self._net                   = nqs_choose_network(net, input_shape=self._shape, backend=self._nqsbackend, **kwargs)
+        try:
+            if logansatz is None:
+                raise ValueError(self._ERROR_INVALID_NETWORK)
+            
+            self._logger.info(f"Initializing NQS network with ansatz: {logansatz}", lvl=1, color='blue')
+            self._net = nqs_choose_network(logansatz, 
+                        input_shape =   self._shape, 
+                        backend     =   self._nqsbackend, 
+                        dtype       =   dtype,
+                        param_dtype =   kwargs.get('param_dtype', None),
+                        **kwargs
+                    )
+            
+        except Exception as e:
+            raise ValueError(f"Failed to initialize network. Check the network type and parameters.\nOriginal error: {e}")
+        
         if not self._initialized:
             self.init_network()
         
@@ -235,6 +290,12 @@ class NQS(MonteCarloSolver):
         self._analytic              = self._net.has_analytic_grad
         self._dtype                 = self._net.dtype
         
+        # --------------------------------------------------
+        #! Sampler
+        # --------------------------------------------------
+        
+        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None))        
+
         # --------------------------------------------------
         #! Handle gradients
         # --------------------------------------------------
@@ -285,9 +346,8 @@ class NQS(MonteCarloSolver):
         self._use_orbax             = kwargs.get('use_orbax', True)
         self._orbax_max_to_keep     = kwargs.get('orbax_max_to_keep', 3)
 
+        #! set the checkpoint manager
         if (self._isjax and self._use_orbax and hasattr(self._net, 'net_module') and isinstance(self._net.net_module, nn.Module)):
-
-            #! set the checkpoint manager
             ckpt_base = Path(self._dir_detailed / 'checkpoints')
             ckpt_base.mkdir(parents=True, exist_ok=True)
             
@@ -425,6 +485,44 @@ class NQS(MonteCarloSolver):
         self._batch_size = batch_size
         self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
     
+    def set_sampler(self, sampler: Union[VMCSampler, str], upd_fun: Optional[Callable] = None, **kwargs) -> VMCSampler:
+        ''' Set a new sampler for the NQS solver. '''    
+        if sampler is None or isinstance(sampler, str):
+    
+            if self._isjax:
+                import jax
+                import jax.numpy as jnp
+            
+            self._logger.warning("No sampler provided. Using default VMCSampler.", lvl=0)
+            self._sampler = VMCSampler(
+                            net             =   self._net,
+                            shape           =   self._shape,
+                            rng             =   self._rng,
+                            rng_k           =   self._rng_k,
+                            seed            =   kwargs.get('seed',          None),
+                            numchains       =   kwargs.get('s_numchains',   16),
+                            numsamples      =   kwargs.get('s_numsamples',  1000),
+                            sweep_steps     =   kwargs.get('s_sweep_steps', 10),
+                            therm_steps     =   kwargs.get('s_therm_steps', 100),
+                            #
+                            beta            =   self._beta,
+                            mu              =   self._mu,
+                            hilbert         =   self._hilbert, # can be None
+                            #
+                            statetype       =   kwargs.get('s_statetype',   jnp.float32 if self._isjax else np.float32),
+                            initstate       =   kwargs.get('s_initstate',   None),
+                            upd_fun         =   upd_fun,
+                            logprob_fact    =   kwargs.get('s_logprob_fact', 0.5),
+                            backend         =   self._backend_str,
+                            makediffer      =   kwargs.get('s_makediffer', True),
+                            dtype           =   self._dtype,
+                        )
+            self._logger.info(f"Using default VMCSampler {self._sampler}", lvl=0, color='blue')
+        else:
+            self._sampler = get_sampler(sampler, self._net, self._shape, self._rng, self._rng_k, dtype=self._dtype, upd_fun=upd_fun, **kwargs)
+        
+        return self._sampler        
+
     #####################################
     #! EVALUATION OF THE ANSATZ BATCHED (\psi(s))
     #####################################

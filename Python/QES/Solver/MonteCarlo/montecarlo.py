@@ -185,7 +185,7 @@ class MonteCarloSolver(Solver):
                         **kwargs)
         
         # define the instance variables
-        self._mcparams          = McsTrain(
+        self._mcparams = McsTrain(
                             epochs      = kwargs.get("epochs", 1),
                             mcsam       = kwargs.get("mcsam", 10),
                             mcth        = kwargs.get("mcth", 0),
@@ -194,16 +194,12 @@ class MonteCarloSolver(Solver):
                             nflip       = kwargs.get("nflip", 1),
                             nrepl       = kwargs.get("nrepl", 1),
                             direct      = directory,
-                            )
-        
-        if sampler is None:
-            raise ValueError(self._ERROR_MSG_SAMPLER)
+                        )
         
         # for the replica and Monte Carlo process
         self._replica_idx       = replica       # replica index
         self._beta              = beta          # inverse temperature beta = 1/T
         self._mu                = mu            # modification of the probability distribution
-        self._sampler           = self.set_sampler(sampler, kwargs.get("upd_fun", None))
         
         self._accepted          = 0             # number of accepted steps
         self._total             = 0             # total number of steps
@@ -297,7 +293,7 @@ class MonteCarloSolver(Solver):
         self._total         = 0
         self.init()
     
-    def set_sampler(self, sampler: Union[Sampler, str], upd_fun: Optional[Callable] = None) -> Sampler:
+    def set_sampler(self, sampler: Union[Sampler, str], upd_fun: Optional[Callable] = None, **kwargs) -> Sampler:
         '''
         Set the sampler for the Monte Carlo solver.
         '''
@@ -307,8 +303,8 @@ class MonteCarloSolver(Solver):
                             rng         =   self._rng,
                             rng_k       =   self._rng_k,
                             hilbert     =   self._hilbert,
-                            numsamples  =   self._mcparams.mcsam,           #!TODO: this can be modified later
-                            numchains   =   self._mcparams.mcchain,         #!TODO: this can be modified later
+                            numsamples  =   self._mcparams.mcsam,   #!TODO: this can be modified later
+                            numchains   =   self._mcparams.mcchain, #!TODO: this can be modified later
                             )
         # set the sampler properties
         if hasattr(self._sampler, "set_beta"):

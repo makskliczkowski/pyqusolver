@@ -49,7 +49,7 @@ class Solver(ABC):
         best            : float = None
     
     ###################################
-    defdir     = "./data"       # default directory for saving the data
+    defdir     = "./mcdata"     # default directory for saving the data
 
     ###################################
     NOT_IMPLEMENTED_ERROR       = "The state is not implemented for the given modes."

@@ -307,7 +307,7 @@ def _set_state_rand(modes       : int                           = 2,
     # check the size from hilbert
     size        = shape if isinstance(shape, int) else int(np.prod(shape))
     ran_state   = None
-    if hilbert is None:
+    if hilbert is None or True:
         if modes == 2:
             if Binary.BACKEND_DEF_SPIN:
                 ran_state = choice([-1, 1], shape, rng=rng, rng_k=rng_k, backend=backend)
