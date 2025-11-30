@@ -88,8 +88,8 @@ class Solver(ABC):
         # Handle the Hilbert space representation
         self._hilbert       = hilbert                                                       # Hilbert space representation
         if self._hilbert is not None:
-            self._size  = hilbert.ns
-            self._modes = hilbert.modes
+            self._size      = hilbert.ns
+            self._modes     = hilbert.local_space.local_dim
         elif hilbert is None and shape is not None:
             self._hilbert   = HilbertSpace(ns=self._size, modes=self._modes)
         elif hilbert is None and shape is None:
@@ -98,7 +98,7 @@ class Solver(ABC):
         # directory creation
         self._dir           = directory                                                     # directory for saving the data (potentially)
         if not isinstance(directory, Directories):
-            self._dir       = Directories(directory)
+            self._dir       = Directories(directory).resolve()
             self._dir.mkdir(parents=True, exist_ok=True)
         
         # check the backend

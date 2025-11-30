@@ -40,8 +40,7 @@ if JAX_AVAILABLE:
 ###################################
 try:
     from QES.Solver.solver              import Solver
-    from QES.Solver.MonteCarlo.sampler  import Sampler, SolverInitState
-    from QES.Solver.MonteCarlo.vmc      import get_sampler
+    from QES.Solver.MonteCarlo.sampler  import Sampler, SolverInitState, get_sampler
 except ImportError as e:
     raise ImportError("Failed to import Solver modules. Ensure QES package is correctly installed.") from e
 ###################################
@@ -156,6 +155,7 @@ class MonteCarloSolver(Solver):
                 directory   : Optional[str]                 = None,
                 nthreads    : Optional[int]                 = 1,
                 backend     : Optional[str]                 = 'default',
+                logger      : Optional[Logger]              = None,
                 **kwargs):
         """
         Initializes the Monte Carlo solver with default parameters.
@@ -172,6 +172,7 @@ class MonteCarloSolver(Solver):
             - {backend} (str)       : Backend to use (default is 'default').
             - {modes}   (int)       : Number of spin modes (in MB systems 2 for spins etc.)
             - {upd_fun} (Callable)  : Update function for the sampler - if None, the default is used.
+            - {logger}  (Logger)    : Logger object for logging messages.
         """
         
         # call the parent class constructor with the arguments and keyword arguments passed
@@ -209,7 +210,7 @@ class MonteCarloSolver(Solver):
         self._info              = "a general Monte Carlo Solver"
         
         # create the logger
-        self._logger            = get_global_logger() if self._hilbert is None else self._hilbert.logger
+        self._logger            = logger or (get_global_logger() if self._hilbert is None else self._hilbert.logger)
         
         # initialize the solver #!TODO : check whether this is necessary
         self.init()

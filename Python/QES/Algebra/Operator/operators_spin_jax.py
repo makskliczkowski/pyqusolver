@@ -66,7 +66,7 @@ else:
     _flip_func = None
 
 # -----------------------------------------------------------------------------
-#! Sigma-X (sigma ₓ) operator
+#! Sigma-X (sigma _x) operator
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
@@ -78,7 +78,7 @@ if JAX_AVAILABLE:
                         spin        : bool  = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
         r"""
-        Apply the Pauli-X (sigma ₓ) operator on the given sites.
+        Apply the Pauli-X (sigma _x) operator on the given sites.
         For each site, flip the bit at position (ns-1-site) using a JAX-compatible flip function.
         
         Args:
@@ -127,8 +127,8 @@ if JAX_AVAILABLE:
                         spin        : bool = BACKEND_DEF_SPIN,
                         spin_value  : float = _SPIN):
         r"""
-        Apply the inverse of the Pauli-X (sigma ₓ) operator on a JAX array state.
-        This is equivalent to applying the sigma ₓ operator again.
+        Apply the inverse of the Pauli-X (sigma _x) operator on a JAX array state.
+        This is equivalent to applying the sigma _x operator again.
         Corresponds to the adjoint operation.
         <s|O|s'> = <s'|O\dag|s>
         meaning that we want to find all the states s' that lead to the state s.
@@ -355,7 +355,7 @@ if JAX_AVAILABLE:
     # @partial(jax.jit, static_argnums=(2, 3))
     def sigma_z_jnp(state,
                     sites       : Union[List[int], None],
-                    spin        : bool = BACKEND_DEF_SPIN,
+                    spin        : bool  = BACKEND_DEF_SPIN,
                     spin_value  : float = _SPIN):
         r"""
         \sum _z on a JAX array state.
@@ -377,7 +377,6 @@ if JAX_AVAILABLE:
         """        
         coeff       = 1.0
         sites       = jnp.asarray(sites)
-        # jax.debug.print("🔧 Compiling my_func for shape: {}", sites.shape)
         for site in sites:
             bit     =   _binary.jaxpy.check_arr_jax(state, site)
             factor  =   jax.lax.cond(bit,

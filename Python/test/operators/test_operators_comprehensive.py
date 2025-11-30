@@ -181,7 +181,7 @@ class TestOperatorCombinations:
         assert isinstance(result_x[1], np.ndarray), "Result coeffs should be array"
         assert result_x[0].shape == (1,), f"Expected shape (1,), got {result_x[0].shape}"
         assert result_x[1].shape == (1,), f"Expected shape (1,), got {result_x[1].shape}"
-        print(f"(ok)  \sigmaₓ on |000⟩: {len(result_x[0])} states generated")
+        print(f"(ok)  \sigma_x on |000⟩: {len(result_x[0])} states generated")
 
         result_z = sig_z_g(state)
         assert isinstance(result_z[0], np.ndarray), "Result states should be array"
@@ -193,7 +193,7 @@ class TestOperatorCombinations:
         result_comb = sig_x_sig_z(state)
         assert isinstance(result_comb[0], np.ndarray), "Combined result states should be array"
         assert isinstance(result_comb[1], np.ndarray), "Combined result coeffs should be array"
-        print(f"(ok)  \sigmaₓ\sigmaz on |000⟩: {len(result_comb[0])} states generated")
+        print(f"(ok)  \sigma_x\sigmaz on |000⟩: {len(result_comb[0])} states generated")
 
     def test_spin_global_operators_numpy_backend(self, lattice):
         """Test global spin operators on NumPy states."""
@@ -205,14 +205,14 @@ class TestOperatorCombinations:
         result_x = sig_x_g(np_state)
         assert result_x[0].shape == (1, 8), f"Expected shape (1, 8), got {result_x[0].shape}"
         assert result_x[1].shape == (1,), f"Expected shape (1,), got {result_x[1].shape}"
-        print(f"(ok)  \sigmaₓ on NumPy |000⟩: output shape {result_x[0].shape}")
+        print(f"(ok)  \sigma_x on NumPy |000⟩: output shape {result_x[0].shape}")
 
         # Test combination
         sig_x_sig_z = sig_x_g * sig_z_g
         result_comb = sig_x_sig_z(np_state)
         assert result_comb[0].shape == (1, 8), f"Expected shape (1, 8), got {result_comb[0].shape}"
         assert result_comb[1].shape == (1,), f"Expected shape (1,), got {result_comb[1].shape}"
-        print(f"(ok)  \sigmaₓ\sigmaz on NumPy |000⟩: output shape {result_comb[0].shape}")
+        print(f"(ok)  \sigma_x\sigmaz on NumPy |000⟩: output shape {result_comb[0].shape}")
 
     @pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not available")
     def test_spin_global_operators_jax_backend(self, lattice):
@@ -225,14 +225,14 @@ class TestOperatorCombinations:
         result_x = sig_x_g(jnp_state)
         assert result_x[0].shape == (1, 8), f"Expected shape (1, 8), got {result_x[0].shape}"
         assert result_x[1].shape == (1,), f"Expected shape (1,), got {result_x[1].shape}"
-        print(f"(ok)  \sigmaₓ on JAX |000⟩: output shape {result_x[0].shape}")
+        print(f"(ok)  \sigma_x on JAX |000⟩: output shape {result_x[0].shape}")
 
         # Test combination
         sig_x_sig_z = sig_x_g * sig_z_g
         result_comb = sig_x_sig_z(jnp_state)
         assert result_comb[0].shape == (1, 8), f"Expected shape (1, 8), got {result_comb[0].shape}"
         assert result_comb[1].shape == (1,), f"Expected shape (1,), got {result_comb[1].shape}"
-        print(f"(ok)  \sigmaₓ\sigmaz on JAX |000⟩: output shape {result_comb[0].shape}")
+        print(f"(ok)  \sigma_x\sigmaz on JAX |000⟩: output shape {result_comb[0].shape}")
 
 
 class TestFermionOperators:

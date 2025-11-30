@@ -914,7 +914,7 @@ class SamplerType(Enum):
     Enum class for the sampler types.
     """
     MCSampler       = auto()
-    ExactSampler    = auto()
+    ARSampler       = auto()
     
     @staticmethod
     def from_str(s: str) -> 'SamplerType':
@@ -948,36 +948,57 @@ def get_sampler(typek: Union[str, SamplerType, Sampler], *args, **kwargs) -> Sam
     >>> print(sampler)
     <__main__.VMCSampler object at 0x...>
     """
-    from vmc        import VMCSampler
-    from arsampler  import ARSampler
+    # Local imports to avoid circular dependencies
+    try:
+        from .vmc import VMCSampler
+    except ImportError:
+        VMCSampler = None
+
+    try:
+        from .arsampler import ARSampler
+    except ImportError:
+        ARSampler = None
+
+    # -----------------------------------------------------------
+    # 1. INSTANCE CHECK: If it's already an initialized Sampler object
+    # -----------------------------------------------------------
+    if isinstance(typek, Sampler):
+        return typek
+    
+    # -----------------------------------------------------------
+    # 2. CLASS CHECK: If it's a class definition (e.g. passed VMCSampler class)
+    # -----------------------------------------------------------
+    if isinstance(typek, type) and issubclass(typek, Sampler):
+        return typek(*args, **kwargs)
+    
+    # -----------------------------------------------------------
+    # 3. STRING TO ENUM CONVERSION
+    # -----------------------------------------------------------
     
     if isinstance(typek, str):
-        typek = typek.strip()
-        typek = SamplerType.from_str(typek)
+        typek_str = typek.strip().lower()
+        
+        # Manually map common strings if they aren't in Enum yet
+        if typek_str    in ['ar', 'arsampler', 'exact']:
+            typek = SamplerType.ARSampler
+        elif typek_str  in ['vmc', 'mc', 'mcsampler', 'default']:
+            typek = SamplerType.MCSampler
+        else:
+            try:
+                typek = SamplerType.from_str(typek_str)
+            except ValueError as e:
+                raise ValueError(f"Unknown sampler type string: {typek_str}") from e
+            
+    # -----------------------------------------------------------
+    # 4. ENUM TO CLASS INSTANCE MAPPING
+    # -----------------------------------------------------------
     
-    # check the type of the sampler
-    if isinstance(typek, Sampler):                  # is already a sampler instance
-        return typek
-    elif issubclass(typek, Sampler):                # is a sampler class
-        return typek(*args, **kwargs)
-    elif isinstance(typek, VMCSampler):             # is a sampler class
-        return typek
-    elif isinstance(typek, ARSampler):              # is a sampler class
-        return typek(*args, **kwargs)
-    elif isinstance(typek, str):                    # is a string to convert to enum
-        typek = SamplerType.from_str(typek)
-    elif typek == SamplerType.MCSampler:            # is a sampler type from the enum
-        typek = SamplerType.MCSampler
-    elif typek == SamplerType.ExactSampler:
-        typek = SamplerType.ExactSampler
-    else:
-        return typek
-    
-    # set from the type enum
     if typek == SamplerType.MCSampler:
         return VMCSampler(*args, **kwargs)
     
-    elif typek == SamplerType.ExactSampler:
+    elif typek == SamplerType.ARSampler:
+        if ARSampler is None:
+            raise ImportError("ARSampler implementation not found.")
         return ARSampler(*args, **kwargs)
         
     raise ValueError(SamplerErrors.NOT_IMPLEMENTED_ERROR)

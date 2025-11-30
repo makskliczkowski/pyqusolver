@@ -21,6 +21,7 @@ Date    : 2025-11-01
 import os
 import warnings
 import numpy as np
+from logging import Logger, getLogger
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, Any, List
@@ -218,22 +219,78 @@ class TDVP:
     
     def __init__(
             self,
-            use_sr          : bool                              = True,
-            use_minsr       : bool                              = False,
-            rhs_prefactor   : Union[float, complex]             = 1.0,
+            use_sr          : bool                                      = True,
+            use_minsr       : bool                                      = False,
+            rhs_prefactor   : Union[float, complex]                     = 1.0,
             # Stochastic reconfiguration parameters
-            sr_lin_solver   : Optional[solvers.Solver]          = None,     # default solver
-            sr_precond      : Optional[precond.Preconditioner]  = None,     # default preconditioner
-            sr_snr_tol      : float                             = 1e-3,     # for signal-to-noise ratio
-            sr_pinv_tol     : float                             = 1e-14,    # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
-            sr_pinv_cutoff  : float                             = 1e-8,     # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
-            sr_diag_shift   : float                             = 0.0,      # diagonal shift for the covariance matrix in case of ill-conditioning
-            sr_lin_solver_t : Optional[solvers.SolverForm]      = solvers.SolverForm.GRAM, # form of the solver - gram, matvec, matrix
-            sr_lin_x0       : Optional[Array]                   = None,     # initial guess for the solver
-            sr_maxiter      : int                               = 100,      # maximum number of iterations for the linear solver
+            sr_lin_solver   : Optional[Union[solvers.Solver, str]]      = None,     # default solver
+            sr_precond      : Optional[precond.Preconditioner]          = None,     # default preconditioner
+            sr_snr_tol      : float                                     = 1e-3,     # for signal-to-noise ratio
+            sr_pinv_tol     : float                                     = 1e-14,    # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
+            sr_pinv_cutoff  : float                                     = 1e-8,     # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
+            sr_diag_shift   : float                                     = 0.0,      # diagonal shift for the covariance matrix in case of ill-conditioning
+            sr_lin_solver_t : Optional[Union[solvers.SolverForm, str]]  = 'gram',   # form of the solver - gram, matrix
+            sr_lin_x0       : Optional[Array]                           = None,     # initial guess for the solver
+            sr_maxiter      : int                                       = 100,      # maximum number of iterations for the linear solver
             # Backend
-            backend         : str                               = 'default',# 'jax' or 'numpy'
+            backend         : str                                       = 'default',# 'jax' or 'numpy'
+            logger          : Optional[Any]                             = None
         ):
+        ''' TDVP Initialization Function
+        
+        This function initializes the TDVP class with the provided parameters. It sets up the necessary configurations for performing
+        time-dependent variational principle calculations on quantum states. The parameters allow customization of the stochastic reconfiguration method, solver options, and backend settings.
+        Parameters
+        ----------
+        use_sr : bool, optional
+            Flag to indicate if stochastic reconfiguration is used, by default True.
+        use_minsr : bool, optional
+            Flag to indicate if minimal stochastic reconfiguration is used, by default False. This reverses the order of operators in the covariance matrix.
+            We do this when the number of parameters is large compared to the number of samples (usually when the ansatz is very expressive).
+            Thus, instead of computing S = <O^+ O>_c, we compute S = <O O^+>_c which is smaller in size...
+        rhs_prefactor : Union[float, complex], optional
+            Prefactor for the RHS of the TDVP equation (-1 for ground state, -i for real time), by default 1.0.
+        sr_lin_solver : Optional[solvers.Solver], optional
+            Linear solver for the TDVP equation (A x = b), by default None (uses default solver). One can
+            provide a solver instance or a string identifier:
+            
+            Currently, it is recomended to use one of the following solvers:
+                - PseudoInverseSolver           ('pseudo_inverse') - ONLY FOR FULL CORRELATION MATRIX FORMING
+                - ConjugateGradientSolver       ('cg' - inner implementation), ('scipy_cg' - scipy implementation) - USES GRAM MATRIX STRUCTURE
+                - MinResSolver                  ('minres' - inner implementation), ('scipy_minres' - scipy implementation) - USES GRAM MATRIX STRUCTURE
+                - MinresQLPSolver               ('minres_qlp' - inner implementation) - USES GRAM MATRIX STRUCTURE
+                - BackendSolver                 ('backend' - uses default backend solver, e.g., numpy.linalg.solve)
+        sr_precond : Optional[precond.Preconditioner], optional
+            Preconditioner for the TDVP equation (A x = b), by default None (uses default preconditioner). One can
+            provide a preconditioner instance or a string identifier. 
+            
+            Currently, it is recomended to use one of the following preconditioners:
+            TODO:
+        sr_snr_tol : float, optional
+            TODO: Start to use this
+            Tolerance for the signal-to-noise ratio in the pseudo-inverse calculation, by default 1e-3.
+        sr_pinv_tol : float, optional
+            Tolerance for the Moore-Penrose pseudo-inverse eigenvalues, by default 1e-14.
+        sr_pinv_cutoff : float, optional
+            Cutoff for the Moore-Penrose pseudo-inverse eigenvalues, by default 1e-8.
+        sr_diag_shift : float, optional
+            Diagonal shift for the covariance matrix in case of ill-conditioning, by default 0.0.
+            Can be used to stabilize the inversion of the covariance matrix -> A -> A + sr_diag_shift * I
+        sr_lin_solver_t : Optional[solvers.SolverForm], optional
+            Form of the solver - gram, matrix, by default solvers.SolverForm.GRAM.
+            Determines whether to use the Gram matrix structure or form the full matrix. Options are:
+                - solvers.SolverForm.GRAM   : Uses the Gram matrix structure (S = <O^+ O>_c)
+                - solvers.SolverForm.MATVEC : Uses matrix-vector products
+                - solvers.SolverForm.FULL   : Forms the full covariance matrix
+            Or can be provided as a string: 'gram', 'matvec', 'full'
+            
+        sr_lin_x0 : Optional[Array], optional
+            Initial guess for the solver, by default None. Can start from zero or previous solution. Only used for iterative solvers.
+        sr_maxiter : int, optional
+            Maximum number of iterations for the linear solver, by default 100. Only used for iterative solvers.
+        backend : str, optional
+            Backend for numerical operations - 'jax' or 'numpy', by default 'default' (uses JAX if available, otherwise NumPy).        
+        '''
         
         self.backend         = get_backend(backend)
         self.is_jax          = not (backend == 'numpy' or backend == 'np' or backend == np)
@@ -271,26 +328,29 @@ class TDVP:
             warnings.warn(f"Preconditioner could not be set: {e}")
             raise e
 
-        self.meta            = None
+        self.meta           = None
         
         # Helper storage
-        self._e_local_mean   = None     # mean local energy
-        self._e_local_std    = None     # std local energy
+        self._e_local_mean  = None     # mean local energy
+        self._e_local_std   = None     # std local energy
         # ---
-        self._solution       = None     # solution of the TDVP equation
-        self._f0             = None     # force vector obtained from the covariance of loss and derivative
-        self._s0             = None     # Fisher matrix obtained from the covariance of derivatives
-        self._n_samples      = None     # number of samples
-        self._full_size      = None     # full size of the covariance matrix
-        self._x0             = sr_lin_x0
-        self.timings         = TDVPTimes()
+        self._solution      = None     # solution of the TDVP equation
+        self._f0            = None     # force vector obtained from the covariance of loss and derivative
+        self._s0            = None     # Fisher matrix obtained from the covariance of derivatives
+        self._n_samples     = None     # number of samples
+        self._full_size     = None     # full size of the covariance matrix
+        self._x0            = sr_lin_x0
+        self.timings        = TDVPTimes()
         
         # Global phase parameter tracking for dynamical correlation functions
         # Equation from paper: $|\psi_{\theta_0,\theta}\rangle = e^{\theta_0}|\psi_\theta\rangle$
         # Evolution: $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
-        self._theta0         = 0.0      # global phase parameter
-        self._theta0_dot     = 0.0      # time derivative of global phase parameter
+        self._theta0        = 0.0      # global phase parameter
+        self._theta0_dot    = 0.0      # time derivative of global phase parameter
 
+        # Logger
+        self.logger         = logger if logger is not None else getLogger(__name__)
+        
         #! functions
         self._init_functions()
 
@@ -376,10 +436,21 @@ class TDVP:
         """
         
         if self.sr_solve_lin is None:
-            self.sr_solve_lin = solvers.PseudoInverseSolver(backend=self.backend, sigma=self.sr_pinv_cutoff)
+            # Default to PseudoInverseSolver if no solver is provided
+            self.sr_solve_lin_t     = solvers.SolverForm.MATRIX
+            self.sr_solve_lin       = solvers.PseudoInverseSolver(backend=self.backend, sigma=self.sr_diag_shift)
+            self.logger.info("No solver provided. Defaulting to PseudoInverseSolver with full matrix formation.")
 
         if isinstance(self.sr_solve_lin, str) or isinstance(self.sr_solve_lin, solvers.SolverType) or isinstance(self.sr_solve_lin, int):
-            self.sr_solve_lin = solvers.choose_solver(solver_id=self.sr_solve_lin, sigma=self.sr_pinv_cutoff)
+            identifier              = self.sr_solve_lin
+            self.sr_solve_lin       = solvers.choose_solver(
+                                        solver_id       =   identifier, 
+                                        is_gram         =   self.sr_solve_lin_t == solvers.SolverForm.GRAM.value,
+                                        sigma           =   self.sr_diag_shift, 
+                                        backend         =   self.backend, 
+                                        default_precond =   self.sr_precond, 
+                                        maxiter         =   self.sr_maxiter)
+            self.logger.info(f"Solver set to {self.sr_solve_lin} based on identifier '{identifier}'.")
 
         if self.sr_solve_lin is not None:
             if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:

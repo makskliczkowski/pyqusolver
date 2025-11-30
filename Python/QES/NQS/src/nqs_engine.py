@@ -404,7 +404,7 @@ class NQSEvalEngine(UnifiedEvaluationEngine):
     
     def evaluate_function(self,
                          func           : Callable,
-                         states         : Array,
+                         states         : Optional[Array]       = None,
                          probabilities  : Optional[Array]       = None,
                          params         : Optional[Any]         = None,
                          batch_size     : Optional[int]         = None) -> EvaluationResult:
@@ -430,6 +430,9 @@ class NQSEvalEngine(UnifiedEvaluationEngine):
         """
         if params is None:
             params = self.nqs.get_params()
+            
+        if states is None or len(states) == 0:
+            (last_configs, last_ansatze), (states, all_ansatze), (all_probabilities) = self.nqs.sample()
         
         # Set batch size if override provided
         old_batch_size = self.config.batch_size

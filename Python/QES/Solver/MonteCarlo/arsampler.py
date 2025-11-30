@@ -40,10 +40,25 @@ class ARSampler(Sampler):
     def __init__(self, 
                 net, 
                 shape       : Tuple[int, ...], 
-                rng_k       : jax.random.KeyArray, 
+                rng_k       : jax.random.PRNGKey,
                 *,
                 dtype       : Any       = jnp.complex128,
                 **kwargs):
+        """
+        Initialize the Autoregressive Sampler.
+        Parameters:
+        -----------
+        net         : Callable
+            The autoregressive neural network. Must have a method to compute log-probabilities.
+            Expected to have a signature: net.apply(params, configs) -> logits
+        shape       : Tuple[int, ...]
+            Shape of a single configuration (e.g., (N_sites,)).
+        rng_k       : jax.random.PRNGKey
+            Random number generator key for JAX.
+        dtype       : Any, optional
+            Data type for computations (default: jnp.complex128).
+        kwargs      : Additional keyword arguments.
+        """
         
         # AR doesn't need therm/sweep steps
         super().__init__(shape          =   shape, 

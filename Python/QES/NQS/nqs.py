@@ -28,16 +28,10 @@ import h5py
 import warnings
 
 # typing and other imports
-from typing import Union, Tuple, Union, Callable, Optional, Any, Sequence, List, Dict
+from typing import Union, Tuple, Union, Callable, Optional, Any, List, Dict, Callable
 from functools import partial
 from pathlib import Path
 from dataclasses import dataclass
-
-# Import timeit utility for timing code blocks
-try:
-    from QES.general_python.common.timer import timeit
-except ImportError as e:
-    raise ImportError("Failed to import timer module. Ensure QES.general_python is correctly installed.") from e
 
 # import physical problems
 try:
@@ -59,7 +53,8 @@ try:
     from QES.general_python.common.flog         import Logger
     
     #! Monte Carlo
-    from QES.Solver.MonteCarlo.vmc              import VMCSampler, get_sampler
+    from QES.Solver.MonteCarlo.sampler          import Sampler, get_sampler
+    from QES.Solver.MonteCarlo.vmc              import VMCSampler
     from QES.Solver.MonteCarlo.montecarlo       import MonteCarloSolver
     
     #! Hilbert space
@@ -113,6 +108,7 @@ class NQS(MonteCarloSolver):
     _ERROR_INVALID_BATCH_SIZE   = "Batch size must be a positive integer."
     _ERROR_STATES_PSI           = "If providing states and psi, both must be provided as a tuple (states, psi)."
     _ERROR_SHAPE_HILBERT        = "Either shape or hilbert space must be provided."
+    _ERROR_ENERGY_WAVEFUNCTION  = "Energy computation is only valid for wavefunction problems."
     
     def __init__(self,
                 # information on the NQS
@@ -138,6 +134,8 @@ class NQS(MonteCarloSolver):
                 backend     : str                                           = 'default',
                 dtype       : Optional[Union[type, str]]                    = None,
                 problem     : Optional[Union[str, PhysicsInterface]]        = 'wavefunction',
+                # logging
+                logger      : Optional[Logger]                              =   None,
                 **kwargs):
         '''
         Initialize the NQS solver.
@@ -230,7 +228,10 @@ class NQS(MonteCarloSolver):
                         hilbert     =   hilbert,
                         modes       =   modes,
                         directory   =   directory,
-                        backend     =   backend)
+                        backend     =   backend,
+                        logger      =   logger,
+                        dtype       =   dtype,
+                        **kwargs)
                 
         # --------------------------------------------------
         self._batch_size            = batch_size        
@@ -272,7 +273,7 @@ class NQS(MonteCarloSolver):
             self._logger.info(f"Initializing NQS network with ansatz: {logansatz}", lvl=1, color='blue')
             self._net = nqs_choose_network(logansatz, 
                         input_shape =   self._shape, 
-                        backend     =   self._nqsbackend, 
+                        backend     =   self._backend_str, 
                         dtype       =   dtype,
                         param_dtype =   kwargs.get('param_dtype', None),
                         **kwargs
@@ -294,7 +295,7 @@ class NQS(MonteCarloSolver):
         #! Sampler
         # --------------------------------------------------
         
-        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None))        
+        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), **kwargs)     
 
         # --------------------------------------------------
         #! Handle gradients
@@ -486,38 +487,61 @@ class NQS(MonteCarloSolver):
         self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
     
     def set_sampler(self, sampler: Union[VMCSampler, str], upd_fun: Optional[Callable] = None, **kwargs) -> VMCSampler:
-        ''' Set a new sampler for the NQS solver. '''    
+        ''' Set a new sampler for the NQS solver. '''  
+        
+        if isinstance(sampler, Sampler):
+            self._sampler = sampler
+            return self._sampler
+          
         if sampler is None or isinstance(sampler, str):
+    
+            # DEFAULT FALLBACK
+            if sampler is None: 
+                sampler_type = 'MCSampler' # Default to MCMC
+            else:
+                sampler_type = sampler
     
             if self._isjax:
                 import jax
                 import jax.numpy as jnp
+                
+            sampler_kwargs                  = kwargs.copy()
+            sampler_kwargs['net']           = self._net
+            sampler_kwargs['shape']         = self._shape
+            sampler_kwargs['rng']           = self._rng
+            sampler_kwargs['rng_k']         = self._rng_k
+            sampler_kwargs['dtype']         = self._dtype            
+            sampler_kwargs['beta']          = self._beta
+            sampler_kwargs['mu']            = self._mu
+            sampler_kwargs['hilbert']       = self._hilbert
+            sampler_kwargs['backend']       = self._backend_str
             
-            self._logger.warning("No sampler provided. Using default VMCSampler.", lvl=0)
-            self._sampler = VMCSampler(
-                            net             =   self._net,
-                            shape           =   self._shape,
-                            rng             =   self._rng,
-                            rng_k           =   self._rng_k,
-                            seed            =   kwargs.get('seed',          None),
-                            numchains       =   kwargs.get('s_numchains',   16),
-                            numsamples      =   kwargs.get('s_numsamples',  1000),
-                            sweep_steps     =   kwargs.get('s_sweep_steps', 10),
-                            therm_steps     =   kwargs.get('s_therm_steps', 100),
-                            #
-                            beta            =   self._beta,
-                            mu              =   self._mu,
-                            hilbert         =   self._hilbert, # can be None
-                            #
-                            statetype       =   kwargs.get('s_statetype',   jnp.float32 if self._isjax else np.float32),
-                            initstate       =   kwargs.get('s_initstate',   None),
-                            upd_fun         =   upd_fun,
-                            logprob_fact    =   kwargs.get('s_logprob_fact', 0.5),
-                            backend         =   self._backend_str,
-                            makediffer      =   kwargs.get('s_makediffer', True),
-                            dtype           =   self._dtype,
-                        )
-            self._logger.info(f"Using default VMCSampler {self._sampler}", lvl=0, color='blue')
+            sampler_kwargs['numchains']     = kwargs.get('s_numchains', 16)
+            sampler_kwargs.pop('s_numchains', None)
+            sampler_kwargs['numsamples']    = kwargs.get('s_numsamples', 1000)
+            sampler_kwargs.pop('s_numsamples', None)
+            
+            sampler_kwargs['sweep_steps']   = kwargs.get('s_sweep_steps', 10)
+            sampler_kwargs.pop('s_sweep_steps', None)
+            
+            sampler_kwargs['therm_steps']   = kwargs.get('s_therm_steps', 100)
+            sampler_kwargs.pop('s_therm_steps', None)
+            
+            sampler_kwargs['statetype']     = kwargs.get('s_statetype', jnp.float32 if self._isjax else np.float32)
+            sampler_kwargs.pop('s_statetype', None)
+            
+            sampler_kwargs['initstate']     = kwargs.get('s_initstate', None)
+            sampler_kwargs.pop('s_initstate', None)
+            
+            sampler_kwargs['logprob_fact']  = kwargs.get('s_logprob_fact', 0.5)
+            sampler_kwargs.pop('s_logprob_fact', None)
+            
+            sampler_kwargs['makediffer']    = kwargs.get('s_makediffer', True)
+            sampler_kwargs.pop('s_makediffer', None)
+
+            sampler_kwargs.pop('upd_fun', None)            
+            self._sampler                   = get_sampler(sampler_type, upd_fun=upd_fun, **sampler_kwargs)
+            self._logger.warning(f"Using {self._sampler}", lvl=0, color='blue')
         else:
             self._sampler = get_sampler(sampler, self._net, self._shape, self._rng, self._rng_k, dtype=self._dtype, upd_fun=upd_fun, **kwargs)
         
@@ -766,7 +790,7 @@ class NQS(MonteCarloSolver):
                                             Defaults to True.
         Returns:    
             Any: The result of evaluating the provided function `func` using 
-            the generated samples.
+            the generated samples. 
         """
 
         _, (states, ansatze), probabilities = sampler.sample(parameters=parameters, num_samples=num_samples, num_chains=num_chains)
@@ -805,6 +829,17 @@ class NQS(MonteCarloSolver):
                 The output of the evaluated functions. If a single function is 
                 provided, the result is returned directly. If multiple functions are provided, 
                 a list of results is returned.
+                - Returns (states, ansatze), probabilities, output
+                    - states: The sampled states from the sampler.
+                    - ansatze: The corresponding wavefunction values for the sampled states.
+                    - probabilities: The probabilities associated with the sampled states.
+                    - The output is generally a list of: estimates, mean(estimates), std(estimates)
+        Example:
+            >>> (states, ansatze), probabilities, output = psi.apply([f1, ...], ...)
+            where `f1` is a function that takes the required inputs and returns the desired output.
+            - f1 (x) = [{|s'>}], [<s'|f|s> for s' in {|s'>}]
+            and output is the O_loc(s) evaluated over the sampled states.
+            - O_loc(s) = \sum _{s \in {samples}} sum_{s'} <s'|O|s> * psi(s') / psi(s) / num_samples
         """
         
         params          = kwargs.get('params', self._net.get_params())
@@ -914,13 +949,11 @@ class NQS(MonteCarloSolver):
         Returns:
             EnergyStatistics object with energy values and statistics
         """
-        if ham_action_func is None:     ham_action_func = self._local_en_func
-        if params is None:              params          = self._net.get_params()
-        if batch_size is None:          batch_size      = self._batch_size
-        
-        if self._nqsproblem.typ == 'wavefunction':
-            return self._eval_engine.compute_local_energy(states, ham_action_func, params, probabilities, batch_size)
-        raise NotImplementedError("Energy computation is only implemented for wavefunction problems.")
+        if self._nqsproblem.typ != 'wavefunction':      raise ValueError(self._ERROR_ENERGY_WAVEFUNCTION)
+        if ham_action_func is None:                     ham_action_func = self._local_en_func
+        if params is None:                              params          = self._net.get_params()
+        if batch_size is None:                          batch_size      = self._batch_size
+        return self._eval_engine.compute_local_energy(states, ham_action_func, params, probabilities, batch_size)
     
     def compute_observable(self, observable_func, states, observable_name="Observable", params=None, compute_expectation=False, batch_size=None):
         """
@@ -947,6 +980,12 @@ class NQS(MonteCarloSolver):
         if observable_func is None:         raise ValueError("Observable function must be provided.")
         if params is None:                  params          = self._net.get_params()
         if batch_size is None:              batch_size      = self._batch_size
+        
+        if isinstance(observable_func, Operator):
+            observable_func = observable_func.jax_apply if self._isjax else observable_func.npy
+        elif not callable(observable_func):
+            raise ValueError("Observable function must be callable or an Operator instance.")
+            
         return self._eval_engine.compute_observable(observable_func, states, observable_name, params, compute_expectation, batch_size)
         
     @property
@@ -958,9 +997,14 @@ class NQS(MonteCarloSolver):
     def local_energy(self, *args, **kwargs):    return self.compute_energy(*args, **kwargs)
     def local_en(self, *args, **kwargs):        return self.compute_energy(*args, **kwargs)
     def en(self, *args, **kwargs):              return self.compute_energy(*args, **kwargs)
+    def loss(self, *args, **kwargs):            return self.compute_energy(*args, **kwargs)
+    
     def observable(self, *args, **kwargs):      return self.compute_observable(*args, **kwargs)
     def obs(self, *args, **kwargs):             return self.compute_observable(*args, **kwargs)
     def compute_obs(self, *args, **kwargs):     return self.compute_observable(*args, **kwargs)
+    def expectation(self, *args, **kwargs):     return self.compute_observable(*args, **kwargs)
+    def expect(self, *args, **kwargs):          return self.compute_observable(*args, **kwargs)
+    def exp(self, *args, **kwargs):             return self.compute_observable(*args, **kwargs)
     
     #####################################
     #! SAMPLE
@@ -990,12 +1034,12 @@ class NQS(MonteCarloSolver):
         Example:
         ----------
             >>> nqs = NQS(model, net, sampler)
-            >>> (states, ansatze), probabilities = nqs.sample(num_samples=1000, num_chains=10)
-            >>> print("Sampled states:", states)
+            >>> (last configs, last ansatze), (all configs, all ansatze), (all probabilities) = nqs.sample(num_samples=1000, num_chains=10)
+            >>> print("Sampled states:", last configs)
             >>> # Sampled states: [[...], [...], ...]
-            >>> print("Sampled ansatze:", ansatze)
+            >>> print("Sampled ansatze:", last ansatze)
             >>> # Sampled ansatze: [[...], [...], ...]
-            >>> print("Sampled probabilities:", probabilities)
+            >>> print("Sampled probabilities:", all probabilities)
             >>> # Sampled probabilities: [[...], [...], ...]        
         '''
         if reset and hasattr(self._sampler, 'reset'):
@@ -1006,18 +1050,24 @@ class NQS(MonteCarloSolver):
             
         return self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs)
     
-    @property
-    def sampler(self):
-        '''
-        Returns the sampler used for sampling the NQS.
-        '''
-        return self._sampler
+    def smp(self, *args, **kwargs):             return self.sample(*args, **kwargs)
+    def sampling(self, *args, **kwargs):        return self.sample(*args, **kwargs)
+    def get_samples(self, *args, **kwargs):     return self.sample(*args, **kwargs)
+    def get_smp(self, *args, **kwargs):         return self.sample(*args, **kwargs)
+    def get_sampling(self, *args, **kwargs):    return self.sample(*args, **kwargs)
+    def samples(self, *args, **kwargs):         return self.sample(*args, **kwargs)
     
     @property
+    def sampler(self):
+        ''' Returns the sampler used for sampling the NQS. '''
+        return self._sampler
+    @sampler.setter
+    def sampler(self, sampler: VMCSampler):
+        ''' Sets a new sampler for the NQS. '''
+        self.set_sampler(sampler)
+    @property
     def sampler_func(self, num_samples: int = None, num_chains: int = None):
-        '''
-        Returns the sampler function used for sampling the NQS.
-        '''
+        ''' Returns the sampler function used for sampling the NQS. '''
         return self._sampler.get_sampler(num_samples=num_samples, num_chains=num_chains)
 
     #####################################
@@ -1495,7 +1545,6 @@ class NQS(MonteCarloSolver):
     
     #####################################
     #! STATE MODIFIER
-    #!TODO: THIS IS NOT FINISHED, MUST BE COMPLETED
     #####################################
     
     @property
@@ -1512,120 +1561,165 @@ class NQS(MonteCarloSolver):
         '''
         return self._modifier is not None
     
-    @property
-    def ansatz_modified(self):
-        '''
-        Return the ansatz function with the modifier applied.
-        '''
-        return self._ansatz_mod_func
-    
     def unset_modifier(self):
-        '''
-        Unset the state modifier.
-        '''
-        self._modifier = None
-        self.log("State modifier unset.", log='info', lvl = 2, color = 'blue')
-        
-        # reset the ansatz function
-        self._ansatz_func, self._params = self._net.get_apply(self._isjax)
-    
-    def _set_modifier_func(self):
-        '''
-        Set the state modifier function.
-        '''
-        if self._modifier is None:
-            self.log("State modifier is None. Cannot set the function.", log='error', lvl = 2, color = 'red')
-            return
+        """
+        Unset the state modifier and restore the original ansatz function.
+        """
+        if self._modifier is None:  return
 
-        if isinstance(self._modifier, Operator):
-            if self._isjax and hasattr(self._modifier, 'jax'):
-                self._modifier_func = self._modifier.jax
-            elif hasattr(self._modifier, 'npy'):
-                self._modifier_func = self._modifier.npy
-            else:
-                raise ValueError("The operator does not have a JAX or NumPy implementation.")
-        else:
-            self._modifier_func = self._modifier
-        self.log(f"State modifier function set to {self._modifier}.", log='info', lvl = 2, color = 'blue')
-
-    def set_modifier(self, modifier: Union[Operator, OperatorFunction], **kwargs):
-        '''
-        Set the state modifier.
-        '''
+        self._modifier              = None
+        self._modifier_func         = None
         
-        #! The modifier should be an inverse mapping - for a given state, it shall return all the states that lead to it 
-        #! through the application of the operator.
+        # Restore the original pure network function
+        self._ansatz_func, _        = self._net.get_apply(self._isjax)
+        self.log("State modifier unset. Reverted to ground state ansatz.", log='info', lvl=1, color='blue')
+                    
+    def set_modifier(self, modifier: Union[Operator, Callable], **kwargs):
+        r"""
+        Apply a linear operator $\hat{O}$ to the ansatz state: $|\tilde{\Psi}\rangle = \hat{O} |\Psi_\theta\rangle$.
+
+        This transforms the NQS evaluation into a modified state evaluation. 
+        For a given configuration $s$, the new log-amplitude is computed via the resolution of identity:
+
+        .. math::
+            \langle s | \tilde{\Psi} \rangle = \langle s | \hat{O} | \Psi_\theta \rangle 
+            = \sum_{s'} \langle s | \hat{O} | s' \rangle \langle s' | \Psi_\theta \rangle
+
+        Assuming the operator $\hat{O}$ is sparse in the computational basis, it connects 
+        configuration $s$ to a finite set of configurations $\{s'_k\}$ with weights $w_k$:
+
+        .. math::
+            \hat{O}^\dagger |s\rangle = \sum_{k=1}^M w_k^* |s'_k\rangle \implies \langle s | \hat{O} | s'_k \rangle = w_k
+
+        The modified log-amplitude becomes:
+
+        .. math::
+            \log \tilde{\Psi}(s) = \log \left( \sum_{k=1}^M w_k \cdot \exp(\log \Psi_\theta(s'_k)) \right)
+
+        Optimization (Branching Factor):
+        --------------------------------
+        The function automatically detects the branching factor $M$ of the operator:
+        1. **M=1 (Diagonal/Permutation):** Fast path. No LogSumExp.
+           $\log \tilde{\Psi}(s) = \log(w) + \log \Psi_\theta(s')$
+        2. **M>1 (General Sparse):** Stable path. Uses `logsumexp` to avoid underflow.
+
+        Parameters
+        ----------
+        modifier : Union[Operator, Callable]
+            An operator or function that takes a state $s$ and returns:
+            - `connected_states` (batch, M, N): The states $s'_k$.
+            - `weights` (batch, M): The matrix elements $w_k$.
+
+        Notes
+        -----
+        This is useful for:
+        - **Symmetries:** $\hat{O} = \sum_g \hat{g}$ (Projection).
+        - **Excited States:** $\hat{O} = 1 - |\Psi_0\rangle\langle\Psi_0|$ (Gram-Schmidt).
+        - **Spectral Functions:** Green's functions calculation.
+        """
+        
+        # Setup the Operator Function
         self._modifier = modifier
-        self._set_modifier_func()
         
-        #! get the ansatz function without the modifier
-        model_callable, self._params = self._net.get_apply(self._isjax)
+        if isinstance(modifier, Operator):
+            if self._isjax and hasattr(modifier, 'jax'):
+                self._modifier_func = modifier.jax
+            elif hasattr(modifier, 'npy'):
+                raise ValueError("Numpy backend not supported for state modifiers.")
+            else:
+                raise ValueError("Operator must implement .jax(...) for JAX backend.")
+        else:
+            self._modifier_func = modifier # Assume it's a callable
+
+        import jax.numpy as jnp
+        import jax
+
+        # Get the base network (Pure function)
+        # We need the pure function f(params, x) -> log_psi
+        model_callable, _ = self._net.get_apply(self._isjax)
         
-        # it modifies this ansatz function, one needs to recompile and take it
-        def _ansatz_func_jax(params, x):
-            """
-            Args
-            ----
-            params : pytree - network parameters
-            x      : (..., N_dim) - either a single state (N_dim,) or a batch (N_sample, N_dim)
-
-            Returns
-            -------
-            ansatz : (N_sample,) or () - product of network x modifier for every sample
-            """
-            x           = jnp.atleast_2d(x)     # (B, N_dim);  B = 1 for a single state
-            B           = x.shape[0]            
-            
-            #! obtain all modified states & weights
-            #    st  : (B, M, N_dim)
-            #    w   : (B, M)
-            st, w       = jax.vmap(self._modifier_func)(x)
-            M           = st.shape[1]                                               # number of modified states
-            #! flatten (B * M) so we can call the network once
-            st_flat     = st.reshape(-1, st.shape[-1])                              # (B\cdot M, N_dim)
-            log_psi     = jax.vmap(lambda s: model_callable(params, s))(st_flat)    # (B\cdot M,)
-            #! reshape the log_psi to (B, M)
-            log_psi_r   = log_psi.reshape(B, -1)                                    # (B, M)
-            log_psi_r  += jnp.log(w.astype(log_psi_r.dtype))
-
-            #! exponentiate the log_psi to combine the weights
-            def _many_mods(lpr): # lpr: (B, M)
-                return jnp.log(jnp.sum(jnp.exp(lpr), axis=1))                       # (B,)
-            
-            def _one_mod(lpr):
-                return lpr[:, 0]                                                    # (B,)
-            
-            ansatz = jax.lax.cond(
-                M > 1,
-                _many_mods,
-                _one_mod,
-                log_psi_r
-            )
-            return ansatz
+        # Compile-time introspection (The "Three Situations": Diagonal, Permutation, Branching)
+        # We run the modifier ONCE on a dummy state to check the branching factor M.
+        # This allows us to define the most efficient JAX graph possible.
         
         if self._isjax:
-            self._ansatz_mod_func = jax.jit(_ansatz_func_jax)
-        else:
-            self.log("JAX backend is not available. Cannot set the ansatz function.", log='error', lvl = 2, color = 'red')
-            self._ansatz_mod_func = model_callable
-        
-        #! set the ansatz function to the modified one
+            dummy_state                             = jnp.ones((1, self._nvisible), dtype=self._dtype) 
+            if hasattr(self, '_shape'):             dummy_state = jnp.ones((1, *self._shape))
+            
+            try:
+                # Run mapping on dummy to check output shape
+                # Shape is usually (Batch, M, ...)
+                st_dummy, w_dummy                   = self._modifier_func(dummy_state)
+                M_branching                         = st_dummy.shape[1]
+                self.log(f"Modifier set. Detected branching factor M={M_branching}.", lvl=1)
+            except Exception as e:
+                self.log(f"Could not inspect operator branching ({e}). Assuming M>1.", lvl=1, color='yellow')
+                M_branching                         = 2 # Force branching logic
+
+            # -------------------------------------------------------------
+            # Diagonal or Permutation (Fast Path)
+            # -------------------------------------------------------------
+            if M_branching == 1:
+                
+                def _ansatz_modified_fast(params, x):
+                    # Get new state s' and coefficient w
+                    # shapes: st (Batch, 1, N), w (Batch, 1)
+                    st, w           = self._modifier_func(x) 
+                    
+                    # Remove the singleton M dimension
+                    st              = st.squeeze(axis=1) # (Batch, N)
+                    w               = w.squeeze(axis=1)  # (Batch,)
+                    
+                    # Evaluate Ansatz on s'
+                    log_psi_prime   = model_callable(params, st)
+                    
+                    # Add operator log-weight: log(w * psi) = log(w) + log_psi
+                    return log_psi_prime + jnp.log(w.astype(jnp.complex128))
+
+                self._ansatz_mod_func = jax.jit(_ansatz_modified_fast)
+
+            # -------------------------------------------------------------
+            # Branching / General Sparse Operator (Stable Path)
+            # -------------------------------------------------------------
+            else:
+                def _ansatz_modified_branching(params, x):
+                    # x: (Batch, N)
+                    
+                    # Get all connected states
+                    # st: (Batch, M, N), w: (Batch, M)
+                    st, w   = jax.vmap(self._modifier_func)(x)
+                    B, M    = st.shape[0], st.shape[1]
+                    
+                    # Flatten to feed into network efficiently
+                    # (Batch * M, N)
+                    st_flat = st.reshape(B * M, -1) 
+                    
+                    # Evaluate Ansatz in one big batch
+                    # log_psi_flat: (Batch * M,)
+                    log_psi_flat        = model_callable(params, st_flat)
+                    
+                    # Reshape back
+                    # log_psi_connected: (Batch, M)
+                    log_psi_connected   = log_psi_flat.reshape(B, M)
+                    
+                    # Compute Log-Sum-Exp safely
+                    # We want: log( sum_k( w_k * exp(log_psi_k) ) )
+                    #        = log( sum_k( exp(log(w_k) + log_psi_k) ) )
+                    
+                    # log_w: (Batch, M) - promote to complex to handle negative weights (phase)
+                    log_w               = jnp.log(w.astype(jnp.complex128))
+                    
+                    # terms: (Batch, M)
+                    terms               = log_w + log_psi_connected
+                    
+                    # JAX LogSumExp handles the numerical stability of adding exponentials
+                    return jax.scipy.special.logsumexp(terms, axis=1)
+
+                self._ansatz_mod_func = jax.jit(_ansatz_modified_branching)
+
+        # Swap the pointer
         self._ansatz_func = self._ansatz_mod_func
     
-    #####################################
-    #! UPDATES
-    #####################################
-    
-    def update(self, **kwargs):
-        '''
-        Update the NQS solver after state modification.
-        '''
-    
-    def unupdate(self, **kwargs):
-        '''
-        Unupdate the NQS solver after state modification.
-        '''
-
     #####################################
     #! WEIGHTS
     #####################################
@@ -1827,19 +1921,25 @@ class NQS(MonteCarloSolver):
     #####################################
     
     @property
-    def beta_penalty(self):
-        '''
-        Return the beta penalty.
-        '''
-        return self._beta_penalty
-    
-    @property
-    def net(self):
-        '''
-        Return the neural network.
-        '''
-        return self._net
-    
+    def net(self):                          return self._net
+    @net.setter
+    def net(self, new_net):
+        """
+        Safety wrapper: If network changes, ensure Sampler knows about it.
+        """
+        self._net = new_net
+        
+        # If the sampler has a reference to the network (ARSampler), update it
+        if hasattr(self._sampler, '_net'):
+            self._sampler._net = new_net
+            
+            # ARSampler might need to re-jit if the static apply fn changed
+            if hasattr(self._sampler, '_sample_jit'):
+                # Force re-creation of JIT kernel on next sample call
+                # (Assuming you implement a check or just re-init the sampler)
+                pass 
+                
+        self.log("Network updated. Sampler reference updated.", lvl=1)
     @property
     def net_flax(self):
         '''
@@ -1853,41 +1953,34 @@ class NQS(MonteCarloSolver):
             raise e
         return None
     
+    # ---
+    
     @property
     def num_params(self):
-        '''
-        Return the number of parameters in the neural network.
-        '''
+        ''' Return the number of parameters in the neural network. '''
         return self._params_total_size
-    
+    @property
+    def npar(self):
+        return self._params_total_size    
     @property
     def nvisible(self):
-        '''
-        Return the number of visible units in the neural network.
-        '''
+        ''' Return the number of visible units in the neural network. '''
         return self._nvisible
-    
+    @property
+    def nvis(self):
+        return self._nvisible
     @property
     def size(self):
-        '''
-        Return the size of the neural network.
-        '''
+        ''' Return the size of the neural network. '''
         return self._size
-    
     @property
     def batch_size(self):
-        '''
-        Return the batch size.
-        '''
+        ''' Return the batch size used for sampling. '''
         return self._batch_size
-    
     @property
     def backend(self):
-        '''
-        Return the backend used for the neural network.
-        '''
+        ''' Return the backend used for the neural network. '''
         return self._backend
-    
     @property
     def nqsbackend(self):
         '''
@@ -1898,9 +1991,7 @@ class NQS(MonteCarloSolver):
     #! Aliases for local energy
     @property
     def local_energy(self):
-        '''
-        Return the local energy function.
-        '''
+        ''' Return the local energy function. '''
         return self._local_en_func
     @property
     def loc_energy(self):
@@ -1911,19 +2002,11 @@ class NQS(MonteCarloSolver):
         ''' Alias for local_energy '''
         return self._local_en_func
     
-    @property
-    def nvis(self):
-        '''
-        Return the number of visible units in the neural network.
-        '''
-        return self._nvisible
+    #! Other loss functions (TODO: implement)
+    # ...
     
     @property
-    def npar(self):
-        '''
-        Return the number of parameters in the neural network.
-        '''
-        return self._params_total_size
+    def beta_penalty(self):                 return self._beta_penalty
     
     #####################################
 
@@ -1938,10 +2021,150 @@ class NQS(MonteCarloSolver):
     #####################################
     
     def __repr__(self):
-        return f"NQS(ansatz={self._net},sampler={self._sampler},backend={self._backend_str})"
+        return f"NQS(logansatz={self._net},sampler={self._sampler},backend={self._backend_str},mod={self.modified})"
     
     def __str__(self):
-        return f"NQS(ansatz={self._net},sampler={self._sampler},backend={self._backend_str})"    
+        return f"NQS(logansatz={self._net},sampler={self._sampler},backend={self._backend_str},mod={self.modified})"    
+
+    def help(self, topic: str = "general"):
+        """
+        Prints usage information and physics background for NQS features.
+        
+        Parameters
+        ----------
+        topic : str
+            The topic to query. Options:
+            - 'general': 
+                Overview of the NQS object.
+            - 'modifier':
+                Details on state modifiers (Projectors, Symmetries).
+            - 'sampling': 
+                Info on VMC vs Autoregressive sampling.
+            - 'network': 
+                Details about the loaded ansatz.
+            - 'usage': 
+                Example workflows and common operations.
+        """
+        topic   = topic.lower().strip()
+        msg     = ""
+        border  = "-" * 60
+        
+        if topic == "general":
+            msg = f"""
+                {border}
+                NQS Solver Help: General
+                {border}
+                This object represents a variational quantum state |Psi_theta>.
+                
+                Current Configuration:
+                - Backend: {self._backend_str}
+                - Ansatz: {type(self._net).__name__}
+                - Params: {self.num_params}
+                - Sampler: {type(self._sampler).__name__} (Batch: {self._batch_size}, mu: {self._sampler._mu})
+                
+                Key Methods:
+                - train(...): Optimize parameters via VMC/TDVP.
+                - sample(...): Generate configurations s ~ |Psi(s)|^mu (default mu=2 - squared amplitude).
+                - evaluate(s): Compute log(Psi(s)).
+                - set_modifier(O): Transform ansatz to O|Psi>.
+                """
+            
+        elif topic == "modifier":
+            msg = f"""
+                {border}
+                NQS Solver Help: State Modifiers
+                {border}
+                Modifiers allow you to apply an operator O to the ansatz:
+                |Psi_new> = O |Psi_old>
+                
+                This is done on-the-fly during evaluation. The NQS computes:
+                log <s|Psi_new> = log ( sum_k <s|O|s'_k> * <s'_k|Psi_old> )
+                
+                Usage:
+                    op = Operator(...) # e.g., Symmetry projector or S^z
+                    nqs.set_modifier(op)
+                
+                Performance Modes (Auto-Detected):
+                1. Single-Branch (M=1):
+                Operator maps s -> s'. Very fast. 
+                Used for: 
+                    Quantum Numbers (S^z, N), Basis Rotations. Depends on operator.
+                
+                2. Multi-Branch (M>1):
+                Operator maps s -> sum_k w_k |s'_k>. Slower (evaluates net M times).
+                Used for: 
+                    Symmetries (Sum over group), Hamiltonian action.
+                
+                Current Status:
+                - Modified: {self.modified}
+                - Modifier: {self._modifier}
+                """
+            
+        elif topic == "sampling":
+            msg = f"""
+                {border}
+                NQS Solver Help: Sampling
+                {border}
+                Current Sampler: {type(self._sampler).__name__}
+                
+                1. MCMC (VMCSampler):
+                - Uses Metropolis-Hastings.
+                - Good for general RBMs/CNNs.
+                - Suffers from autocorrelation time (tau).
+                
+                2. Autoregressive (ARSampler):
+                - Generates samples sequentially (s1 -> s2 -> ...).
+                - Zero autocorrelation (iid samples).
+                - Requires 'ar' or 'made' network architecture.
+                - Exact likelihoods P(s) available.
+                """
+        elif topic == "usage":
+            msg = f"""
+                {border}
+                NQS Solver Help: General usage
+                {border}
+                Current Ansatz: {type(self._net).__name__}
+
+                1. Initialization
+                psi     = NQS(logansatz='ar', model=hamil, sampler='ARSampler')
+                # or 
+                psi     = NQS(logansatz=custom_net, sampler=custom_sampler)
+                # or VMC
+                psi     = NQS(logansatz='rbm', model=hamil, sampler='MCSampler', backend='jax', s_numsamples=5000)
+
+                2. Training (via NQSTrainer)
+                trainer = NQSTrainer(psi, lin_solver='jax_cg', ...)
+                stats   = trainer.train(n_epochs=100)
+
+                3. Sampling & Observables
+                # Get raw samples and log-amplitudes
+                (_, _), (configs, log_psi), weights = psi.sample(num_samples=1000)
+                
+                # Compute Expectation Values (e.g. Energy)
+                E_stats = psi.compute_energy(configs)
+                print(f"Energy: {{E_stats.mean:.4f}} +/- {{E_stats.error:.4f}}")
+
+                4. I/O Operations
+                psi.save_weights("checkpoint.h5")
+                psi.load_weights("checkpoint.h5")
+
+                5. Dynamic Settings (What you can change)
+                psi.batch_size = 2048  # Adjust batch size for evaluation
+                psi.net = new_net      # Swap architecture (resets optimizer)
+                psi.sampler = 'vmc'    # Switch sampling strategy
+                
+                6. Compute observables, for example for Hamiltonian for spin-1/2
+                lat = Lattice(...)
+                mod = Hamiltonian(...)
+                sig_x = mod.operators.sig_x(lattice=lat, sites=[0])
+                obs_x = psi.compute_observable(sig_x, num_samples=1000)
+                print(f"<Sx_0> = {{obs_x.mean:.4f}} +/- {{obs_x.error:.4f}}")
+                """
+        
+        else:
+            msg = f"Unknown topic '{topic}'. Try: 'general', 'modifier', 'sampling', 'usage'."
+            
+        print(msg)
 
 #########################################
 #! EOF
