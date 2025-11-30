@@ -70,6 +70,7 @@ except ImportError as e:
 # ----------------------------------------------------------
 AnsatzFunctionType      = Callable[[Callable, Array, int, Any], Array]               # func, states, batch_size, params -> Array [log ansatz values]
 ApplyFunctionType       = Callable[[Callable, Array, Array, Array, int, Any], Array] # func, states, probs, params, batch_size -> Array [sampled/evaluated values]
+EvalFunctionType        = Callable[[Callable, Array, Any, int], Array]               # func, states, params, batch_size -> Array [log ansatz values]
 
 #########################################
 #! NQS main class
@@ -551,7 +552,7 @@ class NQS(MonteCarloSolver):
     #! EVALUATION OF THE ANSATZ BATCHED (\psi(s))
     #####################################
     
-    def evaluate(self, states, batch_size=None, params=None):
+    def evaluate(self, states, batch_size=None, params=None, return_stats=False):
         '''
         Evaluate the neural network (log ansatz) for the given quantum states.
         
@@ -565,12 +566,13 @@ class NQS(MonteCarloSolver):
         Returns:
             The evaluated network output (log ansatz values).
         '''
-        result = self._eval_engine.evaluate_ansatz(states, params, batch_size)
-        return result.values
+        states = self._nqsbackend.asarray(states, dtype = self._sampler._statetype)
+        result = self._eval_engine.evaluate_ansatz(states, params, batch_size, return_stats=return_stats)
+        return result if return_stats else result.values
     
     def ansatz(self, states, batch_size=None, params=None): 
         ''' Alias for the log ansatz evaluation '''
-        return self.evaluate(states, batch_size, params)
+        return self.evaluate(states, batch_size=batch_size, params=params)
     
     def __call__(self, states):
         '''
@@ -584,6 +586,7 @@ class NQS(MonteCarloSolver):
         Returns:
             The evaluated network output.
         '''
+        states = self._nqsbackend.asarray(states, dtype = self._sampler._statetype)
         return self._eval_func(func=self._ansatz_func, data=states, batch_size=self._batch_size, params=self.get_params())
     
     @property
@@ -596,12 +599,12 @@ class NQS(MonteCarloSolver):
         Returns:
             Callable: The evaluation function.
         '''
-        return self._eval_func
-    
+        return self._eval_func    
     @property
     def eval_fun(self):      
         'Alias for eval_func. We assume it returns log(psi(s))'
         return self._eval_func
+    
     @property
     def ansatz_func(self):      
         'Alias for ansatz_func. We assume it returns log(psi(s))'
@@ -915,7 +918,6 @@ class NQS(MonteCarloSolver):
             Callable: The apply function.
         '''
         return self._apply_fun_jax if self._isjax else self._apply_fun_np
-    
     @property
     def apply_fun(self):    
         'Alias for apply_func'    
@@ -1048,7 +1050,14 @@ class NQS(MonteCarloSolver):
         if params is None:
             params = self._net.get_params()
             
-        return self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs)
+        (last_configs, last_ansatze), (states, all_ansatze), (all_probabilities) = self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs)
+        
+        if kwargs.get('states', False):
+            return states, all_ansatze
+        elif kwargs.get('last', False):
+            return last_configs, last_ansatze
+        # default return all            
+        return (last_configs, last_ansatze), (states, all_ansatze), (all_probabilities)
     
     def smp(self, *args, **kwargs):             return self.sample(*args, **kwargs)
     def sampling(self, *args, **kwargs):        return self.sample(*args, **kwargs)
@@ -1952,7 +1961,14 @@ class NQS(MonteCarloSolver):
         except Exception as e:
             raise e
         return None
-    
+
+    @property
+    def model(self):
+        '''
+        Return the underlying physical model. For example, the Hamiltonian.
+        '''
+        return self._model
+
     # ---
     
     @property

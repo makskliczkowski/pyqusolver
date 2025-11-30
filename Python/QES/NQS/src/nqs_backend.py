@@ -134,6 +134,36 @@ class BackendInterface(ABC):
         - total_size                    -> total size of the parameter pytree - useful for flattening
         """
         pass
+    
+    @staticmethod
+    def stable_ratio(exp_top, exp_bot):
+        """Compute stable ratio of two exponentials in log-space."""
+        return exp_top / exp_bot
+    
+    @staticmethod
+    def to_numpy(x):
+        """Convert backend array to NumPy array."""
+        return np.array(x)
+    
+    @staticmethod
+    def asarray(x, dtype=None, **kwargs):
+        """Convert input to backend array with optional dtype."""
+        return np.asarray(x, dtype=dtype, **kwargs)
+    
+    @staticmethod
+    def to_jax(x, dtype=None, **kwargs):
+        """Convert input to JAX array with optional dtype."""
+        return x
+    
+    @staticmethod
+    def is_jax_array(x):
+        """Check if input is a JAX array."""
+        return False
+
+    @staticmethod
+    def device_put(x):
+        """Put array on JAX device."""
+        pass
 
 # --------------------------------------------------------------
 #! NumPy backend
@@ -278,6 +308,35 @@ class JAXBackend(BackendInterface):
         # log_top and log_bot are log-amplitudes if you store logs;
         # compute ratio r = Psi_top / Psi_bot in log-space for stability.
         return jnp.exp(log_top - log_bot)
+
+    @staticmethod
+    def to_numpy(x):
+        '''Convert JAX array to NumPy array.'''
+        return np.array(x)
+    
+    @staticmethod
+    def asarray(x, dtype=None, **kwargs):
+        '''Convert input to JAX array with optional dtype.'''
+        if dtype is not None:
+            return jnp.asarray(x, dtype=dtype, **kwargs)
+        return jnp.asarray(x, **kwargs)
+    
+    @staticmethod
+    def to_jax(x, dtype=None, **kwargs):
+        '''Convert input to JAX array with optional dtype.'''
+        if dtype is not None:
+            return jnp.array(x, dtype=dtype, **kwargs)
+        return jnp.array(x, **kwargs)
+    
+    @staticmethod
+    def is_jax_array(x):
+        '''Check if input is a JAX array.'''
+        return isinstance(x, jnp.ndarray)
+    
+    @staticmethod
+    def device_put(x):
+        '''Put array on JAX device.'''
+        return jax.device_put(x)    
 
 # --------------------------------------------------------------
 #! Summary of JAX functions

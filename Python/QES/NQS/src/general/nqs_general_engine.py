@@ -31,7 +31,6 @@ Date        : 2025-11-01
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, List, Tuple, Any, Dict
-from functools import partial
 
 import os
 import numpy as np
@@ -46,8 +45,7 @@ if JAX_AVAILABLE:
     try:
         import jax
         import jax.numpy as jnp
-        from jax import jit, vmap, grad
-        from jax.tree_util import tree_flatten, tree_unflatten
+        from jax import jit, vmap
     except ImportError as e:
         pass
 else:
@@ -215,7 +213,8 @@ class EvaluationBackend(ABC):
         
     @abstractmethod
     def evaluate_ansatz(self,
-                       ansatz_func  : Callable,
+                       ansatz_func  : Callable[[Callable, Array, int, Any], Array],
+                       eval_func    : Callable[[Callable, Array, Any, int], Array], # func, states, params, batch_size -> Array [log ansatz values]
                        states       : Array,
                        params       : Any,
                        batch_size   : Optional[int] = None) -> Array:
@@ -239,12 +238,12 @@ class EvaluationBackend(ABC):
         
     @abstractmethod
     def apply_function(self,
-                      func          : Callable,
-                      states        : Array,
-                      ansatz_func   : Callable,
-                      params        : Any,
-                      probabilities : Optional[Array] = None,
-                      batch_size    : Optional[int] = None) -> Array:
+                    func          : Callable[[Array], [Array, float, float]],
+                    states        : Array,
+                    eval_func     : Callable[[Callable, Array, Any, int], Array], # func, states, params, batch_size -> Array [log ansatz values]
+                    params        : Any,
+                    probabilities : Optional[Array] = None,
+                    batch_size    : Optional[int] = None) -> Array:
         """
         Apply a function to states with optional probability weighting.
         
@@ -279,30 +278,32 @@ class JAXBackend(EvaluationBackend):
         return 'jax'
     
     def evaluate_ansatz(self,
-                       ansatz_func  : Callable,
+                       ansatz_func  : Callable[[Callable, Array, int, Any], Array],
                        states       : Array,
                        params       : Any,
-                       batch_size   : Optional[int] = None) -> Array:
+                       eval_func    : Optional[Callable]    = None,
+                       batch_size   : Optional[int]         = None) -> Array:
         """Evaluate log-ansatz using JAX with optional batching."""
         
-        # Define the vectorized evaluation
-        def single_eval(state):
-            return ansatz_func(params, state)
-        
-        if self.jit_compile:
-            single_eval = jit(single_eval)
-        
-        # Vectorize over batch dimension
-        vmapped_eval    = vmap(single_eval)
-        
-        # Handle batching
-        if batch_size is None or len(states) <= batch_size:
-            return vmapped_eval(states)
+        # Fallback to native evaluation if no eval_func provided
+        if eval_func is None:
+            def single_eval(state):
+                return ansatz_func(params, state)
+
+            if self.jit_compile:
+                single_eval = jit(single_eval)
+            
+            eval_func = vmap(single_eval)
+            # Handle batching
+            if batch_size is None or len(states) <= batch_size:
+                return eval_func(states)
+            else:
+                # Process in batches
+                batches = BatchProcessor.create_batches(states, batch_size)
+                results = [eval_func(batch) for batch in batches]
+                return jnp.concatenate(results, axis=0)
         else:
-            # Process in batches
-            batches = BatchProcessor.create_batches(states, batch_size)
-            results = [vmapped_eval(batch) for batch in batches]
-            return jnp.concatenate(results, axis=0)
+            return eval_func(func=ansatz_func, data=states, params=params, batch_size=batch_size)
     
     def apply_function(self,
                       func          : Callable,
@@ -346,14 +347,19 @@ class NumpyBackend(EvaluationBackend):
     # ----------------------------------------
     
     def evaluate_ansatz(self,
-                       ansatz_func  : Callable,
-                       states       : Array,
-                       params       : Any,
-                       batch_size   : Optional[int] = None) -> Array:
+                    ansatz_func  : Callable,
+                    eval_func    : Callable,
+                    states       : Array,
+                    params       : Any,
+                    batch_size   : Optional[int] = None) -> Array:
         """Evaluate log-ansatz using NumPy."""
         
         # Convert states to NumPy if needed
         states_np = np.asarray(states)
+        
+        if eval_func is not None:
+            return eval_func(func=ansatz_func, data=states_np, params=params, batch_size=batch_size)
+        
         
         # Handle batching
         if batch_size is None or len(states_np) <= batch_size:
@@ -423,12 +429,13 @@ class AutoBackend(EvaluationBackend):
     
     def evaluate_ansatz(self,
                        ansatz_func  : Callable,
+                       eval_func    : Callable,
                        states       : Array,
                        params       : Any,
                        batch_size   : Optional[int] = None) -> Array:
         """Dispatch to appropriate backend."""
         backend = self._select_backend(states)
-        return backend.evaluate_ansatz(ansatz_func, states, params, batch_size)
+        return backend.evaluate_ansatz(ansatz_func, eval_func, states, params, batch_size)
     
     def apply_function(self,
                       func          : Callable,
@@ -493,7 +500,8 @@ class UnifiedEvaluationEngine:
                        states       : Array,
                        params       : Any,
                        *,
-                       return_stats : bool = True
+                       eval_func    : Optional[Callable]    = None,
+                       return_stats : bool                  = True
                        ) -> Union[Array, EvaluationResult]:
         """
         Evaluate log-ansatz log|psi(s)| on states.
@@ -515,9 +523,8 @@ class UnifiedEvaluationEngine:
                 raise ValueError("Cannot evaluate on empty state array")
         
         # Compute ansatz values
-        values = self.backend.evaluate_ansatz(ansatz_func, states, params, batch_size=self.config.batch_size)
-        
-        # Compute statistics
+        values                      = self.backend.evaluate_ansatz(ansatz_func, eval_func=eval_func, 
+                                            states=states, params=params, batch_size=self.config.batch_size)
         mean, std, min_val, max_val = BatchProcessor.compute_statistics(values, return_stats=self.config.return_stats)
         
         if not return_stats:
@@ -567,7 +574,8 @@ class UnifiedEvaluationEngine:
                 raise ValueError("Cannot evaluate on empty state array")
         
         # Apply function
-        values = self.backend.apply_function(func, states, ansatz_func, params, probabilities, batch_size=self.config.batch_size)
+        values = self.backend.apply_function(func, 
+                            states, ansatz_func, params, probabilities, batch_size=self.config.batch_size)
         
         # Compute statistics
         mean, std, min_val, max_val = BatchProcessor.compute_statistics(values, return_stats=self.config.return_stats)
@@ -620,7 +628,12 @@ class UnifiedEvaluationEngine:
 
 def create_evaluation_engine(backend        : str = 'auto',
                             batch_size      : Optional[int] = None,
-                            jit_compile     : bool = True) -> UnifiedEvaluationEngine:
+                            jit_compile     : bool          = True,
+                            return_stats    : bool          = True,
+                            validate_inputs : bool          = True,
+                            verbose         : bool          = False
+                            
+                            ) -> UnifiedEvaluationEngine:
     """
     Factory function to create a configured evaluation engine.
     
@@ -636,9 +649,12 @@ def create_evaluation_engine(backend        : str = 'auto',
         Configured UnifiedEvaluationEngine instance
     """
     config = EvaluationConfig(
-        backend        = backend,
-        batch_size     = batch_size,
-        jit_compile    = jit_compile
+        backend         = backend,
+        batch_size      = batch_size,
+        jit_compile     = jit_compile,
+        return_stats    = return_stats,
+        validate_inputs = validate_inputs,
+        verbose         = verbose
     )
     return UnifiedEvaluationEngine(config)
 

@@ -2425,7 +2425,7 @@ class Hamiltonian(Operator):
             use_complex                         = self._iscpx
 
             if use_complex:
-                @numba.njit(nogil=True, inline='always')
+                @numba.njit(nogil=True, inline='always', fastmath=True)
                 def wrapper(k: int):
                     # Allocate inside - unavoidable with current Numba limitations
                     # Using inline='always' reduces function call overhead
@@ -2433,7 +2433,7 @@ class Hamiltonian(Operator):
                     vals_buf    = np.empty(max_out, dtype=np.complex128)
                     return instr_function(k, nops_val, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
             else:
-                @numba.njit(nogil=True, inline='always')
+                @numba.njit(nogil=True, inline='always', fastmath=True)
                 def wrapper(k: int):
                     states_buf  = np.empty(max_out, dtype=np.int64)
                     vals_buf    = np.empty(max_out, dtype=np.float64)

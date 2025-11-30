@@ -48,7 +48,7 @@ except ImportError:
 
 try:
     from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
-    from .general.nqs_general_engine import UnifiedEvaluationEngine, EvaluationConfig, EvaluationResult, create_evaluation_engine
+    from .general.nqs_general_engine import UnifiedEvaluationEngine, EvaluationConfig, EvaluationResult, BatchProcessor
 except:
     raise RuntimeError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.")
 
@@ -187,14 +187,15 @@ class NQSEvalEngine(UnifiedEvaluationEngine):
     #####################################################################################################
     
     def evaluate_ansatz(self,
-                       states       : np.ndarray,
+                       states       : np.ndarray    = None,
                        params       : Optional[Any] = None,
-                       batch_size   : Optional[int] = None) -> EvaluationResult:
+                       batch_size   : Optional[int] = None, 
+                       return_stats : bool          = False
+                       ) -> EvaluationResult:
         """
         Evaluate the NQS ansatz log|psi(s)| on states.
-        
-        Comments:
-            This consolidates the old _eval_jax, _eval_np, and ansatz methods.
+        This function takes the ansatz function from the NQS instance, it's
+        parameters, and evaluates it on the provided states.
         
         Parameters:
         -----------
@@ -213,13 +214,35 @@ class NQSEvalEngine(UnifiedEvaluationEngine):
         
         # Set batch size if override provided
         old_batch_size = self.config.batch_size
-        if batch_size is not None:
-            self.set_batch_size(batch_size)
         
+        # Set batch size if override provided
+        if batch_size is not None: 
+            self.set_batch_size(batch_size)
+            
+        if states is None or len(states) == 0:
+            (_, _), (states, ansatzes), (_) = self.nqs.sample(batch_size=self.config.batch_size)
+            
+            if not return_stats:
+                return ansatzes
+        
+            mean, std, min_val, max_val = BatchProcessor.compute_statistics(ansatzes, return_stats=return_stats)
+            return EvaluationResult(
+                values          = ansatzes,
+                mean            = mean,
+                std             = std,
+                min_val         = min_val,
+                max_val         = max_val,
+                n_samples       = ansatzes.shape[0],
+                backend_used    = self.get_backend_name(),
+                metadata        = {'type': 'NQS Ansatz Evaluation'}
+            )
+            
+        # Evaluate using the parent class method
         try:
-            result = self.evaluate_ansatz(self.nqs._ansatz_func, states, params)
+            result = super().evaluate_ansatz(self.nqs.ansatz_func,                  
+                        states=states, params=params, return_stats=return_stats, eval_func=self.nqs.eval_func)
         finally:
-            if batch_size is not None:
+            if batch_size is not None:  
                 self.set_batch_size(old_batch_size)
         
         return result
