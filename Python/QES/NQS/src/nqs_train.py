@@ -548,18 +548,13 @@ class NQSTrainer:
         if path.endswith(os.sep) or os.path.isdir(path):
             os.makedirs(path, exist_ok=True)
             final_path  = os.path.join(path, f"checkpoint_{step}.{fmt}")
-            absolute    = True
         else:
             final_path  = path
-            absolute    = True # Treat user input as absolute path usually
 
         return self.nqs.save_weights(
             filename        =   final_path, 
             step            =   step, 
-            save_metadata   =   meta, 
-            fmt             =   fmt, 
-            overwrite       =   overwrite, 
-            absolute        =   absolute
+            metadata        =   meta, 
         )
         
 # ------------------------------------------------------

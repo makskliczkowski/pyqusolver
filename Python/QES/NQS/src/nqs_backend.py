@@ -16,10 +16,6 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Union
 
-#! -------------------------------------------------------------
-JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
-#! -------------------------------------------------------------
-
 # --------------------------------------------------------------
 #! Import net_utils from QES.general_python
 # --------------------------------------------------------------
@@ -44,41 +40,33 @@ except ImportError as e:
 try:
     #! Neural Networks
     from QES.general_python.ml import networks as Networks
-    
-    #! For the gradients and stuff
-    import QES.general_python.ml.net_impl.net_general as net_general
-
-    if JAX_AVAILABLE:
-        import QES.general_python.ml.net_impl.interface_net_flax as net_flax
-
 except ImportError as e:
     raise ImportError("Could not import general_python.ml.networks modules. Make sure general_python.ml is installed correctly.") from e
 
 # Different backends imports
 try:
     # JAX imports
-    if JAX_AVAILABLE:
-        import jax
-        from jax import jit as jax_jit
-        from jax import numpy as jnp
+    import jax
+    from jax import numpy as jnp
     
-        # jax tree
-        try:
-            from jax.tree import tree_flatten
-            from orbax.checkpoint import CheckpointManager, PyTreeCheckpointHandler
-        except ImportError:
-            from jax.tree_util import tree_flatten
-            CheckpointManager, PyTreeCheckpointHandler = None, None
-        
-        # use flax
-        import flax
-        import flax.linen as nn
-        import flax.training.train_state
-    else:
-        jax, jnp, flax                              = None, None, None
-        tree_flatten                                = None
-        CheckpointManager, PyTreeCheckpointHandler  = None, None
+    # jax tree
+    try:
+        from jax.tree           import tree_flatten
+        from orbax.checkpoint   import CheckpointManager, PyTreeCheckpointHandler
+    except ImportError:
+        from jax.tree_util      import tree_flatten
+        CheckpointManager, PyTreeCheckpointHandler = None, None
+    
+    # use flax
+    import flax.linen as nn
+    
+    JAX_AVAILABLE               = True
 except ImportError as e:
+    JAX_AVAILABLE               = False
+    jax, jnp, flax              = None, None, None
+    tree_flatten                = None
+    CheckpointManager           = None
+    PyTreeCheckpointHandler     = None
     warnings.warn("JAX or Flax could not be imported. Ensure they are installed correctly.", ImportWarning)
     raise e
 
@@ -107,6 +95,8 @@ class BackendInterface(ABC):
         pass
 
     # ------
+    #! Compilation and gradient preparation
+    # ------
     
     @abstractmethod
     def compile_functions(self, net, batch_size: int):
@@ -123,6 +113,7 @@ class BackendInterface(ABC):
     def prepare_gradients(self, net):
         """
         Returns a dict with:
+        - analytic_grad_fun             -> function to compute analytical gradients in pytree form (if available)
         - flat_grad_func                -> function to compute flattened gradients (log psi)
         - dict_grad_types               -> dict with gradient types per parameter
         - slice_metadata                -> metadata for slicing gradients - e.g. information about the structure of the gradients
@@ -140,26 +131,35 @@ class BackendInterface(ABC):
         """Compute stable ratio of two exponentials in log-space."""
         return exp_top / exp_bot
     
+    # ----------------------------------------------------------
+    
     @staticmethod
     def to_numpy(x):
         """Convert backend array to NumPy array."""
         return np.array(x)
     
     @staticmethod
-    def asarray(x, dtype=None, **kwargs):
-        """Convert input to backend array with optional dtype."""
-        return np.asarray(x, dtype=dtype, **kwargs)
-    
-    @staticmethod
     def to_jax(x, dtype=None, **kwargs):
         """Convert input to JAX array with optional dtype."""
-        return x
-    
+        return x    
+
     @staticmethod
     def is_jax_array(x):
         """Check if input is a JAX array."""
         return False
-
+    
+    @staticmethod
+    def is_numpy_array(x):
+        """Check if input is a NumPy array."""
+        return isinstance(x, np.ndarray)
+    
+    # ----------------------------------------------------------    
+    
+    @staticmethod
+    def asarray(x, dtype=None, **kwargs):
+        """Convert input to backend array with optional dtype."""
+        return np.asarray(x, dtype=dtype, **kwargs)
+    
     @staticmethod
     def device_put(x):
         """Put array on JAX device."""
@@ -183,7 +183,7 @@ class NumpyBackend(BackendInterface):
     def local_energy(self, hamiltonian: Hamiltonian) -> Callable[[Any, Any], Any]:
         return hamiltonian.get_loc_energy_np_fun()
 
-    # ---
+    # ----------------------------------------------------------
 
     def compile_functions(self, net, batch_size: int):
         # net.get_apply(use_jax=False) should return (apply_fn, params)
@@ -216,6 +216,20 @@ class NumpyBackend(BackendInterface):
         # exp_top/log_psi_top and exp_bot/log_psi_bot are log-amplitudes if you store logs;
         # compute ratio r = Psi_top / Psi_bot in log-space for stability.
         return np.exp(exp_top - exp_bot)
+    
+    # ----------------------------------------------------------
+    
+    @staticmethod
+    def to_numpy(x):
+        '''Convert NumPy array to NumPy array.'''
+        return np.array(x)
+
+    @staticmethod
+    def asarray(x, dtype=None, **kwargs):
+        '''Convert input to NumPy array with optional dtype.'''
+        if dtype is not None:
+            return np.asarray(x, dtype=dtype, **kwargs)
+        return np.asarray(x, **kwargs)
 
 # --------------------------------------------------------------
 #! JAX backend
@@ -234,6 +248,8 @@ class JAXBackend(BackendInterface):
 
     def local_energy(self, hamiltonian: Hamiltonian) -> Callable[[Any, Any], Any]:
         return hamiltonian.get_loc_energy_jax_fun()
+
+    # ----------------------------------------------------------
 
     def compile_functions(self, net: Networks.GeneralNet, batch_size: int):
         '''
@@ -281,6 +297,7 @@ class JAXBackend(BackendInterface):
         
         # prepare the dictionary
         out = dict(
+            analytic_grad_func  = None,
             flat_grad_func      = flat_grad_func,
             dict_grad_type      = dict_grad_type,
             slice_metadata      = slice_metadata,
@@ -309,10 +326,25 @@ class JAXBackend(BackendInterface):
         # compute ratio r = Psi_top / Psi_bot in log-space for stability.
         return jnp.exp(log_top - log_bot)
 
+    # ----------------------------------------------------------
+
     @staticmethod
     def to_numpy(x):
         '''Convert JAX array to NumPy array.'''
         return np.array(x)
+    
+    @staticmethod
+    def to_jax(x, dtype=None, **kwargs):
+        '''Convert input to JAX array with optional dtype.'''
+        if dtype is not None:
+            return jnp.array(x, dtype=dtype, **kwargs)
+
+    @staticmethod
+    def is_jax_array(x):
+        '''Check if input is a JAX array.'''
+        return isinstance(x, jnp.ndarray)
+
+    # ----------------------------------------------------------
     
     @staticmethod
     def asarray(x, dtype=None, **kwargs):
@@ -322,21 +354,9 @@ class JAXBackend(BackendInterface):
         return jnp.asarray(x, **kwargs)
     
     @staticmethod
-    def to_jax(x, dtype=None, **kwargs):
-        '''Convert input to JAX array with optional dtype.'''
-        if dtype is not None:
-            return jnp.array(x, dtype=dtype, **kwargs)
-        return jnp.array(x, **kwargs)
-    
-    @staticmethod
-    def is_jax_array(x):
-        '''Check if input is a JAX array.'''
-        return isinstance(x, jnp.ndarray)
-    
-    @staticmethod
     def device_put(x):
         '''Put array on JAX device.'''
-        return jax.device_put(x)    
+        return jax.device_put(x)
 
 # --------------------------------------------------------------
 #! Summary of JAX functions

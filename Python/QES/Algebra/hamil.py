@@ -20,8 +20,11 @@ import numba
 import numpy as np
 import scipy as sp
 from numba.typed import List as NList
-from typing import List, Tuple, Union, Optional, Callable, Dict, Any
+from typing import List, Tuple, Union, Optional, Callable, Dict, Any, TYPE_CHECKING
 from abc import ABC
+
+if TYPE_CHECKING:
+    from QES.Algebra.Operator.operator_loader import OperatorModule
 
 ###################################################################################################
 from QES.Algebra.hilbert import HilbertSpace, HilbertConfig, Logger, Lattice
@@ -1032,7 +1035,7 @@ class Hamiltonian(Operator):
     def max_en(self):                   return self._max_en
     
     @property
-    def operators(self):
+    def operators(self) -> 'OperatorModule':
         """
         Lazy-loaded operator module for convenient operator access.
         
