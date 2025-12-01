@@ -18,7 +18,7 @@ Date        : 2025-11-01
 -------------------------------------------------------------------------------
 """
 
-from typing import Any, List, Dict, TYPE_CHECKING
+from typing import Any, List, Dict, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 # Import the robust smart-factory from general_python
@@ -96,14 +96,23 @@ class NetworkFactory:
     }
 
     @staticmethod
-    def create(network_type: str, **kwargs) -> 'GeneralNet':
+    def create(network_type: str, input_shape: Tuple[int, ...], dtype: str = 'complex128', backend: str = 'jax', **kwargs) -> 'GeneralNet':
         """
         Creates a network instance using the core QES factory.
         
         Args:
-            network_type (str): 'rbm', 'cnn', 'ar', 'simple'
-            **kwargs: Arguments passed to the network constructor 
-                      (e.g. input_shape, alpha, kernel_size, dtype)
+            network_type (str): 
+                'rbm', 'cnn', 'ar', 'simple'
+            input_shape (Tuple[int, ...]): 
+                Shape of the input layer
+            dtype (str): 
+                Data type for the network weights
+            backend (str): 
+                Backend to use ('jax', 'tensorflow', etc.)    
+        
+            **kwargs: 
+                Arguments passed to the network constructor 
+                (e.g. alpha, kernel_size)
         
         Returns:
             A GeneralNet compatible instance (usually FlaxInterface).
@@ -130,7 +139,7 @@ class NetworkFactory:
             ... )
         """
         # Delegate to the robust implementation in general_python
-        return choose_network(network_type, **kwargs)
+        return choose_network(network_type, input_shape=input_shape, dtype=dtype, backend=backend, **kwargs)
 
     @staticmethod
     def list_available() -> List[str]:

@@ -38,7 +38,7 @@ try:
     from .src.nqs_network_integration           import *
     from .src.nqs_ansatz_modifier               import AnsatzModifier
     from .src.nqs_checkpoint_manager            import NQSCheckpointManager
-    from .src.nqs_engine                        import NQSEvalEngine
+    from .src.nqs_engine                        import NQSEvalEngine, NQSObservable, NQSLoss
 except ImportError as e:
     raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
 
@@ -1012,7 +1012,10 @@ class NQS(MonteCarloSolver):
     
     # ---
     
-    def compute_observable(self, states=None, ansatze=None, functions=None, names=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=False, return_values=False, **kwargs):
+    def compute_observable(self, states=None, 
+            ansatze=None, functions=None, names=None, *, 
+            params=None, probabilities=None, batch_size=None, 
+            num_samples=None, num_chains=None, return_stats=False, return_values=False, **kwargs) -> Union[NQSObservable, Array]:
         """
         Evaluate an observable using the evaluation engine.
         
@@ -1656,14 +1659,25 @@ class NQS(MonteCarloSolver):
     def save_weights(self, step: int = 0, filename: Optional[str] = None, metadata: Optional[dict] = None):
         """
         Delegates saving to the CheckpointManager."
+        
         Parameters
         ----------
         step : int
-            The current training step or epoch.
+            The current training step or epoch. Used for versioning the saved weights.
         filename : Optional[str]
             The filename to save the weights to. If None, a default naming scheme is used.
+            The CheckpointManager handles the naming.
         metadata : Optional[dict]
             Additional metadata to save with the weights.
+        Returns
+        -------
+        None
+        
+        Example:
+        --------
+            >>> nqs = NQS(model, net, sampler)
+            >>> nqs.save_weights(step=10, filename="nqs_weights_step10.ckpt")
+            Saved weights for step 10
         """
 
         params = self.get_params()

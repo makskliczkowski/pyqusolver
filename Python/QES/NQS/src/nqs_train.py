@@ -40,6 +40,7 @@ except ImportError:
 try:
     from QES.general_python.common.flog         import Logger
     from QES.general_python.common.timer        import timeit
+    from QES.general_python.common.hdf5man      import HDF5Manager
 except ImportError:
     import logging
     Logger = logging.getLogger 
@@ -96,10 +97,16 @@ class NQSTrainStats:
     def to_dict(self):
         # Helper for JSON serialization
         return {
-            "history"       : self.history,
-            "history_std"   : self.history_std,
-            "lr"            : self.lr_history,
-            "reg"           : self.reg_history
+            "history/val"           : self.history,
+            "history/std"           : self.history_std,
+            "history/lr"            : self.lr_history,
+            "history/reg"           : self.reg_history,
+            "history/theta0"        : np.array(self.global_phase),
+            "timings/n_steps"       : self.timings.n_steps,
+            "timings/step"          : self.timings.step,
+            "timings/sample"        : self.timings.sample,
+            "timings/update"        : self.timings.update,
+            "timings/total"         : self.timings.total,
         }
 
 # ------------------------------------------------------
@@ -509,9 +516,9 @@ class NQSTrainer:
             raise e
         
         # Finalize
-        self.save_checkpoint(epoch, save_path, fmt="h5", overwrite=True, absolute=absolute_path)
         self.stats.history      = np.array(self.stats.history).flatten().tolist()
         self.stats.history_std  = np.array(self.stats.history_std).flatten().tolist()
+        self.save_checkpoint(epoch, save_path, fmt="h5", overwrite=True, absolute=absolute_path)
         self.logger.info(f"Training completed in {time.time() - t0:.2f} seconds over {len(self.stats.history)}/{n_epochs} epochs.", lvl=0, color='green')
         return self.stats
 
@@ -551,12 +558,45 @@ class NQSTrainer:
         else:
             final_path  = path
 
+        # save history
+        HDF5Manager.save_hdf5(directory=Path(final_path).parent, filename=f"stats.h5", data=self.stats.to_dict())
+
         return self.nqs.save_weights(
             filename        =   final_path, 
             step            =   step, 
             metadata        =   meta, 
         )
         
+    def load_history(self, path: Optional[Union[str, Path]] = None) -> NQSTrainStats:
+        """
+        Loads training history from checkpoint.
+        
+        Parameters:
+        -----------
+        step: int
+            Training step or epoch to load.
+            path: Union[str, Path]
+            Path to the checkpoint directory or file.
+        Returns:
+        --------
+        NQSTrainStats
+            Loaded training statistics.
+        """
+        path        = Path(path) if path is not None else self.nqs.defdir
+        filename    = "stats.h5"
+        if path.is_file():
+            path    = path.parent
+
+        stats_data  = HDF5Manager.read_hdf5(file_path=path / filename)
+        self.stats  = NQSTrainStats(
+            history         = stats_data.get("history", []),
+            history_std     = stats_data.get("history_std", []),
+            lr_history      = stats_data.get("lr", []),
+            reg_history     = stats_data.get("reg", []),
+        )
+        self.logger.info(f"Loaded training history from {path / filename}", lvl=1, color='green')
+        return self.stats
+    
 # ------------------------------------------------------
 #! EOF
 # ------------------------------------------------------

@@ -152,7 +152,7 @@ import sys
 # Core Imports (Expose the API)
 # We use try-except blocks to handle partial installations or lazy loading issues
 try:
-    from .nqs import NQS
+    from .nqs import NQS, NQSEvalEngine, NQSSingleStepResult, NQSObservable, NQSLoss
 except ImportError as e:
     raise ImportError(f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}")
 
