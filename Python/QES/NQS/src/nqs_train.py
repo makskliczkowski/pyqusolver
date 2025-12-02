@@ -86,17 +86,44 @@ class NQSTrainTime:
 
 @dataclass
 class NQSTrainStats:
-    """Training statistics container."""
-    history         : List[float]         = field(default_factory=list)
-    history_std     : List[float]         = field(default_factory=list)
-    lr_history      : List[float]         = field(default_factory=list)
-    reg_history     : List[float]         = field(default_factory=list)
-    global_phase    : List[complex]       = field(default_factory=list) # New: Track theta0
-    timings         : NQSTrainTime        = field(default_factory=NQSTrainTime)
+    """
+    Training statistics container.
+    
+    Attributes:
+    -----------
+    history : List[float]
+        Loss/energy values per epoch.
+    history_std : List[float]
+        Standard deviation of loss per epoch.
+    lr_history : List[float]
+        Learning rate schedule history.
+    reg_history : List[float]
+        Regularization schedule history.
+    global_phase : List[complex]
+        Global phase evolution (theta_0) for wavefunction tracking.
+    timings : NQSTrainTime
+        Performance timing data.
+    seed : Optional[int]
+        Random seed used for reproducibility.
+    exact_predictions : Optional[np.ndarray]
+        Reference values from exact methods (e.g., ED eigenvalues).
+        Can be a single value or array of values (ground state, excited states, etc.)
+    exact_method : Optional[str]
+        Method used to compute exact predictions (e.g., 'lanczos', 'full_diag', 'dmrg').
+    """
+    history             : List[float]               = field(default_factory=list)
+    history_std         : List[float]               = field(default_factory=list)
+    lr_history          : List[float]               = field(default_factory=list)
+    reg_history         : List[float]               = field(default_factory=list)
+    global_phase        : List[complex]             = field(default_factory=list)
+    timings             : NQSTrainTime              = field(default_factory=NQSTrainTime)
+    seed                : Optional[int]             = None
+    exact_predictions   : Optional[np.ndarray]      = None  # e.g., ED eigenvalues
+    exact_method        : Optional[str]             = None  # e.g., 'lanczos', 'full_diag'
 
-    def to_dict(self):
-        # Helper for JSON serialization
-        return {
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert stats to dictionary for HDF5 serialization."""
+        result = {
             "history/val"           : self.history,
             "history/std"           : self.history_std,
             "history/lr"            : self.lr_history,
@@ -108,22 +135,126 @@ class NQSTrainStats:
             "timings/update"        : self.timings.update,
             "timings/total"         : self.timings.total,
         }
+        if self.seed is not None:
+            result["seed"]              = self.seed
+        if self.exact_predictions is not None:
+            result["exact/predictions"] = np.asarray(self.exact_predictions)
+        if self.exact_method is not None:
+            result["exact/method"]      = self.exact_method
+        return result
+    
+    def set_exact(self, predictions: Union[float, List[float], np.ndarray], method: str = None):
+        """
+        Set exact/reference predictions (e.g., from ED).
+        
+        Parameters:
+        -----------
+        predictions : Union[float, List[float], np.ndarray]
+            Reference values. Can be:
+            - Single value (ground state energy)
+            - Array of values (eigenvalues, multiple observables, etc.)
+        method : str, optional
+            Method used to compute these values (e.g., 'lanczos', 'full_diag', 'dmrg').
+        """
+        self.exact_predictions  = np.atleast_1d(np.asarray(predictions))
+        self.exact_method       = method
+        
+    @property
+    def exact_gs(self) -> Optional[float]:
+        """Get the ground state energy from exact predictions (first element)."""
+        if self.exact_predictions is not None and len(self.exact_predictions) > 0:
+            return float(self.exact_predictions[0])
+        return None
+    
+    @property
+    def has_exact(self) -> bool:
+        """Check if exact predictions are available."""
+        return self.exact_predictions is not None and len(self.exact_predictions) > 0
 
 # ------------------------------------------------------
 
 class NQSTrainer:
     '''
     Trainer for Neural Quantum States.
-    It orchestrates the interaction between the Neural Network, the Physics Engine (TDVP),
-    and the Optimization Schedule.
     
-    Features:
-    - Phase Scheduling (learning rate + regularization)
-    - Global Phase Evolution Tracking
-    - Checkpointing with architecture metadata
-    - Dynamic ODE time-step adjustment
-    - Excited State Penalty Terms
-    - JIT Compilation for performance
+    Orchestrates the interaction between the Neural Network, the Physics Engine (TDVP),
+    and the Optimization Schedule. Supports multiple scheduler configuration patterns.
+    
+    Features
+    --------
+    - **Phase Scheduling**: Multi-phase training with different LR/Reg per phase
+    - **Global Phase Evolution**:   Tracking theta_0 for wavefunction analysis  
+    - **Checkpointing**:            Architecture-aware saving with metadata
+    - **Dynamic Time-Step**:        ODE dt controlled via learning rate scheduler
+    - **Excited States**:           Penalty terms for targeting excited states
+    - **JIT Compilation**:          Pre-compiled critical paths for performance
+    
+    Scheduler Configuration Patterns
+    ---------------------------------
+    There are multiple ways to configure learning rate (LR) and regularization (Reg) schedules:
+    
+    **1. Preset Phases (Recommended for beginners)**
+    
+    Use a named preset that defines multi-phase training:
+    
+    >>> trainer = NQSTrainer(nqs, phases='default')  # Pre-train -> Main -> Refine
+    >>> trainer = NQSTrainer(nqs, phases='kitaev')   # Specialized for Kitaev models
+    
+    **2. Custom Phase List**
+    
+    Define your own phases with `LearningPhase` dataclass:
+    
+    >>> from QES.general_python.ml.training_phases import LearningPhase, PhaseType, PhaseScheduler
+    >>> 
+    >>> my_phases = [
+    ...     LearningPhase(
+    ...         name="warmup", epochs=50, phase_type=PhaseType.PRE_TRAINING,
+    ...         lr=0.1, lr_schedule="exponential", lr_kwargs={'lr_decay': 0.05},
+    ...         reg=0.01, reg_schedule="constant"
+    ...     ),
+    ...     LearningPhase(
+    ...         name="main", epochs=200, phase_type=PhaseType.MAIN,
+    ...         lr=0.02, lr_schedule="adaptive", lr_kwargs={'patience': 15, 'lr_decay': 0.5},
+    ...         reg=0.001, reg_schedule="constant"
+    ...     ),
+    ... ]
+    >>> lr_sched = PhaseScheduler(my_phases, param_type='lr')
+    >>> reg_sched = PhaseScheduler(my_phases, param_type='reg')
+    >>> trainer = NQSTrainer(nqs, phases=(lr_sched, reg_sched))
+    
+    **3. Direct Scheduler Injection**
+    
+    Pass any callable `(epoch, loss) -> float` as a scheduler:
+    
+    >>> # Using built-in schedulers
+    >>> from QES.general_python.ml.schedulers import choose_scheduler
+    >>> lr_sched    = choose_scheduler('cosine', initial_lr=0.01, max_epochs=300, min_lr=1e-5)
+    >>> reg_sched   = choose_scheduler('constant', initial_lr=0.001, max_epochs=300)
+    >>> trainer     = NQSTrainer(nqs, lr_scheduler=lr_sched, reg_scheduler=reg_sched, phases=None)
+    >>> 
+    >>> # Using custom lambda
+    >>> custom_lr = lambda epoch, loss: 0.01 * (0.99 ** epoch)
+    >>> trainer = NQSTrainer(nqs, lr_scheduler=custom_lr, reg_scheduler=lambda e, l: 0.001, phases=None)
+    
+    **4. Constant Values (Bypass Scheduling)**
+    
+    Use fixed LR/Reg throughout training:
+    
+    >>> trainer = NQSTrainer(nqs, lr=0.01, reg=0.001, phases=None)
+    
+    Available Scheduler Types
+    -------------------------
+    - ``'constant'``        : Fixed value throughout training
+    - ``'exponential'``     : lr * exp(-decay_rate * epoch)
+    - ``'step'``            : lr * decay^floor(epoch/step_size)
+    - ``'cosine'``          : Cosine annealing from initial_lr to min_lr
+    - ``'linear'``          : Linear decay from initial_lr to min_lr
+    - ``'adaptive'``        : ReduceLROnPlateau (requires loss metric)
+    
+    See Also
+    --------
+    - `QES.general_python.ml.training_phases`   : Phase definitions and presets
+    - `QES.general_python.ml.schedulers`        : Low-level scheduler implementations
     '''
     
     _ERR_INVALID_SCHEDULER      = "Invalid scheduler provided. Must be a PhaseScheduler or callable."
@@ -171,7 +302,107 @@ class NQSTrainer:
                 **kwargs
             ):
         '''
-        Initializes the NQS Trainer.
+        Initialize the NQS Trainer.
+        
+        Parameters
+        ----------
+        nqs : NQS
+            Neural Quantum State instance to train.
+            
+        Scheduler Configuration (flexible, mix and match)
+        -------------------------------------------------
+        phases : Union[str, Tuple], default='default'
+            Phase scheduling configuration. Can be:
+            - ``str``   : Preset name ('default', 'kitaev')
+            - ``tuple`` : (lr_scheduler, reg_scheduler) - each can be string, callable, or PhaseScheduler
+            - ``None``  : Use lr_scheduler/reg_scheduler params or constant lr/reg values
+            
+        lr_scheduler : str or Callable, optional
+            Learning rate scheduler. Can be:
+            - Scheduler type string: 'constant', 'exponential', 'step', 'cosine', 'linear', 'adaptive'
+            - Callable with signature: ``(epoch: int, loss: float) -> float``
+            - PhaseScheduler instance
+            
+        reg_scheduler : str or Callable, optional  
+            Regularization scheduler. Same options as lr_scheduler.
+            
+        lr : float, optional
+            Initial learning rate. When used alone (phases=None, no lr_scheduler), creates
+            a constant scheduler. Can also override the initial value of other schedulers.
+            
+        reg : float, optional
+            Initial regularization. Same behavior as lr.
+            
+        Scheduler kwargs (passed to factory when using string types):
+            - lr_decay : float - Decay rate for exponential/step/adaptive
+            - step_size : int - Steps between decays (step scheduler)
+            - min_lr : float - Minimum value (cosine, linear, adaptive)
+            - patience : int - Epochs before reduction (adaptive)
+            - min_delta : float - Minimum improvement (adaptive)
+            
+        Solvers
+        -------
+        lin_solver : Union[str, Callable], default=SolverType.SCIPY_CG
+            Linear solver for SR equations ('cg', 'gmres', 'scipy_cg', etc.).
+            
+        pre_solver : Union[str, Callable], optional
+            Preconditioner for linear solver ('jacobi', 'ilu', etc.).
+            
+        ode_solver : Union[IVP, str], default='Euler'
+            ODE integrator ('Euler', 'RK4', 'Heun', or IVP instance).
+            
+        tdvp : TDVP, optional
+            Pre-configured TDVP engine. If None, created internally.
+            
+        TDVP Configuration (when tdvp=None)
+        ------------------------------------
+        use_sr : bool, default=True
+            Enable Stochastic Reconfiguration.
+            
+        use_minsr : bool, default=False  
+            Use MinSR (scales O(N_samples) instead of O(N_params)).
+            
+        rhs_prefactor : float, default=-1.0
+            Prefactor for gradient RHS (imaginary time: -1, real time: -1j).
+            
+        diag_shift : float, default=1e-5
+            Initial diagonal regularization for SR matrix.
+            
+        Other Parameters
+        ----------------
+        n_batch : int, default=1000
+            Batch size for VMC sampling.
+            
+        timing_mode : NQSTimeModes, default=NQSTimeModes.LAST
+            Profiling mode (OFF, BASIC, FIRST, LAST, DETAILED).
+            
+        early_stopper : Callable, optional
+            Early stopping criterion.
+            
+        lower_states : List[NQS], optional
+            Lower energy states for excited state targeting.
+            
+        Examples
+        --------
+        >>> # 1. Preset phases (recommended for beginners)
+        >>> trainer     = NQSTrainer(nqs, phases='default')
+        >>> trainer     = NQSTrainer(nqs, phases='kitaev')
+        
+        >>> # 2. String scheduler types (simple and flexible)
+        >>> trainer     = NQSTrainer(nqs, lr_scheduler='cosine', lr=0.01, reg=0.001, phases=None)
+        >>> trainer     = NQSTrainer(nqs, lr_scheduler='adaptive', lr=0.02, 
+        ...                      patience=20, lr_decay=0.5, phases=None)  # kwargs passed to scheduler
+        
+        >>> # 3. Constant values (simplest)
+        >>> trainer     = NQSTrainer(nqs, lr=0.01, reg=0.001, phases=None)
+        
+        >>> # 4. Tuple of string schedulers
+        >>> trainer     = NQSTrainer(nqs, phases=('exponential', 'constant'), lr=0.05, lr_decay=0.02)
+        
+        >>> # 5. Custom callable scheduler
+        >>> from QES.general_python.ml.schedulers import choose_scheduler
+        >>> lr          = choose_scheduler('cosine', initial_lr=0.01, max_epochs=500, min_lr=1e-5)
+        >>> trainer     = NQSTrainer(nqs, lr_scheduler=lr, reg=0.001, phases=None)
         '''
         
         if nqs is None:         raise ValueError(self._ERR_NO_NQS)
@@ -254,7 +485,8 @@ class NQSTrainer:
             loss_info = (info.mean_energy, info.std_energy)
             return new_params, new_t, (loss_info, meta)
         
-        # Compile it
+        # NOTE: Do NOT JIT train_step_logic because TDVP has side effects (stores global phase).
+        # JIT compilation would cause tracer leaks from compute_global_phase_evolution.
         self._step_jit          = train_step_logic
         # self._step_jit          = jax.jit(train_step_logic, static_argnames=['f', 'est_fn', 'lower_states'])
                     
@@ -265,25 +497,91 @@ class NQSTrainer:
     #! Private Helpers
     # ------------------------------------------------------
 
-    def _set_phases(self, phases, lr, reg, lr_scheduler=None, reg_scheduler=None, **kwargs):
-        ''' Initializes the learning rate and regularization schedulers. '''
+    def _set_phases(self, phases, lr, reg, lr_scheduler=None, reg_scheduler=None, n_epochs=500, **kwargs):
+        '''
+        Initialize learning rate and regularization schedulers.
         
-        if isinstance(phases, str):
+        Supports multiple configuration patterns:
+        
+        1. Preset string: phases='default' or phases='kitaev'
+        2. Tuple of schedulers: phases=(lr_sched, reg_sched)
+        3. String scheduler types: lr_scheduler='cosine', reg_scheduler='constant'
+        4. Direct float values: lr=0.01, reg=0.001 (constant schedulers)
+        5. Mix: lr_scheduler='adaptive' with lr=0.05 (sets initial value)
+        
+        Parameters
+        ----------
+        phases : str or tuple, optional
+            Preset name or (lr_scheduler, reg_scheduler) tuple.
+        lr : float, optional
+            Initial learning rate. Overrides preset/scheduler initial value.
+        reg : float, optional
+            Initial regularization. Overrides preset/scheduler initial value.
+        lr_scheduler : str, Callable, or PhaseScheduler, optional
+            LR scheduler. Can be scheduler type string ('cosine', 'exponential', etc.)
+        reg_scheduler : str, Callable, or PhaseScheduler, optional
+            Reg scheduler. Can be scheduler type string.
+        n_epochs : int, default=500
+            Max epochs for auto-created schedulers (when using string types).
+        **kwargs : dict
+            Extra args passed to scheduler factory (lr_decay, min_lr, patience, etc.)
+        '''
+        from QES.general_python.ml.schedulers import choose_scheduler
+        
+        # Helper to create scheduler from string or passthrough
+        def _resolve_scheduler(sched, init_val, param_name, max_epochs):
+            if sched is None:
+                if init_val is not None:
+                    # Constant scheduler from float value
+                    return choose_scheduler('constant', initial_lr=init_val, max_epochs=max_epochs, logger=self.logger)
+                return None
+            elif isinstance(sched, str):
+                # String scheduler type -> create via factory
+                init = init_val if init_val is not None else (1e-2 if param_name == 'lr' else 1e-3)
+                self.logger.info(f"Creating '{sched}' scheduler for {param_name} (init={init:.2e})")
+                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs)
+            elif callable(sched) or isinstance(sched, PhaseScheduler):
+                return sched
+            else:
+                raise ValueError(f"Invalid {param_name}_scheduler type: {type(sched)}")
+        
+        # Check if user explicitly provided schedulers or lr/reg values
+        # If so, these take precedence over the default 'phases' preset
+        user_provided_scheduler = (lr_scheduler is not None or reg_scheduler is not None or 
+                                   lr is not None or reg is not None)
+        
+        # Case 1: User provided lr_scheduler/reg_scheduler or lr/reg directly -> use them
+        if user_provided_scheduler and (phases == 'default' or phases is None):
+            self.lr_scheduler = _resolve_scheduler(lr_scheduler, lr, 'lr', n_epochs)
+            self.reg_scheduler = _resolve_scheduler(reg_scheduler, reg, 'reg', n_epochs)
+        
+        # Case 2: Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
+        elif isinstance(phases, str):
             self.logger.info(f"Initializing training phases with preset: '{phases}'")
             self.lr_scheduler, self.reg_scheduler = create_phase_schedulers(phases, self.logger)
-        elif isinstance(phases, (tuple, list)) and len(phases) == 2:
-            self.lr_scheduler, self.reg_scheduler = phases
-            if not (callable(self.lr_scheduler) or isinstance(self.lr_scheduler, PhaseScheduler)):
-                raise ValueError(self._ERR_INVALID_SCHEDULER)
-            if not (callable(self.reg_scheduler) or isinstance(self.reg_scheduler, PhaseScheduler)):
-                raise ValueError(self._ERR_INVALID_SCHEDULER)
-        else:
-            # Fallback for manual injection
-            self.lr_scheduler   = lr_scheduler
-            self.reg_scheduler  = reg_scheduler
             
-        self._init_lr       = self.lr_scheduler(0)  if self.lr_scheduler    else lr  or 1e-2
-        self._init_reg      = self.reg_scheduler(0) if self.reg_scheduler   else reg or 1e-3
+        # Case 3: Tuple of schedulers
+        elif isinstance(phases, (tuple, list)) and len(phases) == 2:
+            # Validate and resolve if strings
+            self.lr_scheduler, self.reg_scheduler   = phases
+            self.lr_scheduler                       = _resolve_scheduler(self.lr_scheduler, lr, 'lr', n_epochs)
+            self.reg_scheduler                      = _resolve_scheduler(self.reg_scheduler, reg, 'reg', n_epochs)
+            
+        # Case 4: No phases -> use injected schedulers or create from lr/reg
+        else:
+            self.lr_scheduler   = _resolve_scheduler(lr_scheduler, lr, 'lr', n_epochs)
+            self.reg_scheduler  = _resolve_scheduler(reg_scheduler, reg, 'reg', n_epochs)
+        
+        # Compute initial values (override with explicit lr/reg if provided)
+        if self.lr_scheduler:
+            self._init_lr = lr if lr is not None else self.lr_scheduler(0)
+        else:
+            self._init_lr = lr or 1e-2
+            
+        if self.reg_scheduler:
+            self._init_reg = reg if reg is not None else self.reg_scheduler(0)
+        else:
+            self._init_reg = reg or 1e-3
     
     # ------------------------------------------------------
     #! Timing Helpers
@@ -402,10 +700,33 @@ class NQSTrainer:
             save_path           : str   = None,
             reset_stats         : bool  = True,
             use_pbar            : bool  = True,
-            absolute_path       : bool  = False,
             **kwargs) -> NQSTrainStats:
         """
         Main training loop.
+        
+        Parameters:
+        -----------
+        n_epochs: int
+            Total number of training epochs. If None, defaults to 100 or inferred from scheduler.
+        checkpoint_every: int
+            Frequency of saving checkpoints (in epochs).
+        save_path: str
+            Path to save checkpoints.
+        reset_stats: bool
+            Whether to reset training statistics at the start.
+        use_pbar: bool
+            Whether to use a progress bar during training.
+        
+        Returns:
+        -----------
+        NQSTrainStats
+            Training statistics collected during the run.
+            
+        Example:
+        --------
+            >>> trainer = NQSTrainer(nqs)
+            >>> stats = trainer.train(n_epochs=500, checkpoint_every=100, save_path="./checkpoints/")
+            ... Training completed in 1234.56 seconds over 500 epochs.
         """
         # Timer for the WHOLE epoch (BASIC mode)
         import time
@@ -464,9 +785,11 @@ class NQSTrainer:
                 self.stats.global_phase.append(self.tdvp.global_phase)
 
                 # 6. Logging & Storage
-                mean_loss   = np.real(mean_loss)
+                mean_loss                   = np.real(mean_loss)
+                self.stats.timings.n_steps += 1
                 self.stats.history.append(mean_loss)
                 self.stats.history_std.append(np.real(std_loss))
+                self.stats.timings.total.append(time.time() - t0)
 
                 # Calculate total time for this epoch
                 t_sample    = self.stats.timings.sample[-1]
@@ -496,7 +819,7 @@ class NQSTrainer:
 
                 # Checkpointing
                 if epoch % checkpoint_every == 0 or epoch == n_epochs - 1:
-                    self.save_checkpoint(epoch, save_path, fmt="h5", overwrite=True, absolute=absolute_path)
+                    self.save_checkpoint(epoch, save_path, fmt="h5", overwrite=True, **kwargs)
 
                 # Early Stopping
                 if np.isnan(mean_loss):
@@ -518,7 +841,8 @@ class NQSTrainer:
         # Finalize
         self.stats.history      = np.array(self.stats.history).flatten().tolist()
         self.stats.history_std  = np.array(self.stats.history_std).flatten().tolist()
-        self.save_checkpoint(epoch, save_path, fmt="h5", overwrite=True, absolute=absolute_path)
+        self.save_checkpoint(epoch + 1, save_path, fmt="h5", overwrite=True, **kwargs)
+        
         self.logger.info(f"Training completed in {time.time() - t0:.2f} seconds over {len(self.stats.history)}/{n_epochs} epochs.", lvl=0, color='green')
         return self.stats
 
@@ -526,75 +850,152 @@ class NQSTrainer:
     #! Checkpointing
     # ------------------------------------------------------
 
-    def save_checkpoint(self, step: int, path: Union[str, Path], fmt: str = "h5", overwrite: bool = True, absolute = False):
+    def save_checkpoint(self, step: int, path: Union[str, Path] = None, *, fmt: str = "h5", overwrite: bool = True, **kwargs) -> Union[Path, None]:
         """
-        Saves weights + Architecture Metadata.
+        Saves weights + Architecture Metadata + Training Stats.
+        
+        The checkpoint manager handles path resolution:
+        - If path is a directory: saves to {path}/checkpoint_{step}.{fmt}
+        - If path is a file: saves directly to that file
+        - If path is None: uses default directory from NQS
         
         Parameters:
         -----------
-        step: int
+        step : Union[int, str]
             Current training step or epoch. Used for versioning.
-        path: str
-            File path to save the weights.
-        fmt: str
-            Format to save weights ('h5', 'json', etc.)
-        overwrite: bool
+        path : Union[str, Path], optional
+            File path or directory to save the weights.
+            If None, uses NQS default directory.
+        fmt : str
+            Format to save weights ('h5', 'json', etc.) - used for HDF5 fallback.
+        overwrite : bool
             Whether to overwrite existing files.
+            
+        Returns:
+        --------
+        Path : The path where the checkpoint was saved.
         """
-        net         = self.nqs.net
-        path        = path if path is not None else self.nqs.defdir
-        meta        = {
-                        "network_class" : net.__class__.__name__,
-                        "step"          : step,
-                        "last_loss"     : float(self.stats.history[-1]) if self.stats.history else 0.0
-                    }
-        
-        # If path is a directory (ends with /), append filename.
-        # If path is a filename, use it directly.
         import os
+        
+        net         = self.nqs.net
+        path        = str(path) if path is not None else str(self.nqs.defdir)
+        seed        = getattr(self.nqs, '_net_seed', getattr(self.nqs, '_seed', None))
+        
+        # Update stats with seed before saving
+        self.stats.seed                 = seed
+        self.stats.exact_predictions    = kwargs.get('exact_predictions',   None) if self.stats.exact_predictions is None else self.stats.exact_predictions
+        # self.stats.exact_method         = kwargs.get('exact_method',        None) if self.stats.exact_method is None else self.stats.exact_method
+        
+        # Build comprehensive metadata
+        meta                = {
+                                "network_class" : net.__class__.__name__,
+                                "step"          : step,
+                                "seed"          : seed,
+                                "last_loss"     : float(self.stats.history[-1]) if self.stats.history else 0.0,
+                                "n_epochs"      : len(self.stats.history),
+                            }
+        
+        # Resolve path for stats file
         if path.endswith(os.sep) or os.path.isdir(path):
             os.makedirs(path, exist_ok=True)
-            final_path  = os.path.join(path, f"checkpoint_{step}.{fmt}")
+            final_path          = os.path.join(path, f"checkpoint_{step}.{fmt}")
+            final_path_stats    = os.path.join(path, "stats.h5")
         else:
-            final_path  = path
+            # Path is a specific file
+            final_path          = path
+            final_path_stats    = os.path.join(str(Path(path).parent), "stats.h5")
+            os.makedirs(str(Path(path).parent), exist_ok=True)
 
-        # save history
-        HDF5Manager.save_hdf5(directory=Path(final_path).parent, filename=f"stats.h5", data=self.stats.to_dict())
+        if not overwrite and os.path.exists(final_path):
+            self.logger.warning(f"Checkpoint file {final_path} already exists and overwrite is False. Skipping save.", lvl=1, color='yellow')
+            return None
+        
+        # Save training history/stats
+        HDF5Manager.save_hdf5(
+            directory   = os.path.dirname(final_path_stats), 
+            filename    = os.path.basename(final_path_stats), 
+            data        = self.stats.to_dict()
+        )
+        self.logger.info(f"Saved training stats to {final_path_stats}", lvl=2, color='green')
 
+        # Delegate weight saving to NQS (which uses checkpoint manager)
         return self.nqs.save_weights(
-            filename        =   final_path, 
-            step            =   step, 
-            metadata        =   meta, 
+            filename    = final_path,
+            step        = step,
+            metadata    = meta, 
         )
         
-    def load_history(self, path: Optional[Union[str, Path]] = None) -> NQSTrainStats:
+    def load_checkpoint(self, step: Optional[int] = None, path: Optional[Union[str, Path]] = None, *, fmt: str = "h5", load_weights: bool = True) -> NQSTrainStats:
         """
         Loads training history from checkpoint.
         
         Parameters:
         -----------
-        step: int
-            Training step or epoch to load.
-            path: Union[str, Path]
+        step : Optional[int]
+            Training step or epoch to load. If None:
+            - Orbax: loads the latest checkpoint
+            - HDF5: requires path or finds latest in default directory
+        path : Union[str, Path], optional
             Path to the checkpoint directory or file.
+            If None, uses NQS default directory.
+        fmt : str
+            Format of the saved weights ('h5', 'json', etc.)
+        load_weights : bool
+            Whether to load the weights from the checkpoint.
+            
         Returns:
         --------
         NQSTrainStats
             Loaded training statistics.
         """
-        path        = Path(path) if path is not None else self.nqs.defdir
-        filename    = "stats.h5"
-        if path.is_file():
-            path    = path.parent
+        import os
+        
+        path_str        = str(path) if path is not None else str(self.nqs.defdir)
+        filename_stats  = "stats.h5"
+        
+        # Resolve paths
+        if path_str.endswith(os.sep) or os.path.isdir(path_str):
+            final_path      = os.path.join(path_str, f"checkpoint_{step}.{fmt}") if step is not None else None
+            filename_stats  = os.path.join(path_str, "stats.h5")
+        else:
+            final_path      = path_str
+            filename_stats  = os.path.join(str(Path(path_str).parent), "stats.h5")
 
-        stats_data  = HDF5Manager.read_hdf5(file_path=path / filename)
-        self.stats  = NQSTrainStats(
-            history         = stats_data.get("history", []),
-            history_std     = stats_data.get("history_std", []),
-            lr_history      = stats_data.get("lr", []),
-            reg_history     = stats_data.get("reg", []),
-        )
-        self.logger.info(f"Loaded training history from {path / filename}", lvl=1, color='green')
+        # Load training stats
+        try:
+            stats_data = HDF5Manager.read_hdf5(file_path=Path(filename_stats))
+            self.stats = NQSTrainStats(
+                                history             = stats_data.get("/history/val",        []),
+                                history_std         = stats_data.get("/history/std",        []),
+                                lr_history          = stats_data.get("/history/lr",         []),
+                                reg_history         = stats_data.get("/history/reg",        []),
+                                global_phase        = stats_data.get("/history/theta0",     []),
+                                seed                = stats_data.get("/seed",               None),
+                                exact_predictions   = stats_data.get("/exact/predictions",  None),
+                                exact_method        = stats_data.get("/exact/method",       None),
+                                timings             = NQSTrainTime(
+                                                        n_steps = stats_data.get("/timings/n_steps", 0),
+                                                        step    = stats_data.get("/timings/step", []),
+                                                        sample  = stats_data.get("/timings/sample", []),
+                                                        update  = stats_data.get("/timings/update", []),
+                                                        total   = stats_data.get("/timings/total", []),
+                                                    )
+                            )
+            self.logger.info(f"Loaded training history from {filename_stats}", lvl=1, color='green')
+            if self.stats.has_exact:
+                self.logger.info(f"Loaded exact predictions ({self.stats.exact_method}): ground state = {self.stats.exact_ground_state:.6f}", lvl=2, color='green')
+        except Exception as e:
+            self.logger.warning(f"Could not load training stats from {filename_stats}: {e}", lvl=0, color='yellow')
+        
+        # Load weights
+        if load_weights:
+            try:
+                self.nqs.load_weights(step=step, filename=final_path)
+                self.logger.info(f"Loaded weights for step {step} from {final_path}", lvl=2, color='green')
+            except Exception as e:
+                self.logger.error(f"Failed to load weights: {e}", lvl=0, color='red')
+                raise
+        
         return self.stats
     
 # ------------------------------------------------------

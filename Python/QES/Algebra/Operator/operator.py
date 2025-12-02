@@ -1560,7 +1560,7 @@ class Operator(ABC):
         #!TODO: Implement the JAX version of the matrix function
         return None
     
-    def matrix(self, *args, dim = None, matrix_type = 'sparse',
+    def matrix(self, *args, dim = None, matrix_type = 'sparse', dtype = None,
             hilbert_1 = None, hilbert_2 = None, use_numpy: bool = True, **kwargs) -> Array | None:
         """
         Generates the matrix representation of the operator.
@@ -1604,11 +1604,11 @@ class Operator(ABC):
             if is_sparse:
                 return self._matrix_fun(dim1, matrix_type, *args)
             else:
-                return self._backend.asarray(self._matrix_fun(dim1, matrix_type, *args))
+                return self._backend.asarray(self._matrix_fun(dim1, matrix_type, *args), dtype=dtype)
         
         # wrap the function
         wrapped_fun     = self._fun.wrap(*args)
-        dtype           = kwargs.get('dtype', self._backend.float64 if not use_numpy else np.float64)
+        dtype           = dtype if dtype is not None else self._backend.complex128
         max_loc_upd     = kwargs.get('max_loc_upd', 1)
 
         # Create JIT wrapper for matrix builder

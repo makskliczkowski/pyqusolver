@@ -711,12 +711,21 @@ def build_operator_matrix(
     >>> # Without Hilbert space (no symmetries)
     >>> H_simple = build_operator_matrix(operator_func, nh=dim, ns=num_sites)
     """
+    
     if hilbert_space is None or hilbert_space.nh == hilbert_space.nhfull:
-        if nh is None or ns is None:
-            raise ValueError("If hilbert_space is None, nh and ns must be provided")
+        
+        # This is invalid if we are in the 'full space' or 'no space' case.
         if hilbert_space_out is not None:
-            raise ValueError("hilbert_space_out not supported without hilbert_space")
-        return _build_no_hilbert(operator_func, nh, ns, sparse, max_local_changes, dtype)
+            raise ValueError("hilbert_space_out not supported when operating in the full Hilbert space (i.e., when hilbert_space is None or nh == nhfull).")
+
+        # If hilbert_space is None, we must ensure nh and ns are explicitly provided.
+        if hilbert_space is None:
+            if nh is None or ns is None:
+                raise ValueError("If hilbert_space is None, nh (Hilbert space size) and ns (number of spins) must be provided.")
+        
+        # If we reach here, we are in the full space case (nh == nhfull or hilbert_space is None) 
+        # and we have all necessary parameters (nh, ns).
+        return _build_no_hilbert(operator_func, nh or (hilbert_space.dim if hilbert_space is not None else None), ns or (hilbert_space.ns if hilbert_space is not None else None), sparse, max_local_changes, dtype)
     
     # Use provided or default values
     nh = nh or hilbert_space.dim

@@ -227,4 +227,4 @@ data/*
 *.dat
 *.tsv
 *.h5
-*checkpoint*
+*checkpoint.*

@@ -11,7 +11,7 @@ Description     : Autoregressive Sampler for quantum states using JAX.
 -------------------------------------------------------
 '''
 
-from typing import Optional, Tuple, Any
+from typing import Callable, Optional, Tuple, Any
 
 try:
     from QES.Solver.MonteCarlo.sampler import Sampler, JAX_AVAILABLE
@@ -42,7 +42,11 @@ class ARSampler(Sampler):
                 shape       : Tuple[int, ...], 
                 rng_k       : jax.random.PRNGKey,
                 *,
-                dtype       : Any       = jnp.complex128,
+                dtype       : Any                   = jnp.complex128,
+                upd_fun     : Optional[Callable]    = None,
+                backend     : str                   = 'jax',
+                numchains   : int                   = 1,
+                numsamples  : int                   = 1,
                 **kwargs):
         """
         Initialize the Autoregressive Sampler.
@@ -62,24 +66,30 @@ class ARSampler(Sampler):
         
         # AR doesn't need therm/sweep steps
         super().__init__(shape          =   shape, 
-                        upd_fun         =   None, 
                         rng_k           =   rng_k, 
-                        numchains       =   kwargs.get('numchains', 1),
-                        numsamples      =   kwargs.get('numsamples', 1), 
-                        backend         =   'jax', 
+                        numchains       =   numchains,
+                        numsamples      =   numsamples, 
+                        backend         =   backend,
                         dtype           =   dtype,
+                        upd_fun         =   upd_fun,
                         **kwargs)
         
         # Ensure we have the apply function
         self._net                       = net
-        if hasattr(net, 'apply'):       self._net_apply = net.apply
-        elif hasattr(net, 'get_apply'): self._net_apply = net.get_apply()[0]
-        else:                           self._net_apply = net # Callable
+        
+        if hasattr(net, '_flax_module'):
+            self._net_apply             = net._flax_module.apply
+        elif hasattr(net, 'net_flax') and net.net_flax is not None:
+             self._net_apply            = net.net_flax.apply
+        elif hasattr(net, 'apply'):
+            self._net_apply             = net.apply
+        else:
+            self._net_apply             = net # Assuming it is a raw callable
         
         # Pre-compile the sampling kernel
         self._dtype                     = dtype
-        self._sample_jit                = jax.jit(self._static_sample_ar, static_argnames=['net_apply', 'shape', 'total_count', 'statetype'])
         self._mu                        = kwargs.get('mu', 2.0)  # Scaling factor for log-prob to log-psi
+        self._sample_jit                = jax.jit(self._static_sample_ar, static_argnames=['net_apply', 'shape', 'total_count', 'statetype'])
 
     @staticmethod
     def _static_sample_ar(net_apply, params, rng_key, shape, total_count, statetype: Any = jnp.float32, mu: float = 2.0) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -95,64 +105,52 @@ class ARSampler(Sampler):
             c. Update the configuration and log-prob accumulators.
         """
         
-        # Number of degrees of freedom (e.g., sites)
-        N = shape[0]
+        N               = shape[0]
+        canvas          = jnp.zeros((total_count, N),   dtype=statetype)
+        log_prob_sum    = jnp.zeros((total_count,),     dtype=jnp.float64)
         
-        # We start with zeros (or arbitrary, masked inputs ignore them anyway)
-        # Shape: (Total_Samples, N_sites)
-        canvas          = jnp.zeros((total_count, N), dtype=jnp.float32)        # Inputs are 0/1
-        log_prob_sum    = jnp.zeros((total_count,), dtype=jnp.float32)          # Log prob accumulator
-        
-        # Sequential Scan Loop
-        # We fill the lattice site by site: 0 -> 1 -> ... -> N-1
         def scan_body(carry, site_idx):
             curr_configs, curr_log_p, key   = carry
             key, subkey                     = jax.random.split(key)
+            variables                       = {'params': params} 
             
-            # Evaluate Network on current partial configurations
-            # The MADE network outputs logits for ALL sites in parallel,
-            # but site `i` output depends only on inputs `0...i-1`.
-            # logits shape: (Total_Samples, N_sites)
-            logits                          = net_apply(params, curr_configs)
+            # 1. Evaluate Network to get logits for current site
+            # The lambda tells Flax to invoke the specific sub-method for logits
+            logits      = net_apply(variables, curr_configs, method=lambda n, x: n.get_logits(x))            
+
             
             # Select logit for the CURRENT site we are filling
             # Shape: (Total_Samples,)
-            logit_i                         = logits[:, site_idx]
+            logit_i     = jnp.real(logits[:, site_idx])
             
-            # Sample new spin (Bernoulli / Categorical)
+            # 2. Sample (Bernoulli)
             # prob(s_i=1) = sigmoid(logit_i)
-            prob_1                          = nn.sigmoid(logit_i)
+            prob_1      = nn.sigmoid(logit_i)
+            new_degrees = jax.random.bernoulli(subkey, prob_1).astype(statetype)
             
-            # Sample 0 or 1
-            new_degrees                     = jax.random.bernoulli(subkey, prob_1).astype(statetype)
+            # 3. Update Config & Log Prob
+            new_configs = curr_configs.at[:, site_idx].set(new_degrees)
             
-            # Update Configuration
-            new_configs                     = curr_configs.at[:, site_idx].set(new_degrees)
+            # log_p(1) = -softplus(-x), log_p(0) = -softplus(x)
+            log_p_i     = jnp.where(new_degrees > 0.5, -nn.softplus(-logit_i), -nn.softplus(logit_i))
             
-            # Accumulate Log Prob
-            # log_p(s_i) = s_i * log(p) + (1-s_i) * log(1-p)
-            # Numerical stable: 
-            # log_p(1) = -softplus(-x), log_p(0) = -softplus(x) 
-            # This comes from log(sigmoid(x)) and log(1-sigmoid(x))
-            log_p_i                         = jnp.where(new_degrees > 0.5, -nn.softplus(-logit_i), -nn.softplus(logit_i))
-            new_log_p_sum                   = curr_log_p + log_p_i
-            
-            return (new_configs, new_log_p_sum, key), None
+            return (new_configs, curr_log_p + log_p_i, key), None
 
-        # Run Scan
+        # Run Scan over all sites
         init_val                                = (canvas, log_prob_sum, rng_key)
         (final_configs, final_log_psi, _), _    = jax.lax.scan(scan_body, init_val, jnp.arange(N))
 
-        # Get Phases if needed
-        phases                                  = net_apply(params, final_configs, method=lambda n, x: n.get_phase(x))
-        # if dtype is real, phases will be zero
+        # Get Phases (Call get_phase method)
+        variables                               = {'params': params}
+        phases                                  = net_apply(variables, final_configs, method=lambda n, x: n.get_phase(x))
+
+        # Combine Amplitude (log_prob / mu) and Phase
         final_log_psi                           = final_log_psi / mu + 1j * phases
         
-        # Convert 0/1 back to physical values one wants (e.g., -1/+1)
-        #!TODO: General local dimension handling (if needed)
+        # Convert 0/1 to physical spins (-1/+1)
         final_configs_phys                      = 2 * final_configs - 1 
         
-        return final_configs_phys, final_log_psi
+        return final_configs_phys * 0.5, final_log_psi
 
     # ---------------------------------------------------------
     # Public Sampling Method
@@ -161,12 +159,11 @@ class ARSampler(Sampler):
     def sample(self, parameters=None, num_samples=None, num_chains=None):
         
         # Setup counts
-        n_c             = num_chains if num_chains is not None else self._numchains
-        n_s             = num_samples if num_samples is not None else self._numsamples
+        n_c             = num_chains    if num_chains   is not None else self._numchains
+        n_s             = num_samples   if num_samples  is not None else self._numsamples
         total_samples   = n_c * n_s
         
         if parameters is None: 
-            # Fetch parameters from network logic
             parameters  = self._net.get_params()
 
         # Run JIT Kernel
@@ -177,26 +174,40 @@ class ARSampler(Sampler):
                                     key_sample, 
                                     self._shape, 
                                     total_samples,
-                                    self._statetype
+                                    self._statetype,
+                                    self._mu
                                 )
         
         # Reshape to (Chains, Samples, N)
-        configs_reshaped    = configs.reshape((n_c, n_s) + self._shape)
+        configs_reshaped    = configs.reshape((n_c, n_s) + self._shape) # Convert back to physical spins (-1/+1) #!TODO: Make general
         
         # Handle Amplitudes
         # AR gives P(s) = |psi(s)|^2. 
         # log_psi (complex) = 0.5 * log(P(s)) + i * phase(s)
         # The AR network usually only models the Amplitude.
-        log_psi_reshaped    = log_psi.reshape((n_c, n_s))
+        configs_reshaped    = configs.reshape((-1,) + self._shape)      # Flatten configs
+        log_psi_reshaped    = log_psi.reshape((-1,))                    # Flatten log_psi too
         
-        # For now, we return 0.5 * log_P as the real part of log_psi.
-        log_psi_reshaped    =  log_psi.reshape((n_c, n_s)) / self._mu
-        
-        # Weights
-        # Since we sampled EXACTLY from P(s) = |psi|^2, importance weights are all 1.0
-        weights             = jnp.ones((n_c, n_s))
+        # Importance weights are 1.0
+        weights             = jnp.ones(total_samples)
         
         return (None, None), (configs_reshaped, log_psi_reshaped), weights
+    
+    # ---------------------------------------------------------
+    # ! ABSTRACT METHOD IMPLEMENTATIONS
+    # ---------------------------------------------------------
+    
+    def get_sampler(self):
+        """ Returns the JIT-compiled sampling kernel (Satisfies ABC). """
+        return self._sample_jit
+
+    def _get_sampler_jax(self):
+        """ Returns the JAX sampling kernel (Satisfies ABC). """
+        return self._sample_jit
+
+    def _get_sampler_np(self):
+        """ Numpy implementation not supported for ARSampler. """
+        raise NotImplementedError("Autoregressive sampling is JAX-only.")    
     
 # ---------------------------------------------------------
 # End of AR Sampler

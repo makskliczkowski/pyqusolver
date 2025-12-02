@@ -243,6 +243,7 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         self._batch_size            = batch_size        
         self._initialized           = False
+        self._seed                  = seed
         
         self._modifier_wrapper      = None   # type: Optional[AnsatzModifier]
         self._modifier_source       = None   # type: Optional[Union[Operator, Callable]]
@@ -283,6 +284,7 @@ class NQS(MonteCarloSolver):
                         backend     =   self._backend_str, 
                         dtype       =   dtype,
                         param_dtype =   kwargs.get('param_dtype', None),
+                        seed        =   seed,
                         **kwargs
                     )
             
@@ -341,7 +343,7 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         #! Initialize unified evaluation engine
         # --------------------------------------------------
-        self._eval_engine       = NQSEvalEngine(self, batch_size=batch_size, **kwargs)
+        self._eval_engine = NQSEvalEngine(self, batch_size=batch_size, **kwargs)
 
         #######################################
         #! Directory to save the results
@@ -350,7 +352,7 @@ class NQS(MonteCarloSolver):
         self._init_directory()
         
         # Initialize the Manager
-        self.ckpt_manager       = NQSCheckpointManager(directory=self._dir_detailed, use_orbax=kwargs.get('use_orbax', True), max_to_keep=kwargs.get('orbax_max_to_keep', 3))
+        self.ckpt_manager = NQSCheckpointManager(directory=self._dir_detailed, use_orbax=kwargs.get('use_orbax', True), max_to_keep=kwargs.get('orbax_max_to_keep', 3), logger=self._logger)
     
     #####################################
     #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
@@ -373,6 +375,13 @@ class NQS(MonteCarloSolver):
         Initializes the directory for saving results.
         This method creates a directory structure based on the problem model and network configuration.
         It ensures that the directory exists and is ready for use.
+        
+        Directory Structure:
+        --------------------
+        {base_dir}/{model}/{lattice_or_shape}/{network_summary}/
+        
+        Note: Seed is NOT included in directory name (stored in metadata instead).
+        This makes it easier to find and compare results across different seeds.
         """
         
         base                = Directories(self._dir)
@@ -382,23 +391,24 @@ class NQS(MonteCarloSolver):
         if self._model.lattice is not None:
             detailed        = detailed.join(str(self._model.lattice), create=False)
         else:
-            detailed        = detailed.join(str(self._nvisible), create=False)
+            detailed        = detailed.join(str(self.shape), create=False)
 
         #! network summary: skip sampler & params
-        #   e.g. "FlaxNetInterface_in12_dtypecomplex128"
+        #   e.g. "RBM_shape=12_dtype=complex128"
+        #   Note: seed is NOT included here (saved in metadata/stats instead)
         
         net_cls             = type(self._net).__name__
         try:
             dim             = self._net.input_dim
-            dtype           = getattr(self._net, "dtype", self._dtype)
-            seed            = getattr(self._net, "seed", None)
+            dtype           = getattr(self._net, "dtype",   self._dtype)
+            self._net_seed  = getattr(self._net, "seed",    self._seed)  # Store seed for metadata
         except AttributeError:
-            dim, dtype = None, None
+            dim, dtype      = None, None
+            self._net_seed  = self._seed
 
         parts               = [net_cls]
-        if dim   is not None: parts.append(f"in={dim}")
+        if dim   is not None: parts.append(f"shape={dim}")
         if dtype is not None: parts.append(f"dtype={dtype}")
-        if seed  is not None: parts.append(f"seed={seed}")
 
         net_folder          = "_".join(parts)
         final_dir           = detailed.join(net_folder, create=False)
@@ -411,6 +421,7 @@ class NQS(MonteCarloSolver):
         #! store for later use
         self._dir           = base
         self._dir_detailed  = final_dir
+        self.defdir         = self._dir_detailed
     
     # ---
     
@@ -532,7 +543,7 @@ class NQS(MonteCarloSolver):
             sampler_kwargs['makediffer']    = kwargs.get('s_makediffer', True)
             sampler_kwargs.pop('s_makediffer', None)
 
-            sampler_kwargs.pop('upd_fun', None)            
+            sampler_kwargs.pop('upd_fun', None)
             self._sampler                   = get_sampler(sampler_type, upd_fun=upd_fun, **sampler_kwargs)
             self._logger.warning(f"Using {self._sampler}", lvl=0, color='blue')
         else:
@@ -941,7 +952,7 @@ class NQS(MonteCarloSolver):
     
     # ---
 
-    def loss(self, states=None, ansatze=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=False, return_values=False, **kwargs):
+    def loss(self, states=None, ansatze=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSLoss, Array]:
         '''
         Compute loss using the evaluation engine.
         
@@ -969,19 +980,18 @@ class NQS(MonteCarloSolver):
         loss_funct                  = self.loss_function
         if params is None:          params = self._net.get_params()
         if batch_size is None:      batch_size = self._batch_size
-        return self._eval_engine.loss(states=states, ansatze=ansatze, action_func=loss_funct,
-            params=params, probabilities=probabilities, batch_size=batch_size, num_samples=num_samples, 
+        return self._eval_engine.loss(states=states, ansatze=ansatze, action_func=loss_funct, params=params, probabilities=probabilities, batch_size=batch_size, num_samples=num_samples, 
             num_chains=num_chains, return_stats=return_stats, return_values=return_values, **kwargs)
         
-    def compute_loss(self, *args, **kwargs):
+    def compute_loss(self, states=None, ansatze=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSLoss, Array]:
         ''' Alias for the loss computation '''
-        return self.loss(*args, **kwargs)    
+        return self.loss(states=states, ansatze=ansatze, params=params, probabilities=probabilities, batch_size=batch_size, num_samples=num_samples, num_chains=num_chains, return_stats=return_stats, return_values=return_values, **kwargs)    
     
     # ---
     # specifically for energy computations    
     # ---
     
-    def compute_energy(self, states=None, ansatze=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=False, return_values=False, **kwargs):
+    def compute_energy(self, states=None, ansatze=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSLoss, Array]:
         """
         Compute local energies using the evaluation engine.
         
@@ -1015,7 +1025,7 @@ class NQS(MonteCarloSolver):
     def compute_observable(self, states=None, 
             ansatze=None, functions=None, names=None, *, 
             params=None, probabilities=None, batch_size=None, 
-            num_samples=None, num_chains=None, return_stats=False, return_values=False, **kwargs) -> Union[NQSObservable, Array]:
+            num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSObservable, Array]:
         """
         Evaluate an observable using the evaluation engine.
         
@@ -1041,7 +1051,11 @@ class NQS(MonteCarloSolver):
             params=params, probabilities=probabilities, batch_size=batch_size, num_samples=num_samples, 
             num_chains=num_chains, return_stats=return_stats, return_values=return_values, **kwargs)
             
-    def expectation(self, *args, **kwargs):     return self.compute_observable(*args, **kwargs)
+    def expectation(self, states=None, ansatze=None, functions=None, names=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSObservable, Array]:
+        ''' Alias for the observable computation '''
+        return self.compute_observable(states=states, ansatze=ansatze, functions=functions, names=names,
+            params=params, probabilities=probabilities, batch_size=batch_size, num_samples=num_samples, 
+            num_chains=num_chains, return_stats=return_stats, return_values=return_values, **kwargs)
     
     #####################################
     #! SAMPLE
@@ -1420,6 +1434,7 @@ class NQS(MonteCarloSolver):
         """
         
         batch_size                  = batch_size if batch_size is not None else self._batch_size
+        self._set_batch_size(batch_size)
         
         # ! Snapshot the current functions
         # This guarantees that the trainer uses exactly what was active when wrapped
@@ -1658,45 +1673,93 @@ class NQS(MonteCarloSolver):
     
     def save_weights(self, step: int = 0, filename: Optional[str] = None, metadata: Optional[dict] = None):
         """
-        Delegates saving to the CheckpointManager."
+        Delegates saving to the CheckpointManager.
         
         Parameters
         ----------
         step : int
             The current training step or epoch. Used for versioning the saved weights.
         filename : Optional[str]
-            The filename to save the weights to. If None, a default naming scheme is used.
-            The CheckpointManager handles the naming.
+            The filename to save the weights to. Can be:
+            - Absolute path: used directly
+            - Relative path: resolved relative to self.defdir
+            - None: uses default naming scheme (checkpoint_{step}.h5 or Orbax step-based)
         metadata : Optional[dict]
             Additional metadata to save with the weights.
+            Seed, backend, and network type are automatically added.
+            
+        Returns
+        -------
+        Path : The path where the checkpoint was saved.
+        
+        Example:
+        --------
+            >>> nqs = NQS(model, net, sampler)
+            >>> nqs.save_weights(step=10, filename="best_model.h5")
+            >>> nqs.save_weights(step=100) # Uses default naming
+        """
+        params = self.get_params()
+        
+        # Build comprehensive metadata
+        if metadata is None: 
+            metadata = {}
+        
+        # Core metadata - always included
+        metadata.update({
+            'backend'       : self._backend_str, 
+            'net_type'      : type(self._net).__name__,
+            'seed'          : getattr(self, '_net_seed', self._seed),
+            'shape'         : list(self.shape) if hasattr(self, 'shape') else None,
+            'dtype'         : str(self._dtype),
+        })
+        
+        # Add model info if available
+        if hasattr(self, '_model') and self._model is not None:
+            metadata['model'] = str(self._model)
+            if hasattr(self._model, 'lattice') and self._model.lattice is not None:
+                metadata['lattice'] = str(self._model.lattice)
+        
+        saved_path = self.ckpt_manager.save(
+            step        = step if isinstance(step, int) else 'final', 
+            params      = params, 
+            metadata    = metadata, 
+            filename    = filename
+        )
+        self.log(f"Saved weights for step {step} to {saved_path}", lvl=1, color='green')
+        return saved_path
+
+    def load_weights(self, step: Optional[int] = None, filename: Optional[str] = None):
+        """
+        Delegates loading to the CheckpointManager.
+        
+        Parameters
+        ----------
+        step : Optional[int]
+            The training step to load. If None:
+            - Orbax: loads the latest checkpoint
+            - HDF5: requires filename or finds latest checkpoint_*.h5
+        filename : Optional[str]
+            Custom filename to load. Can be:
+            - Absolute path: used directly
+            - Relative path: resolved relative to self.defdir
+            - None: uses step-based naming
+            
         Returns
         -------
         None
         
         Example:
         --------
-            >>> nqs = NQS(model, net, sampler)
-            >>> nqs.save_weights(step=10, filename="nqs_weights_step10.ckpt")
-            Saved weights for step 10
-        """
-
-        params = self.get_params()
-        
-        # Add default metadata
-        if metadata is None: 
-            metadata = {}
-            
-        metadata.update({'backend': self._backend_str, 'net_type': type(self._net).__name__})
-        
-        self.ckpt_manager.save(step=step, params=params, metadata=metadata, filename=filename)
-        self.log(f"Saved weights for step {step}", lvl=1, color='green')
-
-    def load_weights(self, step: Optional[int] = None, filename: Optional[str] = None):
-        """
-        Delegates loading to the CheckpointManager.
+            >>> nqs.load_weights(step=100)
+            >>> nqs.load_weights(filename='best_model.h5')
+            >>> nqs.load_weights()  # Latest checkpoint
         """
         try:
-            params = self.ckpt_manager.load(step=step, filename=filename)
+            params = self.ckpt_manager.load(
+                step        = step if isinstance(step, int) else 'final' if step is not None else None, 
+                filename    = filename, 
+                target_par  = self.get_params()
+            )
             self.set_params(params)
             self.log(f"Loaded weights (step={step}, file={filename})", lvl=1)
         except Exception as e:

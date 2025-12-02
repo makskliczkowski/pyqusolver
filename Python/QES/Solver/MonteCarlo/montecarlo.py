@@ -12,6 +12,8 @@ Date        : 2025-11-01
 License     : MIT
 ------------------------------
 '''
+
+import logging
 from typing import Union, Callable, Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 try:
     from QES.general_python.algebra.utils       import JAX_AVAILABLE, get_backend
     from QES.general_python.common.directories  import Directories
-    from QES.general_python.common.flog         import get_global_logger, Logger
+    from QES.general_python.common.flog         import Logger
     from QES.general_python.common.timer        import Timer
 except ImportError as e:
     raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
@@ -210,7 +212,7 @@ class MonteCarloSolver(Solver):
         self._info              = "a general Monte Carlo Solver"
         
         # create the logger
-        self._logger            = logger or (get_global_logger() if self._hilbert is None else self._hilbert.logger)
+        self._logger            = logger or self._hilbert.logger if self._hilbert is not None else logging.getLogger(__name__)
         
         # initialize the solver #!TODO : check whether this is necessary
         self.init()

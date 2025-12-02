@@ -104,7 +104,6 @@ class EvaluationResult:
         if self.error_of_mean is None:
             self.error_of_mean      = self.std / np.sqrt(max(self.n_samples - 1, 1))
         
-
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the evaluation results."""
         if self.has_stats:
@@ -225,7 +224,8 @@ class NQSObservable(EvaluationResult):
     """
     
     observable_name : str           = ""  # Name of the observable
-
+    observable_num  : int           = 1   # Number of observables evaluated
+    
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the observable evaluation."""
         return {
@@ -238,6 +238,28 @@ class NQSObservable(EvaluationResult):
             'error_of_mean'         : self.error_of_mean,
             'n_samples'             : self.n_samples,
         }
+
+    def stats(self):
+        ''' Calculate statistics if not already present '''
+        if not self.has_stats:
+            if self.observable_num == 1:
+                self.mean           = np.mean(self.values)
+                self.std            = np.std(self.values)
+                self.min_val        = np.min(self.values)
+                self.max_val        = np.max(self.values)
+                self.variance       = self.std ** 2
+                self.error_of_mean  = self.std / np.sqrt(max(self.n_samples - 1, 1))
+                self.has_stats      = True
+            else:
+                self.mean           = [np.mean(v) for v in self.values]
+                self.std            = [np.std(v) for v in self.values]
+                self.min_val        = [np.min(v) for v in self.values]
+                self.max_val        = [np.max(v) for v in self.values]
+                self.variance       = [s ** 2 for s in self.std]
+                self.error_of_mean  = [s / np.sqrt(max(self.n_samples - 1, 1)) for s in self.std]
+                self.has_stats      = True
+                
+        return (self.mean, self.std, self.min_val, self.max_val)
 
 #####################################################################################################
 #! COMPUTE LOCAL ENERGY CLASS
@@ -414,20 +436,22 @@ class NQSEvalEngine:
             self.set_batch_size(batch_size)
         
         try:
-            output = self.nqs.apply(
-                        functions       = action_func,
-                        states_and_psi  = (states, ansatze),
-                        probabilities   = probabilities,
-                        batch_size      = self.batch_size,
-                        parameters      = params,
-                        num_samples     = num_samples,
-                        num_chains      = num_chains,
-                        return_values   = True,
-                    )
+            output, m, std = self.nqs.apply(
+                                functions       = action_func,
+                                states_and_psi  = (states, ansatze),
+                                probabilities   = probabilities,
+                                batch_size      = self.batch_size,
+                                parameters      = params,
+                                num_samples     = num_samples,
+                                num_chains      = num_chains,
+                                return_values   = True,
+                            )
                                     
             # Convert to EnergyStatistics
-            local_losses                    = np.array(output)
-            self._cached_results['losses']  = local_losses
+            local_losses                            = np.array(output)
+            self._cached_results['losses/val']      = local_losses
+            self._cached_results['losses/mean']     = m
+            self._cached_results['losses/std']      = std
             
             if return_values:
                 return local_losses
@@ -502,18 +526,30 @@ class NQSEvalEngine:
                         return_values   = True,
                     )
                             
+            if not single_function:
+                values      = [np.array(v[0]) for v in output]  # Extract values from output
+                means       = [v[1] for v in output]
+                stds        = [v[2] for v in output]
+            else:
+                values      = [np.array(output[0])]
+                means       = [output[1]]
+                stds        = [output[2]]
+                            
             # Convert to NQSObservable
             observables = []
-            for idx, vals in enumerate(output):
+            for idx, vals in enumerate(values):
                 name        = names[idx] if names is not None and isinstance(names, (list, tuple)) else (names if isinstance(names, str) else f"O_{idx}")
                 obs_result  = NQSObservable(values = np.array(vals), has_stats = return_stats, backend_used = self.nqs.backend_str, observable_name = name)
                 observables.append(obs_result)
             
-            self._cached_results['observables'] = observables
+            self._cached_results['observables/values']  = values
+            self._cached_results['observables/means']   = means
+            self._cached_results['observables/stds']    = stds
             
             if return_values:
-                return [obs.values for obs in observables] if not single_function else observables[0].values
-            return observables if not single_function else observables[0]
+                return values
+            
+            return observables[0] if single_function else observables
         
         except Exception as e:
             raise RuntimeError(f"Error computing observables: {e}")

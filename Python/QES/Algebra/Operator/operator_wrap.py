@@ -8,6 +8,7 @@ import numba.typed
 import inspect
 from numba import njit
 from inspect import signature
+from functools import partial
 
 try:
     from QES.general_python.algebra.utils import JAX_AVAILABLE
@@ -82,44 +83,41 @@ if JAX_AVAILABLE:
 
 def _make_mul_int_njit(outer_op_fun, inner_op_fun, allocator_m=2):
     """
-    Creates a Numba-jitted function that composes two operator functions acting on integer-based quantum states.
-    This function returns a compiled implementation that, given a quantum state and additional arguments, applies
-    `inner_op_fun` to the state, then applies `outer_op_fun` to each resulting state, combining the coefficients
-    appropriately. The result is a tuple of arrays containing the resulting states and their corresponding coefficients.
-    If Numba compilation fails, a fallback implementation returning an empty result is provided.
-    Args:
-        outer_op_fun (callable):
-            A function that takes a state and additional arguments, returning a tuple of
-            (states, coefficients) as 1D numpy arrays.
-        inner_op_fun (callable): 
-            A function with the same signature as `outer_op_fun`, applied first.
-    Returns:
-        callable:
-            A function with signature (state, *args) -> (states, coefficients), where `states` is a 1D numpy
-            array of int64 and `coefficients` is a 1D numpy array of float64 or complex128.
+    Creates a Numba-jitted composition (outer * inner).
+    Natively supports Tuple inputs to avoid allocation overhead.
     """
     try:
-        # Wrapper that always returns complex128 - safe for all operator products
-        # This avoids Numba's strict type unification issues with conditional dtypes
         @numba.njit(cache=True)
         def mul_int_impl(state, *args):
-            g_states, g_coeffs = inner_op_fun(state, *args)
-            if g_states.shape[0] == 0:
+            # 1. Get results (Tuples or Arrays)
+            g_states, g_coeffs  = inner_op_fun(state, *args)
+            size                = len(g_states)
+            
+            # 2. Handle empty result case
+            if size == 0:
+                # Return empty arrays (allocating empty is cheap)
                 return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.complex128)
 
-            total_estimate  = g_states.shape[0] * allocator_m
+            # 3. Allocation for the *result* is unavoidable for variable-sized products
+            total_estimate  = size * allocator_m
             res_states      = np.empty(total_estimate, dtype=np.int64)
             res_coeffs      = np.empty(total_estimate, dtype=np.complex128)
             count           = 0
 
-            for k in range(g_states.shape[0]):
-                g_state_k   = g_states[k]
-                g_coeff_k   = g_coeffs[k]
-                f_states_k, f_coeffs_k = outer_op_fun(g_state_k, *args)
-
-                for l in range(f_states_k.shape[0]):
-                    if count >= res_states.shape[0]:
-                        new_size = res_states.shape[0] * 2
+            # 4. Iterate directly (works for Tuple and Array)
+            for k in range(size):
+                g_state_k               = g_states[k]
+                g_coeff_k               = g_coeffs[k]
+                
+                # Apply outer operator
+                f_states_k, f_coeffs_k  = outer_op_fun(g_state_k, *args)
+                
+                # Iterate over result (Tuple or Array)
+                len_f = len(f_states_k)
+                for l in range(len_f):
+                    # Dynamic resizing if estimate was too low
+                    if count >= len(res_states):
+                        new_size        = len(res_states) * 2
                         tmp_s           = np.empty(new_size, dtype=np.int64)
                         tmp_c           = np.empty(new_size, dtype=np.complex128)
                         tmp_s[:count]   = res_states[:count]
@@ -128,18 +126,15 @@ def _make_mul_int_njit(outer_op_fun, inner_op_fun, allocator_m=2):
                         res_coeffs      = tmp_c
 
                     res_states[count]   = f_states_k[l]
+                    # Enforce complex type for safety
                     res_coeffs[count]   = g_coeff_k * f_coeffs_k[l]
                     count              += 1
 
             return res_states[:count], res_coeffs[:count]
 
         return mul_int_impl
-    except Exception as e: # Catch Numba errors
-        print(f"Numba compilation failed for _make_mul_int_njit: {e}. Falling back to Python.")
-        
-        def mul_int_fallback(state, *args):
-            return _empty_result_int()
-        return mul_int_fallback
+    except Exception as e:
+        raise e
 
 def _make_mul_np_njit(outer_op_fun, inner_op_fun, allocator_m=2):
     """
