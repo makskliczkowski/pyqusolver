@@ -147,10 +147,12 @@ class ARSampler(Sampler):
         # Combine Amplitude (log_prob / mu) and Phase
         final_log_psi                           = final_log_psi / mu + 1j * phases
         
-        # Convert 0/1 to physical spins (-1/+1)
-        final_configs_phys                      = 2 * final_configs - 1 
+        # Convert 0/1 to physical spins (-0.5/+0.5) for Hamiltonian compatibility
+        # The Hamiltonian expects spin values in (-0.5, +0.5) format
+        # The AR network internally works with (0,1) but we return physical spins
+        final_configs_phys                      = (final_configs - 0.5)  # Convert (0,1) -> (-0.5, +0.5)
         
-        return final_configs_phys * 0.5, final_log_psi
+        return final_configs_phys, final_log_psi
 
     # ---------------------------------------------------------
     # Public Sampling Method
