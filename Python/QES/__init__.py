@@ -82,8 +82,8 @@ from .qes_globals import (
     get_backend_manager,
     get_numpy_rng,
     reseed_all,
-    next_jax_key as _next_jax_key,
-    split_jax_keys as _split_jax_keys,
+    next_jax_key        as _next_jax_key,
+    split_jax_keys      as _split_jax_keys,
 )
 
 # Lightweight registry utilities

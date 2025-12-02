@@ -73,7 +73,6 @@ class HeisenbergKitaev(Hamiltonian):
     def __init__(self,
                 lattice             : Lattice,
                 K                   : Union[List[float], None, float]       = 1.0,
-                logger              : Optional['Logger']                    = None,
                 *,
                 hilbert_space       : Optional[HilbertSpace]                = None,
                 # Heisenberg couplings
@@ -151,7 +150,7 @@ class HeisenbergKitaev(Hamiltonian):
                         lattice         = lattice, 
                         is_sparse       = True,
                         dtype           = dtype if (hy is None and Gamma is None) else np.complex128, # enforce complex dtype if hy field is used
-                        backend=backend, logger=logger, use_forward=use_forward, **kwargs)
+                        backend=backend, use_forward=use_forward, **kwargs)
 
         # Initialize the Hamiltonian
         if hilbert_space is None:

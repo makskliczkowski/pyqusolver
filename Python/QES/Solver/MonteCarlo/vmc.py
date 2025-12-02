@@ -1013,9 +1013,9 @@ class VMCSampler(Sampler):
         current_proposed        = self._num_proposed
         current_accepted        = self._num_accepted
         if self._isjax:
-            self._static_sample_fun = self.get_sampler_jax(self._numsamples, self._numchains)
+            self._static_sample_fun = self._get_sampler_jax(self._numsamples, self._numchains)
         else:
-            self._static_sample_fun = self.get_sampler_np(self._numsamples, self._numchains)
+            self._static_sample_fun = self._get_sampler_np(self._numsamples, self._numchains)
         return current_states, current_proposed, current_accepted
     
     def _sample_callable(self, parameters=None):
@@ -1091,7 +1091,7 @@ class VMCSampler(Sampler):
         reinitialized_for_call  = False
         
         #! check if one needs to reconfigure the sampler
-        if used_num_chains != self._numchains:
+        if used_num_chains != self._numchains or used_num_samples != self._numsamples:
             print(f"Warning: Running sample with {used_num_chains} chains (instance default is {self._numchains}). State reinitialized for this call.")
             reinitialized_for_call                              = True
             current_states, current_proposed, current_accepted  = self._sample_reinitialize(used_num_chains, used_num_samples)

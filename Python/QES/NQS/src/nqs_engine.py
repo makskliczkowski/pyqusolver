@@ -476,7 +476,8 @@ class NQSEvalEngine:
             num_samples     : Optional[int]                                                 = None,
             num_chains      : Optional[int]                                                 = None,
             return_stats    : Optional[bool]                                                = None,
-            return_values   : bool                                                          = False
+            return_values   : bool                                                          = False,
+            log_progress    : bool                                                          = False
         ) -> Union[Array, NQSObservable]:
         """
         Evaluate observables O(s) on sampled states s from |psi|^mu distribution.
@@ -524,6 +525,7 @@ class NQSEvalEngine:
                         num_samples     = num_samples,
                         num_chains      = num_chains,
                         return_values   = True,
+                        log_progress    = log_progress
                     )
                             
             if not single_function:

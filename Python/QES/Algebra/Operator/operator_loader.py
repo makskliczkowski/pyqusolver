@@ -171,7 +171,82 @@ class OperatorModule:
     # ----------------------------
     # Utility method to print help
     # ----------------------------
+    
+    def correlators(self, *, indices_pairs: Optional[list] = None, correlators = None, **kwargs):
+        """
+        Generate correlation operators for specified correlator types and site indices.
+        Parameters
+        ----------
+        indices_pairs : list of tuples or None, optional
+            List of (i, j) index tuples specifying the sites for the correlators. If None, defaults to just correlators...
+        correlators : list or None, optional
+            List of correlator types to generate (e.g., ['zz', 'xx', 'xy', ...]). If None, defaults to ['zz'] for spin systems.
+        **kwargs
+            Additional keyword arguments passed to the operator constructors.
+        Returns
+        -------
+        dict
+            Dictionary mapping (i, j) tuples or 'i,j' to the corresponding operator objects for each correlator type.
+        Raises
+        ------
+        ValueError
+            If an unknown correlator type or module is specified.
+        NotImplementedError
+            If correlators for fermions or hardcore bosons are requested (not yet implemented).
+        Notes
+        -----
+        - Supported correlator types for spin systems include: 'xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz'.
+        - For unsupported local space types, an error is raised.
+        """
 
+        
+        # we can return operators with indices applied
+        if indices_pairs is None:
+            indices_pairs = [(None, None)]
+                    
+        if self._local_space_type in (LocalSpaceTypes.SPIN_1_2, LocalSpaceTypes.SPIN_1):
+            ops_module  = self._load_spin_operators()
+            correlators = correlators or ['zz']
+            ops         = { x : {} for x in correlators }
+            for corr in correlators:
+                for (i, j) in indices_pairs:
+                    sites               = [i,j] if i is not None and j is not None else None
+                    key                 = (i,j) if sites is not None else 'i,j'
+                    kwargs_op           = kwargs.copy()
+                    kwargs_op['sites']  = sites
+                    
+                    if 'xx' == corr:
+                        op = ops_module.sig_x(**kwargs_op)
+                    elif 'xy' == corr:
+                        op = ops_module.sig_xy(**kwargs_op)
+                    elif 'xz' == corr:
+                        op = ops_module.sig_xz(**kwargs_op)
+                    elif 'yx' == corr:
+                        op = ops_module.sig_yx(**kwargs_op)
+                    elif 'yy' == corr:
+                        op = ops_module.sig_y(**kwargs_op)
+                    elif 'yz' == corr:
+                        op = ops_module.sig_yz(**kwargs_op)
+                    elif 'zx' == corr:
+                        op = ops_module.sig_zx(**kwargs_op)
+                    elif 'zy' == corr:
+                        op = ops_module.sig_zy(**kwargs_op)
+                    elif 'zz' == corr:
+                        op = ops_module.sig_z(**kwargs_op)
+                    else:
+                        raise ValueError(f"Unknown correlator type: {corr}")
+                    ops[corr][key] = op
+            return ops
+            
+        elif self._local_space_type == LocalSpaceTypes.SPINLESS_FERMIONS:
+            ops_module = self._load_fermion_operators()
+            raise NotImplementedError("Fermion correlators not yet implemented.")
+        elif self._local_space_type == LocalSpaceTypes.BOSONS:
+            ops_module = self._load_hardcore_operators()
+            raise NotImplementedError("Hardcore boson correlators not yet implemented.")
+        else:
+            raise ValueError(f"Unknown module: {module}")
+        
     @staticmethod
     def overlap(a, O, b, backend: str = 'default'):
         """

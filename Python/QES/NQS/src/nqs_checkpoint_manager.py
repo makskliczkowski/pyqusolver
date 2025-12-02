@@ -206,11 +206,12 @@ class NQSCheckpointManager:
         """
         if isinstance(step, int):
             save_key = step
-            save_arg = ocp.args.StandardSave(params)
+            # Use Composite wrapper for consistency with restore
+            save_arg = ocp.args.Composite(default=ocp.args.StandardSave(params))
         elif isinstance(step, str):
             # String identifiers saved at step 0 with named key
             save_key = 0 
-            save_arg = {step: ocp.args.StandardSave(params)}
+            save_arg = ocp.args.Composite(**{step: ocp.args.StandardSave(params)})
         else:
             raise TypeError(f"Step must be int or str, got {type(step)}")
 
@@ -229,6 +230,14 @@ class NQSCheckpointManager:
         
         # Save params via Orbax
         self._orbax_manager.save(save_key, args=save_arg)
+        
+        # Without this, the checkpoint may not be written to disk before we try to access it
+        self._orbax_manager.wait_until_finished()
+        
+        # Verify the checkpoint was actually saved
+        saved_step_dir = self._checkpoint_dir / str(save_key)
+        if not saved_step_dir.exists():
+            self._log(f"WARNING: Orbax checkpoint directory {saved_step_dir} was not created!", lvl=0, color='red')
         
         # Always save metadata as JSON alongside Orbax checkpoint
         self._save_metadata_json(step, metadata)
@@ -300,21 +309,40 @@ class NQSCheckpointManager:
                 self._log(f"Loading latest Orbax checkpoint (step={restore_key})", lvl=1)
             else:
                 restore_key = step
-                
-            restore_arg = ocp.args.StandardRestore(target_par)
             
+            # Try multiple restore strategies to handle different checkpoint formats
+            # Strategy 1: New format with Composite(default=...)
+            try:
+                restore_arg     = ocp.args.Composite(default=ocp.args.StandardRestore(target_par))
+                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
+                # Extract from composite
+                if hasattr(restored_items, 'default'):
+                    return restored_items.default
+                elif isinstance(restored_items, dict) and 'default' in restored_items:
+                    return restored_items['default']
+                return restored_items
+            except (ValueError, KeyError, TypeError) as e1:
+                self._log(f"Composite restore failed ({e1}), trying StandardRestore...", lvl=2)
+                
+            # Strategy 2: Legacy format with simple StandardRestore
+            try:
+                restore_arg     = ocp.args.StandardRestore(target_par)
+                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
+                return restored_items
+            except (ValueError, KeyError, TypeError) as e2:
+                self._log(f"StandardRestore also failed ({e2})", lvl=2)
+                raise ValueError(f"Could not restore checkpoint at step {restore_key}. Tried Composite and Standard restore. Errors: {e1}, {e2}")
+                    
         elif isinstance(step, str):
             # String identifiers were saved at step 0
-            restore_key = 0 
-            restore_arg = {step: ocp.args.StandardRestore(target_par)}
+            restore_key     = 0 
+            restore_arg     = ocp.args.Composite(**{step: ocp.args.StandardRestore(target_par)})
+            restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
+            if hasattr(restored_items, step):
+                return getattr(restored_items, step)
+            return restored_items[step]
         else:
             raise TypeError(f"Step must be int, str, or None, got {type(step)}")
-            
-        restored_items = self._orbax_manager.restore(restore_key, args=restore_arg)
-        
-        if isinstance(step, str):
-            return restored_items[step]
-        return restored_items
 
     def _load_hdf5_wrapper(self, step: Optional[Union[int, str]], filename: Optional[str]) -> Any:
         """Load using HDF5 backend."""

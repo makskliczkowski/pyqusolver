@@ -116,7 +116,8 @@ class ARSampler(Sampler):
             
             # 1. Evaluate Network to get logits for current site
             # The lambda tells Flax to invoke the specific sub-method for logits
-            logits      = net_apply(variables, curr_configs, method=lambda n, x: n.get_logits(x))            
+            # NOTE: curr_configs is in binary (0,1) format during sampling
+            logits      = net_apply(variables, curr_configs, is_binary=True, method=lambda n, x, is_binary: n.get_logits(x, is_binary=is_binary))            
 
             
             # Select logit for the CURRENT site we are filling
@@ -141,8 +142,9 @@ class ARSampler(Sampler):
         (final_configs, final_log_psi, _), _    = jax.lax.scan(scan_body, init_val, jnp.arange(N))
 
         # Get Phases (Call get_phase method)
+        # NOTE: final_configs is in binary (0,1) format here
         variables                               = {'params': params}
-        phases                                  = net_apply(variables, final_configs, method=lambda n, x: n.get_phase(x))
+        phases                                  = net_apply(variables, final_configs, is_binary=True, method=lambda n, x, is_binary: n.get_phase(x, is_binary=is_binary))
 
         # Combine Amplitude (log_prob / mu) and Phase
         final_log_psi                           = final_log_psi / mu + 1j * phases

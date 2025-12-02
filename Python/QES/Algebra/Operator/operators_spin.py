@@ -1062,9 +1062,9 @@ def sig_x(  lattice     : Optional[Lattice]     = None,
     Operator
         The \sigma _x operator.    
     """
-    if type_act == OperatorTypeActing.Global or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code = SPIN_LOOKUP_CODES.sig_x_global
-    elif type_act == OperatorTypeActing.Local:
+    elif OperatorTypeActing.is_type_local(type_act):
         code = SPIN_LOOKUP_CODES.sig_x_local
     else:
         code = SPIN_LOOKUP_CODES.sig_x_corr
@@ -1119,9 +1119,9 @@ def sig_y( lattice     : Optional[Lattice]     = None,
     np_fun  = sigma_y_np
     jnp_fun = sigma_y_jnp
     
-    if type_act == OperatorTypeActing.Global or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code = SPIN_LOOKUP_CODES.sig_y_global
-    elif type_act == OperatorTypeActing.Local:
+    elif OperatorTypeActing.is_type_local(type_act):
         code = SPIN_LOOKUP_CODES.sig_y_local
     else:
         code = SPIN_LOOKUP_CODES.sig_y_corr
@@ -1173,10 +1173,9 @@ def sig_z(  lattice     : Optional[Lattice]     = None,
     Operator
         The \sigma _x operator.
     """
-    
-    if type_act == OperatorTypeActing.Global or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code = SPIN_LOOKUP_CODES.sig_z_global
-    elif type_act == OperatorTypeActing.Local:
+    elif OperatorTypeActing.is_type_local(type_act):
         code = SPIN_LOOKUP_CODES.sig_z_local
     else:
         code = SPIN_LOOKUP_CODES.sig_z_corr
@@ -1209,9 +1208,9 @@ def sig_p(  lattice     : Optional[Lattice]     = None,
     Factory for the spin-raising operator \sigma ^+.
     """
     
-    if type_act == OperatorTypeActing.Global or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code = SPIN_LOOKUP_CODES.sig_p_global
-    elif type_act == OperatorTypeActing.Local:
+    elif OperatorTypeActing.is_type_local(type_act):
         code = SPIN_LOOKUP_CODES.sig_p_local
     else:
         code = SPIN_LOOKUP_CODES.sig_p_corr
@@ -1244,9 +1243,9 @@ def sig_m(  lattice     : Optional[Lattice]     = None,
     Factory for the spin-lowering operator \sigma ^ -.
     """
 
-    if type_act == OperatorTypeActing.Global or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code = SPIN_LOOKUP_CODES.sig_m_global
-    elif type_act == OperatorTypeActing.Local:
+    elif OperatorTypeActing.is_type_local(type_act):
         code = SPIN_LOOKUP_CODES.sig_m_local
     else:
         code = SPIN_LOOKUP_CODES.sig_m_corr
@@ -1279,7 +1278,7 @@ def sig_pm( lattice     : Optional[Lattice]     = None,
     Factory for the alternating operator: even-indexed sites \sigma ^+, odd-indexed \sigma ^ -.
     """
 
-    if type_act == OperatorTypeActing.Global or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code = SPIN_LOOKUP_CODES.sig_pm_corr
     else:
         code = SPIN_LOOKUP_CODES.sig_pm_corr
@@ -1312,7 +1311,7 @@ def sig_mp( lattice     : Optional[Lattice]     = None,
     Factory for the alternating operator: even-indexed sites \sigma ^ -, odd-indexed \sigma ^+.
     """
 
-    if type_act == OperatorTypeActing.Global or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code = SPIN_LOOKUP_CODES.sig_mp_corr
     else:
         code = SPIN_LOOKUP_CODES.sig_mp_corr
@@ -1530,6 +1529,7 @@ else:
 
 def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
     r''' Factory for mixed sigma operators (e.g., \sigma _x \sigma _y). '''
+    
     if sites is not None and len(sites) != 2:
         raise ValueError("Mixed sigma operators require exactly two sites.")
     
@@ -1568,7 +1568,7 @@ def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
         raise ValueError(f"Unknown mixed sigma operator name: {name}")
     
     return create_operator(
-        type_act    = OperatorTypeActing.Correlation,
+        type_act    = OperatorTypeActing.Correlation if sites is None else OperatorTypeActing.Global,
         op_func_int = int_func,
         op_func_np  = np_func,
         op_func_jnp = jnp_func,
@@ -1576,7 +1576,27 @@ def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
         name        = name,
         modifies    = True,
         code        = code,
+        sites       = sites,
     )
+
+def sig_xy(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    r''' Factory for the \sigma _x \sigma _y operator. '''
+    return make_sigma_mixed('xy', lattice, ns, sites)
+def sig_yx(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    r''' Factory for the \sigma _y \sigma _x operator. '''
+    return make_sigma_mixed('yx', lattice, ns, sites)
+def sig_yz(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    r''' Factory for the \sigma _y \sigma _z operator. '''
+    return make_sigma_mixed('yz', lattice, ns, sites)
+def sig_zy(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    r''' Factory for the \sigma _z \sigma _y operator. '''
+    return make_sigma_mixed('zy', lattice, ns, sites)
+def sig_zx(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    r''' Factory for the \sigma _z \sigma _x operator. '''
+    return make_sigma_mixed('zx', lattice, ns, sites)
+def sig_xz(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    r''' Factory for the \sigma _x \sigma _z operator. '''
+    return make_sigma_mixed('xz', lattice, ns, sites)
 
 # -----------------------------------------------------------------------------
 #? COMPOSITION FUNCTION BASED ON THE CODES!

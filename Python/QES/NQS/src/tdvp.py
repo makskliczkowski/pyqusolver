@@ -21,7 +21,6 @@ Date    : 2025-11-01
 import os
 import warnings
 import numpy as np
-from logging import Logger, getLogger
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, Any, List
@@ -222,6 +221,9 @@ class TDVP:
             use_sr          : bool                                      = True,
             use_minsr       : bool                                      = False,
             rhs_prefactor   : Union[float, complex]                     = 1.0,
+            *,
+            # other
+            regularization  : float                                     = 0.0,      # maybe used?
             # Stochastic reconfiguration parameters
             sr_lin_solver   : Optional[Union[solvers.Solver, str]]      = None,     # default solver
             sr_precond      : Optional[precond.Preconditioner]          = None,     # default preconditioner
@@ -301,6 +303,7 @@ class TDVP:
         self.use_minsr       = use_minsr            # flag to indicate if minimal SR is used -> reverse O^+O to O O^+
         self.rhs_prefactor   = rhs_prefactor        # prefactor for the RHS of the TDVP equation (1 for ground state, i for real time)
         self.form_matrix     = False                # flag to indicate if the full matrix is formed
+        self.regularization  = regularization       # maybe used?
         
         #! handle the stochastic reconfiguration parameters
         self.sr_snr_tol      = sr_snr_tol           # for signal-to-noise ratio
@@ -349,7 +352,7 @@ class TDVP:
         self._theta0_dot    = 0.0      # time derivative of global phase parameter
 
         # Logger
-        self.logger         = logger if logger is not None else getLogger(__name__)
+        self.logger         = logger
         
         #! functions
         self._init_functions()
@@ -439,7 +442,7 @@ class TDVP:
             # Default to PseudoInverseSolver if no solver is provided
             self.sr_solve_lin_t     = solvers.SolverForm.MATRIX
             self.sr_solve_lin       = solvers.PseudoInverseSolver(backend=self.backend, sigma=self.sr_diag_shift)
-            self.logger.info("No solver provided. Defaulting to PseudoInverseSolver with full matrix formation.")
+            if self.logger: self.logger.info("No solver provided. Defaulting to PseudoInverseSolver with full matrix formation.")
 
         if isinstance(self.sr_solve_lin, str) or isinstance(self.sr_solve_lin, solvers.SolverType) or isinstance(self.sr_solve_lin, int):
             identifier              = self.sr_solve_lin
@@ -450,7 +453,7 @@ class TDVP:
                                         backend         =   self.backend, 
                                         default_precond =   self.sr_precond, 
                                         maxiter         =   self.sr_maxiter)
-            self.logger.info(f"Solver set to {self.sr_solve_lin} based on identifier '{identifier}'.")
+            if self.logger: self.logger.info(f"Solver set to {self.sr_solve_lin} based on identifier '{identifier}'.")
 
         if self.sr_solve_lin is not None:
             if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
@@ -552,14 +555,27 @@ class TDVP:
         '''
         Set the diagonal shift for the TDVP equation.
         
+        The diagonal shift (sigma) is now passed dynamically at solve time,
+        so changing this value does NOT trigger solver recompilation.
+        
         Parameters
         ----------
         diag_shift : float
             The diagonal shift to be used for the TDVP equation.
         '''
         self.sr_diag_shift = diag_shift
-        self._init_solver_lin()
 
+    def set_regularization(self, regularization: float):
+        '''
+        Set the regularization parameter for the TDVP equation.
+        
+        Parameters
+        ----------
+        regularization : float
+            The regularization parameter to be used for the TDVP equation.
+        '''
+        self.regularization = regularization
+        
     ###################
     
     def set_rhs_prefact(self, rhs_prefactor: Union[float, complex]):
@@ -815,7 +831,8 @@ class TDVP:
                                 x0              =   self._x0,
                                 precond_apply   =   self.sr_precond_fn,
                                 maxiter         =   self.sr_maxiter,
-                                tol             =   self.sr_pinv_tol)
+                                tol             =   self.sr_pinv_tol,
+                                sigma           =   self.sr_diag_shift)
         elif self.sr_solve_lin_t == solvers.SolverForm.MATRIX.value:
             if self.use_minsr:
                 raise ValueError('The matrix solver is not implemented for the minimum stochastic reconfiguration (minsr) method.')
@@ -824,14 +841,19 @@ class TDVP:
                                 x0              =   self._x0,
                                 precond_apply   =   self.sr_precond_fn,
                                 maxiter         =   self.sr_maxiter,
-                                tol             =   self.sr_pinv_tol) 
+                                tol             =   self.sr_pinv_tol,
+                                sigma           =   self.sr_diag_shift)  # Dynamic sigma!
+            
         elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
-            solution = solve_func(matvec        =   self._solve_prepare_matvec(mat_s, mat_s_p),
-                                b               =   vec_b,
-                                x0              =   self._x0,
-                                precond_apply   =   self.sr_precond_fn,
-                                maxiter         =   self.sr_maxiter,
-                                tol             =   self.sr_pinv_tol)
+            # For MATVEC mode, create a matvec with current sigma bound
+            matvec_fn                           = self._solve_prepare_matvec(mat_s, mat_s_p)
+            matvec_with_sigma                   = lambda v, mv=matvec_fn, sig=self.sr_diag_shift: mv(v, sig)
+            solution                            = solve_func(matvec         =   matvec_with_sigma,
+                                                            b               =   vec_b,
+                                                            x0              =   self._x0,
+                                                            precond_apply   =   self.sr_precond_fn,
+                                                            maxiter         =   self.sr_maxiter,
+                                                            tol             =   self.sr_pinv_tol)
         return solution
     
     def _solve_handle_x0(self, vec_b: Array, use_old_result: bool):
@@ -933,9 +955,9 @@ class TDVP:
                 converged       = True,
             )
 
-        #! precondition the S matrices?
+        #! precondition the S matrices, use regularization?
         if True:
-            #!TODO:
+            #!TODO: Do something with regularization, sr_ and others...
             pass
     
         #! solve the linear system

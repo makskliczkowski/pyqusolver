@@ -212,14 +212,18 @@ class OperatorTypeActing(Enum):
             If the provided name does not correspond to any OperatorTypeActing member.
         """
         name = name.lower()
-        if name == 'global':
+        if name.startswith('g'):
             return OperatorTypeActing.Global
-        elif name == 'local':
+        elif name.startswith('l'):
             return OperatorTypeActing.Local
-        elif name == 'correlation':
+        elif name.startswith('c'):
             return OperatorTypeActing.Correlation
         else:
             raise ValueError(f"Unknown OperatorTypeActing name: {name}")
+    
+    @staticmethod
+    def is_type_global(val_str: Union[str, 'OperatorTypeActing']):
+        return (isinstance(val_str, str) and val_str.lower().startswith('g')) or (val_str == OperatorTypeActing.Global)
     
     def is_global(self):
         """
@@ -227,11 +231,19 @@ class OperatorTypeActing(Enum):
         """
         return self == OperatorTypeActing.Global
         
+    @staticmethod
+    def is_type_local(val_str: Union[str, 'OperatorTypeActing']):
+        return (isinstance(val_str, str) and val_str.lower().startswith('l')) or (val_str == OperatorTypeActing.Local)
+        
     def is_local(self):
         """
         Check if the operator is a local operator.
         """
         return self == OperatorTypeActing.Local
+        
+    @staticmethod
+    def is_type_correlation(val_str: Union[str, 'OperatorTypeActing']):
+        return (isinstance(val_str, str) and val_str.lower().startswith('c')) or (val_str == OperatorTypeActing.Correlation)
         
     def is_correlation(self):
         """
@@ -2065,7 +2077,7 @@ def create_operator(type_act        : int | OperatorTypeActing,
         type_act = OperatorTypeActing.from_string(type_act)
             
     #! Global operator: the operator acts on a specified set of sites (or all if sites is None)
-    if type_act == OperatorTypeActing.Global.value or sites is not None:
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         
         # If sites is None, we act on all sites.
         if isinstance(sites, int):
@@ -2104,7 +2116,7 @@ def create_operator(type_act        : int | OperatorTypeActing,
                         instr_code  = code)
     
     #! Local operator: the operator acts on one specific site. The returned functions expect an extra site argument.
-    elif type_act == OperatorTypeActing.Local.value:
+    elif OperatorTypeActing.is_type_local(type_act):
         
         if isinstance(op_func_int, CPUDispatcher):
             fun_int = _make_local_closure(op_func_int, ns, extra_args)
@@ -2138,7 +2150,7 @@ def create_operator(type_act        : int | OperatorTypeActing,
                         instr_code  = code)
     
     #! Correlation operator: the operator acts on a pair of sites.
-    elif type_act == OperatorTypeActing.Correlation.value:
+    elif OperatorTypeActing.is_type_correlation(type_act):
         
         if isinstance(op_func_int, CPUDispatcher):
             fun_int = _make_corr_closure(op_func_int, ns, extra_args)

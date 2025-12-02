@@ -305,7 +305,7 @@ class Hamiltonian(Operator):
         self._dtypeint              = self._backend.int64   # Integer type for the model
         self._dtype                 = dtype
         self._hilbert_space         = hilbert_space         # Hilbert space of the system, if any
-        self._logger                = self._hilbert_space.logger if logger is None and self._hilbert_space is not None else logger
+        self._logger                = self._hilbert_space.logger if (logger is None and self._hilbert_space is not None) else logger
         
         #! general Hamiltonian info
         self._name                  = "Hamiltonian"
@@ -1071,7 +1071,46 @@ class Hamiltonian(Operator):
                 local_space_type    = LocalSpaceTypes.SPIN_HALF if self._is_manybody else None
             self._operator_module   = get_operator_module(local_space_type)
         return self._operator_module
-        
+    
+    def correlators(self, indices_pairs:List[Tuple[int, int]], correlators=None, **kwargs) -> dict:
+        """
+        Computes correlators using the operator module.
+
+        Parameters
+        ----------
+        indices_pairs : List[Tuple[int, int]]
+            List of index pairs for which to compute the correlators.
+
+        correlators : optional
+            List of correlator types to compute, e.g.,:
+            - SPIN      : ['xx', 'yy', 'zz']),
+            - FERMION   : ['cdagc', 'ccdag']),
+        **kwargs
+            Additional keyword arguments to pass to the operator module's correlators method.
+
+        Returns
+        -------
+        dict
+            Dictionary containing the computed correlators.
+
+        Raises
+        ------
+        AttributeError
+            If the operator module does not have a 'correlators' attribute.
+            
+        Example
+        ------
+        >>> hamil       = Spin1/2Model(...)
+        >>> hamil.correlators(indices_pairs=[(0,2), (1,3)], correlators=['xx', 'yy'])
+        { 'xx': ..., 'yy': { (i,j) : OP for i,j in ... } }
+        """
+
+        op_module = self.operators # Ensure operator module is loaded
+        if hasattr(op_module, 'correlators'):
+            return op_module.correlators(indices_pairs=indices_pairs, correlators=correlators, **kwargs)
+        else:
+            raise AttributeError("Operator module does not have a 'correlators' attribute.")
+                
     @property
     def entanglement(self):
         """
@@ -2260,7 +2299,8 @@ class Hamiltonian(Operator):
             
             if hasattr(result, 'converged'):
                 if result.converged:
-                    self._log(f"  Converged in {result.iterations} iterations", lvl=2)
+                    if result.iterations is not None:
+                        self._log(f"  Converged in {result.iterations} iterations", lvl=2)
                 else:
                     self._log(f"  Warning: Did not converge after {result.iterations} iterations", lvl=2, color="yellow")
             self._log(f"  Ground state energy: {self._eig_val[0]:.10f}", lvl=2, log='debug')

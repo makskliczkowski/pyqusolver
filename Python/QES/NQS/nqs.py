@@ -23,6 +23,7 @@ Description     : Neural Quantum State (NQS) Solver implementation.
 ----------------------------------------------------------
 """
 
+import time
 import h5py
 import warnings
 
@@ -46,6 +47,8 @@ except ImportError as e:
 
 if TYPE_CHECKING:
     from QES.Algebra.Operator.operator_loader   import OperatorModule
+    from QES.NQS.src.nqs_train                  import NQSTrainer, NQSTrainStats
+    from QES.NQS.src.nqs_train                  import NQSTrainer, NQSTrainStats
 
 # from QES.general_python imports
 try:
@@ -812,7 +815,9 @@ class NQS(MonteCarloSolver):
             parameters      : Optional[dict]                                                                    = None,
             num_samples     : Optional[int]                                                                     = None,
             num_chains      : Optional[int]                                                                     = None,
-            return_values   : bool                                                                              = False):
+            return_values   : bool                                                                              = False,
+            log_progress    : bool                                                                              = False
+            ):
         r"""
         Evaluate a set of functions based on the provided states, wavefunction, and probabilities.
         This method computes the output of one or more functions using the provided states, 
@@ -829,6 +834,22 @@ class NQS(MonteCarloSolver):
             probabilities (Optional[Union[np.ndarray, jnp.ndarray]]):
                 Probabilities associated with the states. If not provided, defaults to an array of ones with the same 
                 shape as the wavefunction ansatze.
+            log_progress (bool):
+                Whether to log progress during the evaluation. Defaults to False.
+            return_values (bool):
+                If True, only the output of the evaluated functions is returned. If False, 
+                returns a tuple containing the states, wavefunction, probabilities, and output. Defaults to False.
+            parameters (Optional[dict]):
+                The parameters (weights) to use for the network evaluation. If not provided, 
+                defaults to the current parameters of the network (`self.get_params()`).
+            batch_size (Optional[int]):
+                The batch size to use for evaluation. If not provided, defaults to `self._batch_size`.
+            num_samples (Optional[int]):
+                Number of samples to generate if using the sampler. If not provided, 
+                defaults to the sampler's `numsamples`.
+            num_chains (Optional[int]):
+                Number of chains to use if using the sampler. If not provided, 
+                defaults to the sampler's `numchains`.
             **kwargs:
                 Additional keyword arguments:
                     - batch_size (int)          : The batch size for evaluation. Defaults to self._batch_size.
@@ -886,8 +907,14 @@ class NQS(MonteCarloSolver):
         if probabilities is None:
             probabilities = self._backend.ones_like(ansatze).astype(ansatze.dtype)
             
-        output = [
-            self._apply_func(
+        output = []
+        for f in functions:
+            
+            if log_progress:
+                t0 = time.time()
+                self._logger.info(f"Applying function {f}", lvl=1, color='green')
+                
+            result = self._apply_func(
                 func            = f,
                 states          = states,
                 sample_probas   = probabilities,
@@ -895,8 +922,12 @@ class NQS(MonteCarloSolver):
                 logproba_fun    = self._ansatz_func,
                 parameters      = params,
                 batch_size      = batch_size
-            ) for f in functions
-        ]
+            )
+            
+            if log_progress:
+                self._logger.info(f"Function {f} applied in {(time.time() - t0)*1000:.2f} ms", lvl=1, color='green')
+                
+            output.append(result)
         
         # check if the output is a list
         if isinstance(output, list) and len(output) == 1:
@@ -1943,6 +1974,211 @@ class NQS(MonteCarloSolver):
         return super().swap(other)
     
     #####################################
+    #! TRAIN
+    #####################################
+    
+    _trainer: Optional["NQSTrainer"] = None
+    
+    @property
+    def trainer(self) -> Optional["NQSTrainer"]:
+        """
+        Returns the current NQSTrainer instance if one has been created.
+        
+        Returns
+        -------
+        NQSTrainer or None
+            The trainer instance, or None if train() hasn't been called yet.
+        """
+        if self._trainer is None:
+            from QES.NQS.src.nqs_train import NQSTrainer
+            self._trainer = NQSTrainer(nqs = self) # default...
+            
+        return self._trainer
+    
+    def train(self,
+            n_epochs            : int                       = 300,
+            checkpoint_every    : int                       = 50,
+            *,
+            # Trainer configuration (only used if override=True or no trainer exists)
+            reset_weights       : bool                      = False,
+            override            : bool                      = True,
+            # Solvers
+            lin_solver          : Union[str, Callable]      = 'scipy_cg',
+            pre_solver          : Union[str, Callable]      = None,
+            ode_solver          : Union[str, Any]           = 'Euler',
+            tdvp                : Any                       = None,
+            # Configuration
+            n_batch             : int                       = 128,
+            phases              : Union[str, tuple]         = 'default',
+            # Utilities
+            timing_mode         : str                       = 'detailed',
+            early_stopper       : Any                       = None,
+            lower_states        : List["NQS"]               = None,
+            # Schedulers
+            lr_scheduler        : Optional[Callable]        = None,
+            reg_scheduler       : Optional[Callable]        = None,
+            diag_scheduler      : Optional[Callable]        = None,
+            lr                  : Optional[float]           = None,
+            reg                 : Optional[float]           = None,
+            # Linear Solver options
+            lin_sigma           : float                     = None,
+            lin_is_gram         : bool                      = True,
+            # TDVP options
+            use_sr              : bool                      = True,
+            use_minsr           : bool                      = False,
+            rhs_prefactor       : float                     = -1.0,
+            diag_shift          : float                     = 1e-5,
+            # Training options
+            save_path           : str                       = None,
+            reset_stats         : bool                      = True,
+            use_pbar            : bool                      = True,
+            # Some exact solutions
+            exact_predictions   : Any                       = None,
+            exact_method        : str                       = None,
+            **kwargs
+        ) -> "NQSTrainStats":
+        """
+        Train the NQS using the NQSTrainer.
+        
+        This is a convenience method that creates an NQSTrainer internally and runs
+        the training loop. For more control, instantiate NQSTrainer directly.
+        
+        Parameters
+        ----------
+        n_epochs : int, default=300
+            Number of training epochs.
+            
+        checkpoint_every : int, default=50
+            Save checkpoint every N epochs.
+            
+        override : bool, default=True
+            If True, always create a new trainer with the provided arguments.
+            If False, reuse existing trainer if one exists (ignores other config args).
+            
+        lin_solver : str or Callable, default='scipy_cg'
+            Linear solver for SR equations.
+            
+        ode_solver : str, default='Euler'
+            ODE integrator for parameter updates.
+            
+        n_batch : int, default=1000
+            Batch size for VMC sampling.
+            
+        phases : str or tuple, default='default'
+            Phase scheduling preset or custom phases.
+            
+        lr : float, optional
+            Learning rate. If None, uses scheduler default.
+            
+        lr_scheduler : str or Callable, optional
+            Learning rate scheduler type or instance.
+            Options: 'constant', 'exponential', 'cosine', 'linear', 'adaptive', 'step'
+            
+        reg : float, optional
+            Regularization strength.
+            
+        diag_scheduler : str or Callable, optional
+            Diagonal shift scheduler for SR matrix regularization.
+            Same options as lr_scheduler. Dynamically adjusts diag_shift.
+            
+        use_sr : bool, default=True
+            Use Stochastic Reconfiguration.
+            
+        use_minsr : bool, default=False
+            Use MinSR (memory efficient).
+            
+        diag_shift : float, default=1e-5
+            Diagonal regularization for SR matrix.
+            
+        use_pbar : bool, default=True
+            Show progress bar during training.
+            
+        exact_predictions : array-like, optional
+            Exact reference values (e.g., from ED) for comparison.
+            
+        exact_method : str, optional
+            Method used to compute exact predictions (e.g., 'lanczos').
+            
+        **kwargs
+            Additional arguments passed to NQSTrainer.
+            
+        Returns
+        -------
+        NQSTrainStats
+            Training statistics including loss history, timing, etc.
+            
+        Examples
+        --------
+        >>> # Simple training with defaults
+        >>> stats = psi.train(n_epochs=200)
+        
+        >>> # With custom scheduler
+        >>> stats = psi.train(n_epochs=500, lr=1e-3, lr_scheduler='cosine', min_lr=1e-5)
+        
+        >>> # With exact comparison
+        >>> hamil.diagonalize()
+        >>> stats = psi.train(n_epochs=300, exact_predictions=hamil.eigenvalues)
+        
+        See Also
+        --------
+        NQSTrainer : Full trainer class with more configuration options.
+        """
+        
+        # Import here to avoid circular imports
+        from QES.NQS.src.nqs_train import NQSTrainer
+        
+        if reset_weights:
+            self.reset()
+            self.log("Network parameters reset before training.", lvl=1, color='blue')
+        
+        # Create or reuse trainer
+        if override or self._trainer is None:
+            self._trainer = NQSTrainer(
+                nqs             = self,
+                # Solvers
+                lin_solver      = lin_solver,
+                pre_solver      = pre_solver,
+                ode_solver      = ode_solver,
+                tdvp            = tdvp,
+                # Configuration
+                n_batch         = n_batch,
+                phases          = phases,
+                # Utilities
+                timing_mode     = timing_mode,
+                early_stopper   = early_stopper,
+                logger          = self._logger,
+                lower_states    = lower_states,
+                # Schedulers
+                lr_scheduler    = lr_scheduler,
+                reg_scheduler   = reg_scheduler,
+                diag_scheduler  = diag_scheduler,
+                lr              = lr,
+                reg             = reg,
+                diag_shift      = diag_shift,
+                # Linear Solver
+                lin_sigma       = lin_sigma,
+                lin_is_gram     = lin_is_gram,
+                # TDVP
+                use_sr          = use_sr,
+                use_minsr       = use_minsr,
+                rhs_prefactor   = rhs_prefactor,
+                **kwargs
+            )
+        
+        # Run training
+        stats = self._trainer.train(
+            n_epochs            = n_epochs,
+            checkpoint_every    = checkpoint_every,
+            save_path           = save_path,
+            reset_stats         = reset_stats,
+            use_pbar            = use_pbar,
+            exact_predictions   = exact_predictions,
+            exact_method        = exact_method,
+        )
+        
+        return stats
+    
+    #####################################
     
     def __repr__(self):
         return f"NQS(logansatz={self._net},sampler={self._sampler},backend={self._backend_str},mod={self.modified})"
@@ -1968,6 +2204,10 @@ class NQS(MonteCarloSolver):
                 Details about the loaded ansatz.
             - 'usage': 
                 Example workflows and common operations.
+            - 'train':
+                Training with the train() method (LR scheduling, SR, etc.).
+            - 'checkpoints':
+                Saving and loading model weights and checkpoints.
         """
         topic   = topic.lower().strip()
         msg     = ""
@@ -1988,7 +2228,7 @@ class NQS(MonteCarloSolver):
                 
                 Key Methods:
                 - train(...): Optimize parameters via VMC/TDVP.
-                - sample(...): Generate configurations s ~ |Psi(s)|^mu (default mu=2 - squared amplitude).
+                - sample(...): Generate configurations s ~ |Psi(s)|^{self._sampler._mu} (default mu=2 - squared amplitude).
                 - evaluate(s): Compute log(Psi(s)).
                 - set_modifier(O): Transform ansatz to O|Psi>.
                 """
@@ -2085,8 +2325,107 @@ class NQS(MonteCarloSolver):
                 print(f"<Sx_0> = {{obs_x.mean:.4f}} +/- {{obs_x.error:.4f}}")
                 """
         
+        elif topic == "train":
+            msg = f"""
+                {border}
+                NQS Solver Help: Training with train()
+                {border}
+                The train() method provides a convenient way to train the NQS
+                without manually creating an NQSTrainer instance.
+                
+                Basic Usage:
+                    stats = psi.train(n_epochs=300)
+                
+                Key Parameters:
+                - n_epochs: Number of training epochs (default: 300)
+                - checkpoint_every: Save checkpoint every N epochs (default: 50)
+                - override: If True (default), create new trainer; if False, reuse existing
+                
+                Learning Rate Scheduling:
+                    # Constant LR
+                    stats = psi.train(lr=1e-3)
+                    
+                    # Cosine annealing (recommended)
+                    stats = psi.train(lr=1e-2, lr_scheduler='cosine', min_lr=1e-5)
+                    
+                    # Exponential decay (gamma^epoch)
+                    stats = psi.train(lr=1e-2, lr_scheduler='exponential', lr_decay=0.99)
+                
+                Stochastic Reconfiguration:
+                    # Standard SR
+                    stats = psi.train(use_sr=True, diag_shift=1e-4)
+                    
+                    # MinSR (memory efficient for large networks)
+                    stats = psi.train(use_minsr=True)
+                    
+                    # Plain gradient descent
+                    stats = psi.train(use_sr=False)
+                
+                Comparison with Exact Diagonalization:
+                    hamil.diagonalize()
+                    stats = psi.train(exact_predictions=hamil.eigenvalues, exact_method='lanczos')
+                
+                Continuing Training (reuse optimizer state):
+                    stats = psi.train(n_epochs=100)         # First run
+                    stats = psi.train(n_epochs=100, override=False)  # Continue
+                
+                Accessing the Trainer:
+                    psi.train(n_epochs=100)
+                    trainer = psi.trainer  # Access underlying NQSTrainer
+                    
+                Current Status:
+                - Trainer exists: {self._trainer is not None}
+                - Trainer type: {type(self._trainer).__name__ if self._trainer else 'None'}
+                """
+        
+        elif topic == "checkpoints":
+            msg = f"""
+                {border}
+                NQS Solver Help: Checkpoints & I/O
+                {border}
+                Save and load model weights for resuming training or inference.
+                
+                Manual Save/Load (Weights Only):
+                    # Save current network parameters
+                    psi.save_weights("my_model.h5")
+                    
+                    # Load weights (network architecture must match)
+                    psi.load_weights("my_model.h5")
+                    
+                    # With custom path
+                    psi.save_weights("/path/to/checkpoints/epoch_100.h5")
+                
+                Automatic Checkpoints During Training:
+                    stats = psi.train(
+                        n_epochs=300,
+                        checkpoint_every=50,       # Save every 50 epochs
+                        save_path="./checkpoints"  # Directory for auto-saves
+                    )
+                    # Creates: ./checkpoints/epoch_50.h5, epoch_100.h5, ...
+                
+                Resume Training from Checkpoint:
+                    # Load weights from previous run
+                    psi.load_weights("./checkpoints/epoch_200.h5")
+                    
+                    # Continue training (new trainer)
+                    stats = psi.train(n_epochs=100)
+                    
+                    # Or continue with same optimizer state
+                    stats = psi.train(n_epochs=100, override=False)
+                
+                File Format:
+                    - HDF5 (.h5) format for weights
+                    - Contains: network parameters, metadata
+                    - Compatible with JAX/Flax serialization
+                
+                Tips:
+                    - Always save after successful training
+                    - Use descriptive filenames (e.g., 'gs_N16_E-5.234.h5')
+                    - Keep checkpoint_every reasonable (50-100 epochs)
+                """
+        
         else:
-            msg = f"Unknown topic '{topic}'. Try: 'general', 'modifier', 'sampling', 'usage'."
+            msg = f"Unknown topic '{topic}'. Try: 'general', 'modifier', 'sampling', 'usage', 'train', 'checkpoints'."
             
         print(msg)
 

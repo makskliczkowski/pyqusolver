@@ -16,9 +16,9 @@ from typing import List, Tuple, Union, Optional
 
 # Assume these are available from the QES package:
 try:
-    import QES.Algebra.hilbert as hilbert_module
-    import QES.Algebra.hamil as hamil_module
-    from QES.Algebra.Operator import operators_spin as operators_spin_module
+    import QES.Algebra.hilbert  as hilbert_module
+    import QES.Algebra.hamil    as hamil_module
+    from QES.Algebra.Operator   import operators_spin as operators_spin_module
 except ImportError as e:
     raise ImportError("Required QES modules are not available.") from e
 

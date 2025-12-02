@@ -44,9 +44,13 @@ Usage Example:
     >>> # 3. Define NQS Physics
     >>> psi = NQS(net=net, sampler=sampler, model=model)
     >>> 
-    >>> # 4. Train (using 'kitaev' preset for frustrated systems)
+    # 4. Train (using 'kitaev' preset for frustrated systems)
     >>> trainer = NQSTrainer(nqs=psi, phases="kitaev")
-    >>> # trainer.train() # Uncomment to run actual training
+    >>> # stats = trainer.train() # Uncomment to run actual training
+    >>>
+    >>> # Or use the convenient train() method directly on NQS:
+    >>> # stats = psi.train(n_epochs=300, lr=1e-2, lr_scheduler='cosine')
+    >>> # stats = psi.train(n_epochs=100, override=False)  # Continue training
 
 Ground State Optimization Example:
 ----------------------------------
@@ -83,6 +87,15 @@ Ground State Optimization Example:
     print("Starting Ground State Optimization...")
     # stats = trainer.train() # Uncomment to run actual training
     # print(f"Final Energy: {stats.history[-1]:.5f}")
+    
+    # Alternative: Use train() method directly on NQS
+    # stats = psi.train(n_epochs=300, lr=1e-2, lr_scheduler='cosine', use_sr=True)
+    # stats = psi.train(n_epochs=100, override=False)  # Continue with same trainer
+    
+    # 6. Save/Load Checkpoints
+    # psi.save_weights("ground_state.h5")  # Save network weights
+    # psi.load_weights("ground_state.h5")  # Load network weights
+    # Trainer checkpoints are saved automatically every checkpoint_every epochs
 
 Excited State Optimization Example:
 -----------------------------------
@@ -139,6 +152,37 @@ Excited State Optimization Example:
     print("Starting Excited State Optimization...")
     # stats = trainer.train() # Uncomment to run actual training
     # print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
+    
+    # Alternative: Use train() method with lower_states
+    # stats = psi_excited.train(
+    #     n_epochs=300,
+    #     lower_states=[psi_ground],
+    #     lr=1e-2,
+    #     lr_scheduler='cosine'
+    # )
+    
+    # 5. Save/Load
+    # psi_excited.save_weights("excited_state.h5")
+
+Checkpoint Management:
+----------------------
+    # Manual Save/Load (weights only)
+    psi.save_weights("checkpoint.h5")
+    psi.load_weights("checkpoint.h5")
+    
+    # Automatic checkpoints during training
+    stats = psi.train(
+        n_epochs=300,
+        checkpoint_every=50,      # Save every 50 epochs
+        save_path="./checkpoints" # Directory for checkpoints
+    )
+    
+    # Training creates files like:
+    # ./checkpoints/epoch_50.h5, epoch_100.h5, ...
+    
+    # Resume training from checkpoint
+    psi.load_weights("./checkpoints/epoch_200.h5")
+    stats = psi.train(n_epochs=100)  # Continue from loaded state
 
 ---------------------------------------------------------------------
 File        : QES/NQS/__init__.py
@@ -235,6 +279,10 @@ trainer = NQSTrainer(
 print("Starting Ground State Optimization...")
 stats = trainer.train()
 print(f"Final Energy: {stats.history[-1]:.5f}")
+
+# Alternative: Use psi.train() directly
+# stats = psi.train(n_epochs=300, lr=1e-2, lr_scheduler='cosine')
+# psi.save_weights("ground_state.h5")  # Save weights
 """
 
     excited_body = """
@@ -265,6 +313,10 @@ trainer = NQSTrainer(
 print("Starting Excited State Optimization...")
 stats = trainer.train()
 print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
+
+# Alternative: Use psi.train() with lower_states
+# stats = psi_excited.train(n_epochs=300, lower_states=[psi_ground], lr=1e-2)
+# psi_excited.save_weights("excited_state.h5")
 """
 
     if mode.lower() == 'excited':
