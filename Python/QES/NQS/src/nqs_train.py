@@ -38,12 +38,11 @@ except ImportError:
 
 # QES General Imports
 try:
-    from QES.general_python.common.flog         import Logger
+    from QES.general_python.common.flog         import Logger, get_global_logger
     from QES.general_python.common.timer        import timeit
     from QES.general_python.common.hdf5man      import HDF5Manager
 except ImportError:
-    import logging
-    Logger = logging.getLogger 
+    raise ImportError("QES general modules missing.")
 
 #! NQS Imports
 try:
@@ -415,8 +414,8 @@ class NQSTrainer:
         '''
         
         if nqs is None:         raise ValueError(self._ERR_NO_NQS)
-        self.nqs                = nqs                                           # Most important component
-        self.logger             = logger or Logger("nqs_trainer")               # Logger
+        self.nqs                = nqs                                               # Most important component
+        self.logger             = logger
         self.n_batch            = n_batch
         
         # Validate lower states
@@ -431,7 +430,7 @@ class NQSTrainer:
             try:
                 timing_mode             = NQSTimeModes[timing_mode.upper()]
                 self.timing_mode        = timing_mode
-                self.logger.info(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color='green')
+                if self.logger:         self.logger.info(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color='green')
             except KeyError:
                 raise ValueError(self._ERR_INVALID_TIMING_MODE)
             self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
@@ -451,7 +450,7 @@ class NQSTrainer:
         # Setup TDVP (Physics Engine)
         self.tdvp = tdvp
         if self.tdvp is None:
-            self.logger.warning("No TDVP engine provided. Creating default TDVP instance.", lvl=0, color='yellow')
+            if self.logger: self.logger.warning("No TDVP engine provided. Creating default TDVP instance.", lvl=0, color='yellow')
             self.tdvp = TDVP(
                             use_sr          =   use_sr, 
                             use_minsr       =   use_minsr,
@@ -462,7 +461,7 @@ class NQSTrainer:
                             sr_precond      =   self.pre_solver,
                             backend         =   nqs.backend
                         )                    
-            self.logger.info(f"Created default TDVP engine {self.tdvp}", lvl=1, color='yellow')
+            if self.logger: self.logger.info(f"Created default TDVP engine {self.tdvp}", lvl=1, color='yellow')
             
         # Setup ODE Solver
         try:
@@ -552,7 +551,7 @@ class NQSTrainer:
             elif isinstance(sched, str):
                 # String scheduler type -> create via factory
                 init = init_val if init_val is not None else (1e-2 if param_name == 'lr' else 1e-3)
-                self.logger.info(f"Creating '{sched}' scheduler for {param_name} (init={init:.2e})", lvl=2, color='blue')
+                if self.logger: self.logger.debug(f"Creating '{sched}' scheduler for {param_name} (init={init:.2e})", lvl=2, color='blue')
                 return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, **kwargs)
             
             elif callable(sched) or isinstance(sched, PhaseScheduler):
@@ -572,7 +571,7 @@ class NQSTrainer:
         
         # Case 2: Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
         elif isinstance(phases, str):
-            self.logger.info(f"Initializing training phases with preset: '{phases}'")
+            if self.logger: self.logger.debug(f"Initializing training phases with preset: '{phases}'")
             self.lr_scheduler, self.reg_scheduler   = create_phase_schedulers(phases, self.logger)
             # diag_scheduler is separate from phase presets
             self.diag_scheduler                     = _resolve_scheduler(diag_scheduler, diag_shift, 'diag', n_epochs)
@@ -773,7 +772,7 @@ class NQSTrainer:
         # Auto-detect epochs from scheduler if not provided
         if n_epochs is None and isinstance(self.lr_scheduler, PhaseScheduler):
             n_epochs = sum(p.epochs for p in self.lr_scheduler.phases)
-            self.logger.info(f"Auto-detected total epochs from phases: {n_epochs}")
+            if self.logger: self.logger.info(f"Auto-detected total epochs from phases: {n_epochs}")
         
         # Reset stats if needed, if not we continue accumulating
         if reset_stats:
@@ -860,7 +859,7 @@ class NQSTrainer:
                         
                     pbar.set_postfix(postfix)
                 else:
-                    self.logger.info(f"Epoch {epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
+                    if self.logger: self.logger.info(f"Epoch {epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
 
                 # Checkpointing
                 if epoch % checkpoint_every == 0 or epoch == n_epochs - 1:
@@ -868,19 +867,19 @@ class NQSTrainer:
 
                 # Early Stopping
                 if np.isnan(mean_loss):
-                    self.logger.error("Energy is NaN. Stopping training.")
+                    if self.logger: self.logger.error("Energy is NaN. Stopping training.")
                     break
 
                 if self.early_stopper and self.early_stopper(mean_loss):
-                    self.logger.info(f"Early stopping triggered at epoch {epoch}")
+                    if self.logger: self.logger.info(f"Early stopping triggered at epoch {epoch}")
                     break
                 
         except KeyboardInterrupt:
-            self.logger.warning("Training interrupted by user.")
+            if self.logger: self.logger.warning("Training interrupted by user.")
         except StopIteration as e:
-            self.logger.info(f"Training stopped: {e}")
+            if self.logger: self.logger.info(f"Training stopped: {e}")
         except Exception as e:
-            self.logger.error(f"An error occurred during training: {e}")
+            if self.logger: self.logger.error(f"An error occurred during training: {e}")
             if use_pbar: pbar.close()
             raise e
         
@@ -890,7 +889,7 @@ class NQSTrainer:
         self.stats.history_std  = np.array(self.stats.history_std).flatten().tolist()
         self.save_checkpoint(epoch + 1, save_path, fmt="h5", overwrite=True, **kwargs)
         
-        self.logger.info(f"Training completed in {time.time() - t0:.2f} seconds over {len(self.stats.history)}/{n_epochs} epochs.", lvl=0, color='green')
+        if self.logger: self.logger.info(f"Training completed in {time.time() - t0:.2f} seconds over {len(self.stats.history)}/{n_epochs} epochs.", lvl=0, color='green')
         return self.stats
 
     # ------------------------------------------------------
@@ -954,7 +953,7 @@ class NQSTrainer:
             os.makedirs(str(Path(path).parent), exist_ok=True)
 
         if not overwrite and os.path.exists(final_path):
-            self.logger.warning(f"Checkpoint file {final_path} already exists and overwrite is False. Skipping save.", lvl=1, color='yellow')
+            if self.logger: self.logger.warning(f"Checkpoint file {final_path} already exists and overwrite is False. Skipping save.", lvl=1, color='yellow')
             return None
         
         # Save training history/stats
@@ -963,7 +962,7 @@ class NQSTrainer:
             filename    = os.path.basename(final_path_stats), 
             data        = self.stats.to_dict()
         )
-        self.logger.info(f"Saved training stats to {final_path_stats}", lvl=2, color='green')
+        if self.logger: self.logger.info(f"Saved training stats to {final_path_stats}", lvl=2, color='green')
 
         # Delegate weight saving to NQS (which uses checkpoint manager)
         return self.nqs.save_weights(
@@ -1029,19 +1028,19 @@ class NQSTrainer:
                                                         total   = stats_data.get("/timings/total", []),
                                                     )
                             )
-            self.logger.info(f"Loaded training history from {filename_stats}", lvl=1, color='green')
+            if self.logger: self.logger.info(f"Loaded training history from {filename_stats}", lvl=1, color='green')
             if self.stats.has_exact:
-                self.logger.info(f"Loaded exact predictions ({self.stats.exact_method}): ground state = {self.stats.exact_ground_state:.6f}", lvl=2, color='green')
+                if self.logger: self.logger.info(f"Loaded exact predictions ({self.stats.exact_method}): ground state = {self.stats.exact_gs:.6f}", lvl=2, color='green')
         except Exception as e:
-            self.logger.warning(f"Could not load training stats from {filename_stats}: {e}", lvl=0, color='yellow')
+            if self.logger: self.logger.warning(f"Could not load training stats from {filename_stats}: {e}", lvl=0, color='yellow')
         
         # Load weights
         if load_weights:
             try:
                 self.nqs.load_weights(step=step, filename=final_path)
-                self.logger.info(f"Loaded weights for step {step} from {final_path}", lvl=2, color='green')
+                if self.logger: self.logger.info(f"Loaded weights for step {step} from {final_path}", lvl=2, color='green')
             except Exception as e:
-                self.logger.error(f"Failed to load weights: {e}", lvl=0, color='red')
+                if self.logger: self.logger.error(f"Failed to load weights: {e}", lvl=0, color='red')
                 raise
         
         return self.stats

@@ -26,25 +26,16 @@ from dataclasses import dataclass
 
 try:
     # general thingies
-    from QES.general_python.common.flog import get_global_logger, Logger
-    from QES.general_python.common.binary import bin_search
-    from QES.general_python.lattices.lattice import Lattice, LatticeDirection
+    from QES.general_python.common.flog             import get_global_logger, Logger
+    from QES.general_python.common.binary           import bin_search
+    from QES.general_python.lattices.lattice        import Lattice, LatticeDirection
     
     # already imported from QES.general_python
-    from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE
+    from QES.general_python.algebra.utils           import get_backend, JAX_AVAILABLE
 
     #################################################################################################
-    from QES.Algebra.Operator.operator import ( 
-        Operator, 
-        LocalSpace, LocalSpaceTypes, 
-        StateTypes,      
-        SymmetryGenerators, GlobalSymmetries, OperatorTypeActing,
-        operator_identity
-    )
-    
+    from QES.Algebra.Operator.operator              import LocalSpace, StateTypes, operator_identity
     from QES.Algebra.globals                        import GlobalSymmetry
-    from QES.Algebra.Symmetries.base                import SymmetryOperator
-    from QES.Algebra.Symmetries.translation         import TranslationSymmetry
     from QES.Algebra.hilbert_config                 import HilbertConfig
 except ImportError as e:
     raise ImportError(f"Failed to import required modules in hilbert.py: {e}") from e
@@ -150,25 +141,25 @@ class HilbertSpace(ABC):
 
     def __init__(self,
                 # core definition - elements to define the modes
-                ns              : Union[int, None]                  = None,
-                lattice         : Union[Lattice, None]              = None,
-                nh              : Union[int, None]                  = None,
+                ns              : Union[int, None]                                  = None,
+                lattice         : Union[Lattice, None]                              = None,
+                nh              : Union[int, None]                                  = None,
                 # mode specificaton
-                is_manybody     : bool                              = True,
-                part_conserv    : Optional[bool]                    = True,
+                is_manybody     : bool                                                  = True,
+                part_conserv    : Optional[bool]                                        = True,
                 # local space properties - for many body
-                sym_gen         : Union[dict, None]                 = None,
-                global_syms     : Union[List[GlobalSymmetry], None] = None,
-                gen_mapping     : bool                              = False,
-                local_space     : Optional[Union[LocalSpace, str]]  = None,
+                sym_gen         : Union[dict, None]                                     = None,
+                global_syms     : Union[List[GlobalSymmetry], None]                     = None,
+                gen_mapping     : bool                                                  = False,
+                local_space     : Optional[Union[LocalSpace, str]]                      = None,
                 # general parameters
-                state_type      : StateTypes                        = StateTypes.INTEGER,
-                backend         : str                               = 'default',
-                dtype           : np.dtype                          = np.float64,
-                basis           : Optional[str]                     = None,
+                state_type      : StateTypes                                            = StateTypes.INTEGER,
+                backend         : str                                                   = 'default',
+                dtype           : np.dtype                                              = np.float64,
+                basis           : Optional[str]                                         = None,
                 boundary_flux   : Optional[Union[float, Dict[LatticeDirection, float]]] = None,
-                state_filter    : Optional[Callable[[int], bool]]   = None,
-                logger          : Optional[Logger]                  = None,
+                state_filter    : Optional[Callable[[int], bool]]                       = None,
+                logger          : Optional[Logger]                                      = None,
                 **kwargs):
         r"""
         Initializes a HilbertSpace object with specified system and local space properties, symmetries, and backend configuration.
@@ -1244,34 +1235,6 @@ class HilbertSpace(ABC):
         if self._local_space is None:
             return tuple()
         return self._local_space.list_operator_keys()
-
-    def build_local_operator(self,
-                             key            : str,
-                             *,
-                             type_override  : Optional[OperatorTypeActing] = None,
-                             name           : Optional[str] = None) -> Operator:
-        """
-        Instantiate a registered local operator by name.
-
-        Parameters
-        ----------
-        key:
-            Identifier of the onsite operator as provided by the catalog.
-        type_override:
-            Optionally force the acting type (local/global/correlation).
-        name:
-            Optional display name for the resulting Operator.
-        """
-        if self._local_space is None:
-            raise ValueError("Hilbert space was constructed without a local space definition.")
-        local_op = self._local_space.get_op(key)
-        return operator_from_local(
-            local_op,
-            lattice=self._lattice,
-            ns=self._ns,
-            name=name,
-            type_override=type_override,
-        )
     
     def get_operator_elem(self, col_idx: int):
         """

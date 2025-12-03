@@ -322,7 +322,8 @@ class NQSCheckpointManager:
                     return restored_items['default']
                 return restored_items
             except (ValueError, KeyError, TypeError) as e1:
-                self._log(f"Composite restore failed ({e1}), trying StandardRestore...", lvl=2)
+                pass
+                # self._log(f"Composite restore failed ({e1}), trying StandardRestore...", lvl=2)
                 
             # Strategy 2: Legacy format with simple StandardRestore
             try:
