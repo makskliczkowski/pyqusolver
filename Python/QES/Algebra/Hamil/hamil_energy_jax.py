@@ -161,8 +161,8 @@ def local_energy_jax_wrap(
     operator_terms_list_ns    : List,
     operator_terms_list_nmod  : List,
     operator_terms_list_nmod_ns : List,
-    n_max                     : Optional[int] = 1,
-    dtype                     : Optional[jnp.dtype] = jnp.complex64,
+    n_max                     : Optional[int]       = 1,
+    dtype                     : Optional[jnp.dtype] = jnp.complex128,
 ) -> Callable:
     """
     Build a JIT-compiled local-energy function
@@ -185,8 +185,9 @@ def local_energy_jax_wrap(
     # Normalise dtype to a JAX dtype; default to complex for safety
     if not isinstance(dtype, jnp.dtype):
         dtype = jnp.dtype(dtype)
+        
     if dtype not in (jnp.complex64, jnp.complex128):
-        dtype = jnp.complex64
+        dtype = jnp.complex128
 
     # -------------------------------------------------------------------------
     # 1. Unpack and flatten all operator groups
@@ -227,9 +228,9 @@ def local_energy_jax_wrap(
 
     def wrap_nos(f):
         def op(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-            new_states, coeffs = f(state)
-            new_states = jnp.asarray(new_states, dtype=state.dtype)
-            coeffs     = jnp.asarray(coeffs,     dtype=dtype)
+            new_states, coeffs  = f(state)
+            new_states          = jnp.asarray(new_states, dtype=state.dtype)
+            coeffs              = jnp.asarray(coeffs,     dtype=dtype)
             if new_states.ndim == 1:
                 new_states = new_states.reshape((1, new_states.shape[0]))
             return new_states, coeffs.reshape((-1,))
@@ -237,7 +238,7 @@ def local_energy_jax_wrap(
 
     # Modifying operators (may return many states)
     f_mod_sites_wrapped  = tuple(wrap_mod(f_mod_sites[i],  i_mod_sites[i])  for i in range(len(f_mod_sites)))
-    f_mod_nos_wrapped    = tuple(wrap_nos(f_mod_nos[i])                    for i in range(len(f_mod_nos)))
+    f_mod_nos_wrapped    = tuple(wrap_nos(f_mod_nos[i])                     for i in range(len(f_mod_nos)))
 
     # Non-modifying operators: we wrap them to match the diagonal interface
     # expected by local_energy_jax_nonmod_nosites (state -> (state, coeff))
@@ -286,7 +287,7 @@ def local_energy_jax_wrap(
                 m_nmod_nos_arr,
                 f_nmod_sites_t,
                 m_nmod_sites_arr,
-            )  # shape (1,)
+            ).astype(dtype)  # shape (1,)
 
             states_list   = [state.reshape((1, ns))]
             energies_list = [diag.reshape((1,))]
