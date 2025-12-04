@@ -84,8 +84,13 @@ class HeisenbergKitaev(Hamiltonian):
                 hx                  : Union[List[float], None, float]       = None,
                 hy                  : Union[List[float], None, float]       = None,
                 hz                  : Union[List[float], None, float]       = None,
-                # Classical impurities (s^z_i * <s^z_imp> * cos(theta), with theta the angle between the spin and the z-axis)
-                impurities          : List[Tuple[int, float]]               = [],
+                # Classical impurities 
+                # Format: List of tuples, either:
+                #   - (site, amplitude)                     -> z-polarized impurity: amplitude * sig^z_i
+                #   - (site, phi, theta, amplitude)         -> arbitrary direction using spherical coordinates:
+                #       sin(theta)*cos(phi)*ampl * sig^x_i + sin(theta)*sin(phi)*ampl * sig^y_i + cos(theta)*ampl * sig^z_i
+                #     where theta is polar angle from z-axis, phi is azimuthal angle in xy-plane
+                impurities          : List[Tuple]                           = [],
                 # other parameters
                 dtype               : type                                  = np.float64,
                 backend             : str                                   = "default",
@@ -123,10 +128,23 @@ class HeisenbergKitaev(Hamiltonian):
             dlt : Union[List[float], None, float], optional
                 Anisotropy parameter(s). Default is 1.0.
                 Can be a single float (uniform) or a list (site-dependent).
-            impurities : List[Tuple[int, float]], optional
-                List of classical impurities defined as tuples of (site index, coupling strength). Default is [].
-                Each impurity contributes to the Hamiltonian as s^z_i * <s^z_imp> * cos(theta), with theta the angle between the spin and the z-axis.
-                Example: [(0, 0.5), (3, -0.3)] adds impurities at sites 0 and 3 with respective strengths.
+            impurities : List[Tuple], optional
+                List of classical impurities. Supports two formats:
+                
+                1. Z-polarized (2-tuple): (site_index, amplitude)
+                    Adds: amplitude * sig^z_i
+                    Example: [(0, 0.5), (3, -0.3)] adds z-impurities at sites 0 and 3.
+                
+                2. Arbitrary direction (4-tuple): (site_index, phi, theta, amplitude)
+                    Uses spherical coordinates where:
+                    - theta: polar angle from z-axis (0 = +z, pi = -z)
+                    - phi: azimuthal angle in xy-plane (0 = +x, pi/2 = +y)
+                    Adds: sin(theta)*cos(phi)*ampl * sig^x_i 
+                        + sin(theta)*sin(phi)*ampl * sig^y_i 
+                        + cos(theta)*ampl * sig^z_i
+                    Example:    [(0, 0, np.pi/2, 1.0)]          adds x-polarized impurity at site 0.
+                                [(0, np.pi/2, np.pi/2, 1.0)]    adds y-polarized impurity at site 0.
+                                [(0, 0, 0, 1.0)]                adds z-polarized impurity at site 0.
             dtype : type, optional
                 Data type for numerical computations. Default is np.float64.
             backend : str, optional
@@ -165,8 +183,11 @@ class HeisenbergKitaev(Hamiltonian):
         self._gx, self._gy, self._gz    = Gamma if isinstance(Gamma, (list, np.ndarray, tuple)) else (Gamma, Gamma, Gamma) if Gamma is not None else (None, None, None)
         self._dlt                       = dlt   if isinstance(dlt, (list, np.ndarray, tuple)) else [dlt] * self.ns if dlt is not None else None
         self._kx, self._ky, self._kz    = K     if isinstance(K, (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K)
-        # setup the impurities
-        self._impurities                = impurities if (isinstance(impurities, list) and all(isinstance(i, tuple) and len(i) == 2 for i in impurities)) else []
+        
+        # setup the impurities - validate format: either 2-tuple (site, ampl) or (3,4)-tuple (site, phi, theta, ampl)
+        self._impurities                = []
+        self._setup_impurities(impurities)
+        
         self._log(f"Initializing Heisenberg-Kitaev Hamiltonian on lattice: {lattice}", lvl = 1, log = 'info', color = 'green')
         self._log(f"Impurities provided: {self._impurities}", lvl = 2, log = 'info', color = 'blue')
             
@@ -180,16 +201,16 @@ class HeisenbergKitaev(Hamiltonian):
         self._is_sparse                 = True
         
         #! Calculate maximum local coupling channels
-        # 3 from Heisenberg + 3 from Kitaev + 6 from Gamma + 2 from fields + impurities len(self._impurities)
+        # 3 from Heisenberg + 3 from Kitaev + 6 from Gamma + 3 from fields + 3*impurities (x,y,z components each)
         self._max_local_ch              = 3                                             + \
-                                        (3 if self._j is not None else  0)              + \
+                                        (3 if self._j  is not None else 0)              + \
                                         (2 if self._gx is not None else 0)              + \
                                         (2 if self._gy is not None else 0)              + \
                                         (2 if self._gz is not None else 0)              + \
                                         (1 if self._hz is not None else 0)              + \
                                         (1 if self._hy is not None else 0)              + \
                                         (1 if self._hx is not None else 0)              + \
-                                        len(self._impurities)
+                                        3 * len(self._impurities)                       # Each impurity can have x, y, z components
         self.set_couplings()
         
         # functions for local energy calculation in a jitted way (numpy and jax)
@@ -198,6 +219,36 @@ class HeisenbergKitaev(Hamiltonian):
         self._instr_function            = operators_spin_module.sigma_composition_integer(is_complex = self._iscpx)
         self._instr_max_out             = len(self._instr_codes) + 1
         self._set_local_energy_functions()
+    
+    # ----------------------------------------------------------------------------------------------
+    
+    def _setup_impurities(self, impurities: List[Tuple]):
+        '''
+        Sets up the impurities list in the required format.
+        Supports two formats:
+            1. Z-polarized (2-tuple): (site_index, amplitude)
+            2. Full spherical coordinates (4-tuple): (site_index, phi, theta, amplitude)
+        '''
+        if impurities is None:
+            self._impurities = []
+        else:
+            self._impurities = []
+            for imp in impurities:
+                if isinstance(imp, tuple):
+                    if len(imp) == 2:
+                        # Z-polarized: (site, amplitude) -> convert to (site, 0, 0, amplitude) for z-direction
+                        site, ampl = imp
+                        self._impurities.append((site, 0.0, 0.0, ampl)) # theta=0 means z-polarized
+                    elif len(imp) >= 3:
+                        # Full spherical: (site, phi, theta, amplitude)
+                        if len(imp) == 4:
+                            self._impurities.append(imp)
+                        else:
+                            self._impurities.append((imp[0], imp[1], imp[2], 1.0)) # default amplitude=1.0
+                    else:
+                        raise ValueError(f"Impurity tuple must have 2 or 4 elements, got {len(imp)}: {imp}")
+                else:
+                    raise ValueError(f"Each impurity must be a tuple, got {type(imp)}: {imp}")
     
     # ----------------------------------------------------------------------------------------------
     
@@ -234,6 +285,14 @@ class HeisenbergKitaev(Hamiltonian):
             Hamiltonian.fmt("hy",      self._hy,       prec=prec) if self._hy  is not None else "",
             Hamiltonian.fmt("hx",      self._hx,       prec=prec) if self._hx  is not None else "",
         ]
+        # handle impurities
+        if len(self._impurities) > 0:
+            imp_strs = []
+            for site, phi, theta, ampl in self._impurities:
+                phi_i   = phi   % (2 * np.pi)
+                theta_i = theta % np.pi
+                imp_strs.append(f"{site}:phi={phi_i:.{prec}f}:theta={theta_i:.{prec}f}:ampl={ampl:.{prec}f}")
+            parts.append(f"impurities[{' ; '.join(imp_strs)}]")
         
         parts = [p for p in parts if p]
         return sep.join(parts) + ")"
@@ -345,29 +404,51 @@ class HeisenbergKitaev(Hamiltonian):
             self._log(f"Starting i: {i}", lvl = 1, log = 'debug')
             
             #? z-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
-            if self._hz is not None and not np.isclose(self._hz[i], 0.0, rtol=1e-10):
+            if Hamiltonian._ADD_CONDITION(self._hz, i):
                 z_field = SINGLE_TERM_MULT * self._hz[i]
                 self.add(op_sz_l, multiplier = z_field, modifies = False, sites = [i])
                 self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
 
             #? y-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
-            if self._hy is not None and not np.isclose(self._hy[i], 0.0, rtol=1e-10):
+            if Hamiltonian._ADD_CONDITION(self._hy, i):
                 y_field = SINGLE_TERM_MULT * self._hy[i]
                 self.add(op_sy_l, multiplier = y_field, modifies = True, sites = [i])
                 self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl = 2, log = 'debug')
 
             #? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
-            if self._hx is not None and not np.isclose(self._hx[i], 0.0, rtol=1e-10):
+            if Hamiltonian._ADD_CONDITION(self._hx, i):
                 x_field = SINGLE_TERM_MULT * self._hx[i]
                 self.add(op_sx_l, multiplier = x_field, modifies = True, sites = [i])
                 self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = 'debug')
             
-            #? impurities
-            for (imp_site, imp_strength) in self._impurities:
-                if imp_site == i:
-                    imp_field = SINGLE_TERM_MULT * imp_strength
-                    self.add(op_sz_l, multiplier = imp_field, modifies = False, sites = [i])
-                    self._log(f"Adding impurity Sz at {i} with value {imp_field:.2f}", lvl = 2, log = 'debug')
+            #? impurities - now supports arbitrary spin directions via spherical coordinates
+            # Format: (site, phi, theta, amplitude) where all are stored in this 4-tuple format
+            # Components: sin(theta)*cos(phi)*ampl * sig^x + sin(theta)*sin(phi)*ampl * sig^y + cos(theta)*ampl * sig^z
+            for (imp_site, phi, theta, ampl) in self._impurities:
+                if imp_site == i and Hamiltonian._ADD_CONDITION(ampl):
+                    # Compute spherical coordinate components
+                    sin_theta   = np.sin(theta)
+                    cos_theta   = np.cos(theta)
+                    sin_phi     = np.sin(phi)
+                    cos_phi     = np.cos(phi)
+                    
+                    # Z-component: cos(theta) * amplitude
+                    imp_z       = SINGLE_TERM_MULT * ampl * cos_theta
+                    if Hamiltonian._ADD_CONDITION(imp_z):
+                        self.add(op_sz_l, multiplier=imp_z, modifies=False, sites=[i])
+                        self._log(f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log='debug')
+                    
+                    # X-component: sin(theta) * cos(phi) * amplitude
+                    imp_x       = SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
+                    if Hamiltonian._ADD_CONDITION(imp_x):
+                        self.add(op_sx_l, multiplier=imp_x, modifies=True, sites=[i])
+                        self._log(f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log='debug')
+                    
+                    # Y-component: sin(theta) * sin(phi) * amplitude
+                    imp_y       = SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
+                    if Hamiltonian._ADD_CONDITION(imp_y):
+                        self.add(op_sy_l, multiplier=imp_y, modifies=True, sites=[i])
+                        self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log='debug')
 
             #? now check the correlation operators
             nn_num = nn_nums[i]
@@ -399,15 +480,15 @@ class HeisenbergKitaev(Hamiltonian):
                         sx_sx  += phase * CORR_TERM_MULT * self._kx if self._kx is not None else 0.0
                         
                 if True:
-                    if not np.isclose(sz_sz, 0.0, rtol=1e-10):
+                    if Hamiltonian._ADD_CONDITION(sz_sz):
                         self.add(op_sz_sz_c, sites = [i, nei], multiplier = sz_sz, modifies = False)
                         self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
                         elems += 1
-                    if not np.isclose(sx_sx, 0.0, rtol=1e-10):
+                    if Hamiltonian._ADD_CONDITION(sx_sx):
                         self.add(op_sx_sx_c, sites = [i, nei], multiplier = sx_sx, modifies = True)
                         self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
                         elems += 1
-                    if not np.isclose(sy_sy, 0.0, rtol=1e-10):
+                    if Hamiltonian._ADD_CONDITION(sy_sy):
                         self.add(op_sy_sy_c, sites = [i, nei], multiplier = sy_sy, modifies = True)
                         self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
                         elems += 1
@@ -416,7 +497,7 @@ class HeisenbergKitaev(Hamiltonian):
                 #! Gamma terms
                 if True:
                     #? Gamma_x terms
-                    if self._gx is not None and not np.isclose(self._gx, 0.0, rtol=1e-10) and nn == HEI_KIT_X_BOND_NEI:
+                    if Hamiltonian._ADD_CONDITION(self._gx) and nn == HEI_KIT_X_BOND_NEI:
                         val = self._gx * phase * CORR_TERM_MULT
                         self.add(op_sy_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sz_sy_c, sites = [i, nei], multiplier = val, modifies = True)
@@ -424,7 +505,7 @@ class HeisenbergKitaev(Hamiltonian):
                         elems += 2
 
                     # #? Gamma_y terms
-                    if self._gy is not None and not np.isclose(self._gy, 0.0, rtol=1e-10) and nn == HEI_KIT_Y_BOND_NEI:
+                    if Hamiltonian._ADD_CONDITION(self._gy) and nn == HEI_KIT_Y_BOND_NEI:
                         val = self._gy * phase * CORR_TERM_MULT
                         self.add(op_sz_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sx_sz_c, sites = [i, nei], multiplier = val, modifies = True)
@@ -432,7 +513,7 @@ class HeisenbergKitaev(Hamiltonian):
                         elems += 2
 
                     # #? Gamma_z terms
-                    if self._gz is not None and not np.isclose(self._gz, 0.0, rtol=1e-10) and nn == HEI_KIT_Z_BOND_NEI:
+                    if Hamiltonian._ADD_CONDITION(self._gz) and nn == HEI_KIT_Z_BOND_NEI:
                         val = self._gz * phase * CORR_TERM_MULT
                         self.add(op_sx_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sy_sx_c, sites = [i, nei], multiplier = val, modifies = True)

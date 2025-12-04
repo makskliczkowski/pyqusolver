@@ -477,7 +477,8 @@ class NQSEvalEngine:
             num_chains      : Optional[int]                                                 = None,
             return_stats    : Optional[bool]                                                = None,
             return_values   : bool                                                          = False,
-            log_progress    : bool                                                          = False
+            log_progress    : bool                                                          = False,
+            args            : Optional[tuple]                                               = None
         ) -> Union[Array, NQSObservable]:
         """
         Evaluate observables O(s) on sampled states s from |psi|^mu distribution.
@@ -497,6 +498,11 @@ class NQSEvalEngine:
                 Optional probability weights for importance sampling
             batch_size: 
                 Optional batch size override
+            args:
+                Optional tuple of additional arguments to pass to the observable function.
+                These are broadcast (not vmapped) across all sampled states.
+                Useful for computing correlation functions <O_i O_j> where (i, j) are
+                passed as runtime arguments, avoiding N² recompilations.
         Returns:
             NQSObservable or array of NQSObservable with observable values and statistics
         """
@@ -525,7 +531,8 @@ class NQSEvalEngine:
                         num_samples     = num_samples,
                         num_chains      = num_chains,
                         return_values   = True,
-                        log_progress    = log_progress
+                        log_progress    = log_progress,
+                        args            = args
                     )
                             
             if not single_function:

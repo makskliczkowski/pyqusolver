@@ -160,6 +160,119 @@ class NetworkFactory:
                 "arguments"     : info.arguments or {}
             }
         return {"error": "Unknown network type"}
+    
+    @staticmethod
+    def net_help():
+        rbm = """
+Restricted Boltzmann Machine (RBM) for NQS.
+
+The RBM is a single-layer dense network. It connects all visible spins
+to a layer of hidden units. It is the standard baseline for NQS.
+
+Usage
+-----
+    from QES.general_python.ml.networks import choose_network
+    
+    # 1. Define RBM Parameters
+    # ------------------------
+    # An alpha (density) of 2 means: n_hidden = 2 * n_visible
+    rbm_params = {
+        'input_shape': (100,),       # 100 spins
+        'alpha': 2,                  # Density of hidden units
+        'use_bias': True,
+        'dtype': 'complex128'        # Essential for quantum phases
+    }
+    
+    # 2. Create the Network
+    # ---------------------
+    # 'rbm' key triggers the RBM class factory
+    net = choose_network('rbm', **rbm_params)
+    
+    # 3. Initialize & Run
+    # -------------------
+    # Initialize with a random key (handled internally or explicitly)
+    # params = net.init(jax.random.PRNGKey(0))
+    # log_psi = net(params, sample_configuration)
+"""
+        cnn = """
+Convolutional Neural Network (CNN) for NQS.
+
+A deep architecture that respects the locality of physical interactions.
+Essential for 2D frustrated systems (like Kitaev or J1-J2 models) where
+local correlations are complex.
+
+Features:
+- Periodic Boundary Conditions (Torus geometry).
+- Sum Pooling: Ensures energy is extensive (scales with N).
+- Complex Weights: Captures the sign structure of the wavefunction.
+
+Usage
+-----
+    from QES.general_python.ml.networks import choose_network
+    import jax.numpy as jnp
+    
+    # 1. Define Lattice Geometry
+    # --------------------------
+    # For a 10x10 Lattice (100 spins)
+    L = 10
+    n_sites = L * L
+    
+    # 2. Define CNN Parameters
+    # ------------------------
+    cnn_params = {
+        'input_shape':  (n_sites,),
+        'reshape_dims': (L, L),          # Reshape 1D input to 2D grid
+        'features':     (16, 32, 64),    # Deep network with increasing channels
+        'kernel_sizes': ((3,3), (3,3), (3,3)),
+        'activations':  ['lncosh'] * 3,  # Holomorphic activation
+        'periodic':     True,            # Wrap edges (Torus)
+        'sum_pooling':  True,            # Sum output over all spatial sites
+        'dtype':        'complex128'
+    }
+    
+    # 3. Create the Network
+    # ---------------------
+    net = choose_network('cnn', **cnn_params)
+    
+    # 4. Debug/Check
+    # --------------
+    print(f"Total Parameters: {net.nparams}")
+    # > Total Parameters: ~25k (Complex)
+"""
+        ar = """
+Autoregressive Network (AR) for NQS.
+An autoregressive architecture that allows for exact sampling.
+Useful for large systems where MCMC sampling is challenging.
+Usage
+-----
+    from QES.general_python.ml.networks import choose_network
+    
+    # 1. Define AR Parameters
+    # -----------------------
+    ar_params = {
+        'input_shape': (100,),       # 100 spins
+        'depth': 3,                  # Number of layers
+        'num_hidden': 128,           # Hidden units per layer
+        'rnn_type': 'lstm',          # RNN cell type
+        'activations': 'relu',       # Activation function
+        'dtype': 'complex128'        # Essential for quantum phases
+    }
+    
+    # 2. Create the Network
+    # ---------------------
+    net = choose_network('ar', **ar_params)
+    
+    # 3. Initialize & Run
+    # -------------------
+    # Initialize with a random key (handled internally or explicitly)
+    # params = net.init(jax.random.PRNGKey(0))
+    # log_psi = net(params, sample_configuration)
+"""
+        return {
+                'rbm' : rbm,
+                'cnn' : cnn,
+                'ar'  : ar
+            }
 
 # ----------------------------------
 #! End of File

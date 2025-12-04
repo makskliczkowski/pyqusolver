@@ -1527,7 +1527,7 @@ else:
     sigma_xz_mixed_jnp  = None
     sigma_zy_mixed_jnp  = None
 
-def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
+def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None) -> Operator:
     r''' Factory for mixed sigma operators (e.g., \sigma _x \sigma _y). '''
     
     if sites is not None and len(sites) != 2:
@@ -1567,10 +1567,15 @@ def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
     else:
         raise ValueError(f"Unknown mixed sigma operator name: {name}")
     
+    if OperatorTypeActing.is_type_local(type_act):
+        raise ValueError("Mixed sigma operators do not support local acting type.")
+    
+    type_act        = OperatorTypeActing.Correlation if sites is None else OperatorTypeActing.Global
     return create_operator(
-        type_act    = OperatorTypeActing.Correlation if sites is None else OperatorTypeActing.Global,
+        type_act    = type_act,
         op_func_int = int_func,
         op_func_np  = np_func,
+        ns          = ns,
         op_func_jnp = jnp_func,
         lattice     = lattice,
         name        = name,
@@ -1579,24 +1584,24 @@ def make_sigma_mixed(name, lattice=None, ns=None, sites=None) -> Operator:
         sites       = sites,
     )
 
-def sig_xy(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+def sig_xy(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _x \sigma _y operator. '''
-    return make_sigma_mixed('xy', lattice, ns, sites)
-def sig_yx(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    return make_sigma_mixed('xy', lattice, ns, type_act=type_act, sites=sites)
+def sig_yx(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _y \sigma _x operator. '''
-    return make_sigma_mixed('yx', lattice, ns, sites)
-def sig_yz(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    return make_sigma_mixed('yx', lattice, ns, type_act=type_act, sites=sites)
+def sig_yz(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _y \sigma _z operator. '''
-    return make_sigma_mixed('yz', lattice, ns, sites)
-def sig_zy(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    return make_sigma_mixed('yz', lattice, ns, type_act=type_act, sites=sites)
+def sig_zy(lattice=None, ns=None, type_act='global',sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _z \sigma _y operator. '''
-    return make_sigma_mixed('zy', lattice, ns, sites)
-def sig_zx(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    return make_sigma_mixed('zy', lattice, ns, type_act=type_act, sites=sites)
+def sig_zx(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _z \sigma _x operator. '''
-    return make_sigma_mixed('zx', lattice, ns, sites)
-def sig_xz(lattice=None, ns=None, sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+    return make_sigma_mixed('zx', lattice, ns, type_act=type_act, sites=sites)
+def sig_xz(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _x \sigma _z operator. '''
-    return make_sigma_mixed('xz', lattice, ns, sites)
+    return make_sigma_mixed('xz', lattice, ns, type_act=type_act, sites=sites)
 
 # -----------------------------------------------------------------------------
 #? COMPOSITION FUNCTION BASED ON THE CODES!
