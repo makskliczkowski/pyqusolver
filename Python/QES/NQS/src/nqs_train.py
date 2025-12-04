@@ -887,7 +887,7 @@ class NQSTrainer:
         if use_pbar:            pbar.close()
         self.stats.history      = np.array(self.stats.history).flatten().tolist()
         self.stats.history_std  = np.array(self.stats.history_std).flatten().tolist()
-        self.save_checkpoint(epoch + 1, save_path, fmt="h5", overwrite=True, **kwargs)
+        self.save_checkpoint(epoch + 1, save_path, fmt="h5", overwrite=True, verbose=True, **kwargs)
         
         if self.logger: self.logger.info(f"Training completed in {time.time() - t0:.2f} seconds over {len(self.stats.history)}/{n_epochs} epochs.", lvl=0, color='green')
         return self.stats
@@ -962,7 +962,7 @@ class NQSTrainer:
             filename    = os.path.basename(final_path_stats), 
             data        = self.stats.to_dict()
         )
-        if self.logger: self.logger.info(f"Saved training stats to {final_path_stats}", lvl=2, color='green')
+        if self.logger: self.logger.say(f"Saved training stats to {final_path_stats}", lvl=2, verbose=kwargs.get('verbose', False))
 
         # Delegate weight saving to NQS (which uses checkpoint manager)
         return self.nqs.save_weights(

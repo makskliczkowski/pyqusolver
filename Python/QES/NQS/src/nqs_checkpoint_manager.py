@@ -81,33 +81,33 @@ class NQSCheckpointManager:
         logger : Optional[Any]
             Logger instance. If None, uses Python's logging module.
         """
-        self.directory      = Path(directory)
-        self.use_orbax      = use_orbax and ORBAX_AVAILABLE
-        self.max_to_keep    = max_to_keep
-        self._logger        = logger
+        self.directory          = Path(directory)
+        self.use_orbax          = use_orbax and ORBAX_AVAILABLE
+        self.max_to_keep        = max_to_keep
+        self._logger            = logger
         
         # Ensure directory exists
         self.directory.mkdir(parents=True, exist_ok=True)
-        self._log(f"Checkpoint directory set to: {self.directory}", lvl=1)
-        
         self._orbax_manager     = None
         self._checkpoint_dir    = self.directory / "checkpoints"
         
         if self.use_orbax:
             self._log("Initializing Orbax CheckpointManager.", lvl=1)
-            self._log(f"Checkpoints will be saved to: {self._checkpoint_dir}", lvl=2)
-            self._log(f"Max checkpoints to keep: {self.max_to_keep}", lvl=2)
+            self._log(f"Checkpoints (max {self.max_to_keep}) will be saved to: {self._checkpoint_dir}", lvl=2)
             self._init_orbax()
 
     # ------------------------------------------------------
     #! Internal Helpers
     # ------------------------------------------------------
 
-    def _log(self, msg: str, lvl: int = 0, color: str = None):
+    def _log(self, msg: str, lvl: int = 0, color: str = None, log = 'info'):
         """Unified logging helper."""
         if self._logger is not None:
             try:
-                self._logger.info(msg, lvl=lvl, color=color)
+                if log == 'debug':
+                    self._logger.debug(msg, lvl=lvl, color=color)
+                else:
+                    self._logger.info(msg, lvl=lvl, color=color)
             except TypeError:
                 self._logger.info(msg)
         else:
@@ -222,8 +222,7 @@ class NQSCheckpointManager:
             existing_steps = self._orbax_manager.all_steps()
             
             if save_key in existing_steps:
-                self._log(f"Overwriting existing checkpoint at step {save_key}", lvl=2)
-                # Delete the existing checkpoint directory
+                self._log(f"Overwriting existing checkpoint at step {save_key}", lvl=2, log='debug')
                 step_dir = self._checkpoint_dir / str(save_key)
                 if step_dir.exists():
                     shutil.rmtree(step_dir)
@@ -236,13 +235,12 @@ class NQSCheckpointManager:
         
         # Verify the checkpoint was actually saved
         saved_step_dir = self._checkpoint_dir / str(save_key)
-        if not saved_step_dir.exists():
-            self._log(f"WARNING: Orbax checkpoint directory {saved_step_dir} was not created!", lvl=0, color='red')
+        saved_step_dir.mkdir(parents=True, exist_ok=True)
         
         # Always save metadata as JSON alongside Orbax checkpoint
         self._save_metadata_json(step, metadata)
         
-        self._log(f"Saved Orbax checkpoint for step {step}", lvl=1, color='green')
+        self._log(f"Saved Orbax checkpoint for step {step}", lvl=1, color='green', log='debug')
         return self._checkpoint_dir / str(save_key)
 
     def _save_hdf5_wrapper(self, step: Union[int, str], params: Any, metadata: Dict[str, Any], filename: Optional[str]) -> Path:
@@ -514,7 +512,7 @@ class NQSCheckpointManager:
         with open(meta_path, 'w') as f:
             json.dump(serializable_metadata, f, indent=2)
         
-        self._log(f"Saved metadata to {meta_path}", lvl=2)
+        self._log(f"Saved metadata to {meta_path}", lvl=2, log='debug')
 
     def _make_json_serializable(self, obj: Any) -> Any:
         """Convert non-JSON-serializable objects to serializable forms."""
