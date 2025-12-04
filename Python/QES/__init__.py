@@ -52,6 +52,7 @@ __all__ = [
     # Networks
     "RBM",
     "CNN",
+    "ResNet",
     "Autoregressive",
     "SimpleNet",
     "choose_network",
@@ -142,6 +143,7 @@ _API_EXPORTS: Dict[str, str] = {
     # Networks from QES.general_python.ml
     'RBM'               : 'QES.general_python.ml.net_impl.networks.net_rbm',
     'CNN'               : 'QES.general_python.ml.net_impl.networks.net_cnn',
+    'ResNet'            : 'QES.general_python.ml.net_impl.networks.net_res',
     'Autoregressive'    : 'QES.general_python.ml.net_impl.networks.net_autoregressive',
     'SimpleNet'         : 'QES.general_python.ml.net_impl.net_simple',
     'choose_network'    : 'QES.general_python.ml.networks',

@@ -93,6 +93,19 @@ class NetworkFactory:
                 "dtype"             : "Data type for weights ('float32', 'complex64', etc.)",
             }
         ),
+        'resnet': NetworkInfo(
+            "ResNet",
+            "Deep Residual Network",
+            "State-of-the-Art for 2D topological phases (Kitaev, frustrated magnets). Uses periodic convolutions and residual connections.",
+            arguments = {
+                "input_shape"       : "Shape of the 1D input (e.g., `(n_spins,)`)",
+                "reshape_dims"      : "Lattice dimensions for reshaping (e.g., `(8, 8)` for a 64-site system)",
+                "features"          : "Number of feature channels / network width (int, default: 32)",
+                "depth"             : "Number of residual blocks (int, default: 4)",
+                "kernel_size"       : "Spatial kernel size (int or tuple, default: 3 -> (3,3) for 2D)",
+                "dtype"             : "Data type for weights ('float32', 'complex128', etc.)",
+            }
+        ),
     }
 
     @staticmethod
@@ -268,10 +281,55 @@ Usage
     # params = net.init(jax.random.PRNGKey(0))
     # log_psi = net(params, sample_configuration)
 """
+        res = """
+Deep Residual Network (ResNet) for NQS.
+
+State-of-the-Art architecture for 2D topological phases such as the Kitaev
+Spin Liquid and frustrated magnets. Uses periodic convolutions and residual
+connections to learn deep representations.
+
+Features:
+- Residual Connections: Enables very deep networks without vanishing gradients.
+- Periodic Boundary Conditions: Respects the torus geometry of the lattice.
+- Sum Pooling: Ensures extensive scaling with system size.
+- Complex Weights: Captures the non-trivial sign structure of quantum states.
+
+Usage
+-----
+    from QES.general_python.ml.networks import choose_network
+    
+    # 1. Define Lattice Geometry
+    # --------------------------
+    # For an 8x8 Lattice (64 sites)
+    L = 8
+    n_sites = L * L
+    
+    # 2. Define ResNet Parameters
+    # ---------------------------
+    resnet_params = {
+        'input_shape':  (n_sites,),
+        'reshape_dims': (L, L),          # Lattice dimensions
+        'features':     32,              # Hidden channel width
+        'depth':        4,               # Number of residual blocks
+        'kernel_size':  3,               # Kernel size (becomes (3,3) for 2D)
+        'dtype':        'complex128'     # Essential for quantum phases
+    }
+    
+    # 3. Create the Network
+    # ---------------------
+    # Use 'resnet' key to create a ResNet instance
+    net = choose_network('resnet', **resnet_params)
+    
+    # 4. Debug/Check
+    # --------------
+    print(net)
+    # > ComplexResNet(reshape=(8, 8), features=32, depth=4, ...)
+"""
         return {
-                'rbm' : rbm,
-                'cnn' : cnn,
-                'ar'  : ar
+                'rbm'    : rbm,
+                'cnn'    : cnn,
+                'ar'     : ar,
+                'resnet' : res, 
             }
 
 # ----------------------------------

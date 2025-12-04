@@ -253,10 +253,10 @@ class NQSCheckpointManager:
         except (TypeError, ValueError) as e:
             # Fallback: try without args (some versions accept pytree directly)
             try:
-                self._orbax_manager.save(save_key, params)
+                self._orbax_manager.save(save_key, params, force = force)
             except Exception as e2:
                 self._log(f"Orbax save failed: {e}, {e2}", lvl=0, color='red')
-                raise
+                pass # Should not reach here if Orbax is working
         
         # Without this, the checkpoint may not be written to disk before we try to access it
         self._orbax_manager.wait_until_finished()

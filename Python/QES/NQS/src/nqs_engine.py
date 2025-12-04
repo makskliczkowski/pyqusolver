@@ -226,6 +226,35 @@ class NQSObservable(EvaluationResult):
     observable_name : str           = ""  # Name of the observable
     observable_num  : int           = 1   # Number of observables evaluated
     
+    def __init__(self,
+            values          : Array,
+            has_stats       : bool            = True,
+            mean            : Optional[float] = None,
+            std             : Optional[float] = None,
+            min_val         : Optional[float] = None,
+            max_val         : Optional[float] = None,
+            n_samples       : int             = 0,
+            variance        : Optional[float] = None,
+            error_of_mean   : Optional[float] = None,
+            backend_used    : str             = 'unknown',
+            observable_name : str             = "",
+            observable_num  : int             = 1,
+        ):
+        self.mean = float(mean) if hasattr(mean, "__array__") else mean
+        self.std  = float(std)  if hasattr(std, "__array__")  else std
+        super().__init__(
+            values          = values,
+            has_stats       = has_stats,
+            mean            = self.mean,
+            std             = self.std,
+            min_val         = min_val,
+            max_val         = max_val,
+            n_samples       = n_samples,
+            variance        = variance,
+            error_of_mean   = error_of_mean,
+            backend_used    = backend_used,
+        )    
+        
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the observable evaluation."""
         return {
@@ -547,8 +576,13 @@ class NQSEvalEngine:
             # Convert to NQSObservable
             observables = []
             for idx, vals in enumerate(values):
-                name        = names[idx] if names is not None and isinstance(names, (list, tuple)) else (names if isinstance(names, str) else f"O_{idx}")
-                obs_result  = NQSObservable(values = np.array(vals), has_stats = return_stats, backend_used = self.nqs.backend_str, observable_name = name)
+                name                    = names[idx] if names is not None and isinstance(names, (list, tuple)) else (names if isinstance(names, str) else f"O_{idx}")
+                obs_result              = NQSObservable(values = np.array(vals), has_stats = return_stats, backend_used = self.nqs.backend_str, observable_name = name)
+                mean_val                = np.asarray(means[idx]).item() if np.ndim(means[idx]) <= 1 else np.asarray(means[idx])
+                std_val                 = np.asarray(stds[idx]).item()  if np.ndim(stds[idx])  <= 1 else np.asarray(stds[idx])
+                obs_result.mean         = mean_val
+                obs_result.std          = std_val
+                obs_result.variance     = std_val ** 2
                 observables.append(obs_result)
             
             self._cached_results['observables/values']  = values

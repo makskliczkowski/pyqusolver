@@ -121,6 +121,7 @@ class VMCSampler(Sampler):
                 hilbert     : 'HilbertSpace'                = None,
                 numsamples  : int                           = 1,
                 numchains   : int                           = 1,
+                numupd      : int                           = 1,
                 initstate                                   = None,
                 backend     : str                           = 'default',
                 logprob_fact: float                         = 0.5,
@@ -197,8 +198,11 @@ class VMCSampler(Sampler):
         self._total_sample_updates_per_sample   = sweep_steps * self._size                  # Updates between collected samples
         self._updates_per_sample                = self._sweep_steps                         # Steps between samples
         self._total_sample_updates_per_chain    = numsamples * self._updates_per_sample * self._numchains
+        self._upd_fun                           = upd_fun
         
-        self._upd_fun = upd_fun
+        # number of times a function is applied per update
+        self._numupd                            = numupd
+        
         if self._upd_fun is None:
             if self._isjax:
                 # Bind RNG arguments to the JAX updater, already JIT-compiled.
@@ -206,6 +210,33 @@ class VMCSampler(Sampler):
             else:
                 # For NumPy backend, bind the RNG to the updater.
                 self._upd_fun = _propose_random_flip_np
+        
+        # Wrap the update function if multiple updates per step are requested
+        if self._numupd > 1:
+            
+            n_updates       = self._numupd
+            base_update_fn  = self._upd_fun
+            if self._isjax:
+                # JAX: Use lax.scan for efficiency and split keys correctly
+                def _multi_update_proposer(state, key):
+                    # 1. Split the incoming key into 'n' unique sub-keys
+                    keys = jax.random.split(key, n_updates)
+                    
+                    # 2. Define the loop body: (state, key) -> (new_state, None)
+                    def body_fn(curr_state, sub_key):
+                        return base_update_fn(curr_state, sub_key), None
+                    
+                    # 3. Run the loop efficiently on device
+                    final_state, _ = jax.lax.scan(body_fn, state, keys)
+                    return final_state
+            else:
+                def _multi_update_proposer(state, rng):
+                    curr_state = state
+                    for _ in range(n_updates):
+                        curr_state = base_update_fn(curr_state, rng)
+                    return curr_state
+
+            self._upd_fun = _multi_update_proposer
         self._static_sample_fun                 = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
     
     #####################################################################
@@ -229,6 +260,7 @@ class VMCSampler(Sampler):
                 f"  - Backend: {self._backendstr}\n"
                 f"  - Chains: {self._numchains}, Samples/Chain: {self._numsamples}\n"
                 f"  - Params: mu={self._mu:.3f}, beta={self._beta:.3f}, logprob_fact={self._logprob_fact:.3f}\n"
+                f"  - Updates per sample: {self._numupd}\n"
                 f"  - Thermalization: {self._therm_steps} sweeps x {self._sweep_steps} steps/sweep ({total_therm_updates_display} total site updates/chain)\n"
                 f"  - Sampling: {self._updates_per_sample} steps/sample ({total_sample_updates_display} total site updates/chain)\n")
         

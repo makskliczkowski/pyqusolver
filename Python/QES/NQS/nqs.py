@@ -222,6 +222,7 @@ class NQS(MonteCarloSolver):
                 - Sampler-specific parameters:
                     - s_numchains       : Number of Markov chains (default: 16).
                     - s_numsamples      : Number of samples per chain (default: 1000).
+                    - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
                     - s_sweep_steps     : Number of sweep steps between samples (default: 10).
                     - s_therm_steps     : Number of thermalization steps (burnin) (default: 100).
                     - s_upd_fun         : Update function for sampler (default: None).
@@ -532,6 +533,9 @@ class NQS(MonteCarloSolver):
             sampler_kwargs.pop('s_numchains', None)
             sampler_kwargs['numsamples']    = kwargs.get('s_numsamples', 1000)
             sampler_kwargs.pop('s_numsamples', None)
+            
+            sampler_kwargs['numupd']        = kwargs.get('s_numupd', 1)
+            sampler_kwargs.pop('s_numupd', None)
             
             sampler_kwargs['sweep_steps']   = kwargs.get('s_sweep_steps', 10)
             sampler_kwargs.pop('s_sweep_steps', None)
@@ -2104,112 +2108,144 @@ class NQS(MonteCarloSolver):
         ) -> "NQSTrainStats":
         """
         Train the NQS using the NQSTrainer.
-        
-        This is a convenience method that creates an NQSTrainer internally and runs
-        the training loop. For more control, instantiate NQSTrainer directly.
-        
+
+        It creates (or reuses) an NQSTrainer instance and runs the training loop, supporting
+        advanced features such as learning rate scheduling, regularization, Stochastic Reconfiguration (SR),
+        MinSR, TDVP, checkpointing, and exact solution comparison.
+
         Parameters
         ----------
         n_epochs : int, default=300
             Number of training epochs.
-            
+
         checkpoint_every : int, default=50
             Save checkpoint every N epochs.
-            
+
+        reset_weights : bool, default=False
+            If True, reinitialize network parameters before training.
+
         override : bool, default=True
             If True, always create a new trainer with the provided arguments.
             If False, reuse existing trainer if one exists (ignores other config args).
-            
+
         lin_solver : str or Callable, default='scipy_cg'
-            Linear solver for SR equations.
-            
+            Linear solver for SR equations. Options: 'scipy_cg', 'jax_cg', custom callable.
+
+        pre_solver : str or Callable, optional
+            Preconditioner for linear solver.
+
         ode_solver : str, default='Euler'
-            ODE integrator for parameter updates.
-            
-        n_batch : int, default=1000
+            ODE integrator for parameter updates. Options: 'Euler', 'RK4', etc.
+
+        tdvp : Any, optional
+            TDVP configuration or callable.
+
+        n_batch : int, default=128
             Batch size for VMC sampling.
-            
+
         phases : str or tuple, default='default'
             Phase scheduling preset or custom phases.
-            
-        lr : float, optional
-            Learning rate. If None, uses scheduler default.
-            
+
+        timing_mode : str, default='detailed'
+            Timing mode for profiling ('detailed', 'minimal').
+
+        early_stopper : Any, optional
+            Early stopping callback or configuration.
+
+        lower_states : List[NQS], optional
+            List of lower-energy NQS states for orthogonalization (excited states).
+
         lr_scheduler : str or Callable, optional
             Learning rate scheduler type or instance.
-            Options: 'constant', 'exponential', 'cosine', 'linear', 'adaptive', 'step'
-            
+            Options: 'constant', 'exponential', 'cosine', 'linear', 'adaptive', 'step'.
+            Scheduler kwargs can be passed via **kwargs:
+                - lr_init, lr_final, lr_decay_rate, lr_patience, lr_min_delta, lr_cooldown, lr_step_size
+
         reg : float, optional
             Regularization strength.
-            
-        diag_scheduler : str or Callable, optional
-            Diagonal shift scheduler for SR matrix regularization.
-            Same options as lr_scheduler. Dynamically adjusts diag_shift.
-            
-        use_sr : bool, default=True
-            Use Stochastic Reconfiguration.
-            
-        use_minsr : bool, default=False
-            Use MinSR (memory efficient).
-            
+
+        reg_scheduler : str or Callable, optional
+            Regularization scheduler for SR matrix.
+
         diag_shift : float, default=1e-5
             Diagonal regularization for SR matrix.
-            
-        use_pbar : bool, default=True
-            Show progress bar during training.
-            
-        exact_predictions : array-like, optional
-            Exact reference values (e.g., from ED) for comparison.
-            
-        exact_method : str, optional
-            Method used to compute exact predictions (e.g., 'lanczos').
-            
-        lin_force_mat : bool, default=False
-            Force forming full matrix in linear solver.
-            
-        lin_is_gram : bool, default=True
-            Treat linear system as Gram matrix (S) if True, else covariance.
-            
-        lower_states : List[NQS], optional
-            List of lower-energy NQS states for orthogonalization.
-        
+
+        diag_scheduler : str or Callable, optional
+            Diagonal shift scheduler for SR matrix.
+
+        use_sr : bool, default=True
+            Use Stochastic Reconfiguration (SR) for optimization.
+
+        use_minsr : bool, default=False
+            Use MinSR (memory efficient SR).
+
         rhs_prefactor : float, default=-1.0
             Prefactor for the TDVP right-hand side.
-            
+
+        save_path : str, optional
+            Directory or filename for saving checkpoints.
+
+        reset_stats : bool, default=True
+            If True, reset training statistics before starting.
+
+        use_pbar : bool, default=True
+            Show progress bar during training.
+
+        exact_predictions : array-like, optional
+            Exact reference values (e.g., from ED) for comparison.
+
+        exact_method : str, optional
+            Method used to compute exact predictions (e.g., 'lanczos').
+
+        lin_force_mat : bool, default=False
+            Force forming full matrix in linear solver.
+
+        lin_is_gram : bool, default=True
+            Treat linear system as Gram matrix (S) if True, else covariance.
+
         **kwargs
-            Additional arguments passed to NQSTrainer.
-            
+            Additional arguments passed to NQSTrainer and schedulers.
+
         Returns
         -------
         NQSTrainStats
-            Training statistics including loss history, timing, etc.
-            
+            Training statistics including loss history, timing, checkpoints, etc.
+
         Examples
         --------
-        >>> # Simple training with defaults
+        >>> # Basic training with default settings
         >>> stats = psi.train(n_epochs=200)
-        
-        >>> # With custom scheduler
+
+        >>> # Training with cosine annealing learning rate scheduler
         >>> stats = psi.train(n_epochs=500, lr=1e-3, lr_scheduler='cosine', min_lr=1e-5)
-        
-        >>> # With exact comparison
+
+        >>> # Training with exact diagonalization comparison
         >>> hamil.diagonalize()
-        >>> stats = psi.train(n_epochs=300, exact_predictions=hamil.eigenvalues)
-        
+        >>> stats = psi.train(n_epochs=300, exact_predictions=hamil.eigenvalues, exact_method='lanczos')
+
+        >>> # Continue training with same optimizer state
+        >>> stats = psi.train(n_epochs=100)
+        >>> stats = psi.train(n_epochs=100, override=False)
+
+        >>> # Advanced: MinSR, custom batch size, checkpointing
+        >>> stats = psi.train(n_epochs=1000, use_minsr=True, n_batch=2048, checkpoint_every=100, save_path='./checkpoints')
+
         See Also
         --------
         NQSTrainer : Full trainer class with more configuration options.
+        NQS.help('train') : Interactive help and usage tips.
         """
-        
+
         # Import here to avoid circular imports
-        from QES.NQS.src.nqs_train import NQSTrainer
-        
+
         if reset_weights:
             self.reset()
             self.log("Network parameters reset before training.", lvl=1, color='blue')
-        
+
         # Create or reuse trainer
         if override or self._trainer is None:
+            from QES.NQS.src.nqs_train import NQSTrainer
+            
             self._trainer = NQSTrainer(
                 nqs             = self,
                 # Solvers
@@ -2242,7 +2278,7 @@ class NQS(MonteCarloSolver):
                 rhs_prefactor   = rhs_prefactor,
                 **kwargs
             )
-        
+
         # Run training
         stats = self._trainer.train(
             n_epochs            = n_epochs,
@@ -2253,7 +2289,7 @@ class NQS(MonteCarloSolver):
             exact_predictions   = exact_predictions,
             exact_method        = exact_method,
         )
-        
+
         return stats
     
     #####################################
@@ -2534,6 +2570,163 @@ class NQS(MonteCarloSolver):
             msg = f"Unknown topic '{topic}'. Try: 'general', 'modifier', 'sampling', 'usage', 'train', 'checkpoints'."
             
         print(msg)
+
+#########################################
+
+def _compute_transition_element(nqs_bra: 'NQS', nqs_ket: 'NQS', operator: 'Operator', num_samples: int = 4096, num_chains: int = 1, operator_args: dict = {}) -> complex:
+    """
+    Computes the normalized transition matrix element:
+    M_12 = <Psi_bra | O | Psi_ket> / sqrt(<bra|bra> * <ket|ket>)
+    
+    Uses bidirectional importance sampling to handle normalization constants correctly.
+    
+    Args:
+        nqs_bra: The state on the left <Psi_1|
+        nqs_ket: The state on the right |Psi_2>
+        operator: The operator O (must be applicable to nqs_ket)
+        num_samples: MC samples
+        num_chains: Number of Markov chains
+        operator_args: Additional arguments for the operator
+        
+    Returns:
+        The normalized expectation value.
+    """
+    
+    # ------------------------------------------------------------------
+    # Step 1: Sample from BRA distribution (Psi_1)
+    # ------------------------------------------------------------------
+    
+    if isinstance(operator, Operator):
+        operator_fun = operator.jax
+    elif isinstance(operator, Callable):
+        operator_fun = operator
+    else:
+        raise ValueError("Operator must be an instance of Operator or a callable function.")
+        
+    # We need samples to compute Q (Transition) and R1 (Overlap Forward)
+    (_, _), (s1, log_psi1_s1), _    = nqs_bra.sample(num_samples=num_samples, num_chains=num_chains)
+    
+    # Evaluate Ket on Bra samples
+    log_psi2_s1                     = nqs_ket.ansatz(s1)
+    
+    # Calculate Log Ratio: log(Psi_2(s) / Psi_1(s))
+    log_ratio_12                    = log_psi2_s1 - log_psi1_s1
+    
+    # Compute R1: <1|2> / <1|1>
+    # Shift for stability: exp(x - max)
+    # R1 = mean(exp(log_ratio))
+    lmax_1                          = jnp.max(jnp.real(log_ratio_12))
+    R1                              = jnp.mean(jnp.exp(log_ratio_12 - lmax_1)) * jnp.exp(lmax_1)
+    
+    # -- Compute Q: <1|O|2> / <1|1> --
+    # Q = mean( (Psi_2/Psi_1) * O_loc_2 )
+    
+    # Compute Local Estimator of O on state 2 at positions s1
+    # nqs.apply returns (stats), but with return_values=True it usually returns raw values depending on engine
+    # We assume standard behavior: returns array of local values
+    # NOTE: We pass (s1, log_psi2_s1) so it doesn't re-evaluate ansatz
+    loc_O_ket                       = nqs_ket.apply(operator_fun, states_and_psi=(s1, log_psi2_s1), return_values=True, args=operator_args)
+    
+    # If apply returned a stats object, extract values. If array, use directly.
+    if hasattr(loc_O_ket, 'values'): loc_O_ket = loc_O_ket.values
+    
+    # Weighted average: E[ exp(log_ratio) * loc_val ]
+    # Use same shift lmax_1 for stability
+    Q                               = jnp.mean(jnp.exp(log_ratio_12 - lmax_1) * loc_O_ket) * jnp.exp(lmax_1)
+
+    # ------------------------------------------------------------------
+    # Step 2: Sample from KET distribution (Psi_2)
+    # ------------------------------------------------------------------
+    # We only need this to compute the normalization ratio (R2)
+    (_, _), (s2, log_psi2_s2), _    = nqs_ket.sample(num_samples=num_samples, num_chains=num_chains)
+    log_psi1_s2                     = nqs_bra.ansatz(s2)
+    
+    # Calculate Log Ratio: log(Psi_1(s) / Psi_2(s))
+    log_ratio_21                    = log_psi1_s2 - log_psi2_s2
+    
+    # -- Compute R2: <2|1> / <2|2> --
+    lmax_2                          = jnp.max(jnp.real(log_ratio_21))
+    R2                              = jnp.mean(jnp.exp(log_ratio_21 - lmax_2)) * jnp.exp(lmax_2)
+    
+    # ------------------------------------------------------------------
+    # Step 3: Combine for Normalized Result
+    # ------------------------------------------------------------------
+    
+    # Handle division by zero if overlap is extremely small
+    if jnp.abs(R1) < 1e-12 or jnp.abs(R2) < 1e-12:
+        return 0.0 + 0.0j
+
+    normalization_ratio             = jnp.sqrt(R2 / jnp.conj(R1))
+    result                          = Q * normalization_ratio
+    return result
+
+def compute_overlap(nqs_a: 'NQS', nqs_b: 'NQS', *, num_samples: int = 4096, num_chains: Optional[int] = None, operator: Optional[Any] = None, operator_args: Optional[Any] = None) -> float:
+    r"""
+    Computes the squared overlap (Fidelity) between two NQS instances:
+    F = |<Psi_A | Psi_B>|^2 / (<Psi_A|Psi_A> <Psi_B|Psi_B>)
+    This is done via Monte Carlo estimation using samples from both distributions.
+    
+    Mathematically:
+    F = ( E_{s ~ |Psi_A|^2} [ Psi_B(s) / Psi_A(s) ] ) *
+        ( E_{s ~ |Psi_B|^2} [ Psi_A(s) / Psi_B(s) ] )
+    
+    where E denotes the expectation value over the sampled configurations.
+    
+    Args:
+        nqs_a: First NQS instance (e.g., current training step).
+        nqs_b: Second NQS instance (e.g., target state or previous step).
+        num_samples: Number of MC samples to use for estimation.
+        num_chains: Number of independent Markov chains for sampling.
+        operator: Optional operator to insert between states (not implemented).
+        operator_args: Additional arguments for the operator (if any).
+    
+    Returns:
+        float: The squared overlap (between 0.0 and 1.0).
+    """
+    
+    if nqs_a.nvisible != nqs_b.nvisible:
+        raise ValueError("NQS instances must have the same number of visible units to compute overlap.")
+    
+    if operator is not None:
+        return _compute_transition_element(nqs_a, nqs_b, operator, num_samples, num_chains, operator_args)
+
+    #! WORK WITH JAX ONLY    
+    import jax.numpy as jnp
+    import jax.scipy.special as jsp
+    
+    # Sample from Distribution A 
+    # We ignore the 'last' samples and take 'all' samples for better statistics
+    (_, _), (samples_a, log_psi_a_on_a), _  = nqs_a.sample(num_samples=num_samples, num_chains=num_chains)
+    
+    # Evaluate Ansatz B on samples from A
+    # Note: nqs.ansatz() handles batching internally based on nqs._batch_size
+    log_psi_b_on_a                          = nqs_b.ansatz(samples_a)
+    
+    # Compute Ratio 1: <Psi_A | Psi_B> / <Psi_A | Psi_A>
+    # ratio = exp( log_psi_b - log_psi_a )
+    # We use Log-Sum-Exp for numerical stability: 
+    # mean(exp(x)) = exp(logsumexp(x) - log(N))
+    log_ratio_1                             = log_psi_b_on_a - log_psi_a_on_a
+    log_mean_1                              = jsp.logsumexp(log_ratio_1) - jnp.log(samples_a.shape[0])
+    
+    # Step 2: Sample from Distribution B
+    (_, _), (samples_b, log_psi_b_on_b), _  = nqs_b.sample(num_samples=num_samples, num_chains=num_chains)
+    
+    # Evaluate Ansatz A on samples from B
+    log_psi_a_on_b                          = nqs_a.ansatz(samples_b)
+    
+    # Compute Ratio 2: <Psi_B | Psi_A> / <Psi_B | Psi_B>
+    log_ratio_2                             = log_psi_a_on_b - log_psi_b_on_b
+    log_mean_2                              = jsp.logsumexp(log_ratio_2) - jnp.log(samples_b.shape[0])
+    
+    # Step 3: Combine 
+    # F = Mean(B/A)_A * Mean(A/B)_B
+    # In log space:                         log_F = log_mean_1 + log_mean_2
+    # The result should be real-valued (overlap of normalized vectors).
+    # We take the real part of the exponential.
+    
+    fidelity = jnp.exp(log_mean_1 + log_mean_2)
+    return float(jnp.real(fidelity))
 
 #########################################
 #! EOF

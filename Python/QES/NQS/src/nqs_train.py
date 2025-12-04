@@ -483,7 +483,7 @@ class NQSTrainer:
         
         # Setup Linear Solver + Preconditioner
         try:
-            self.lin_solver = choose_solver(solver_id=lin_solver, sigma=lin_sigma, is_gram=lin_is_gram, backend=nqs.backend, **kwargs)
+            self.lin_solver = choose_solver(solver_id=lin_solver, sigma=lin_sigma, is_gram=lin_is_gram, backend=nqs.backend_str, **kwargs)
             self.pre_solver = choose_precond(precond_id = pre_solver, **kwargs) if pre_solver else None
         except Exception as e:
             raise ValueError(self._ERR_INVALID_SOLVER) from e
@@ -822,13 +822,16 @@ class NQSTrainer:
         Parameters:
         -----------
         n_epochs: int
-            Total number of training epochs. If None, defaults to 100 or inferred from scheduler.
+            Total number of training epochs for this call. If None, defaults to 100 or inferred from scheduler.
         checkpoint_every: int
             Frequency of saving checkpoints (in epochs).
         save_path: str
             Path to save checkpoints.
         reset_stats: bool
-            Whether to reset training statistics at the start.
+            Whether to reset training statistics at the start. If False, training continues
+            from the previous epoch count and history is appended. Schedulers also continue
+            from the correct global epoch (e.g., if you trained 100 epochs before, calling
+            train(n_epochs=50, reset_stats=False) will run epochs 100-149).
         use_pbar: bool
             Whether to use a progress bar during training.
         **kwargs:
@@ -848,6 +851,11 @@ class NQSTrainer:
             >>> trainer = NQSTrainer(nqs)
             >>> stats = trainer.train(n_epochs=500, checkpoint_every=100, save_path="./checkpoints/")
             ... Training completed in 1234.56 seconds over 500 epochs.
+            
+            >>> # Continue training from where we left off
+            >>> stats = trainer.train(n_epochs=200, reset_stats=False)
+            ... Continuing training from epoch 500 (reset_stats=False)
+            ... Training completed. Total epochs: 700 (this run: 200, started at: 500).
         """
         # Timer for the WHOLE epoch (BASIC mode)
         import time
@@ -861,20 +869,30 @@ class NQSTrainer:
         
         # Reset stats if needed, if not we continue accumulating
         if reset_stats:
-            self.stats = NQSTrainStats() # Reset stats
+            self.stats  = NQSTrainStats() # Reset stats
+            start_epoch = 0
+        else:
+            # Continue from where we left off
+            start_epoch = len(self.stats.history)
+            if self.logger and start_epoch > 0:
+                self.logger.info(f"Continuing training from epoch {start_epoch} (reset_stats=False)", lvl=1, color='cyan')
             
         n_epochs    = n_epochs or 100
         pbar        = trange(n_epochs, desc="NQS Training", leave=True) if use_pbar else range(n_epochs)
         
         try:
             for epoch in pbar:
-                # 1. Scheduling 
+                # Global epoch accounts for previous training when continuing
+                global_epoch                    = start_epoch + epoch
+                
+                # 1. Scheduling (use global_epoch so schedulers continue properly)
                 last_E                          = self.stats.history[-1] if self.stats.history else 0.0
-                lr, reg, diag                   = self._update_hyperparameters(epoch, last_E)
+                lr, reg, diag                   = self._update_hyperparameters(epoch, last_E) # use local epoch for schedulers as we are in a single phase
 
                 # 2. Sampling (Timed)
                 # Returns: ((keys), (configs, ansatz_vals), probs)
-                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(epoch==0), epoch=epoch)
+                # Note: reset=(epoch==0) resets sampler only at start of this train() call
+                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(epoch==0), epoch=global_epoch)
                 (_, _), (cfgs, cfgs_psi), probs = sample_out
                 if self.logger and epoch == 0:  self.logger.info(f"Sampled {cfgs.shape[0]} configurations with batch size {self.n_batch}", lvl=1, color='green')
                 
@@ -895,12 +913,12 @@ class NQSTrainer:
                                                     configs_ansatze = cfgs_psi,
                                                     probabilities   = probs,
                                                     lower_states    = lower_contr,
-                                                    epoch           = epoch
+                                                    epoch           = global_epoch
                                                 )
                 dparams, _, ((mean_loss, std_loss), meta) = step_out
 
                 # 4. Update Weights (Timed)
-                self._timed_execute("update", self.nqs.set_params, dparams, shapes=meta[0], sizes=meta[1], iscpx=meta[2], epoch=epoch)
+                self._timed_execute("update", self.nqs.set_params, dparams, shapes=meta[0], sizes=meta[1], iscpx=meta[2], epoch=global_epoch)
 
                 # 5. Global Phase Integration
                 # No heavy computation here, simple scalar update
@@ -922,6 +940,7 @@ class NQSTrainer:
                 
                 if use_pbar:
                     postfix = {
+                            "epoch": f"G:{global_epoch},L:{epoch}",
                             "loss" : f"{mean_loss:.4f}",
                             "acc"  : f"{acc_ratio:.2%}",
                         }
@@ -946,11 +965,11 @@ class NQSTrainer:
                         
                     pbar.set_postfix(postfix)
                 else:
-                    if self.logger: self.logger.info(f"Epoch {epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
+                    if self.logger: self.logger.info(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
 
-                # Checkpointing
+                # Checkpointing (use global_epoch for consistent checkpoint naming)
                 if epoch % checkpoint_every == 0 or epoch == n_epochs - 1:
-                    self.save_checkpoint(epoch, save_path, fmt="h5", overwrite=True, **kwargs)
+                    self.save_checkpoint(global_epoch, save_path, fmt="h5", overwrite=True, **kwargs)
 
                 # Early Stopping
                 if np.isnan(mean_loss):
@@ -958,7 +977,7 @@ class NQSTrainer:
                     break
 
                 if self.early_stopper and self.early_stopper(mean_loss):
-                    if self.logger: self.logger.info(f"Early stopping triggered at epoch {epoch}")
+                    if self.logger: self.logger.info(f"Early stopping triggered at epoch G:{global_epoch},L:{epoch}")
                     break
                 
         except KeyboardInterrupt:
@@ -974,9 +993,10 @@ class NQSTrainer:
         if use_pbar:            pbar.close()
         self.stats.history      = np.array(self.stats.history).flatten().tolist()
         self.stats.history_std  = np.array(self.stats.history_std).flatten().tolist()
-        self.save_checkpoint(epoch + 1, save_path, fmt="h5", overwrite=True, verbose=True, **kwargs)
+        final_epoch             = start_epoch + epoch + 1  # Total epochs trained so far
+        self.save_checkpoint(final_epoch, save_path, fmt="h5", overwrite=True, verbose=True, **kwargs)
         
-        if self.logger: self.logger.info(f"Training completed in {time.time() - t0:.2f} seconds over {len(self.stats.history)}/{n_epochs} epochs.", lvl=0, color='green')
+        if self.logger:         self.logger.info(f"Training completed in {time.time() - t0:.2f} seconds. Total epochs: {len(self.stats.history)} (this run: {n_epochs}, started at: {start_epoch}).", lvl=0, color='green')
         return self.stats
 
     # ------------------------------------------------------

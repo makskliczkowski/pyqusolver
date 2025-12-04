@@ -474,7 +474,7 @@ class TDVP:
             elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
                 self.form_matrix    = False or self.sr_solve_forced
             else:
-                self.form_matrix    = True or self.sr_solve_forced
+                self.form_matrix    = True
                 
             if self.logger: self.logger.info(f"Solver form set to {'full matrix' if self.form_matrix else 'matrix-vector products'}.", lvl=2, color='red')
             
@@ -505,24 +505,27 @@ class TDVP:
         Raises:
             ValueError: If the preconditioner is not set or the solver form is invalid.
         """
-        if  isinstance(self.sr_precond, str) or                                 \
-            isinstance(self.sr_precond, precond.PreconditionersTypeSym) or      \
-            isinstance(self.sr_precond, precond.PreconditionersTypeNoSym) or    \
-            isinstance(self.sr_precond, precond.PreconditionersType) or         \
-            hasattr(self.sr_precond, 'value') and isinstance(self.sr_precond.value, int):
-            
-            self.sr_precond = precond.choose_precond(precond_id=self.sr_precond, backend=self.backend)
+        
+        self.sr_precond = precond.choose_precond(precond_id=self.sr_precond, backend=self.backend_str)
         
         if self.sr_precond is not None:
-            if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
+            self.sr_precond.reset_backend(self.backend_str)
+            
+            if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value and not self.form_matrix:
+                # Returns func(r, s, sp) -> used in Fisher mode
                 self.sr_precond_fn = self.sr_precond.get_apply_gram()
-            elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
-                self.sr_precond_fn = self.sr_precond.get_apply()
-            elif self.sr_solve_lin_t == solvers.SolverForm.MATRIX.value:
+                
+            elif self.sr_solve_lin_t == solvers.SolverForm.MATRIX.value or self.form_matrix:
+                # Returns func(r, a) -> used in Matrix mode
                 self.sr_precond_fn = self.sr_precond.get_apply_mat()
+                
+            elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
+                # Returns func(r) -> used in pure Matvec mode
+                self.sr_precond_fn = self.sr_precond.get_apply()
+                
             else:
-                raise ValueError('The preconditioner is not set. Please set the preconditioner or use the default one.')  
-    
+                raise ValueError('Invalid Solver Form for preconditioner.')
+        
     ###################
     #! SETTERS
     ###################
@@ -747,13 +750,13 @@ class TDVP:
         
         #! centered loss and derivative
         if excited_penalty is None or len(excited_penalty) == 0:
-            (loss_c, var_deriv_c, var_deriv_c_h, self._n_samples, self._full_size) = self._prepare_fn_j(loss, log_deriv)
+            (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_j(loss, log_deriv)
         else:
             betas           = self.backend.array([x.beta_j for x in excited_penalty])
             r_el            = self.backend.array([x.r_el for x in excited_penalty])
             r_le            = self.backend.array([x.r_le for x in excited_penalty])
-            (loss_c, var_deriv_c, var_deriv_c_h, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)        
-        return loss_c, var_deriv_c, var_deriv_c_h
+            (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)        
+        return loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m
     
     def get_tdvp_standard(self, loss, log_deriv, **kwargs):
         '''
@@ -778,7 +781,7 @@ class TDVP:
         self._e_local_std   = self.backend.std(loss, axis=0)
 
         with self._time('prepare', self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
-            loss_c, var_deriv_c, var_deriv_c_h = prepare
+            loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m = prepare
             
         # for minsr, it is unnecessary to calculate the force vector, however, do it anyway for now
         with self._time('gradient', self._gradient_fn_j, var_deriv_c_h, loss_c, self._n_samples) as gradient:
@@ -790,7 +793,7 @@ class TDVP:
             with self._time('covariance', self._covariance_fn_j, var_deriv_c, var_deriv_c_h, self._n_samples) as covariance:
                 self._s0 = covariance
         
-        return self._f0, self._s0, (loss_c, var_deriv_c, var_deriv_c_h)
+        return self._f0, self._s0, (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m)
 
     ##################
     #! SOLVERS
@@ -814,7 +817,7 @@ class TDVP:
         """
         def _matvec(v, sigma):
             inter = self.backend.matmul(mat_s, v)
-            return self.backend.matmul(mat_sp, inter) / v.shape[1] + sigma * v
+            return  self.backend.matmul(mat_sp, inter) / v.shape[1] + sigma * v
         return jax.jit(_matvec) if self.is_jax else _matvec
     
     def _solve_prepare_s_and_loss(self, vd_c: Array, vd_c_h: Array, loss_c: Array, forces: Array):
@@ -947,7 +950,7 @@ class TDVP:
     #! GLOBAL PHASE
     ###############
 
-    def compute_global_phase_evolution(self, mean_energy: Array, param_derivatives: Array, log_derivatives: Array):
+    def compute_global_phase_evolution(self, mean_energy: Array, param_derivatives: Array, log_derivatives_mean: Array):
         r"""
         Compute the evolution of the global phase parameter $\theta_0$.
         
@@ -977,8 +980,7 @@ class TDVP:
         
         # Second term: - <dot{theta}_k * <psi|d_theta_k psi>>
         # This is the contraction of parameter derivatives with log derivatives
-        term2       = -self.backend.sum(param_derivatives * log_derivatives)
-        
+        term2       = -self.backend.sum(param_derivatives * log_derivatives_mean)
         theta0_dot  = term1 + term2
         # self._theta0_dot = theta0_dot
         return theta0_dot
@@ -992,13 +994,15 @@ class TDVP:
         
         # obtain the loss and covariance without the preprocessor
         self._f0, self._s0, (tdvp)  = self.get_tdvp_standard(e_loc, log_deriv, **kwargs)
+        if self._s0 is not None and self.logger: self.logger.info(f"Covariance matrix shape: {self._s0.shape}", lvl=3)
         
-        f = self._f0                # the force vector
-        s = self._s0                # the covariance matrix, if formed
+        #! get the force and covariance matrix
+        f                           = self._f0 # the force vector
+        s                           = self._s0 # the covariance matrix, if formed
         
         #! handle the solver
         solve_func                  = self.sr_solve_lin_fn
-        loss_c, vd_c, vd_c_h        = tdvp
+        loss_c, vd_c, vd_c_h, vd_m  = tdvp
 
         #! handle the preprocessor
         (mat_s, mat_s_p), vec_b     = self._solve_prepare_s_and_loss(vd_c, vd_c_h, loss_c, f)
@@ -1020,11 +1024,6 @@ class TDVP:
                 residual_norm   = 0.0,
                 converged       = True,
             )
-
-        #! precondition the S matrices, use regularization?
-        if True:
-            #!TODO: Do something with regularization, sr_ and others...
-            pass
     
         #! solve the linear system
         with self._time('solve', self._solve_choice, vec_b=vec_b, mat_s=mat_s, mat_s_p=mat_s_p, mat_a=s, solve_func=solve_func) as solve:
@@ -1054,8 +1053,8 @@ class TDVP:
         # $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
         if solution is not None and self.rhs_prefactor:
             param_derivatives           = solution.x if hasattr(solution, 'x') else solution
-            log_derivatives_centered    = vd_c # centered log derivatives
-            self._theta0_dot            = self.compute_global_phase_evolution(self._e_local_mean, param_derivatives, log_derivatives_centered)
+            log_derivatives_mean        = vd_m
+            self._theta0_dot            = self.compute_global_phase_evolution(self._e_local_mean, param_derivatives, log_derivatives_mean)
             
         #! save the solution
         self._solution = solution

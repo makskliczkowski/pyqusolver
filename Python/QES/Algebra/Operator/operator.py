@@ -1370,11 +1370,11 @@ class Operator(ABC):
     def fun(self, val):         self._fun = val
     
     @property
-    def int(self):              return self._fun.fun
+    def int(self):              self._backend = np;     return self._fun.fun
     @property
-    def npy(self):              return self._fun.npy
+    def npy(self):              self._backend = np;     return self._fun.npy
     @property
-    def jax(self):              return self._fun.jax
+    def jax(self):              self._backend = jnp;    return self._fun.jax
     
     # -------------------------------
     
