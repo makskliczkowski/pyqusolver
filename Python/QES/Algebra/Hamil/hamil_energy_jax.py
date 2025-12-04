@@ -58,61 +58,60 @@ from typing import Tuple, Optional, List, Callable, Union
 from QES.Algebra.Hamil.hamil_energy_helper import unpack_operator_terms, flatten_operator_terms
 
 ################################################################################
+# Diagonal (non-modifying) contribution – no sites
+################################################################################
 
 @partial(jax.jit, static_argnums=(1,))
 def local_energy_jax_nonmod_nosites(
     state       : jnp.ndarray,
     functions   : Tuple[Callable, ...],
-    multipliers : jnp.ndarray,
-) -> jnp.ndarray:
-    """
-    Compute local energy contributions for a given state from operators that
-    do NOT depend explicitly on site indices and do NOT modify the state.
+    multipliers : jnp.ndarray,) -> jnp.ndarray:
+    r"""
+    Diagonal local energy from operators that do **not** depend on site indices
+    and do **not** modify the state.
 
-    Each function f in `functions` is assumed to satisfy
+    Each ``f`` in ``functions`` satisfies
 
         new_state, coeff = f(state)
 
-    where `new_state` can be ignored (typically equal to `state`) and
-    `coeff` is a scalar contribution from that operator term.
+    where ``new_state`` is ignored here and ``coeff`` is a scalar (one term
+    in the diagonal energy).
 
     Parameters
     ----------
     state
-        1D array of shape (ns,).
+        1D array, shape ``(ns,)``.
     functions
         Tuple of callables.
     multipliers
-        1D array of shape (n_ops,) with operator multipliers.
+        1D array of shape ``(n_ops,)``.
 
     Returns
     -------
     local_energy : jnp.ndarray
-        Shape (1,), complex or real, with the total diagonal energy.
+        Shape ``(1,)``, same dtype as ``state``.
     """
 
     num_local = len(functions)
     if num_local == 0:
-        # Return exact zero with same dtype as state (usually complex)
         return jnp.zeros((1,), dtype=state.dtype)
 
-    multipliers = jnp.asarray(multipliers)
-    dtype_e     = jnp.result_type(state, multipliers)
-    multipliers = multipliers.astype(dtype_e)
+    # Work in the multiplying dtype.
+    dtype_e         = multipliers.dtype
+    multipliers     = jnp.asarray(multipliers)
 
     def scan_fn(carry, i):
-        _, coeff = jax.lax.switch(i, functions, state)
-        coeff    = jnp.asarray(coeff).astype(dtype_e)
-        contrib  = jnp.squeeze(coeff) * multipliers[i]
-        return carry + contrib, 0.0
+        _, coeff    = jax.lax.switch(i, functions, state)
+        coeff       = jnp.asarray(coeff, dtype=dtype_e)
+        contrib     = jnp.squeeze(coeff) * multipliers[i]
+        return carry + contrib, jnp.zeros((), dtype=dtype_e)
 
-    init = jnp.zeros((), dtype=dtype_e)
-    total, _ = jax.lax.scan(scan_fn, init, jnp.arange(num_local, dtype=jnp.int32))
+    init        = jnp.zeros((), dtype=dtype_e)
+    total, _    = jax.lax.scan(scan_fn, init, jnp.arange(num_local, dtype=jnp.int32))
     return total.reshape((1,))
 
-
 ################################################################################
-# Non-modifying (diagonal) energy – with/without sites
+# Diagonal (non-modifying) contribution – with/without sites
 ################################################################################
 
 @partial(jax.jit, static_argnums=(1, 3))
@@ -123,75 +122,64 @@ def local_energy_jax_nonmod(
     functions_sites    : Tuple[Callable, ...],
     mult_sites         : jnp.ndarray,
 ) -> jnp.ndarray:
-    """
-    Combine diagonal (non-modifying) energies with and without site indices.
+    r"""
+    Diagonal local energy from non-modifying operators, with and without sites.
 
-    Parameters
-    ----------
-    state
-        1D array of shape (ns,).
-    functions_no_sites
-        Tuple of callables f(state) -> (state, coeff).
-    mult_no_sites
-        Multipliers for `functions_no_sites`.
-    functions_sites
-        Tuple of callables f(state, *sites) already wrapped to depend only
-        on state: f_wrapped(state) -> (state, coeff).
-    mult_sites
-        Multipliers for `functions_sites`.
+    All functions passed here already have the signature
 
-    Returns
-    -------
-    local_energy : jnp.ndarray
-        Shape (1,), diagonal energy.
+        f(state) -> (state_like, coeff)
     """
 
     e1 = local_energy_jax_nonmod_nosites(state, functions_no_sites, mult_no_sites)
     e2 = local_energy_jax_nonmod_nosites(state, functions_sites,    mult_sites)
     return e1 + e2
 
-
 ################################################################################
 # Main wrapper
 ################################################################################
 
 def local_energy_jax_wrap(
-    ns                        : int,
-    operator_terms_list       : List,
-    operator_terms_list_ns    : List,
-    operator_terms_list_nmod  : List,
+    ns                          : int,
+    operator_terms_list         : List,
+    operator_terms_list_ns      : List,
+    operator_terms_list_nmod    : List,
     operator_terms_list_nmod_ns : List,
-    n_max                     : Optional[int]       = 1,
-    dtype                     : Optional[jnp.dtype] = jnp.complex128,
+    n_max                       : Optional[int]       = 1,
+    dtype                       : Optional[jnp.dtype] = jnp.complex128,
 ) -> Callable:
-    """
+    r"""
     Build a JIT-compiled local-energy function
 
         state -> (all_states, all_energies)
 
-    where:
+    where
 
         all_states   : (N_total, ns)
         all_energies : (N_total,)
 
-    and N_total = 1 (diagonal) + sum_i K_i over all modifying operators,
-    with each modifying operator allowed to return MANY states:
+    and
+
+        N_total = 1 (diagonal term) + \sum_i K_i  over all modifying operators,
+
+    with each modifying operator allowed to return **many** states:
 
         f(state, *sites) -> (new_states, coeffs)
         new_states.shape == (K, ns)
         coeffs.shape     == (K,)
+
+    The returned function is JAX-compatible (pure, JIT-able, vmap-able).
     """
 
-    # Normalise dtype to a JAX dtype; default to complex for safety
+    # Normalise dtype; default to complex64 for speed, but honour user choice.
     if not isinstance(dtype, jnp.dtype):
         dtype = jnp.dtype(dtype)
-        
     if dtype not in (jnp.complex64, jnp.complex128):
         dtype = jnp.complex128
 
-    # -------------------------------------------------------------------------
+    ###########################################################################
     # 1. Unpack and flatten all operator groups
-    # -------------------------------------------------------------------------
+    ###########################################################################
+
     f_mod_sites,  i_mod_sites,  m_mod_sites  = unpack_operator_terms(ns, operator_terms_list)
     f_mod_nos,    i_mod_nos,    m_mod_nos    = unpack_operator_terms(ns, operator_terms_list_ns)
     f_nmod_sites, i_nmod_sites, m_nmod_sites = unpack_operator_terms(ns, operator_terms_list_nmod)
@@ -202,114 +190,131 @@ def local_energy_jax_wrap(
     f_nmod_sites, i_nmod_sites, m_nmod_sites = flatten_operator_terms(f_nmod_sites, i_nmod_sites, m_nmod_sites)
     f_nmod_nos,   i_nmod_nos,   m_nmod_nos   = flatten_operator_terms(f_nmod_nos,   i_nmod_nos,   m_nmod_nos)
 
-    # multipliers as JAX arrays (energies will inherit this dtype)
+    # Multipliers live in the chosen complex dtype.
     m_mod_sites   = jnp.asarray(m_mod_sites,   dtype=dtype)
     m_mod_nos     = jnp.asarray(m_mod_nos,     dtype=dtype)
     m_nmod_sites  = jnp.asarray(m_nmod_sites,  dtype=dtype)
     m_nmod_nos    = jnp.asarray(m_nmod_nos,    dtype=dtype)
 
-    # -------------------------------------------------------------------------
-    # 2. Wrap operators so that modifying ones ALWAYS return (K, ns) and (K,)
-    # -------------------------------------------------------------------------
+    ###########################################################################
+    # 2. Wrap operators to enforce shapes
+    ###########################################################################
+
     def wrap_mod(f, sites):
+        """Wrap a modifying operator f(state, *sites)."""
+        
         sites = tuple(int(s) for s in sites)
 
         def op(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-            # f may itself be jitted; we just shape-normalise the result
-            new_states, coeffs = f(state, *sites)
-            new_states = jnp.asarray(new_states, dtype=state.dtype)
-            coeffs     = jnp.asarray(coeffs,     dtype=dtype)
-            # Enforce 2D states: (K, ns)
+            new_states, coeffs  = f(state, *sites)
+            new_states          = jnp.asarray(new_states, dtype=state.dtype)
+            coeffs              = jnp.asarray(coeffs,     dtype=dtype)
+
+            # Enforce (K, ns) for states and (K,) for coeffs.
             if new_states.ndim == 1:
                 new_states = new_states.reshape((1, new_states.shape[0]))
-            return new_states, coeffs.reshape((-1,))
-
+            
+            coeffs = coeffs.reshape((-1,))
+            return new_states, coeffs
         return op
 
     def wrap_nos(f):
+        """Wrap a modifying operator f(state) without site indices."""
         def op(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
             new_states, coeffs  = f(state)
             new_states          = jnp.asarray(new_states, dtype=state.dtype)
             coeffs              = jnp.asarray(coeffs,     dtype=dtype)
+
             if new_states.ndim == 1:
                 new_states = new_states.reshape((1, new_states.shape[0]))
-            return new_states, coeffs.reshape((-1,))
+            coeffs = coeffs.reshape((-1,))
+
+            return new_states, coeffs
+
         return op
 
     # Modifying operators (may return many states)
-    f_mod_sites_wrapped  = tuple(wrap_mod(f_mod_sites[i],  i_mod_sites[i])  for i in range(len(f_mod_sites)))
-    f_mod_nos_wrapped    = tuple(wrap_nos(f_mod_nos[i])                     for i in range(len(f_mod_nos)))
+    f_mod_sites_wrapped     = tuple(wrap_mod(f_mod_sites[i], i_mod_sites[i]) for i in range(len(f_mod_sites)))
+    f_mod_nos_wrapped       = tuple(wrap_nos(f_mod_nos[i]) for i in range(len(f_mod_nos)))
 
-    # Non-modifying operators: we wrap them to match the diagonal interface
-    # expected by local_energy_jax_nonmod_nosites (state -> (state, coeff))
+    # Non-modifying operators: wrap to match diagonal interface
     def wrap_nmod_sites(f, sites):
         sites = tuple(int(s) for s in sites)
         def op(state: jnp.ndarray):
-            new_state, coeff = f(state, *sites)
-            # new_state is ignored later; keep original state for safety
+            _, coeff = f(state, *sites)
             return state, coeff
         return op
 
     def wrap_nmod_nos(f):
         def op(state: jnp.ndarray):
-            new_state, coeff = f(state)
+            _, coeff = f(state)
             return state, coeff
         return op
 
     f_nmod_sites_wrapped    = tuple(wrap_nmod_sites(f_nmod_sites[i], i_nmod_sites[i]) for i in range(len(f_nmod_sites)))
     f_nmod_nos_wrapped      = tuple(wrap_nmod_nos(f_nmod_nos[i]) for i in range(len(f_nmod_nos)))
 
-    # -------------------------------------------------------------------------
-    # 3. Pure Python wrapper; JAX traces through once and then all is XLA
-    # -------------------------------------------------------------------------
+    ###########################################################################
+    # 3. Build the inner JAX function
+    ###########################################################################
+
     def init_wrapper():
 
-        # Everything captured here is static for JAX
-        f_mod_sites_t       = tuple(f_mod_sites_wrapped)
-        f_mod_nos_t         = tuple(f_mod_nos_wrapped)
-        f_nmod_sites_t      = tuple(f_nmod_sites_wrapped)
-        f_nmod_nos_t        = tuple(f_nmod_nos_wrapped)
+        # Capture as tuples/arrays so JAX sees them as static.
+        f_mod_sites_t    = tuple(f_mod_sites_wrapped)
+        f_mod_nos_t      = tuple(f_mod_nos_wrapped)
+        f_nmod_sites_t   = tuple(f_nmod_sites_wrapped)
+        f_nmod_nos_t     = tuple(f_nmod_nos_wrapped)
 
-        m_mod_sites_arr     = jnp.asarray(m_mod_sites,  dtype=dtype)
-        m_mod_nos_arr       = jnp.asarray(m_mod_nos,    dtype=dtype)
-        m_nmod_sites_arr    = jnp.asarray(m_nmod_sites, dtype=dtype)
-        m_nmod_nos_arr      = jnp.asarray(m_nmod_nos,   dtype=dtype)
+        m_mod_sites_arr  = jnp.asarray(m_mod_sites,   dtype=dtype)
+        m_mod_nos_arr    = jnp.asarray(m_mod_nos,     dtype=dtype)
+        m_nmod_sites_arr = jnp.asarray(m_nmod_sites,  dtype=dtype)
+        m_nmod_nos_arr   = jnp.asarray(m_nmod_nos,    dtype=dtype)
 
         @jax.jit
         def wrapper(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
             state = jnp.asarray(state)
             ns    = state.shape[0]
 
-            # 1) Diagonal energy (non-modifying operators)
+            # --------------------------------------------------------------
+            # 1) Diagonal (non-modifying) contribution
+            # --------------------------------------------------------------
             diag = local_energy_jax_nonmod(
                 state,
                 f_nmod_nos_t,
                 m_nmod_nos_arr,
                 f_nmod_sites_t,
                 m_nmod_sites_arr,
-            ).astype(dtype)  # shape (1,)
+            ) # (1,) in state's dtype
 
+            # Collect outputs in lists; length is static, so XLA can unroll.
             states_list   = [state.reshape((1, ns))]
-            energies_list = [diag.reshape((1,))]
+            energies_list = [jnp.asarray(diag, dtype=dtype).reshape((1,))]
 
+            # --------------------------------------------------------------
             # 2) Modifying operators WITH sites
+            # --------------------------------------------------------------
             for op, mult in zip(f_mod_sites_t, m_mod_sites_arr):
-                new_states, coeffs = op(state)          # (K, ns), (K,)
-                energies_list.append(coeffs * mult)     # (K,)
-                states_list.append(new_states)          # (K, ns)
-
-            # 3) Modifying operators WITHOUT sites
-            for op, mult in zip(f_mod_nos_t, m_mod_nos_arr):
-                new_states, coeffs = op(state)          # (K, ns), (K,)
-                energies_list.append(coeffs * mult)
+                new_states, coeffs = op(state) # (K, ns), (K,)
                 states_list.append(new_states)
+                energies_list.append(coeffs * mult)
 
-            all_states   = jnp.concatenate(states_list,   axis=0)
+            # --------------------------------------------------------------
+            # 3) Modifying operators WITHOUT sites
+            # --------------------------------------------------------------
+            for op, mult in zip(f_mod_nos_t, m_mod_nos_arr):
+                new_states, coeffs = op(state) # (K, ns), (K,)
+                states_list.append(new_states)
+                energies_list.append(coeffs * mult)
+
+            # --------------------------------------------------------------
+            # 4) Stack everything
+            # --------------------------------------------------------------
+            all_states   = jnp.concatenate(states_list, axis=0)
             all_energies = jnp.concatenate(
                 [e.reshape((-1,)) for e in energies_list],
                 axis=0,
             )
-
             return all_states, all_energies
 
         return wrapper
@@ -326,3 +331,4 @@ def local_energy_jax_wrap(
     return final_wrapper
 
 ################################################################################
+# End of file
