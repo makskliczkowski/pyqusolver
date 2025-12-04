@@ -96,6 +96,19 @@ class Hamiltonian(Operator):
         "mode_mismatch"                 : _ERR_MODE_MISMATCH,
         "ns_not_provided"               : _ERR_NS_NOT_PROVIDED
     }
+    
+    _ADD_TOLERANCE                      = 1e-10
+    def _ADD_CONDITION(x, *args):
+        if x is None:                   return False
+        if args:
+            if len(args) == 1:
+                y = x[args[0]]
+            else:
+                y = x[args]
+        else:
+            y = x
+        if y is None:                   return False
+        return not np.isclose(y, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
 
     # ----------------------------------------------------------------------------------------------
     
@@ -1072,7 +1085,7 @@ class Hamiltonian(Operator):
             self._operator_module   = get_operator_module(local_space_type)
         return self._operator_module
     
-    def correlators(self, indices_pairs:List[Tuple[int, int]], correlators=None, **kwargs) -> dict:
+    def correlators(self, indices_pairs:List[Tuple[int, int]], correlators=None, type_acting='global', **kwargs) -> dict:
         """
         Computes correlators using the operator module.
 
@@ -1107,7 +1120,7 @@ class Hamiltonian(Operator):
 
         op_module = self.operators # Ensure operator module is loaded
         if hasattr(op_module, 'correlators'):
-            return op_module.correlators(indices_pairs=indices_pairs, correlators=correlators, **kwargs)
+            return op_module.correlators(indices_pairs=indices_pairs, correlators=correlators, type_acting=type_acting, **kwargs)
         else:
             raise AttributeError("Operator module does not have a 'correlators' attribute.")
                 

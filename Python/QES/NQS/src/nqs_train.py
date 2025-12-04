@@ -269,6 +269,7 @@ class NQSTrainer:
                 *,
                 # Solvers
                 lin_solver      : Union[str, Callable]  = SolverType.SCIPY_CG,      # Linear Solver
+                lin_force_mat   : bool                  = False,                    # Force forming full matrix
                 pre_solver      : Union[str, Callable]  = None,                     # Preconditioner
                 ode_solver      : Union[IVP, str]       = 'Euler',                  # ODE Solver or preset
                 tdvp            : Optional[TDVP]        = None,                     # Setup TDVP engine
@@ -288,6 +289,7 @@ class NQSTrainer:
                 lr              : Optional[float]       = None,                     # Direct LR injection       (bypass scheduler)
                 reg             : Optional[float]       = None,                     # Direct Reg injection      (bypass scheduler)
                 diag_shift      : float                 = 1e-5,                     # Initial diagonal shift    (bypass scheduler)
+                grad_clip       : Optional[float]       = None,                     # Gradient clipping threshold (None = no clipping)
                 # --------------------------------------------------------------
                 # Linear Solver + Preconditioner
                 # --------------------------------------------------------------
@@ -317,7 +319,7 @@ class NQSTrainer:
             Phase scheduling configuration. Can be:
             - ``str``   : Preset name ('default', 'kitaev')
             - ``tuple`` : (lr_scheduler, reg_scheduler) - each can be string, callable, or PhaseScheduler
-            - ``None``  : Use lr_scheduler/reg_scheduler params or constant lr/reg values
+            - ``None``  : Use lr_scheduler/reg_scheduler/diag_scheduler params or constant lr/reg/diag values
             
         lr_scheduler : str or Callable, optional
             Learning rate scheduler. Can be:
@@ -328,7 +330,7 @@ class NQSTrainer:
         reg_scheduler : str or Callable, optional  
             Regularization scheduler (for future L2 weight regularization).
             Same options as lr_scheduler.
-            
+
         diag_scheduler : str or Callable, optional
             Diagonal shift (SR regularization) scheduler. Controls the diagonal
             shift added to the SR matrix: S -> S + diag_shift * I.
@@ -340,6 +342,10 @@ class NQSTrainer:
             
         reg : float, optional
             Initial regularization. Same behavior as lr.
+
+        diag_shift : float, optional
+            Initial diagonal shift value. When used alone (phases=None, no diag_scheduler), creates
+            a constant scheduler. Can also override the initial value of other schedulers.
             
         Scheduler kwargs (passed to factory when using string types):
             - lr_decay : float - Decay rate for exponential/step/adaptive
@@ -347,6 +353,37 @@ class NQSTrainer:
             - min_lr : float - Minimum value (cosine, linear, adaptive)
             - patience : int - Epochs before reduction (adaptive)
             - min_delta : float - Minimum improvement (adaptive)
+            - lr_initial : float - Alternative key for initial learning rate (overrides initial_lr)
+            - lr_max_epochs : int - Alternative key for max_epochs (overrides max_epochs)
+            - lr_es : int - Early stopping patience (sets early_stopping_patience)
+            
+            **kwargs : dict
+            Extra args passed to scheduler factory (lr_decay, min_lr, patience, etc.)
+            *LR*
+            - lr_decay      : float - Decay rate for exponential/step/adaptive
+            - lr_step_size  : int - Step size for step scheduler
+            - lr_min        : float - Minimum learning rate for cosine/linear/adaptive
+            - lr_patience   : int - Patience for adaptive scheduler
+            - lr_min_delta  : float - Min improvement for adaptive scheduler
+            - lr_initial    : float - Alternative to initial_lr (overrides initial_lr)
+            - lr_max_epochs : int - Alternative to max_epochs (overrides max_epochs)
+            - lr_es         : int - Early stopping patience (sets early_stopping_patience)
+            *Diagonal*
+            - diag_decay    : float - Decay rate for diag schedulers
+            - diag_step_size: int - Step size for diag schedulers
+            - diag_min      : float - Minimum diag shift for diag schedulers
+            - diag_patience : int - Patience for diag schedulers
+            - diag_min_delta: float - Min improvement for diag schedulers
+            - diag_initial  : float - Alternative to initial diag_shift (overrides diag_shift)
+            - diag_max_epochs : int - Alternative to max_epochs for diag scheduler
+            *Reg*
+            - reg_decay     : float - Decay rate for reg schedulers
+            - reg_step_size : int - Step size for reg schedulers
+            - reg_min       : float - Minimum reg for reg schedulers
+            - reg_patience  : int - Patience for reg schedulers
+            - reg_min_delta : float - Min improvement for reg schedulers
+            - reg_initial   : float - Alternative to initial reg (overrides reg)
+            - reg_max_epochs : int - Alternative to max_epochs for reg scheduler
             
         Solvers
         -------
@@ -376,6 +413,11 @@ class NQSTrainer:
         diag_shift : float, default=1e-5
             Initial diagonal regularization for SR matrix.
             
+        grad_clip : float, optional
+            Maximum L2 norm for gradient clipping. If None, no clipping is applied.
+            Helps stabilize training for CNNs and complex networks with occasional
+            large gradients. Typical values: 1.0-10.0.
+            
         Other Parameters
         ----------------
         n_batch : int, default=1000
@@ -397,12 +439,12 @@ class NQSTrainer:
         >>> trainer     = NQSTrainer(nqs, phases='kitaev')
         
         >>> # 2. String scheduler types (simple and flexible)
-        >>> trainer     = NQSTrainer(nqs, lr_scheduler='cosine', lr=0.01, reg=0.001, phases=None)
+        >>> trainer     = NQSTrainer(nqs, lr_scheduler='cosine', lr=0.01, reg=0.001, diag_shift=1e-5, phases=None)
         >>> trainer     = NQSTrainer(nqs, lr_scheduler='adaptive', lr=0.02, 
         ...                      patience=20, lr_decay=0.5, phases=None)  # kwargs passed to scheduler
         
         >>> # 3. Constant values (simplest)
-        >>> trainer     = NQSTrainer(nqs, lr=0.01, reg=0.001, phases=None)
+        >>> trainer     = NQSTrainer(nqs, lr=0.01, reg=0.001, diag_shift=1e-5, phases=None)
         
         >>> # 4. Tuple of string schedulers
         >>> trainer     = NQSTrainer(nqs, phases=('exponential', 'constant'), lr=0.05, lr_decay=0.02)
@@ -410,7 +452,7 @@ class NQSTrainer:
         >>> # 5. Custom callable scheduler
         >>> from QES.general_python.ml.schedulers import choose_scheduler
         >>> lr          = choose_scheduler('cosine', initial_lr=0.01, max_epochs=500, min_lr=1e-5)
-        >>> trainer     = NQSTrainer(nqs, lr_scheduler=lr, reg=0.001, phases=None)
+        >>> trainer     = NQSTrainer(nqs, lr_scheduler=lr, reg=0.001, diag_shift=1e-5, phases=None)
         '''
         
         if nqs is None:         raise ValueError(self._ERR_NO_NQS)
@@ -436,9 +478,8 @@ class NQSTrainer:
             self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
 
         # Setup Schedulers (The Integrated Part)
-        self._init_reg, self._init_lr, self._init_diag = None, None, None
-        self._set_phases(phases, lr, reg, lr_scheduler=lr_scheduler, reg_scheduler=reg_scheduler,
-                         diag_scheduler=diag_scheduler, diag_shift=diag_shift)
+        self._init_reg, self._init_lr, self._init_diag = reg, lr, diag_shift
+        self._set_phases(phases, lr, reg, lr_scheduler=lr_scheduler, reg_scheduler=reg_scheduler, diag_scheduler=diag_scheduler, diag_shift=diag_shift, **kwargs)
         
         # Setup Linear Solver + Preconditioner
         try:
@@ -448,7 +489,8 @@ class NQSTrainer:
             raise ValueError(self._ERR_INVALID_SOLVER) from e
         
         # Setup TDVP (Physics Engine)
-        self.tdvp = tdvp
+        self.tdvp       = tdvp
+        self.grad_clip  = grad_clip  # Store for later use
         if self.tdvp is None:
             if self.logger: self.logger.warning("No TDVP engine provided. Creating default TDVP instance.", lvl=0, color='yellow')
             self.tdvp = TDVP(
@@ -459,9 +501,20 @@ class NQSTrainer:
                             sr_lin_solver   =   self.lin_solver,
                             sr_lin_solver_t =   lin_type,
                             sr_precond      =   self.pre_solver,
-                            backend         =   nqs.backend
+                            backend         =   nqs.backend,
+                            logger          =   logger,
+                            sr_form_matrix  =   lin_force_mat,
+                            sr_snr_tol      =   kwargs.get('sr_snr_tol', 1e-12),
+                            sr_lin_x0       =   kwargs.get('sr_lin_x0', None),
+                            sr_maxiter      =   kwargs.get('sr_maxiter', 1000),
+                            sr_pinv_cutoff  =   kwargs.get('sr_pinv_cutoff', 1e-8),
                         )                    
             if self.logger: self.logger.info(f"Created default TDVP engine {self.tdvp}", lvl=1, color='yellow')
+        
+        # Set gradient clipping on TDVP
+        if grad_clip is not None:
+            self.tdvp.set_grad_clip(grad_clip)
+            if self.logger: self.logger.info(f"Gradient clipping enabled: max_norm={grad_clip:.2e}", lvl=1, color='cyan')
             
         # Setup ODE Solver
         try:
@@ -475,7 +528,8 @@ class NQSTrainer:
         
         # JIT Compile Critical Paths
         # We pre-compile the sampling and step functions to avoid runtime overhead
-        self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
+        # self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
+        self._single_step_jit   = jax.jit(nqs.wrap_single_step_jax(batch_size = n_batch))
         
         # Define a function that runs the WHOLE step (ODE + TDVP + Energy)
         def train_step_logic(f, est_fn, y, t, configs, configs_ansatze, probabilities, lower_states):
@@ -538,11 +592,42 @@ class NQSTrainer:
             Max epochs for auto-created schedulers (when using string types).
         **kwargs : dict
             Extra args passed to scheduler factory (lr_decay, min_lr, patience, etc.)
+            *LR*
+            - lr_decay      : float - Decay rate for exponential/step/adaptive
+            - lr_step_size  : int - Step size for step scheduler
+            - lr_min        : float - Minimum learning rate for cosine/linear/adaptive
+            - lr_patience   : int - Patience for adaptive scheduler
+            - lr_min_delta  : float - Min improvement for adaptive scheduler
+            *Diagonal*
+            - diag_decay    : float - Decay rate for diag schedulers
+            - diag_step_size: int - Step size for diag schedulers
+            - diag_min      : float - Minimum diag shift for diag schedulers
+            - diag_patience : int - Patience for diag schedulers
+            - diag_min_delta: float - Min improvement for diag schedulers
+            *Reg*
+            - reg_decay     : float - Decay rate for reg schedulers
+            - reg_step_size : int - Step size for reg schedulers
+            - reg_min       : float - Minimum reg for reg schedulers
+            - reg_patience  : int - Patience for reg schedulers
+            - reg_min_delta : float - Min improvement for reg schedulers
+        -----------
         '''
         from QES.general_python.ml.schedulers import choose_scheduler
         
+        diag_kwargs = {k: v for k, v in kwargs.items() if k.startswith('diag_')         }
+        reg_kwargs  = {k: v for k, v in kwargs.items() if k.startswith('reg_')          }
+        lr_kwargs   = {k: v for k, v in kwargs.items() if k.startswith('lr_')           }
+        # transform keys to be accepted by scheduler factory
+        
+        diag_kwargs = {k.replace('diag_',   'lr_'): v for k, v in diag_kwargs.items()   }
+        if self._init_diag is not None: diag_kwargs['lr_initial'] = self._init_diag
+        reg_kwargs  = {k.replace('reg_',    'lr_'): v for k, v in reg_kwargs.items()    }
+        if self._init_reg is not None:  reg_kwargs['lr_initial']  = self._init_reg
+        lr_kwargs   = {k.replace('lr_',     'lr_'): v for k, v in lr_kwargs.items()     }
+        if self._init_lr is not None:   lr_kwargs['lr_initial']   = self._init_lr
+        
         # Helper to create scheduler from string or passthrough
-        def _resolve_scheduler(sched, init_val, param_name, max_epochs):
+        def _resolve_scheduler(sched, init_val, param_name, max_epochs, **kwargs):
             if sched is None:           
                 if init_val is not None: # Constant scheduler from float value
                     return choose_scheduler('constant', initial_lr=init_val, max_epochs=max_epochs, logger=self.logger)
@@ -552,7 +637,7 @@ class NQSTrainer:
                 # String scheduler type -> create via factory
                 init = init_val if init_val is not None else (1e-2 if param_name == 'lr' else 1e-3)
                 if self.logger: self.logger.debug(f"Creating '{sched}' scheduler for {param_name} (init={init:.2e})", lvl=2, color='blue')
-                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, **kwargs)
+                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs)
             
             elif callable(sched) or isinstance(sched, PhaseScheduler):
                 return sched
@@ -565,30 +650,30 @@ class NQSTrainer:
         
         # Case 1: User provided lr_scheduler/reg_scheduler or lr/reg directly -> use them
         if user_provided_scheduler and (phases == 'default' or phases is None):
-            self.lr_scheduler   = _resolve_scheduler(lr_scheduler,      lr,         'lr',   n_epochs)
-            self.reg_scheduler  = _resolve_scheduler(reg_scheduler,     reg,        'reg',  n_epochs)
-            self.diag_scheduler = _resolve_scheduler(diag_scheduler,    diag_shift, 'diag', n_epochs)
+            self.lr_scheduler   = _resolve_scheduler(lr_scheduler,      lr,         'lr',   n_epochs, **lr_kwargs)
+            self.reg_scheduler  = _resolve_scheduler(reg_scheduler,     reg,        'reg',  n_epochs, **reg_kwargs)
+            self.diag_scheduler = _resolve_scheduler(diag_scheduler,    diag_shift, 'diag', n_epochs, **diag_kwargs)
         
         # Case 2: Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
         elif isinstance(phases, str):
             if self.logger: self.logger.debug(f"Initializing training phases with preset: '{phases}'")
             self.lr_scheduler, self.reg_scheduler   = create_phase_schedulers(phases, self.logger)
             # diag_scheduler is separate from phase presets
-            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler, diag_shift, 'diag', n_epochs)
+            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler, diag_shift, 'diag', n_epochs, **diag_kwargs)
             
         # Case 3: Tuple of schedulers
         elif isinstance(phases, (tuple, list)) and len(phases) == 2:
             # Validate and resolve if strings
             self.lr_scheduler, self.reg_scheduler   = phases
-            self.lr_scheduler                       = _resolve_scheduler(self.lr_scheduler,     lr,         'lr',   n_epochs)
-            self.reg_scheduler                      = _resolve_scheduler(self.reg_scheduler,    reg,        'reg',  n_epochs)
-            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler,        diag_shift, 'diag', n_epochs)
+            self.lr_scheduler                       = _resolve_scheduler(self.lr_scheduler,     lr,         'lr',   n_epochs, **lr_kwargs)
+            self.reg_scheduler                      = _resolve_scheduler(self.reg_scheduler,    reg,        'reg',  n_epochs, **reg_kwargs)
+            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler,        diag_shift, 'diag', n_epochs, **diag_kwargs)
             
         # Case 4: No phases -> use injected schedulers or create from lr/reg
         else:
-            self.lr_scheduler                       = _resolve_scheduler(lr_scheduler,          lr,         'lr',   n_epochs)
-            self.reg_scheduler                      = _resolve_scheduler(reg_scheduler,         reg,        'reg',  n_epochs)
-            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler,        diag_shift, 'diag', n_epochs)
+            self.lr_scheduler                       = _resolve_scheduler(lr_scheduler,          lr,         'lr',   n_epochs, **lr_kwargs)
+            self.reg_scheduler                      = _resolve_scheduler(reg_scheduler,         reg,        'reg',  n_epochs, **reg_kwargs)
+            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler,        diag_shift, 'diag', n_epochs, **diag_kwargs)
         
         # Compute initial values (override with explicit lr/reg if provided)
         if self.lr_scheduler:
@@ -791,9 +876,11 @@ class NQSTrainer:
                 # Returns: ((keys), (configs, ansatz_vals), probs)
                 sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(epoch==0), epoch=epoch)
                 (_, _), (cfgs, cfgs_psi), probs = sample_out
+                if self.logger and epoch == 0:  self.logger.info(f"Sampled {cfgs.shape[0]} configurations with batch size {self.n_batch}", lvl=1, color='green')
                 
                 # Handle Excited States (Penalty Terms)
                 lower_contr                     = self._prepare_lower_states(cfgs, cfgs_psi)
+                if self.logger and epoch == 0:  self.logger.info(f"Prepared lower states for excited state handling", lvl=1, color='green')
 
                 # 3. Physics Step (TDVP + ODE) (Timed)
                 params_flat                     = self.nqs.get_params(unravel=True)

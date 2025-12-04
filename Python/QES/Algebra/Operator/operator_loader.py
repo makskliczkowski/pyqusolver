@@ -172,7 +172,7 @@ class OperatorModule:
     # Utility method to print help
     # ----------------------------
     
-    def correlators(self, *, indices_pairs: Optional[list] = None, correlators = None, **kwargs):
+    def correlators(self, *, indices_pairs: Optional[list] = None, correlators = None, type_acting = 'global', **kwargs):
         """
         Generate correlation operators for specified correlator types and site indices.
         Parameters
@@ -181,6 +181,14 @@ class OperatorModule:
             List of (i, j) index tuples specifying the sites for the correlators. If None, defaults to just correlators...
         correlators : list or None, optional
             List of correlator types to generate (e.g., ['zz', 'xx', 'xy', ...]). If None, defaults to ['zz'] for spin systems.
+        type_acting : str, optional
+            Specifies whether the operators act 'locally' on specified sites or 'globally' on the entire system. Default is 'global'.
+            It can be:
+            - 'local'       : Operators act only on the specified sites.
+            - 'global'      : Operators act on the entire system, with identity on other sites.
+            - 'correlation' : Specialized for correlation functions.
+            If indices pairs are specified, this parameter is redundant. Otherwise,
+            it determines how the operators are constructed.
         **kwargs
             Additional keyword arguments passed to the operator constructors.
         Returns
@@ -203,7 +211,10 @@ class OperatorModule:
         # we can return operators with indices applied
         if indices_pairs is None:
             indices_pairs = [(None, None)]
-                    
+        
+        # Pass type_acting to kwargs
+        kwargs['type_act'] = type_acting
+        
         if self._local_space_type in (LocalSpaceTypes.SPIN_1_2, LocalSpaceTypes.SPIN_1):
             ops_module  = self._load_spin_operators()
             correlators = correlators or ['zz']

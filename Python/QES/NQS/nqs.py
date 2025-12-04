@@ -120,6 +120,11 @@ class NQS(MonteCarloSolver):
     _ERROR_SHAPE_HILBERT        = "Either shape or hilbert space must be provided."
     _ERROR_ENERGY_WAVEFUNCTION  = "Energy computation is only valid for wavefunction problems."
     
+    @staticmethod
+    def DUMMY_APPLY_FUN_NPY(x): return np.array([np.array([x])]), np.array([np.array([1.0])])
+    @staticmethod
+    def DUMMY_APPLY_FUN_JAX(x): return jnp.array([jnp.array([x])] * 40), jnp.array([jnp.array([1.0])] * 40)
+    
     def __init__(self,
                 # information on the NQS
                 logansatz   : Union[Callable, str, GeneralNet],
@@ -636,7 +641,8 @@ class NQS(MonteCarloSolver):
                 logproba_in   : Array,                              # logarithm of the probabilities for the input states (\log p(s))
                 logproba_fun  : Callable,                           # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
                 parameters    : Union[dict, list, jnp.ndarray],     # parameters to be passed to the function - for the Networks ansatze
-                batch_size    : Optional[int] = None):              # batch size for evaluation
+                batch_size    : Optional[int] = None,               # batch size for evaluation
+                *op_args):                                          # additional arguments to pass to func (broadcast across states)
         """
         Evaluates a given function on a set of states and probabilities, with optional batching.
         Args:
@@ -655,21 +661,18 @@ class NQS(MonteCarloSolver):
             batch_size (Optional[int], optional):
                 The size of batches for evaluation. 
                 If None, the function is evaluated without batching. Defaults to None.
+            *op_args:
+                Additional arguments to pass to func. These are broadcast (not vmapped) across states.
+                Useful for operator indices (i, j) in correlation functions.
         Returns:
             The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
         """
         if batch_size is None or batch_size == 1:
             funct_in = net_utils.jaxpy.apply_callable_jax
-            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters)
+            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args)
         else:
             funct_in = net_utils.jaxpy.apply_callable_batched_jax
-            return funct_in(func            = func,
-                            states          = states,
-                            sample_probas   = probabilities,
-                            logprobas_in    = logproba_in,
-                            logproba_fun    = logproba_fun,
-                            parameters      = parameters,
-                            batch_size      = batch_size)
+            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
     
     @staticmethod
     def _apply_fun_np(func    : Callable,
@@ -724,7 +727,8 @@ class NQS(MonteCarloSolver):
             logproba_fun    : Callable,
             parameters      : Union[dict, list, np.ndarray],
             batch_size      : Optional[int] = None,
-            is_jax          : bool = True):
+            is_jax          : bool = True,
+            *op_args):
         """
         Evaluates a given function on a set of states and probabilities, with optional batching.
         
@@ -746,23 +750,20 @@ class NQS(MonteCarloSolver):
                 If None, the function is evaluated without batching. Defaults to None.
             is_jax (bool, optional):
                 Flag indicating if JAX is used for computation. Defaults to True.
+            *op_args:
+                Additional arguments to pass to func. These are broadcast (not vmapped) across states.
+                Useful for operator indices (i, j) in correlation functions.
         Returns:
             The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
         """
                     
         if batch_size is None:
             funct_in = net_utils.jaxpy.apply_callable_jax if is_jax else net_utils.numpy.apply_callable_np
-            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters)
+            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args)
         
         # otherwise, we shall use the batched version
         funct_in = net_utils.jaxpy.apply_callable_batched_jax if is_jax else net_utils.numpy.apply_callable_batched_np
-        return funct_in(func            = func,
-                        states          = states,
-                        sample_probas   = probabilities,
-                        logprobas_in    = logproba_in,
-                        logproba_fun    = logproba_fun,
-                        parameters      = parameters,
-                        batch_size      = batch_size)
+        return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
     
     @staticmethod
     def _apply_fun_s(func   : list[Callable],
@@ -816,7 +817,8 @@ class NQS(MonteCarloSolver):
             num_samples     : Optional[int]                                                                     = None,
             num_chains      : Optional[int]                                                                     = None,
             return_values   : bool                                                                              = False,
-            log_progress    : bool                                                                              = False
+            log_progress    : bool                                                                              = False,
+            args            : Optional[tuple]                                                                   = None
             ):
         r"""
         Evaluate a set of functions based on the provided states, wavefunction, and probabilities.
@@ -850,6 +852,11 @@ class NQS(MonteCarloSolver):
             num_chains (Optional[int]):
                 Number of chains to use if using the sampler. If not provided, 
                 defaults to the sampler's `numchains`.
+            args (Optional[tuple]):
+                Additional arguments to pass to the function(s). These are broadcast (not vmapped) 
+                across all sampled states. Useful for passing operator indices (i, j) in correlation 
+                functions like <Sz_i Sz_j> without triggering recompilation for each (i, j) pair.
+                Only 3 compilations needed: 0-arg, 1-arg, 2-arg versions, then reuse for all N² pairs.
             **kwargs:
                 Additional keyword arguments:
                     - batch_size (int)          : The batch size for evaluation. Defaults to self._batch_size.
@@ -871,10 +878,17 @@ class NQS(MonteCarloSolver):
             - f1 (x) = [{|s'>}], [<s'|f|s> for s' in {|s'>}]
             and output is the O_loc(s) evaluated over the sampled states.
             - O_loc(s) = \sum _{s \in {samples}} sum_{s'} <s'|O|s> * psi(s') / psi(s) / num_samples
+            
+            # For correlation functions with operator indices:
+            >>> def measure_corr(state, i, j):
+            ...     # compute <Sz_i Sz_j> on state
+            ...     return new_states, values
+            >>> result = psi.apply(measure_corr, args=(jnp.array(0), jnp.array(1)))
         """
         
-        params          = parameters if parameters is not None else self.get_params()
-        batch_size      = batch_size if batch_size is not None else self._batch_size
+        params          = parameters    if parameters   is not None else self.get_params()
+        batch_size      = batch_size    if batch_size   is not None else self._batch_size
+        op_args         = args          if args         is not None else ()
         
         #! check if the functions are provided
         if functions is None or (isinstance(functions, list) and len(functions) == 0):
@@ -913,15 +927,16 @@ class NQS(MonteCarloSolver):
             if log_progress:
                 t0 = time.time()
                 self._logger.info(f"Applying function {f}", lvl=1, color='green')
-                
+            
             result = self._apply_func(
-                func            = f,
-                states          = states,
-                sample_probas   = probabilities,
-                logprobas_in    = ansatze,
-                logproba_fun    = self._ansatz_func,
-                parameters      = params,
-                batch_size      = batch_size
+                f,
+                states,
+                probabilities,
+                ansatze,
+                self._ansatz_func,
+                params,
+                batch_size,
+                *op_args
             )
             
             if log_progress:
@@ -1056,7 +1071,8 @@ class NQS(MonteCarloSolver):
     def compute_observable(self, states=None, 
             ansatze=None, functions=None, names=None, *, 
             params=None, probabilities=None, batch_size=None, 
-            num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSObservable, Array]:
+            num_samples=None, num_chains=None, return_stats=True, return_values=False, 
+            args=None, **kwargs) -> Union[NQSObservable, Array]:
         """
         Evaluate an observable using the evaluation engine.
         
@@ -1074,13 +1090,18 @@ class NQS(MonteCarloSolver):
                 Whether to compute expectation value
             batch_size: 
                 Optional batch size override
+            args:
+                Optional tuple of additional arguments to pass to the observable function.
+                These are broadcast (not vmapped) across all sampled states.
+                Useful for computing correlation functions <O_i O_j> where (i, j) are
+                passed as runtime arguments, avoiding N² recompilations.
 
         Returns:
             ObservableResult with local values and statistics
         """
         return self._eval_engine.observable(states=states, ansatze=ansatze, functions=functions, names=names,
             params=params, probabilities=probabilities, batch_size=batch_size, num_samples=num_samples, 
-            num_chains=num_chains, return_stats=return_stats, return_values=return_values, **kwargs)
+            num_chains=num_chains, return_stats=return_stats, return_values=return_values, args=args, **kwargs)
             
     def expectation(self, states=None, ansatze=None, functions=None, names=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSObservable, Array]:
         ''' Alias for the observable computation '''
@@ -1835,6 +1856,16 @@ class NQS(MonteCarloSolver):
         # set the parameters
         self._net.set_params(params)
     
+    @property
+    def parameters(self) -> Any:
+        """Alias for get_params() - returns current network parameters."""
+        return self.get_params()
+    
+    @parameters.setter
+    def parameters(self, new_params: Any):
+        """Alias for set_params() - sets new network parameters."""
+        self.set_params(new_params)
+    
     #####################################
     #! GETTERS AND PROPERTIES
     #####################################
@@ -1878,6 +1909,39 @@ class NQS(MonteCarloSolver):
         Return the underlying physical model. For example, the Hamiltonian.
         '''
         return self._model
+    
+    @model.setter
+    def model(self, new_model):
+        '''
+        Set a new physical model and reconfigure the physics/loss functions.
+        
+        This is useful for impurity studies where you want to reuse the same
+        trained network with a modified Hamiltonian (e.g., adding impurities).
+        
+        Parameters:
+            new_model: The new Hamiltonian/model to use.
+        '''
+        self._model = new_model
+        self._nqsproblem.setup(self._model, self._net)
+        
+        # Reconfigure loss function for wavefunction problem
+        if self._nqsproblem.typ == 'wavefunction':
+            self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
+            self._loss_func     = self._local_en_func
+        
+        # Re-initialize directory for new model
+        self._init_directory()
+        
+        # Reset checkpoint manager for new directory
+        self.ckpt_manager       = NQSCheckpointManager(
+                                    directory       = self._dir_detailed, 
+                                    use_orbax       = getattr(self.ckpt_manager, 'use_orbax', True), 
+                                    max_to_keep     = getattr(self.ckpt_manager, 'max_to_keep', 3), 
+                                    logger          = self._logger
+                                )
+        
+        self._logger.info(f"Model updated to: {new_model}", lvl=1, color='blue')
+    
     @property
     def operators(self) -> 'OperatorModule':
         '''
@@ -2023,6 +2087,7 @@ class NQS(MonteCarloSolver):
             # Linear Solver options
             lin_sigma           : float                     = None,
             lin_is_gram         : bool                      = True,
+            lin_force_mat       : bool                      = False,
             # TDVP options
             use_sr              : bool                      = True,
             use_minsr           : bool                      = False,
@@ -2099,6 +2164,18 @@ class NQS(MonteCarloSolver):
         exact_method : str, optional
             Method used to compute exact predictions (e.g., 'lanczos').
             
+        lin_force_mat : bool, default=False
+            Force forming full matrix in linear solver.
+            
+        lin_is_gram : bool, default=True
+            Treat linear system as Gram matrix (S) if True, else covariance.
+            
+        lower_states : List[NQS], optional
+            List of lower-energy NQS states for orthogonalization.
+        
+        rhs_prefactor : float, default=-1.0
+            Prefactor for the TDVP right-hand side.
+            
         **kwargs
             Additional arguments passed to NQSTrainer.
             
@@ -2137,6 +2214,7 @@ class NQS(MonteCarloSolver):
                 nqs             = self,
                 # Solvers
                 lin_solver      = lin_solver,
+                lin_force_mat   = lin_force_mat,
                 pre_solver      = pre_solver,
                 ode_solver      = ode_solver,
                 tdvp            = tdvp,
@@ -2202,6 +2280,8 @@ class NQS(MonteCarloSolver):
                 Info on VMC vs Autoregressive sampling.
             - 'network': 
                 Details about the loaded ansatz.
+            - 'networks':
+                Overview of available ansatz architectures.
             - 'usage': 
                 Example workflows and common operations.
             - 'train':
@@ -2232,7 +2312,7 @@ class NQS(MonteCarloSolver):
                 - evaluate(s): Compute log(Psi(s)).
                 - set_modifier(O): Transform ansatz to O|Psi>.
                 """
-            
+        
         elif topic == "modifier":
             msg = f"""
                 {border}
@@ -2378,6 +2458,32 @@ class NQS(MonteCarloSolver):
                 - Trainer type: {type(self._trainer).__name__ if self._trainer else 'None'}
                 """
         
+        elif topic == "network":
+            info = NetworkFactory.net_help()
+            if self._net is not None:
+                net_type    = self._net.name if hasattr(self._net, 'name') else type(self._net).__name__
+                msg         = f"""
+                            {border}
+                            NQS Solver Help: Network Details
+                            {border}
+                            Current Network Type: {net_type}
+                            
+                            {info.get(net_type, "No additional info available for this network type.")}
+                            """
+        elif topic == "networks":
+            info = NetworkFactory.net_help()
+            msg  = f"""
+                {border}
+                NQS Solver Help: Available Networks
+                {border}
+                The following ansatz architectures are available:
+                
+                {chr(10).join([f"- {k}: {v.splitlines()[0]}" for k,v in info.items()])}
+                
+                For detailed information on each architecture, use:
+                    psi.help(topic='network')
+                """
+                
         elif topic == "checkpoints":
             msg = f"""
                 {border}

@@ -118,10 +118,29 @@ class NQSCheckpointManager:
         """Initialize Orbax CheckpointManager for a given directory."""
         target_dir          = checkpoint_dir or self._checkpoint_dir
         target_dir.mkdir(parents=True, exist_ok=True)
-        
         checkpoint_options  = ocp.CheckpointManagerOptions(max_to_keep=self.max_to_keep)
-        self._orbax_manager = ocp.CheckpointManager(target_dir, options=checkpoint_options)
-
+        
+        # For orbax >= 0.6.0, use the new API without explicit checkpointers
+        # The CheckpointManager will handle PyTree checkpointing automatically
+        try:
+            # New orbax API (>= 0.6.0) - no checkpointers argument needed
+            self._orbax_manager         = ocp.CheckpointManager(target_dir, options=checkpoint_options)
+            self._orbax_use_composite   = False  # Track API style
+        except TypeError as e:
+            # Fallback for older orbax versions
+            try:
+                if hasattr(ocp, 'StandardCheckpointer'):
+                    checkpointer = ocp.StandardCheckpointer()
+                elif hasattr(ocp, 'PyTreeCheckpointer'):
+                    checkpointer = ocp.PyTreeCheckpointer()
+                else:
+                    raise ImportError("Could not find a valid Checkpointer class.")
+                self._orbax_manager = ocp.CheckpointManager(target_dir, checkpointers=checkpointer, options=checkpoint_options)
+                self._orbax_use_composite = True
+            except Exception as e2:
+                self._log(f"Orbax init failed: {e}, {e2}. Falling back to HDF5.", lvl=0, color='red')
+                self.use_orbax = False
+            
     def _resolve_path(self, filename: Optional[str], step: Union[int, str], extension: str = "h5") -> Path:
         """
         Resolve the full path for a checkpoint file.
@@ -206,12 +225,11 @@ class NQSCheckpointManager:
         """
         if isinstance(step, int):
             save_key = step
-            # Use Composite wrapper for consistency with restore
-            save_arg = ocp.args.Composite(default=ocp.args.StandardSave(params))
         elif isinstance(step, str):
             # String identifiers saved at step 0 with named key
             save_key = 0 
-            save_arg = ocp.args.Composite(**{step: ocp.args.StandardSave(params)})
+            # Store the string step in metadata for later retrieval
+            metadata['_string_step'] = step
         else:
             raise TypeError(f"Step must be int or str, got {type(step)}")
 
@@ -228,8 +246,18 @@ class NQSCheckpointManager:
                 if step_dir.exists():
                     shutil.rmtree(step_dir)
         
-        # Save params via Orbax
-        self._orbax_manager.save(save_key, args=save_arg)
+        # Save params via Orbax - use simple PyTreeSave for new API
+        try:
+            # New orbax API (>= 0.6.0) - use StandardSave directly
+            save_arg = ocp.args.StandardSave(params)
+            self._orbax_manager.save(save_key, args=save_arg)
+        except (TypeError, ValueError) as e:
+            # Fallback: try without args (some versions accept pytree directly)
+            try:
+                self._orbax_manager.save(save_key, params)
+            except Exception as e2:
+                self._log(f"Orbax save failed: {e}, {e2}", lvl=0, color='red')
+                raise
         
         # Without this, the checkpoint may not be written to disk before we try to access it
         self._orbax_manager.wait_until_finished()
@@ -301,6 +329,7 @@ class NQSCheckpointManager:
 
     def _load_orbax(self, step: Optional[Union[int, str]], target_par: Optional[Any]) -> Any:
         """Load using Orbax backend."""
+        
         if isinstance(step, int) or step is None:
             if step is None:
                 restore_key = self._orbax_manager.latest_step()
@@ -311,7 +340,22 @@ class NQSCheckpointManager:
                 restore_key = step
             
             # Try multiple restore strategies to handle different checkpoint formats
-            # Strategy 1: New format with Composite(default=...)
+            # Strategy 1: New orbax API (>= 0.6.0) - use StandardRestore directly
+            try:
+                restore_arg     = ocp.args.StandardRestore(target_par)
+                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
+                return restored_items
+            except (ValueError, KeyError, TypeError) as e1:
+                pass
+            
+            # Strategy 2: Try without args (raw pytree restore)
+            try:
+                restored_items  = self._orbax_manager.restore(restore_key)
+                return restored_items
+            except (ValueError, KeyError, TypeError) as e2:
+                pass
+                
+            # Strategy 3: Legacy format with Composite wrapper
             try:
                 restore_arg     = ocp.args.Composite(default=ocp.args.StandardRestore(target_par))
                 restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
@@ -321,27 +365,25 @@ class NQSCheckpointManager:
                 elif isinstance(restored_items, dict) and 'default' in restored_items:
                     return restored_items['default']
                 return restored_items
-            except (ValueError, KeyError, TypeError) as e1:
-                pass
-                # self._log(f"Composite restore failed ({e1}), trying StandardRestore...", lvl=2)
-                
-            # Strategy 2: Legacy format with simple StandardRestore
+            except (ValueError, KeyError, TypeError) as e3:
+                self._log(f"All restore strategies failed: {e1}, {e2}, {e3}", lvl=2)
+                raise ValueError(f"Could not restore checkpoint at step {restore_key}.")
+        
+        elif isinstance(step, str):
+            # String identifiers were saved at step 0
+            restore_key = 0 
+            # Try simple restore first
             try:
                 restore_arg     = ocp.args.StandardRestore(target_par)
                 restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
                 return restored_items
-            except (ValueError, KeyError, TypeError) as e2:
-                self._log(f"StandardRestore also failed ({e2})", lvl=2)
-                raise ValueError(f"Could not restore checkpoint at step {restore_key}. Tried Composite and Standard restore. Errors: {e1}, {e2}")
-                    
-        elif isinstance(step, str):
-            # String identifiers were saved at step 0
-            restore_key     = 0 
-            restore_arg     = ocp.args.Composite(**{step: ocp.args.StandardRestore(target_par)})
-            restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
-            if hasattr(restored_items, step):
-                return getattr(restored_items, step)
-            return restored_items[step]
+            except (ValueError, KeyError, TypeError):
+                # Fallback to composite
+                restore_arg     = ocp.args.Composite(**{step: ocp.args.StandardRestore(target_par)})
+                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
+                if hasattr(restored_items, step):
+                    return getattr(restored_items, step)
+                return restored_items[step]
         else:
             raise TypeError(f"Step must be int, str, or None, got {type(step)}")
 
