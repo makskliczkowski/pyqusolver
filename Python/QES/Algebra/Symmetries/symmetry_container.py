@@ -32,10 +32,12 @@ from __future__ import annotations
 import time
 import numba
 import numpy as np
-from typing import List, Tuple, Dict, Optional, Callable, Union, Set
-from dataclasses import dataclass, field
-from itertools import combinations
-from functools import lru_cache
+
+# other
+from typing         import List, Tuple, Dict, Optional, Callable, Union, Set, TYPE_CHECKING
+from dataclasses    import dataclass, field
+from itertools      import combinations
+from functools      import lru_cache
 
 # --------------------------------------------------------------------------
 #! Private helper functions
@@ -70,11 +72,13 @@ def _binary_search_representative_list(mapping, state):
 # --------------------------------------------------------------------------
 
 try:
-    from QES.general_python.common.flog import get_global_logger
-    from QES.general_python.lattices.lattice import Lattice, LatticeDirection
-    from QES.Algebra.Symmetries.base import SymmetryOperator, SymmetryClass
-    from QES.Algebra.Operator.operator import SymmetryGenerators
-    from QES.Algebra.globals import GlobalSymmetry
+    from QES.Algebra.Symmetries.base            import SymmetryOperator
+    from QES.Algebra.Operator.operator          import SymmetryGenerators
+    from QES.Algebra.globals                    import GlobalSymmetry
+    from QES.general_python.lattices.lattice    import Lattice
+    
+    if TYPE_CHECKING:
+        from QES.general_python.common.flog     import Logger
     
     JAX_AVAILABLE = True
     try:
@@ -120,7 +124,14 @@ class SymmetryCompatibility:
     >>> compat.check_compatibility(sym1, sym2)
     """
     
-    def __init__(self, ns: int, nhl: int = 2, lattice: Optional[Lattice] = None, logger: Optional[Callable[[str], None]] = None):
+    def _check_logger(self, logger: Optional['Logger']) -> None:
+        ''' Ensure logger is set. '''
+        if logger is None:
+            from QES.general_python.common.flog import get_global_logger
+            logger = get_global_logger()
+        self.logger = logger
+    
+    def __init__(self, ns: int, nhl: int = 2, lattice: Optional['Lattice'] = None, logger: Optional['Logger'] = None):
         """
         Initialize compatibility checker.
         
@@ -135,10 +146,10 @@ class SymmetryCompatibility:
         logger : Optional[Callable[[str], None]]
             Logger function for debugging messages
         """
+        self._check_logger(logger)
         self.ns         = ns
         self.nhl        = nhl
         self.lattice    = lattice
-        self.logger     = logger or get_global_logger()
 
         # Cache of compatibility decisions
         self._compat_cache: Dict[Tuple, bool] = {}
@@ -455,7 +466,10 @@ class SymmetryContainer:
     def __post_init__(self):
         """Initialize compatibility checker and logger."""
         self._compatibility = SymmetryCompatibility(self.ns, self.nhl, self.lattice)
-        self.logger         = get_global_logger() if self.logger is None else self.logger
+        
+        if self.logger is None:
+            from QES.general_python.common.flog import get_global_logger
+            self.logger     = get_global_logger()
 
     def set_repr_info(self, repr_list: np.ndarray, repr_norms: np.ndarray) -> None:
         """Set the representatives and their normalization factors."""

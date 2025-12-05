@@ -29,22 +29,17 @@ Date        : 2025-10-26
 
 import numpy as np
 import scipy as sp
-import logging
 from typing import Optional, Literal, Union, Callable, Any
 from numpy.typing import NDArray
 from enum import Enum
 
 # Import eigensolvers from the general_python module
 try:
-    from QES.general_python.algebra.eigen.factory import choose_eigensolver, decide_method
-    from QES.general_python.algebra.eigen.result import EigenResult
-    EIGEN_SOLVERS_AVAILABLE = True
+    from QES.general_python.algebra.eigen.factory   import choose_eigensolver, decide_method
+    from QES.general_python.algebra.eigen.result    import EigenResult
+    EIGEN_SOLVERS_AVAILABLE                         = True
 except ImportError as e:
-    print(f"Warning: Could not import eigensolvers: {e}")
-    EIGEN_SOLVERS_AVAILABLE = False
-    EigenResult             = None
-    choose_eigensolver      = None
-    decide_method           = None
+    raise ImportError("Failed to import eigenvalue solvers from QES.general_python.algebra.eigen. Ensure that the module is properly installed and accessible.") from e
 
 # JAX support
 try:
@@ -140,7 +135,11 @@ class DiagonalizationEngine:
         self.backend        = backend
         self.use_scipy      = use_scipy
         self.verbose        = verbose
-        self.logger         = logger if logger is not None else logging.getLogger(__name__)
+        if not logger:
+            from QES.general_python.common.flog import get_global_logger
+            logger          = get_global_logger()
+
+        self.logger         = logger
         
         # Storage for diagonalization results and basis information
         self._result        : Optional[EigenResult] = None
@@ -263,9 +262,9 @@ class DiagonalizationEngine:
         
         if self.verbose:
             self.logger.info(f"Diagonalization completed using {method}")
-            self.logger.info(f"  Computed {len(self._result.eigenvalues)} eigenvalues")
+            self.logger.info(f"Computed {len(self._result.eigenvalues)} eigenvalues")
             if self._result.converged:
-                self.logger.info(f"  Converged in {self._result.iterations} iterations")
+                self.logger.info(f"Converged in {self._result.iterations} iterations")
             else:
                 self.logger.warning(f"  Warning: Did not converge after {self._result.iterations} iterations")
 

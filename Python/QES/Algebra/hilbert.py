@@ -17,24 +17,20 @@ Changes :
 import sys
 import math
 import time
-import numba
 import numpy as np
 
-from abc import ABC
-from typing import Union, Optional, Callable, List, Tuple, Dict, Any
-from dataclasses import dataclass
+from abc            import ABC
+from typing         import Union, Optional, Callable, List, Tuple, Dict, Any, TYPE_CHECKING
+from dataclasses    import dataclass
 
 try:
     # general thingies
-    from QES.general_python.common.flog             import get_global_logger, Logger
-    from QES.general_python.common.binary           import bin_search
-    from QES.general_python.lattices.lattice        import Lattice, LatticeDirection
-    
-    # already imported from QES.general_python
-    from QES.general_python.algebra.utils           import get_backend, JAX_AVAILABLE
+    if TYPE_CHECKING:
+        from QES.general_python.common.flog         import Logger
+        from QES.general_python.lattices.lattice    import Lattice, LatticeDirection
 
     #################################################################################################
-    from QES.Algebra.Operator.operator              import LocalSpace, StateTypes, operator_identity
+    from QES.Algebra.Hilbert.hilbert_local          import LocalSpace, StateTypes
     from QES.Algebra.globals                        import GlobalSymmetry
     from QES.Algebra.hilbert_config                 import HilbertConfig
 except ImportError as e:
@@ -82,8 +78,11 @@ class HilbertSpace(ABC):
         if not isinstance(gen_mapping, bool):
             HilbertSpace._raise(HilbertSpace._ERRORS["gen_mapping"])
 
-    def _check_ns_infer(self, lattice, ns, nh):
+    def _check_ns_infer(self, lattice: 'Lattice', ns: int, nh: int):
         ''' Check and infer the system size Ns from provided parameters '''
+
+        # import Lattice for type checking
+        from QES.general_python.lattices.lattice import Lattice
         
         # infer local dimension
         _local_dim = self._local_space.local_dim if self._local_space else 2
@@ -129,6 +128,15 @@ class HilbertSpace(ABC):
     
     # --------------------------------------------------------------------------------------------------
     
+    def _check_logger(self, logger: Optional['Logger']) -> 'Logger':
+        ''' Check and return the logger instance '''
+        if logger is None:
+            from QES.general_python.common.flog import get_global_logger
+            return get_global_logger()
+        return logger
+    
+    # --------------------------------------------------------------------------------------------------
+    
     @dataclass
     class SymBasicInfo:
         num_operators   = 0
@@ -141,25 +149,25 @@ class HilbertSpace(ABC):
 
     def __init__(self,
                 # core definition - elements to define the modes
-                ns              : Union[int, None]                                  = None,
-                lattice         : Union[Lattice, None]                              = None,
-                nh              : Union[int, None]                                  = None,
+                ns              : Union[int, None]                                          = None,
+                lattice         : Union['Lattice', None]                                    = None,
+                nh              : Union[int, None]                                          = None,
                 # mode specificaton
-                is_manybody     : bool                                                  = True,
-                part_conserv    : Optional[bool]                                        = True,
+                is_manybody     : bool                                                      = True,
+                part_conserv    : Optional[bool]                                            = True,
                 # local space properties - for many body
-                sym_gen         : Union[dict, None]                                     = None,
-                global_syms     : Union[List[GlobalSymmetry], None]                     = None,
-                gen_mapping     : bool                                                  = False,
-                local_space     : Optional[Union[LocalSpace, str]]                      = None,
+                sym_gen         : Union[dict, None]                                         = None,
+                global_syms     : Union[List[GlobalSymmetry], None]                         = None,
+                gen_mapping     : bool                                                      = False,
+                local_space     : Optional[Union[LocalSpace, str]]                          = None,
                 # general parameters
-                state_type      : StateTypes                                            = StateTypes.INTEGER,
-                backend         : str                                                   = 'default',
-                dtype           : np.dtype                                              = np.float64,
-                basis           : Optional[str]                                         = None,
-                boundary_flux   : Optional[Union[float, Dict[LatticeDirection, float]]] = None,
-                state_filter    : Optional[Callable[[int], bool]]                       = None,
-                logger          : Optional[Logger]                                      = None,
+                state_type      : StateTypes                                                = StateTypes.INTEGER,
+                backend         : str                                                       = 'default',
+                dtype           : np.dtype                                                  = np.float64,
+                basis           : Optional[str]                                             = None,
+                boundary_flux   : Optional[Union[float, Dict['LatticeDirection', float]]]   = None,
+                state_filter    : Optional[Callable[[int], bool]]                           = None,
+                logger          : Optional['Logger']                                        = None,
                 **kwargs):
         r"""
         Initializes a HilbertSpace object with specified system and local space properties, symmetries, and backend configuration.
@@ -182,52 +190,52 @@ class HilbertSpace(ABC):
                 **Examples**:
                 
                 1. Translation symmetry (momentum sectors):
-                   ```python
-                   from QES.Algebra.Symmetries.translation import TranslationSymmetry
-                   
-                   # Dictionary format with explicit symmetry objects:
-                   sym_gen = {'translation': TranslationSymmetry(kx=0, ky=0)}
-                   
-                   # Or using string names (if registered):
-                   sym_gen = {'translation': {'kx': 0, 'ky': 0}}
-                   
-                   # List format:
-                   sym_gen = [TranslationSymmetry(kx=0, ky=0)]
-                   ```
+                    ```python
+                    from QES.Algebra.Symmetries.translation import TranslationSymmetry
+                    
+                    # Dictionary format with explicit symmetry objects:
+                    sym_gen = {'translation': TranslationSymmetry(kx=0, ky=0)}
+                    
+                    # Or using string names (if registered):
+                    sym_gen = {'translation': {'kx': 0, 'ky': 0}}
+                    
+                    # List format:
+                    sym_gen = [TranslationSymmetry(kx=0, ky=0)]
+                    ```
                 
                 2. Parity symmetry:
-                   ```python
-                   from QES.Algebra.Symmetries.parity import ParitySymmetry
-                   
-                   sym_gen = {'parity': ParitySymmetry(sector=1)}  # Even parity
-                   ```
+                    ```python
+                    from QES.Algebra.Symmetries.parity import ParitySymmetry
+                    
+                    sym_gen = {'parity': ParitySymmetry(sector=1)}  # Even parity
+                    ```
                 
                 3. Multiple symmetries:
-                   ```python
-                   sym_gen = {
-                       'translation': TranslationSymmetry(kx=np.pi, ky=0),
-                       'parity': ParitySymmetry(sector=1),
-                       'reflection': ReflectionSymmetry(axis='x', sector=1)
-                   }
-                   ```
+                    ```python
+                    sym_gen = {
+                        'translation': TranslationSymmetry(kx=np.pi, ky=0),
+                        'parity': ParitySymmetry(sector=1),
+                        'reflection': ReflectionSymmetry(axis='x', sector=1)
+                    }
+                    ```
                 
                 4. Particle number conservation (for fermions):
-                   ```python
-                   # Automatically handled when part_conserv=True
-                   # Can also specify explicitly:
-                   sym_gen = {'u1_particle': {'n_particles': 4}}
-                   ```
+                    ```python
+                    # Automatically handled when part_conserv=True
+                    # Can also specify explicitly:
+                    sym_gen = {'u1_particle': {'n_particles': 4}}
+                    ```
                 
                 Supported symmetry types:
-                  - 'translation'        : Discrete translation (momentum)
-                  - 'parity'            : Spin/particle parity
-                  - 'reflection'        : Spatial reflection
-                  - 'inversion'         : Spatial inversion
-                  - 'time_reversal'     : Time reversal
-                  - 'u1_particle'       : Particle number (U(1))
-                  - 'u1_spin'           : Spin S^z conservation
-                  - Custom symmetries can be registered via SymmetryRegistry
-                
+                    - 'translation'        : Discrete translation (momentum)
+                    - 'parity'            : Spin/particle parity
+                    - 'reflection'        : Spatial reflection
+                    - 'inversion'         : Spatial inversion
+                    - 'time_reversal'     : Time reversal
+                    - 'u1_particle'       : Particle number (U(1))
+                    - 'u1_spin'           : Spin S^z conservation
+                    - Custom symmetries can be registered via SymmetryRegistry
+                    
             global_syms (Union[List[GlobalSymmetry], None], optional): 
                 List of global symmetry objects for additional quantum number constraints.
                 These are applied before local symmetry generators. Default is None.
@@ -274,9 +282,8 @@ class HilbertSpace(ABC):
             - Sets up logging and threading options.
         """
         
-        self._logger        = logger if logger is not None else get_global_logger()
-        
         #! initialize the backend for the vectors and matrices
+        self._logger        = self._check_logger(logger)
         self._backend, self._backend_str, self._state_type = self.reset_backend(backend, state_type)
         self._dtype         = dtype if dtype is not None else self._backend.float64
         self._is_many_body  = is_manybody
@@ -368,6 +375,10 @@ class HilbertSpace(ABC):
 
         # Ensure symmetry group always has at least the identity
         if not self._sym_group or len(self._sym_group) == 0:
+            try:
+                from QES.Algebra.Operator.operator import operator_identity
+            except ImportError as e:
+                raise RuntimeError("Failed to import operator_identity. Ensure QES.Algebra.Operator.operator is available.") from e
             self._sym_group = [operator_identity(self._backend)]
     
     # --------------------------------------------------------------------------------------------------
@@ -402,6 +413,7 @@ class HilbertSpace(ABC):
             backend (str): The backend to use for the Hilbert space.
         """
         if isinstance(backend, str):
+            from QES.general_python.algebra.utils import get_backend
             _backend_str   = backend
             _backend       = get_backend(backend)
         else:
@@ -427,12 +439,13 @@ class HilbertSpace(ABC):
         """
         Reset the local symmetries of the Hilbert space.
         """
+        from QES.Algebra.Operator.operator import operator_identity
         self._log("Reseting the local symmetries. Can be now recreated.", lvl = 2, log = 'debug')
         self._sym_group = [operator_identity(self._backend)]
     
     # --------------------------------------------------------------------------------------------------
     
-    def _log(self, msg : str, log : Union[int, str] = Logger.LEVELS_R['info'], lvl : int = 0, color : str = "white", append_msg = True):
+    def _log(self, msg : str, log : Union[int, str] = 'info', lvl : int = 0, color : str = "white", append_msg = True):
         """
         Log the message.
         
@@ -441,6 +454,13 @@ class HilbertSpace(ABC):
             log (Union[int, str]) : The flag to log the message (default is 'info').
             lvl (int) : The level of the message.
         """
+        if self._logger is None:
+            return
+        
+        try:
+            from QES.general_python.common.flog import Logger
+        except ImportError as e:
+            return
         
         if isinstance(log, str):
             log = Logger.LEVELS_R[log]
@@ -869,6 +889,10 @@ class HilbertSpace(ABC):
         This function is created whenever one wants to create a full map for the Hilbert space 
         and store it in the mapping.
         """
+        try:
+            from QES.general_python.common.binary import bin_search
+        except ImportError as e:
+            raise RuntimeError("Failed to import binary search utilities. Ensure QES.general_python.common.binary is available.") from e
         
         # Build jittable repr_idx and repr_phase arrays without creating
         # the legacy object-based `reprmap`. This is memory-efficient and
@@ -1062,7 +1086,7 @@ class HilbertSpace(ABC):
         return self._boundary_flux
 
     @boundary_flux.setter
-    def boundary_flux(self, value: Optional[Union[float, Dict[LatticeDirection, float]]]):
+    def boundary_flux(self, value: Optional[Union[float, Dict['LatticeDirection', float]]]):
         self._boundary_flux = value
         if self._lattice is not None:
             self._lattice.flux = value
@@ -1090,7 +1114,8 @@ class HilbertSpace(ABC):
         return self.representative_list is not None and self._nh != self._nhfull
     
     @property
-    def lattice(self) -> Optional[Lattice]:     return self._lattice
+    def lattice(self) -> Optional['Lattice']: 
+        return self._lattice
     
     def get_basis(self):
         """

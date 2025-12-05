@@ -8,16 +8,22 @@ high-level Hilbert space builders.
 For more details, see the documentation of the `LocalSpace` and `LocalOperator`
 classes below.
 
+------------------------------------------------------------------
 File        : Algebra/Operator/hilbert_local.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-10-01
 License     : MIT
+Description : Local Hilbert space and operator descriptions. This module defines
+            light-weight containers that describe local Hilbert spaces and their
+            onsite operators.  They are used both by the operator catalog and by
+            high-level Hilbert space builders.
+------------------------------------------------------------------
 """
 
 import numpy as np
-from dataclasses import dataclass, field, replace
-from enum import Enum
-from typing import Callable, Dict, Optional, Tuple
+from dataclasses    import dataclass, field, replace
+from enum           import Enum
+from typing         import Callable, Dict, Optional, Tuple
 
 ####################################################################################################
 

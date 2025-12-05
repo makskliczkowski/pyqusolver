@@ -2,14 +2,20 @@
 Qiskit/OpenFermion interoperability layer for QuadraticHamiltonian.
 
 Provides converters to/from Qiskit Nature and OpenFermion formats.
+
+--------------------------------------------------------------------------
+File        : Algebra/interop.py
+Author      : Maksymilian Kliczkowski
+Date        : 2025-06-15
+License     : MIT
+Description : Interoperability utilities for Qiskit Nature and OpenFermion.
+--------------------------------------------------------------------------
 """
 
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
-import logging
 
-logger = logging.getLogger(__name__)
-
+# --------------------------------------------------------------------------
 
 class QiskitInterop:
     """Qiskit Nature interoperability utilities."""
@@ -173,7 +179,7 @@ class QiskitInterop:
             
             return qc
         except Exception as e:
-            logger.error(f"Circuit generation failed: {e}")
+            print(f"Error converting to Qiskit circuit: {e}")
             raise
 
 # --------------------------------------------------------------------------
