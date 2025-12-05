@@ -126,7 +126,29 @@ class NetworkFactory:
             **kwargs: 
                 Arguments passed to the network constructor 
                 (e.g. alpha, kernel_size)
-        
+                For 'cnn':
+                - reshape_dims (Tuple[int, ...]) : The spatial dimensions to reshape the 1D input into (e.g., (8, 8)).
+                - features (Sequence[int]) : Number of output channels for each convolutional layer.
+                - kernel_sizes (Sequence[Union[int, Tuple]]) : Size of the kernel for each conv layer.
+                - strides (Sequence[Union[int, Tuple]]) : Stride for each conv layer. Defaults to 1.
+                - output_shape (Tuple[int, ...]) : Shape of the final output. Default: (1,),
+                - activations (Union[str, Sequence[Union[str, Callable]]]) : Activation function(s) for each conv layer.
+                - periodic (bool) : Whether to use periodic boundary conditions. Default-: True.
+                - sum_pooling (bool) : Whether to sum pool the final output over spatial dimensions. Default: True.        
+                For 'rbm':
+                - alpha (float) : Hidden unit density (n_hidden / n_visible).
+                - use_visible_bias (bool) : Whether to use a bias on the visible layer. Default: True.
+                - use_hidden_bias (bool) : Whether to use a bias on the hidden layer. Default: True.
+                For 'ar':
+                - depth (int) : Number of layers in the autoregressive model.
+                - num_hidden (int) : Number of hidden units in each layer.
+                - rnn_type (str) : Type of recurrent cell if using RNN backend ('lstm', 'gru').
+                - activations (Union[str, Sequence[Union[str, Callable]]]) : Activation function(s) for each layer.
+                For 'resnet':
+                - reshape_dims (Tuple[int, ...]) : The spatial dimensions to reshape the 1D input into (e.g., (8, 8)).
+                - features (int) : Number of feature channels / network width. Default: 32.
+                - depth (int) : Number of residual blocks. Default: 4.
+                - kernel_size (Union[int, Tuple]) : Spatial kernel size. Default: 3 (becomes (3,3) for 2D).
         Returns:
             A GeneralNet compatible instance (usually FlaxInterface).
             

@@ -294,8 +294,11 @@ def local_energy_jax_wrap(
             # --------------------------------------------------------------
             # 2) Modifying operators WITH sites
             # --------------------------------------------------------------
-            for op, mult in zip(f_mod_sites_t, m_mod_sites_arr):
-                new_states, coeffs = op(state) # (K, ns), (K,)
+            # for op, mult in zip(f_mod_sites_t, m_mod_sites_arr):
+            for i in range(len(f_mod_sites_t)):
+                op                  = f_mod_sites_t[i]
+                mult                = m_mod_sites_arr[i]
+                new_states, coeffs  = op(state) # (K, ns), (K,)
                 states_list.append(new_states)
                 energies_list.append(coeffs * mult)
 
@@ -303,7 +306,10 @@ def local_energy_jax_wrap(
             # 3) Modifying operators WITHOUT sites
             # --------------------------------------------------------------
             for op, mult in zip(f_mod_nos_t, m_mod_nos_arr):
-                new_states, coeffs = op(state) # (K, ns), (K,)
+            # for i in range(len(f_mod_nos_t)):
+                op                  = f_mod_nos_t[i]
+                mult                = m_mod_nos_arr[i]
+                new_states, coeffs  = op(state) # (K, ns), (K,)
                 states_list.append(new_states)
                 energies_list.append(coeffs * mult)
 

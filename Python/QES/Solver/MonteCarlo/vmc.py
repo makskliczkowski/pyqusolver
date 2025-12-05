@@ -198,45 +198,22 @@ class VMCSampler(Sampler):
         self._total_sample_updates_per_sample   = sweep_steps * self._size                  # Updates between collected samples
         self._updates_per_sample                = self._sweep_steps                         # Steps between samples
         self._total_sample_updates_per_chain    = numsamples * self._updates_per_sample * self._numchains
-        self._upd_fun                           = upd_fun
+        self._org_upd_fun                       = upd_fun
         
         # number of times a function is applied per update
         self._numupd                            = numupd
         
-        if self._upd_fun is None:
+        if self._org_upd_fun is None:
             if self._isjax:
                 # Bind RNG arguments to the JAX updater, already JIT-compiled.
-                self._upd_fun = _propose_random_flip_jax
+                self._org_upd_fun = _propose_random_flip_jax
             else:
                 # For NumPy backend, bind the RNG to the updater.
-                self._upd_fun = _propose_random_flip_np
+                self._org_upd_fun = _propose_random_flip_np
         
-        # Wrap the update function if multiple updates per step are requested
-        if self._numupd > 1:
-            
-            n_updates       = self._numupd
-            base_update_fn  = self._upd_fun
-            if self._isjax:
-                # JAX: Use lax.scan for efficiency and split keys correctly
-                def _multi_update_proposer(state, key):
-                    # 1. Split the incoming key into 'n' unique sub-keys
-                    keys = jax.random.split(key, n_updates)
-                    
-                    # 2. Define the loop body: (state, key) -> (new_state, None)
-                    def body_fn(curr_state, sub_key):
-                        return base_update_fn(curr_state, sub_key), None
-                    
-                    # 3. Run the loop efficiently on device
-                    final_state, _ = jax.lax.scan(body_fn, state, keys)
-                    return final_state
-            else:
-                def _multi_update_proposer(state, rng):
-                    curr_state = state
-                    for _ in range(n_updates):
-                        curr_state = base_update_fn(curr_state, rng)
-                    return curr_state
-
-            self._upd_fun = _multi_update_proposer
+        self.set_update_num(self._numupd)
+        
+        # if self._isjax:                         self._upd_fun = jax.jit(self._upd_fun)
         self._static_sample_fun                 = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
     
     #####################################################################
@@ -294,6 +271,58 @@ class VMCSampler(Sampler):
         elif callable(net):
             return net, None # Assume no external parameters needed unless provided at sample time
         raise ValueError("Invalid network object provided. Needs to be callable or have an 'apply' method.")
+    
+    ###################################################################
+    
+    def set_update_num(self, numupd: int):
+        r'''
+        Set the number of updates per MCMC step.
+
+        Parameters:
+            numupd (int):
+                Number of times the update function is applied per MCMC step.
+        '''
+        self._numupd = numupd
+        
+        if self._org_upd_fun is None:
+            raise ValueError("Original update function is not set.")
+        
+        if self._numupd > 1:
+            n_updates       = self._numupd
+            base_update_fn  = self._org_upd_fun
+            
+            if self._isjax:
+                # JAX: Use lax.scan for efficiency and split keys correctly
+                def _multi_update_proposer(state, key):
+                    # 1. Split the incoming key into 'n' unique sub-keys
+                    keys = jax.random.split(key, n_updates)
+                    
+                    # 2. Define the loop body: (state, key) -> (new_state, None)
+                    def body_fn(curr_state, sub_key):
+                        return base_update_fn(curr_state, sub_key), None
+                    
+                    # 3. Run the loop efficiently on device
+                    final_state, _ = jax.lax.scan(body_fn, state, keys)
+                    return final_state
+            else:
+                def _multi_update_proposer(state, rng):
+                    curr_state = state
+                    for _ in range(n_updates):
+                        curr_state = base_update_fn(curr_state, rng)
+                    return curr_state
+            self._upd_fun = _multi_update_proposer
+        else:
+            self._upd_fun = self._org_upd_fun
+    
+    @property
+    def numupd(self) -> int:
+        r'''
+        Get the number of updates per MCMC step.
+
+        Returns:
+            int: Number of updates per MCMC step.
+        '''
+        return self._numupd
     
     ###################################################################
     #! ACCEPTANCE PROBABILITY

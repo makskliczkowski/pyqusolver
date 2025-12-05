@@ -2077,6 +2077,7 @@ class NQS(MonteCarloSolver):
             tdvp                : Any                       = None,
             # Configuration
             n_batch             : int                       = 128,
+            n_update            : Optional[int]             = None,
             phases              : Union[str, tuple]         = 'default',
             # Utilities
             timing_mode         : str                       = 'detailed',
@@ -2246,6 +2247,8 @@ class NQS(MonteCarloSolver):
         if override or self._trainer is None:
             from QES.NQS.src.nqs_train import NQSTrainer
             
+            old_stats = self._trainer.stats if self._trainer is not None else None
+            
             self._trainer = NQSTrainer(
                 nqs             = self,
                 # Solvers
@@ -2278,6 +2281,14 @@ class NQS(MonteCarloSolver):
                 rhs_prefactor   = rhs_prefactor,
                 **kwargs
             )
+            
+            if not reset_stats: 
+                self._trainer.stats = old_stats
+
+        # Updates in sampler
+        if hasattr(self._sampler, 'set_update_num') and n_update is not None:
+            self._sampler.set_update_num(n_update)
+            self.log(f"Sampler update number set to {n_update}", lvl=2, color='blue')
 
         # Run training
         stats = self._trainer.train(
@@ -2571,162 +2582,321 @@ class NQS(MonteCarloSolver):
             
         print(msg)
 
-#########################################
-
-def _compute_transition_element(nqs_bra: 'NQS', nqs_ket: 'NQS', operator: 'Operator', num_samples: int = 4096, num_chains: int = 1, operator_args: dict = {}) -> complex:
-    """
-    Computes the normalized transition matrix element:
-    M_12 = <Psi_bra | O | Psi_ket> / sqrt(<bra|bra> * <ket|ket>)
+    #####################################
+    #! STATIC
+    #####################################
     
-    Uses bidirectional importance sampling to handle normalization constants correctly.
-    
-    Args:
-        nqs_bra: The state on the left <Psi_1|
-        nqs_ket: The state on the right |Psi_2>
-        operator: The operator O (must be applicable to nqs_ket)
-        num_samples: MC samples
-        num_chains: Number of Markov chains
-        operator_args: Additional arguments for the operator
+    @staticmethod
+    def _compute_transition_element(nqs_bra: 'NQS', nqs_ket: 'NQS', operator: 'Operator', num_samples: int = 4096, num_chains: int = 1, operator_args: dict = {}) -> complex:
+        """
+        Computes the normalized transition matrix element:
+        M_12 = <Psi_bra | O | Psi_ket> / sqrt(<bra|bra> * <ket|ket>)
         
-    Returns:
-        The normalized expectation value.
-    """
-    
-    # ------------------------------------------------------------------
-    # Step 1: Sample from BRA distribution (Psi_1)
-    # ------------------------------------------------------------------
-    
-    if isinstance(operator, Operator):
-        operator_fun = operator.jax
-    elif isinstance(operator, Callable):
-        operator_fun = operator
-    else:
-        raise ValueError("Operator must be an instance of Operator or a callable function.")
+        Uses bidirectional importance sampling to handle normalization constants correctly.
         
-    # We need samples to compute Q (Transition) and R1 (Overlap Forward)
-    (_, _), (s1, log_psi1_s1), _    = nqs_bra.sample(num_samples=num_samples, num_chains=num_chains)
-    
-    # Evaluate Ket on Bra samples
-    log_psi2_s1                     = nqs_ket.ansatz(s1)
-    
-    # Calculate Log Ratio: log(Psi_2(s) / Psi_1(s))
-    log_ratio_12                    = log_psi2_s1 - log_psi1_s1
-    
-    # Compute R1: <1|2> / <1|1>
-    # Shift for stability: exp(x - max)
-    # R1 = mean(exp(log_ratio))
-    lmax_1                          = jnp.max(jnp.real(log_ratio_12))
-    R1                              = jnp.mean(jnp.exp(log_ratio_12 - lmax_1)) * jnp.exp(lmax_1)
-    
-    # -- Compute Q: <1|O|2> / <1|1> --
-    # Q = mean( (Psi_2/Psi_1) * O_loc_2 )
-    
-    # Compute Local Estimator of O on state 2 at positions s1
-    # nqs.apply returns (stats), but with return_values=True it usually returns raw values depending on engine
-    # We assume standard behavior: returns array of local values
-    # NOTE: We pass (s1, log_psi2_s1) so it doesn't re-evaluate ansatz
-    loc_O_ket                       = nqs_ket.apply(operator_fun, states_and_psi=(s1, log_psi2_s1), return_values=True, args=operator_args)
-    
-    # If apply returned a stats object, extract values. If array, use directly.
-    if hasattr(loc_O_ket, 'values'): loc_O_ket = loc_O_ket.values
-    
-    # Weighted average: E[ exp(log_ratio) * loc_val ]
-    # Use same shift lmax_1 for stability
-    Q                               = jnp.mean(jnp.exp(log_ratio_12 - lmax_1) * loc_O_ket) * jnp.exp(lmax_1)
+        Args:
+            nqs_bra: The state on the left <Psi_1|
+            nqs_ket: The state on the right |Psi_2>
+            operator: The operator O (must be applicable to nqs_ket)
+            num_samples: MC samples
+            num_chains: Number of Markov chains
+            operator_args: Additional arguments for the operator
+            
+        Returns:
+            The normalized expectation value.
+        """
+        
+        # ------------------------------------------------------------------
+        # Step 1: Sample from BRA distribution (Psi_1)
+        # ------------------------------------------------------------------
+        
+        if isinstance(operator, Operator):
+            operator_fun = operator.jax
+        elif isinstance(operator, Callable):
+            operator_fun = operator
+        else:
+            raise ValueError("Operator must be an instance of Operator or a callable function.")
+            
+        # We need samples to compute Q (Transition) and R1 (Overlap Forward)
+        (_, _), (s1, log_psi1_s1), _    = nqs_bra.sample(num_samples=num_samples, num_chains=num_chains)
+        
+        # Evaluate Ket on Bra samples
+        log_psi2_s1                     = nqs_ket.ansatz(s1)
+        
+        # Calculate Log Ratio: log(Psi_2(s) / Psi_1(s))
+        log_ratio_12                    = log_psi2_s1 - log_psi1_s1
+        
+        # Compute R1: <1|2> / <1|1>
+        # Shift for stability: exp(x - max)
+        # R1 = mean(exp(log_ratio))
+        lmax_1                          = jnp.max(jnp.real(log_ratio_12))
+        R1                              = jnp.mean(jnp.exp(log_ratio_12 - lmax_1)) * jnp.exp(lmax_1)
+        
+        # -- Compute Q: <1|O|2> / <1|1> --
+        # Q = mean( (Psi_2/Psi_1) * O_loc_2 )
+        
+        # Compute Local Estimator of O on state 2 at positions s1
+        # nqs.apply returns (stats), but with return_values=True it usually returns raw values depending on engine
+        # We assume standard behavior: returns array of local values
+        # NOTE: We pass (s1, log_psi2_s1) so it doesn't re-evaluate ansatz
+        loc_O_ket                       = nqs_ket.apply(operator_fun, states_and_psi=(s1, log_psi2_s1), return_values=True, args=operator_args)
+        
+        # If apply returned a stats object, extract values. If array, use directly.
+        if hasattr(loc_O_ket, 'values'): loc_O_ket = loc_O_ket.values
+        
+        # Weighted average: E[ exp(log_ratio) * loc_val ]
+        # Use same shift lmax_1 for stability
+        Q                               = jnp.mean(jnp.exp(log_ratio_12 - lmax_1) * loc_O_ket) * jnp.exp(lmax_1)
 
-    # ------------------------------------------------------------------
-    # Step 2: Sample from KET distribution (Psi_2)
-    # ------------------------------------------------------------------
-    # We only need this to compute the normalization ratio (R2)
-    (_, _), (s2, log_psi2_s2), _    = nqs_ket.sample(num_samples=num_samples, num_chains=num_chains)
-    log_psi1_s2                     = nqs_bra.ansatz(s2)
-    
-    # Calculate Log Ratio: log(Psi_1(s) / Psi_2(s))
-    log_ratio_21                    = log_psi1_s2 - log_psi2_s2
-    
-    # -- Compute R2: <2|1> / <2|2> --
-    lmax_2                          = jnp.max(jnp.real(log_ratio_21))
-    R2                              = jnp.mean(jnp.exp(log_ratio_21 - lmax_2)) * jnp.exp(lmax_2)
-    
-    # ------------------------------------------------------------------
-    # Step 3: Combine for Normalized Result
-    # ------------------------------------------------------------------
-    
-    # Handle division by zero if overlap is extremely small
-    if jnp.abs(R1) < 1e-12 or jnp.abs(R2) < 1e-12:
-        return 0.0 + 0.0j
+        # ------------------------------------------------------------------
+        # Step 2: Sample from KET distribution (Psi_2)
+        # ------------------------------------------------------------------
+        # We only need this to compute the normalization ratio (R2)
+        (_, _), (s2, log_psi2_s2), _    = nqs_ket.sample(num_samples=num_samples, num_chains=num_chains)
+        log_psi1_s2                     = nqs_bra.ansatz(s2)
+        
+        # Calculate Log Ratio: log(Psi_1(s) / Psi_2(s))
+        log_ratio_21                    = log_psi1_s2 - log_psi2_s2
+        
+        # -- Compute R2: <2|1> / <2|2> --
+        lmax_2                          = jnp.max(jnp.real(log_ratio_21))
+        R2                              = jnp.mean(jnp.exp(log_ratio_21 - lmax_2)) * jnp.exp(lmax_2)
+        
+        # ------------------------------------------------------------------
+        # Step 3: Combine for Normalized Result
+        # ------------------------------------------------------------------
+        
+        # Handle division by zero if overlap is extremely small
+        if jnp.abs(R1) < 1e-12 or jnp.abs(R2) < 1e-12:
+            return 0.0 + 0.0j
 
-    normalization_ratio             = jnp.sqrt(R2 / jnp.conj(R1))
-    result                          = Q * normalization_ratio
-    return result
+        normalization_ratio             = jnp.sqrt(R2 / jnp.conj(R1))
+        result                          = Q * normalization_ratio
+        return result
 
-def compute_overlap(nqs_a: 'NQS', nqs_b: 'NQS', *, num_samples: int = 4096, num_chains: Optional[int] = None, operator: Optional[Any] = None, operator_args: Optional[Any] = None) -> float:
-    r"""
-    Computes the squared overlap (Fidelity) between two NQS instances:
-    F = |<Psi_A | Psi_B>|^2 / (<Psi_A|Psi_A> <Psi_B|Psi_B>)
-    This is done via Monte Carlo estimation using samples from both distributions.
-    
-    Mathematically:
-    F = ( E_{s ~ |Psi_A|^2} [ Psi_B(s) / Psi_A(s) ] ) *
-        ( E_{s ~ |Psi_B|^2} [ Psi_A(s) / Psi_B(s) ] )
-    
-    where E denotes the expectation value over the sampled configurations.
-    
-    Args:
-        nqs_a: First NQS instance (e.g., current training step).
-        nqs_b: Second NQS instance (e.g., target state or previous step).
-        num_samples: Number of MC samples to use for estimation.
-        num_chains: Number of independent Markov chains for sampling.
-        operator: Optional operator to insert between states (not implemented).
-        operator_args: Additional arguments for the operator (if any).
-    
-    Returns:
-        float: The squared overlap (between 0.0 and 1.0).
-    """
-    
-    if nqs_a.nvisible != nqs_b.nvisible:
-        raise ValueError("NQS instances must have the same number of visible units to compute overlap.")
-    
-    if operator is not None:
-        return _compute_transition_element(nqs_a, nqs_b, operator, num_samples, num_chains, operator_args)
+    @staticmethod
+    def compute_overlap(nqs_a: 'NQS', nqs_b: 'NQS', *, num_samples: int = 4096, num_chains: Optional[int] = None, operator: Optional[Any] = None, operator_args: Optional[Any] = None) -> float:
+        r"""
+        Computes the squared overlap (Fidelity) between two NQS instances:
+        F = |<Psi_A | Psi_B>|^2 / (<Psi_A|Psi_A> <Psi_B|Psi_B>)
+        This is done via Monte Carlo estimation using samples from both distributions.
+        
+        Mathematically:
+        F = ( E_{s ~ |Psi_A|^2} [ Psi_B(s) / Psi_A(s) ] ) *
+            ( E_{s ~ |Psi_B|^2} [ Psi_A(s) / Psi_B(s) ] )
+        
+        where E denotes the expectation value over the sampled configurations.
+        
+        Args:
+            nqs_a: First NQS instance (e.g., current training step).
+            nqs_b: Second NQS instance (e.g., target state or previous step).
+            num_samples: Number of MC samples to use for estimation.
+            num_chains: Number of independent Markov chains for sampling.
+            operator: Optional operator to insert between states (not implemented).
+            operator_args: Additional arguments for the operator (if any).
+        
+        Returns:
+            float: The squared overlap (between 0.0 and 1.0).
+        """
+        
+        if nqs_a.nvisible != nqs_b.nvisible:
+            raise ValueError("NQS instances must have the same number of visible units to compute overlap.")
+        
+        if operator is not None:
+            return _compute_transition_element(nqs_a, nqs_b, operator, num_samples, num_chains, operator_args)
 
-    #! WORK WITH JAX ONLY    
-    import jax.numpy as jnp
-    import jax.scipy.special as jsp
-    
-    # Sample from Distribution A 
-    # We ignore the 'last' samples and take 'all' samples for better statistics
-    (_, _), (samples_a, log_psi_a_on_a), _  = nqs_a.sample(num_samples=num_samples, num_chains=num_chains)
-    
-    # Evaluate Ansatz B on samples from A
-    # Note: nqs.ansatz() handles batching internally based on nqs._batch_size
-    log_psi_b_on_a                          = nqs_b.ansatz(samples_a)
-    
-    # Compute Ratio 1: <Psi_A | Psi_B> / <Psi_A | Psi_A>
-    # ratio = exp( log_psi_b - log_psi_a )
-    # We use Log-Sum-Exp for numerical stability: 
-    # mean(exp(x)) = exp(logsumexp(x) - log(N))
-    log_ratio_1                             = log_psi_b_on_a - log_psi_a_on_a
-    log_mean_1                              = jsp.logsumexp(log_ratio_1) - jnp.log(samples_a.shape[0])
-    
-    # Step 2: Sample from Distribution B
-    (_, _), (samples_b, log_psi_b_on_b), _  = nqs_b.sample(num_samples=num_samples, num_chains=num_chains)
-    
-    # Evaluate Ansatz A on samples from B
-    log_psi_a_on_b                          = nqs_a.ansatz(samples_b)
-    
-    # Compute Ratio 2: <Psi_B | Psi_A> / <Psi_B | Psi_B>
-    log_ratio_2                             = log_psi_a_on_b - log_psi_b_on_b
-    log_mean_2                              = jsp.logsumexp(log_ratio_2) - jnp.log(samples_b.shape[0])
-    
-    # Step 3: Combine 
-    # F = Mean(B/A)_A * Mean(A/B)_B
-    # In log space:                         log_F = log_mean_1 + log_mean_2
-    # The result should be real-valued (overlap of normalized vectors).
-    # We take the real part of the exponential.
-    
-    fidelity = jnp.exp(log_mean_1 + log_mean_2)
-    return float(jnp.real(fidelity))
+        #! WORK WITH JAX ONLY    
+        import jax.numpy as jnp
+        import jax.scipy.special as jsp
+        
+        # Sample from Distribution A 
+        # We ignore the 'last' samples and take 'all' samples for better statistics
+        (_, _), (samples_a, log_psi_a_on_a), _  = nqs_a.sample(num_samples=num_samples, num_chains=num_chains)
+        
+        # Evaluate Ansatz B on samples from A
+        # Note: nqs.ansatz() handles batching internally based on nqs._batch_size
+        log_psi_b_on_a                          = nqs_b.ansatz(samples_a)
+        
+        # Compute Ratio 1: <Psi_A | Psi_B> / <Psi_A | Psi_A>
+        # ratio = exp( log_psi_b - log_psi_a )
+        # We use Log-Sum-Exp for numerical stability: 
+        # mean(exp(x)) = exp(logsumexp(x) - log(N))
+        log_ratio_1                             = log_psi_b_on_a - log_psi_a_on_a
+        log_mean_1                              = jsp.logsumexp(log_ratio_1) - jnp.log(samples_a.shape[0])
+        
+        # Step 2: Sample from Distribution B
+        (_, _), (samples_b, log_psi_b_on_b), _  = nqs_b.sample(num_samples=num_samples, num_chains=num_chains)
+        
+        # Evaluate Ansatz A on samples from B
+        log_psi_a_on_b                          = nqs_a.ansatz(samples_b)
+        
+        # Compute Ratio 2: <Psi_B | Psi_A> / <Psi_B | Psi_B>
+        log_ratio_2                             = log_psi_a_on_b - log_psi_b_on_b
+        log_mean_2                              = jsp.logsumexp(log_ratio_2) - jnp.log(samples_b.shape[0])
+        
+        # Step 3: Combine 
+        # F = Mean(B/A)_A * Mean(A/B)_B
+        # In log space:                         log_F = log_mean_1 + log_mean_2
+        # The result should be real-valued (overlap of normalized vectors).
+        # We take the real part of the exponential.
+        
+        fidelity = jnp.exp(log_mean_1 + log_mean_2)
+        return float(jnp.real(fidelity))
+
+    #####################################
+    #! SAMPLES FOR MCMC, IF APPLICABLE
+    #####################################
+
+    @staticmethod
+    def get_auto_config(system_size, target_total_samples=4096, dtype=jnp.complex64, logger: Logger = None, *, net_depth_estimate: int = 64) -> dict:
+        """
+        Automatically detects hardware and returns optimal VMC parameters.
+        
+        Args:
+            system_size (int): Number of spins/sites (N).
+            target_total_samples (int): Total samples desired for the gradient batch.
+            dtype (jax.dtype): The data type used for the network.
+
+        Returns:
+            dict: A dictionary of parameters ready to pass to NQS/VMCSampler.
+        """
+        if not JAX_AVAILABLE:
+            raise ImportError("JAX is required for automatic configuration. Please install JAX to use this feature.")
+        
+        import os
+        import jax
+        import jax.numpy as jnp
+        import psutil
+        
+        logme           = lambda x: print(x) if logger is None else logger.info(x, lvl=1, color='green')
+        # Detect Backend
+        try:
+            backend     = jax.default_backend()
+            devices     = jax.devices()
+            device_name = str(devices[0].device_kind) if devices else "Unknown"
+        except:
+            backend     = 'cpu'
+            device_name = "CPU"
+        
+        logme(f"Auto-detected backend: {backend.upper()} ({device_name})")
+
+        # 2. Check Precision (Critical for consumer GPUs)
+        config              = {}
+        is_double_precision = (dtype == jnp.complex128) or (dtype == jnp.float64)
+        if backend == 'gpu' and is_double_precision:
+            logme("WARNING: Double precision (complex128) detected on GPU.")
+            logme("This effectively disables parallelism on consumer GPUs.")
+            logme("Performance will be degraded by ~50x.")
+
+        # =========================================================================
+        # STRATEGY A: GPU (Wide & Shallow)
+        # Goal      : Fill VRAM with chains, minimize sequential loops.
+        # =========================================================================
+        
+        if backend == 'gpu':
+            import subprocess
+            
+            def get_gpu_specs():
+                """
+                Queries the GPU for Model Name and Total VRAM (in MB).
+                Returns defaults if GPU is not found or nvidia-smi fails.
+                """
+                gpu_info    = {
+                                'name'              : 'Unknown GPU',
+                                'total_memory_mb'   : 4096,             # Safe fallback (4GB)
+                                'free_memory_mb'    : 2048
+                            }
+                
+                # 1. Try JAX for Name
+                try:
+                    devices = jax.local_devices()
+                    if devices and devices[0].platform == 'gpu':
+                        gpu_info['name'] = devices[0].device_kind
+                except:
+                    pass
+
+                # 2. Try nvidia-smi for Memory details
+                try:
+                    # Query total and free memory
+                    cmd                         = "nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits"
+                    output                      = subprocess.check_output(cmd.split()).decode('ascii').strip().split('\n')[0]
+                    total, free                 = map(int, output.split(','))
+                    gpu_info['total_memory_mb'] = total
+                    gpu_info['free_memory_mb']  = free
+                    logme(f"Detected GPU: {gpu_info['name']} with {total} MB VRAM ({free} MB free).")
+                    
+                except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
+                    logme("Warning: Unable to query GPU memory via nvidia-smi. Using default values.")
+                
+                return gpu_info
+            
+            gpu_specs               = get_gpu_specs()
+            precision_factor        = 2 if is_double_precision else 1
+            fixed_overhead_mb       = 1024
+            
+            # Cost per chain (variable)
+            # N * depth * width factors... simplified heuristic:
+            # A complex64 number is 8 bytes.
+            estimated_chain_mb      = (system_size * net_depth_estimate * 8) / (1024**2) 
+            estimated_chain_mb      = max(0.5, estimated_chain_mb) * precision_factor
+
+            # Available memory for batching (leaving 1GB buffer)
+            available_for_batch     = max(512, gpu_specs['free_memory_mb'] - fixed_overhead_mb)
+            
+            # Calculate Max Chains
+            calculated_chains       = int(available_for_batch / estimated_chain_mb)
+            
+            # Clamp to hardware reasonable limits (powers of 2)
+            # Even with 24GB VRAM, going > 8192 yields diminishing returns
+            max_limit               = 256 if is_double_precision else 8192
+            optimal_chains          = min(calculated_chains, max_limit)
+            
+            # Round down to nearest power of 2
+            optimal_chains          = 2 ** (optimal_chains.bit_length() - 1)
+            optimal_chains          = max(32, optimal_chains) # Minimum 32
+            optimal_chains          = min(target_total_samples, optimal_chains)
+            num_samples_per_chain   = max(1,  target_total_samples // optimal_chains)
+            
+            # GPU hates sequential loops. Keep these minimal.
+            config                  = {
+                's_numchains'       : optimal_chains,
+                's_numsamples'      : num_samples_per_chain,
+                's_therm_steps'     : 10,   # Quick re-adjustment
+                's_sweep_steps'     : 1,    # Reliance on ensemble averaging
+                'hardware'          : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}'
+            }
+            logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
+
+        # =========================================================================
+        # STRATEGY B: CPU (Narrow & Deep)
+        # Goal      : Match CPU cores, run long sequential loops.
+        # =========================================================================
+        else:
+            # Detect physical cores
+            physical_cores          = psutil.cpu_count(logical=False) or 4
+            
+            # Set chains equal to cores to avoid context switching
+            optimal_chains          = physical_cores
+            
+            # We need to get all our data from length, not width
+            num_samples_per_chain   = max(1, -(-target_total_samples // optimal_chains))
+
+            # CPU needs to sweep to decorrelate because we have few chains
+            config = {
+                's_numchains'       : optimal_chains,
+                's_numsamples'      : num_samples_per_chain,
+                's_therm_steps'     : max(20, system_size),      # Rule of thumb: N
+                's_sweep_steps'     : max(1, system_size // 2),  # Rule of thumb: N/2
+                'hardware'          : 'cpu'
+            }
+            logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
+
+        # Calculate actual batch size generated
+        total_batch = config['s_numchains'] * config['s_numsamples']
+        logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.")
+        
+        return config
+
 
 #########################################
 #! EOF

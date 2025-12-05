@@ -799,7 +799,7 @@ class TDVP:
     #! SOLVERS
     ##################
     
-    def _solve_prepare_matvec(self, mat_s: Array, mat_sp: Array):
+    def _solve_prepare_matvec(self, mat_s: Array, mat_sp: Array) -> Callable:
         """
         Prepares the covariance matrix and loss vector for the linear system to be solved.
         This method is used to prepare the input data for the linear solver, including
@@ -817,7 +817,7 @@ class TDVP:
         """
         def _matvec(v, sigma):
             inter = self.backend.matmul(mat_s, v)
-            return  self.backend.matmul(mat_sp, inter) / v.shape[1] + sigma * v
+            return  self.backend.matmul(mat_sp, inter) / self._n_samples + sigma * v
         return jax.jit(_matvec) if self.is_jax else _matvec
     
     def _solve_prepare_s_and_loss(self, vd_c: Array, vd_c_h: Array, loss_c: Array, forces: Array):
@@ -847,7 +847,7 @@ class TDVP:
             # The scaling by 1/N is usually handled inside the solver or covariance func. 
             # In sr.solve_jax, we handle scaling. Here we just prepare raw inputs.
             # return (vd_c, vd_c_h), loss_c
-            return (vd_c_h, vd_c), loss_c
+            return (vd_c_h, vd_c), loss_c / self._n_samples
         
         # otherwise, standard TDVP equation is solved
         # return (vd_c_h, vd_c), forces
@@ -994,7 +994,7 @@ class TDVP:
         
         # obtain the loss and covariance without the preprocessor
         self._f0, self._s0, (tdvp)  = self.get_tdvp_standard(e_loc, log_deriv, **kwargs)
-        if self._s0 is not None and self.logger: self.logger.info(f"Covariance matrix shape: {self._s0.shape}", lvl=3)
+        # if self._s0 is not None and self.logger: self.logger.info(f"Covariance matrix shape: {self._s0.shape}", lvl=3)
         
         #! get the force and covariance matrix
         f                           = self._f0 # the force vector
