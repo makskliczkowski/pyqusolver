@@ -355,8 +355,6 @@ class VMCSampler(Sampler):
         # ratio = jnp.exp(jnp.clip(beta * mu * delta, a_max=30.0)) # prevent overflow
         ratio   = jnp.exp(beta * mu * delta)
         return ratio
-        log_acceptance_ratio = beta * mu * (jnp.real(candidate_val) - jnp.real(current_val))
-        return jnp.exp(log_acceptance_ratio)
     
     @staticmethod
     @numba.njit

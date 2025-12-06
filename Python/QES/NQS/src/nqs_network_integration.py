@@ -9,7 +9,8 @@ Available Networks:
 -------------------
 1. RBM (Restricted Boltzmann Machine)
 2. CNN (Convolutional Neural Network)
-3. AR (Autoregressive Network)
+3. ResNet (Deep Residual Network)
+4. AR (Autoregressive Network)
 
 -------------------------------------------------------------------------------
 File        : NQS/src/nqs_network_integration.py
@@ -24,9 +25,10 @@ from dataclasses import dataclass
 # Import the robust smart-factory from general_python
 try:
     if TYPE_CHECKING:
-        from QES.general_python.ml.networks import GeneralNet
+        from QES.general_python.ml.networks                     import GeneralNet
         
-    from QES.general_python.ml.networks import choose_network, Networks
+    from QES.general_python.ml.networks                         import choose_network, Networks
+    from QES.general_python.ml.net_impl.activation_functions    import list_activations
 except ImportError as e:
     raise ImportError(f"Could not import core QES network factory. Ensure QES is installed correctly.\nOriginal error: {e}")
 
@@ -106,6 +108,7 @@ class NetworkFactory:
                 "dtype"             : "Data type for weights ('float32', 'complex128', etc.)",
             }
         ),
+        'activations': list_activations('jax')
     }
 
     @staticmethod
@@ -180,6 +183,11 @@ class NetworkFactory:
     def list_available() -> List[str]:
         """List all available network types."""
         return list(NetworkFactory._INFO.keys())
+    
+    @staticmethod
+    def list_activations() -> List[str]:
+        """List all available activation functions."""
+        return NetworkFactory._INFO['activations']
 
     @staticmethod
     def get_info(network_type: str) -> Dict[str, str]:
