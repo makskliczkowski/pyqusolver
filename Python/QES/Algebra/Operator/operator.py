@@ -22,39 +22,39 @@ Author  : Maksymilian Kliczkowski, WUST, Poland
 -----------------------------------------------------------------
 """
 
-from __future__ import annotations
-
-import numpy as np
-import copy                  
-import time
-import numbers
-import numba
-from numba.core.registry import CPUDispatcher
+from    __future__ import annotations
+import  numpy as np
+import  copy                  
+import  time
+import  numbers
+import  numba
+from    numba.core.registry import CPUDispatcher
 
 #####################################################################################################
-from abc import ABC
-from enum import Enum, auto, unique
-from typing import Optional, Callable, Union, Sequence, Any, Set, TYPE_CHECKING
-from typing import Union, Tuple, List               # type hints for the functions and methods
-from functools import partial                       # partial function application for operator composition
+from abc        import ABC
+from enum       import Enum, auto, unique
+from typing     import Optional, Callable, Union, Tuple, List, Sequence, Any, Set, TYPE_CHECKING, TypeAlias
+from functools  import partial # partial function application for operator composition
 ####################################################################################################
 
 try:
     if TYPE_CHECKING:
-        from QES.Algebra.hilbert import HilbertSpace
-    
-    from QES.Algebra.Hilbert.hilbert_local import LocalSpace, LocalSpaceTypes, LocalOperator, StateTypes, LocalOpKernels
-    from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
-    from QES.general_python.lattices import Lattice
+        from QES.Algebra.hilbert                import HilbertSpace
+        from QES.general_python.algebra.utils   import Array
+        from QES.general_python.lattices        import Lattice
+        from QES.Algebra.Hilbert.hilbert_local  import LocalSpaceTypes
+
+    from QES.Algebra.Operator.matrix            import GeneralMatrix
 except ImportError as e:
     raise ImportError("QES modules are required for this module to function properly. Please ensure QES is installed.") from e
 
 ####################################################################################################
 
-if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-    from jax.experimental import sparse
+try:
+    import          jax
+    import          jax.numpy as jnp
+    from            jax.experimental import sparse
+    JAX_AVAILABLE   = True
     
     def make_jax_operator_closure(
         op_func         : Callable,
@@ -97,8 +97,9 @@ if JAX_AVAILABLE:
             return op_func_jax(state, static_sites, *static_args, *kwarg_vals)
 
         return jax.jit(compiled_op)
-
-else:
+    
+except ImportError as exc:
+    JAX_AVAILABLE               = False
     jax                         = None
     jnp                         = np
     sparse                      = None
@@ -139,7 +140,11 @@ class SymmetryGenerators(Enum):
     def has_reflection(self):
         return self in [SymmetryGenerators.Reflection]
     
-    def supported_kind(self) -> Set[LocalSpaceTypes]:
+    def supported_kind(self) -> Set['LocalSpaceTypes']:
+        ''' Return the set of LocalSpaceTypes supported by this symmetry generator '''
+        
+        from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
+        
         if self in [SymmetryGenerators.ParityX, SymmetryGenerators.ParityY, SymmetryGenerators.ParityZ]:
             return {LocalSpaceTypes.SPIN_1_2, LocalSpaceTypes.SPIN_1}
         elif self in [SymmetryGenerators.FermionParity, SymmetryGenerators.ParticleHole]:
@@ -178,7 +183,15 @@ def op_func_wrapper(op_func: Callable, *args: Any) -> Callable:
 #! Constants
 ####################################################################################################
 
-_PYTHON_SCALARS = (int, float, complex, np.number)
+_PYTHON_SCALARS                 = (int, float, complex, np.number)
+_FUN_NUMPY  : TypeAlias         = Optional[Callable[[np.ndarray, Any], List[Tuple[Optional[np.ndarray], Union[float, complex]]]]]
+_FUN_INT    : TypeAlias         = Callable[[int, Any], List[Tuple[Optional[int], Union[float, complex]]]]
+if JAX_AVAILABLE:
+    _FUN_JAX: TypeAlias         = Optional[Callable[[jnp.ndarray, Any], List[Tuple[Optional[jnp.ndarray], Union[float, complex]]]]]
+else:
+    _FUN_JAX: TypeAlias         = None
+
+####################################################################################################
 
 @unique
 class OperatorTypeActing(Enum):
@@ -271,12 +284,6 @@ class OperatorTypeActing(Enum):
 #! OperatorFunction
 ####################################################################################################
 
-@numba.njit(cache=True)
-def _empty_result_int():
-    return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
-
-####################################################################################################
-
 class OperatorFunction:
     '''
     OperatorFunction is a class that represents a mathematical operator that can be applied to a state. 
@@ -334,9 +341,9 @@ class OperatorFunction:
     # -----------
     
     def __init__(self,
-                fun_int         : Callable,
-                fun_np          : Optional[Callable]    = None,
-                fun_jax         : Optional[Callable]    = None,
+                fun_int         : _FUN_INT,
+                fun_np          : Optional[_FUN_NUMPY]  = None,
+                fun_jax         : Optional[_FUN_JAX]    = None,
                 modifies_state  : bool                  = True,
                 necessary_args  : int                   = 0):
         """
@@ -350,15 +357,15 @@ class OperatorFunction:
         """
         self._fun_int           =   fun_int
         self._fun_np            =   fun_np
-        self._fun_jax           =   fun_jax
-        self._modifies_state    =   modifies_state            # flag for the operator that modifies the state
-        self._necessary_args    =   int(necessary_args)       # number of necessary arguments for the operator function
+        self._fun_jax           =   fun_jax                         # JAX function for the operator
+        self._modifies_state    =   modifies_state                  # flag for the operator that modifies the state
+        self._necessary_args    =   int(necessary_args)             # number of necessary arguments for the operator function
         self._acting_type       =   OperatorTypeActing.Global       if self._necessary_args == 0 else \
                                     OperatorTypeActing.Local        if self._necessary_args == 1 else \
                                     OperatorTypeActing.Correlation  if self._necessary_args == 2 else OperatorTypeActing.Global
-        self._dispatch          =   self._apply_local if self._necessary_args == 1 else \
-                                    self._apply_correlation if self._necessary_args == 2 else \
-                                    self._apply_global if self._necessary_args == 0 else self._apply_any
+        self._dispatch          =   self._apply_local               if self._necessary_args == 1 else \
+                                    self._apply_correlation         if self._necessary_args == 2 else \
+                                    self._apply_global              if self._necessary_args == 0 else self._apply_any
     
     # -----------
     
@@ -540,21 +547,26 @@ class OperatorFunction:
     def fun(self):
         ''' Set the function that defines the operator '''
         return self._fun_int
+    @fun.setter
+    def fun(self, val):
+        self._fun_int = val
     
     @property
     def npy(self):
         ''' Set the function that defines the operator '''
         return self._fun_np
+    @npy.setter
+    def npy(self, val):
+        self._fun_np = val
     
     @property
     def jax(self):
         ''' Set the function that defines the operator '''
         return self._fun_jax
+    @jax.setter
+    def jax(self, val):
+        self._fun_jax = val
     
-    @fun.setter
-    def fun(self, val):
-        self._fun_int = val
-        
     @property
     def modifies_state(self):
         ''' Set the flag for the operator that modifies the state '''
@@ -563,7 +575,7 @@ class OperatorFunction:
     @modifies_state.setter
     def modifies_state(self, val):
         self._modifies_state = val
-        
+    
     @property
     def necessary_args(self):
         ''' Set the number of necessary arguments for the operator function '''
@@ -881,9 +893,12 @@ class OperatorFunction:
 
 ####################################################################################################
 
-class Operator(ABC):
+class Operator(GeneralMatrix):
     """
     A class to represent a general operator acting on a Hilbert space.
+    
+    Inherits from GeneralMatrix to gain matrix storage, diagonalization,
+    backend handling, and eigenvalue/eigenvector management.
     
     Attributes:
         - op_fun (OperatorFunction):
@@ -895,7 +910,7 @@ class Operator(ABC):
         - fun_jnp (Optional[Callable]):
             The function defining the operator for JAX array states.
         - eigval (float):
-            The eigenvalue of the operator.
+            The eigenvalue of the operator (distinct from matrix eigenvalues).
         - lattice (Optional[Lattice]):
             The lattice object representing the physical system.
         - ns (Optional[int]):
@@ -917,6 +932,10 @@ class Operator(ABC):
         >>> print(op)
         Operator(MyOperator, type_acting=Global, eigval=1.0, type=Other)
         >>> op_result = op.op_fun.apply(state)
+        
+        >>> # Matrix representation and diagonalization (inherited from GeneralMatrix)
+        >>> matrix = op.matrix(dim=hilbert.nh, hilbert_1=hilbert)
+        >>> op.diagonalize()  # Now available for all operators
     """
 
     _INVALID_OPERATION_TYPE_ERROR = "Invalid type for function. Expected a callable function."
@@ -931,71 +950,100 @@ class Operator(ABC):
                 fun_np      : Optional[Callable]            = None,
                 fun_jnp     : Optional[Callable]            = None,
                 eigval                                      = 1.0,
-                lattice     : Optional[Lattice]             = None,
+                lattice     : Optional['Lattice']           = None,
                 ns          : Optional[int]                 = None,
                 typek       : Optional[SymmetryGenerators]  = SymmetryGenerators.Other,
                 name        : str                           = 'Operator',
                 modifies    : bool                          = True,
                 quadratic   : bool                          = False,
                 backend     : str                           = 'default',
+                is_sparse   : bool                          = True,
+                dtype       : Optional[Union[str, np.dtype]]= None,
+                logger      : Optional[Any]                 = None,
+                seed        : Optional[int]                 = None,
                 **kwargs):
         """
-        Initialize the GeneralOperator object.
+        Initialize the Operator object.
         
         Args:
-            Ns (int) :
-                The number of sites in the system.
-            Nhl (int) :
-                The local Hilbert space dimension - 2 for spin-1/2, 4 for spin-1, etc (default is 2).
-            Nhint (int) :
-                The number of modes (fermions, bosons, etc. on each site).
-            lattice (Lattice)   :
-                The lattice object.
-            name (str)          :
-                The name of the operator.
-            type (str)          :
-                The type of the operator.
-            eigval              :
-                The eigenvalue of the operator (default is 1.0).
-            quadratic (bool)    :
-                Flag for the quadratic operator.
-            acton (bool)        :
-                Flag for the action of the operator on the local physical space.
-            modifies (bool)     :
-                Flag for the operator that modifies the state.
-            backend (str)       :
-                The backend for the operator (default is 'default').
-            fun_int (callable)  :
+            op_fun (OperatorFunction, optional):
+                Pre-built operator function object.
+            fun_int (callable, optional):
                 The function that defines the operator - it shall take a state (or a list of states) 
                 and return the transformed state (or a list of states). States can be represented as 
                 integers or numpy arrays or JAX arrays. This enables the user to define any operator 
                 that can be applied to the state. The function shall return a list of pairs (state, value).
-            fun_np (callable)   :
+            fun_np (callable, optional):
                 The function that defines the operator for NumPy arrays.
-            fun_jnp (callable)  :
+            fun_jnp (callable, optional):
                 The function that defines the operator for JAX arrays.
+            eigval (float):
+                The eigenvalue of the operator (default is 1.0).
+            lattice (Lattice, optional):
+                The lattice object.
+            ns (int, optional):
+                The number of sites in the system.
+            typek (SymmetryGenerators, optional):
+                The type/symmetry of the operator.
+            name (str):
+                The name of the operator.
+            modifies (bool):
+                Flag for the operator that modifies the state.
+            quadratic (bool):
+                Flag for the quadratic operator.
+            backend (str):
+                The backend for the operator (default is 'default').
+            is_sparse (bool):
+                Whether to use sparse matrix representation (default is True).
+            dtype (dtype, optional):
+                Data type for matrix elements.
+            logger (Logger, optional):
+                Logger instance.
+            seed (int, optional):
+                Random seed for reproducibility.
         """
         
-        # handle the system phyisical size dimension and the lattice
+        # handle the system physical size dimension and the lattice
         if lattice is None and ns is not None:
-            self._ns        = ns
-            self._lattice   = lattice
+            _ns         = ns
+            _lattice    = lattice
         elif lattice is not None:
-            self._lattice   = lattice
-            self._ns        = self._lattice.ns
+            _lattice    = lattice
+            _ns         = _lattice.ns
         else:
             raise ValueError(Operator._INVALID_SYSTEM_SIZE_PROVIDED)
         
-        # set the backend for the operator
-        self._backend_str               = backend
-        self._backend, self._backend_sp = get_backend(backend, scipy=True)
+        # Filter out Operator-specific kwargs before passing to GeneralMatrix
+        _operator_only_kwargs = {
+            'acton', 'necessary_args', 'instr_code',
+            'fun_int', 'fun_np', 'fun_jax', 'fun_jnp'       # function kwargs handled by Operator
+        }
+        _general_matrix_kwargs = {k: v for k, v in kwargs.items() if k not in _operator_only_kwargs}
+        
+        # Initialize GeneralMatrix parent class
+        # Shape is set to (0, 0) initially - will be set when matrix is built
+        GeneralMatrix.__init__(
+            self,
+            shape       = (0, 0),               # Will be determined when matrix is built
+            ns          = _ns,                  # number of sites - from lattice or provided
+            is_sparse   = is_sparse,            # sparse matrix representation
+            backend     = backend,              # backend
+            logger      = logger,               # logger, already initialized or None
+            seed        = seed,                 # random seed
+            dtype       = dtype,                # data type for matrix elements
+            **_general_matrix_kwargs
+        )
+        
+        # Store lattice (not in GeneralMatrix, specific to Operator)
+        self._lattice           = _lattice
         
         # property of the operator itself
-        self._eigval            = eigval
-        self._name              = name
+        self._eigval            = eigval                            #! operator's eigenvalue (NOT matrix eigenvalue)
+        self._opeigval          = eigval                            # backward compatibility
+        self._name              = name                              # the name of the operator
         self._type              = typek
         if self._type != SymmetryGenerators.Other and self._name == 'Operator':
-            self._name      = self._type.name
+            self._name = self._type.name
         
         # property for the behavior of the operator - e.g., quadratic, action, etc.
         self._quadratic         = quadratic                         # flag for the quadratic operator - this enables different matrix representation
@@ -1005,9 +1053,9 @@ class Operator(ABC):
         self._necessary_args    = kwargs.get("necessary_args", 0)   # number of necessary arguments for the operator function
         self._fun               = None                              # the function that defines the operator - it is set to None if not provided
         self._jit_wrapper_cache = {}                                # cache for JIT wrappers
-        
+
+        #! IMPORTANT
         self._instr_code        = kwargs.get("instr_code", None)    # instruction code for the operator - used in operator builder - linear algebraic operations
-        
         self._init_functions(op_fun, fun_int, fun_np, fun_jnp)      # initialize the operator function
     
     def __repr__(self):
@@ -1075,6 +1123,74 @@ class Operator(ABC):
             raise NotImplementedError()
     
     #################################
+    #! GeneralMatrix interface implementation
+    #################################
+    
+    def build(self, dim: int = None, hilbert: 'HilbertSpace' = None, verbose: bool = False, force: bool = False, **kwargs) -> None:
+        """
+        Build the matrix representation of the operator and store it.
+        
+        This implements the GeneralMatrix.build() interface, allowing
+        operators to participate in the same workflow as Hamiltonians and other matrix-based objects.
+        
+        Parameters
+        ----------
+        dim : int, optional
+            Dimension of the matrix. Required if hilbert is not provided.
+        hilbert : HilbertSpace, optional
+            Hilbert space for matrix construction. Takes precedence over dim.
+        verbose : bool, default False
+            Whether to print progress messages.
+        force : bool, default False
+            If True, rebuild even if matrix already exists.
+        **kwargs
+            Additional arguments passed to matrix() method.
+        """
+        kwargs.pop('verbose', None)
+        
+        if self._matrix is not None and not force:
+            self._log("Matrix already built. Use force=True to rebuild.", lvl=1)
+            return
+        
+        if hilbert is not None:
+            dim = hilbert.nh
+        elif dim is None:
+            raise ValueError("Either 'dim' or 'hilbert' must be provided to build the matrix.")
+        
+        # Build the matrix using existing matrix() method
+        matrix_type     = 'sparse' if self._is_sparse else 'dense'
+        # Remove verbose from kwargs if present to avoid duplication
+        
+        built_matrix    = self.matrix(dim=dim, matrix_type=matrix_type, hilbert_1=hilbert, verbose=verbose, **kwargs)
+        
+        # Store in GeneralMatrix's storage
+        self._set_matrix_reference(built_matrix)
+        self.set_matrix_shape((dim, dim))
+        
+        if verbose:
+            self._log(f"Operator matrix built with shape {self._shape}", lvl=1, color="green")
+    
+    def _get_diagonalization_matrix(self):
+        """
+        Get the matrix to use for diagonalization.
+        
+        For Operator, this returns the stored matrix from build().
+        """
+        if self._matrix is None:
+            raise ValueError("Matrix not built. Call build() first before diagonalizing.")
+        return self._matrix
+    
+    def _matvec_context(self) -> tuple:
+        """
+        Provide context for matvec operations.
+        
+        Returns tuple of (args, kwargs) to pass to matvec.
+        """
+        # For Operator, we may need a Hilbert space for matvec
+        # This can be overridden by subclasses
+        return (), {'hilbert': None}
+    
+    #################################
     #! Static methods
     #################################
     
@@ -1083,7 +1199,7 @@ class Operator(ABC):
         """
         Identity operator function.
         """
-        return state, 1.0
+        return (state,), (1.0,)
     
     @staticmethod
     def idn_f(state, *args):
@@ -1304,18 +1420,38 @@ class Operator(ABC):
     
     @property
     def eigval(self):           return self._eigval
+    @property
+    def opeigval(self):         return self._eigval
     
     @eigval.setter
     def eigval(self, val):      self._eigval = val
+    @opeigval.setter
+    def opeigval(self, val):    self._eigval = val
+    
+    # -------------------------------
+    # Operator-specific properties
+    # -------------------------------
+    
+    @property
+    def lattice(self):          return self._lattice
+    
+    @lattice.setter
+    def lattice(self, val):     self._lattice = val
+    
+    @property
+    def ns(self):               return self._ns
+    @ns.setter
+    def ns(self, val):          self._ns = val
+    @property
+    def sites(self):            return self.ns
     
     # -------------------------------
     
     @property
     def name(self):             return self._name
-    
     @name.setter
     def name(self, val):        self._name = val
-        
+    
     # -------------------------------
     
     @property
@@ -1323,7 +1459,7 @@ class Operator(ABC):
     
     @type.setter
     def type(self, val):        self._type = val
-        
+    
     # -------------------------------
     
     @property
@@ -1335,10 +1471,9 @@ class Operator(ABC):
     
     @property
     def quadratic(self):        return self._quadratic
-    
     @quadratic.setter
     def quadratic(self, val):   self._quadratic = val
-        
+    
     # -------------------------------
     
     @property
@@ -1351,7 +1486,6 @@ class Operator(ABC):
     
     @property
     def modifies(self):         return self._modifies
-    
     @modifies.setter
     def modifies(self, val):    self._modifies = val
     
@@ -1359,7 +1493,6 @@ class Operator(ABC):
     
     @property
     def type_acting(self):      return self._type_acting
-    
     def get_acting_type(self):  return self._type_acting
 
     # -------------------------------
@@ -1541,12 +1674,12 @@ class Operator(ABC):
         Generate the matrix form of the operator without Hilbert space.
         """
         # create a dummy Hilbert space for convenience
-        from QES.Algebra.hilbert import HilbertSpace
+        from QES.Algebra.hilbert                import HilbertSpace
         from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
         
-        dummy_hilbert   = HilbertSpace(nh = dim, backend = self._backend)
+        dummy_hilbert = HilbertSpace(nh = dim, backend = self._backend)
         if verbose:
-            dummy_hilbert.log("Calculating the Hamiltonian matrix using NumPy...", lvl = 2)
+            dummy_hilbert._log("Calculating the Hamiltonian matrix using NumPy...", lvl = 2)
 
         # calculate the time to create the matrix
         t1              = time.time()
@@ -1557,31 +1690,28 @@ class Operator(ABC):
                                                 dtype               = dtype)
         time_taken      = time.time() - t1
         if verbose:
-            dummy_hilbert.log(f"Time taken to create the matrix {self._name}: {time_taken:.2e} seconds", lvl=2)
+            dummy_hilbert._log(f"Time taken to create the matrix {self._name}: {time_taken:.2e} seconds", lvl=2)
         return matrix
     
-    def _matrix_no_hilbert_jax(self, dim: int, is_sparse: bool, wrapped_funct, dtype, max_loc_upd:int = 1):
-        """
-        Generate the matrix form of the operator without Hilbert space.
-        """
-        from QES.Algebra.hilbert import HilbertSpace
-        
-        # create a dummy Hilbert space for convenience
-        dummy_hilbert = HilbertSpace(nh = dim, backend = self._backend)
-        dummy_hilbert.log("Calculating the Hamiltonian matrix using JAX...", lvl = 2)
-        #!TODO: Implement the JAX version of the matrix function
-        return None
-    
-    def matrix(self, *args, dim = None, matrix_type = 'sparse', dtype = None,
-            hilbert_1 = None, hilbert_2 = None, use_numpy: bool = True, **kwargs) -> Array | None:
+    def matrix(self, *args, dim = None, matrix_type = 'sparse', dtype = None, hilbert_1 = None, hilbert_2 = None, use_numpy: bool = True, **kwargs) -> Array | None:
         """
         Generates the matrix representation of the operator.
 
         Parameters:
-        - param dim             : Dimension of the matrix.
-        - param matrix_type     : Type of matrix ("dense" or "sparse").
-        - param *args           : Additional arguments for the operator function - moved to self._fun.
-        - param **kwargs        : Additional keyword arguments for the operator function.
+            dim (int, optional):
+                The dimension of the matrix. Required if hilbert_1 and hilbert_2 are not provided.
+            matrix_type (str, optional):
+                The type of matrix to generate ('sparse' or 'dense'). Default is 'sparse'.
+            dtype (data-type, optional):
+                The desired data-type for the matrix elements. If None, defaults to the backend's complex128.
+            hilbert_1 (HilbertSpace, optional):
+                The first Hilbert space for matrix construction.
+            hilbert_2 (HilbertSpace, optional):
+                The second Hilbert space for matrix construction.
+            use_numpy (bool, optional):
+                Whether to use NumPy for matrix construction when JAX is available. Default is True.
+            **kwargs:
+                Additional keyword arguments for matrix construction.
         :return: The matrix representation of the operator.
         """
         
@@ -1604,7 +1734,7 @@ class Operator(ABC):
             dim1, dim2      = dim, dim
             matrix_hilbert  = 'None'
 
-        verbose         = kwargs.get('verbose', False)
+        verbose         = kwargs.pop('verbose', False)
         
         # check if there are functions from the Hilbert space
         jax_maybe_av    = JAX_AVAILABLE and self._backend != np
@@ -1644,10 +1774,8 @@ class Operator(ABC):
         # Case1: easiest case - no Hilbert space provided
         if matrix_hilbert == 'None':
             # maximum local updates - how many states does the operator create - for sparse
-            if not jax_maybe_av or use_numpy:
-                return self._matrix_no_hilbert_np(dim1, is_sparse, op_wrapper_jit, dtype, max_loc_upd, verbose, **kwargs)
-            else:
-                return self._matrix_no_hilbert_jax(dim1, is_sparse, wrapped_fun, dtype, max_loc_upd)
+            return self._matrix_no_hilbert_np(dim1, is_sparse, op_wrapper_jit, dtype, max_loc_upd, verbose, **kwargs)
+        
         # Case2: one Hilbert space provided
         elif matrix_hilbert == 'single':
             if not jax_maybe_av or use_numpy:
@@ -1792,10 +1920,10 @@ class Operator(ABC):
         if basis is not None and not isinstance(basis, np.ndarray):
             basis = np.array(basis)
             
-        representative_list = getattr(hilbert, 'representative_list', None)
-        normalization       = getattr(hilbert, 'normalization', None)
-        repr_idx            = getattr(hilbert, 'repr_idx', None)
-        repr_phase          = getattr(hilbert, 'repr_phase', None)        
+        representative_list = getattr(hilbert, 'representative_list',   None)
+        normalization       = getattr(hilbert, 'normalization',         None)
+        repr_idx            = getattr(hilbert, 'repr_idx',              None)
+        repr_phase          = getattr(hilbert, 'repr_phase',            None)        
 
         # Prepare Inputs
         # Ensure 2D shape for batch kernel: (N_hilbert, N_batch)
@@ -1885,6 +2013,413 @@ class Operator(ABC):
         return vecs_out
 
     #################################
+    # K-space Transformation Methods
+    #################################
+    
+    def _is_single_particle_matrix(self) -> bool:
+        """
+        Check if the current matrix has single-particle dimensions.
+        
+        A matrix is considered single-particle if its dimension equals:
+        - ns (number of sites) for standard operators
+        - 2*ns for BdG (Bogoliubov-de Gennes) operators with pairing
+        
+        Returns
+        -------
+        bool
+            True if matrix has single-particle dimensions, False otherwise.
+        """
+        matrix = self._get_matrix_reference()
+        if matrix is None:
+            return False
+        
+        dim = matrix.shape[0]
+        ns  = self._ns if self._ns is not None else (self._lattice.ns if self._lattice is not None else None)
+        
+        if ns is None:
+            return False
+        
+        return dim == ns or dim == 2 * ns
+    
+    def to_kspace(self, return_transform: bool = False, **kwargs):
+        r"""
+        Transform operator matrix to k-space (momentum space).
+        
+        This method transforms a real-space operator to k-space using Bloch's theorem.
+        Only valid for operators with single-particle matrix dimensions (dim = ns or 2*ns).
+        
+        Parameters
+        ----------
+        return_transform : bool, optional
+            If True, also return the Bloch unitary matrix W for operator transformations.
+            Default is False.
+        **kwargs
+            Additional arguments passed to kspace_from_realspace (e.g., unitary_norm, use_cache)
+            
+        Returns
+        -------
+        O_k : np.ndarray
+            K-space operator, shape (Lx, Ly, Lz, Nb, Nb) where Nb is bands per unit cell
+        kgrid : np.ndarray
+            K-points in Cartesian coordinates, shape (Lx, Ly, Lz, 3)
+        kgrid_frac : np.ndarray
+            K-points in fractional coordinates, shape (Lx, Ly, Lz, 3)
+        W : np.ndarray, optional
+            Bloch unitary matrix (only if return_transform=True), shape (Lx, Ly, Lz, Ns, Nb)
+            
+        Examples
+        --------
+        >>> # For a quadratic Hamiltonian or single-particle operator
+        >>> H_k, kgrid, kgrid_frac = operator.to_kspace()
+        >>> 
+        >>> # Get W for transforming other operators consistently
+        >>> H_k, kgrid, kgrid_frac, W = operator.to_kspace(return_transform=True)
+        >>> # Transform another operator: O_k = W^dagger @ O @ W
+        
+        Raises
+        ------
+        ValueError
+            If matrix is not built, lattice is not available, or dimensions are wrong.
+            
+        Notes
+        -----
+        The operator matrix must have dimensions ns \times ns (single-particle) or
+        2ns \times 2ns (BdG with particle-hole doubling). Many-body matrices with
+        dimension 2^ns are NOT supported - use single-particle representations.
+        """
+        matrix = self._get_matrix_reference()
+        
+        if matrix is None:
+            raise ValueError("Operator matrix not built. Call build() first.")
+        
+        if self._lattice is None:
+            raise ValueError("Lattice information required for k-space transformation.")
+        
+        if not self._is_single_particle_matrix():
+            dim     = matrix.shape[0]
+            ns      = self._ns or self._lattice.ns
+            raise ValueError(
+                f"K-space transformation requires single-particle matrix dimensions. "
+                f"Got dim={dim}, expected ns={ns} or 2*ns={2*ns}. "
+                f"For many-body Hamiltonians (dim=2^ns), use quadratic representation."
+            )
+        
+        from QES.general_python.lattices.tools.lattice_kspace import kspace_from_realspace
+        
+        # Convert sparse to dense if needed
+        O_real = matrix.toarray() if hasattr(matrix, 'toarray') else matrix
+        return kspace_from_realspace(self._lattice, O_real, return_transform=return_transform, **kwargs)
+    
+    def from_kspace(self, O_k, kgrid=None):
+        """
+        Transform k-space operator back to real space.
+        
+        Parameters
+        ----------
+        O_k : np.ndarray
+            K-space operator, shape (Lx, Ly, Lz, Nb, Nb)
+        kgrid : np.ndarray, optional
+            K-point grid (not used, kept for API compatibility)
+            
+        Returns
+        -------
+        O_real : np.ndarray
+            Real-space operator, shape (Ns, Ns)
+            
+        Examples
+        --------
+        >>> O_k, kgrid, kgrid_frac = operator.to_kspace()
+        >>> # Modify O_k in k-space...
+        >>> O_real_new = operator.from_kspace(O_k)
+        
+        Raises
+        ------
+        ValueError
+            If lattice is not available.
+        """
+        if self._lattice is None:
+            raise ValueError("Lattice information required for inverse k-space transformation.")
+        
+        from QES.general_python.lattices.tools.lattice_kspace import realspace_from_kspace
+        
+        return realspace_from_kspace(self._lattice, O_k, kgrid)
+    
+    def transform_to_kspace(self, return_grid: bool = True, **kwargs):
+        """
+        Alias for to_kspace() for backward compatibility.
+        
+        Parameters
+        ----------
+        return_grid : bool, optional
+            If True (default), return k-grid along with transformed operator.
+        **kwargs
+            Additional arguments for kspace_from_realspace
+            
+        Returns
+        -------
+        O_k : np.ndarray
+            K-space operator, shape (Lx, Ly, Lz, Nb, Nb)
+        kgrid : np.ndarray, optional
+            K-point grid (only if return_grid=True)
+        kgrid_frac : np.ndarray, optional
+            Fractional k-grid (only if return_grid=True)
+        """
+        result = self.to_kspace(**kwargs)
+        
+        if return_grid:
+            return result       # Returns (O_k, kgrid, kgrid_frac) or with W
+        else:
+            return result[0]    # Returns only O_k
+
+    #################################
+    # Help and Documentation
+    #################################
+
+    @classmethod
+    def help(cls, topic: Optional[str] = None) -> str:
+        r"""
+        Display help information about Operator capabilities.
+        
+        Parameters
+        ----------
+        topic : str, optional
+            Specific topic to get help on. Options:
+            - None or 'all': Full overview
+            - 'types': 
+                Operator types (Global, Local, Correlation)
+            - 'creation': 
+                Creating operators
+            - 'application': 
+                Applying operators to states
+            - 'matrix':     
+                Matrix representation
+            - 'inherited':
+                Methods inherited from GeneralMatrix
+            
+        Returns
+        -------
+        str
+            Help text for the requested topic.
+            
+        Examples
+        --------
+        >>> Operator.help()  # Full overview
+        >>> Operator.help('types')  # Operator types help
+        """
+        topics = {
+            'types': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           Operator: Types                                    ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  OperatorTypeActing (determines how operator acts on states):                ║
+║                                                                              ║
+║  Global (0 site arguments):                                                  ║
+║    - Acts on entire system at once                                           ║
+║    - Example: Total spin Sₓ = \sum_i \sigma^x_i                              ║
+║    - Usage: op(state)                                                        ║
+║                                                                              ║
+║  Local (1 site argument):                                                    ║
+║    - Acts on a single specified site                                         ║
+║    - Example: Local spin \sigma_x^i at site i                                ║
+║    - Usage: op(state, site_index)                                            ║
+║                                                                              ║
+║  Correlation (2 site arguments):                                             ║
+║    - Acts on pairs of sites                                                  ║
+║    - Example: Two-site correlation \sigma_x^i \sigma_x^j                     ║
+║    - Usage: op(state, site_i, site_j)                                        ║
+║                                                                              ║
+║  Properties:                                                                 ║
+║    .type_acting              - Get the operator type                         ║
+║    .necessary_args           - Number of site arguments needed               ║
+║    .modifies_state           - Whether operator changes state                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'creation': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         Operator: Creation                                   ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Constructor:                                                                ║
+║    Operator(fun_int, fun_np=None, fun_jax=None, ...)                         ║
+║                                                                              ║
+║  Key Parameters:                                                             ║
+║    fun_int    : Callable - Integer state function (required)                 ║
+║    fun_np     : Callable - NumPy array function   (optional)                 ║
+║    fun_jax    : Callable - JAX array function     (optional)                 ║
+║    eigval     : float    - Operator eigenvalue    (default: 1.0)             ║
+║    modifies   : bool     - Whether operator modifies state                   ║
+║    name       : str      - Operator name                                     ║
+║    lattice    : Lattice  - Lattice for site information                      ║
+║    ns         : int      - Number of sites        (if no lattice)            ║
+║                                                                              ║
+║  Function Signature (returns (new_states, coefficients)):                    ║
+║    Global:      fun(state)        ->  (states_array, values_array)           ║
+║    Local:       fun(state, i)     ->  (states_array, values_array)           ║
+║    Correlation: fun(state, i, j)  ->  (states_array, values_array)           ║
+║                                                                              ║
+║  Factory Functions (from operator modules):                                  ║
+║    sig_x(ns=N, type_act='local')   - Pauli X operator                        ║
+║    sig_y(ns=N, type_act='local')   - Pauli Y operator                        ║
+║    sig_z(ns=N, type_act='local')   - Pauli Z operator                        ║
+║    c_dag(ns=N, type_act='local')   - Fermion creation operator               ║
+║    c_ann(ns=N, type_act='local')   - Fermion annihilation operator           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'application': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                       Operator: Application                                  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Primary Methods:                                                            ║
+║    .apply(states, *args)     - Apply operator to state(s)                    ║
+║    op(states, *args)         - Same as apply (callable interface)            ║
+║    op[states]                - Returns only modified states                  ║
+║    op % states               - Returns only coefficients                     ║
+║                                                                              ║
+║  Return Format:                                                              ║
+║    (new_states, coefficients) - Tuple of arrays                              ║
+║                                                                              ║
+║  State Types Supported:                                                      ║
+║    - Integer      (basis state index)                                        ║
+║    - NumPy array  (occupation numbers)                                       ║
+║    - JAX array    (for GPU acceleration)                                     ║
+║                                                                              ║
+║  Examples:                                                                   ║
+║    >>> op = sig_x(ns=4, type_act='local')                                    ║
+║    >>> states, vals = op(5, 2) # Apply σ_x at site 2 to state |0101⟩         ║
+║    >>> states, vals = op.apply([5, 6, 7], 2) # Batch application             ║
+║                                                                              ║
+║  Fourier Transform:                                                          ║
+║    .apply_fourier(k, hilbert, vec)  - Apply momentum-space operator          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'matrix': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                       Operator: Matrix Representation                        ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Building Matrix:                                                            ║
+║    .build(dim=N, hilbert=H)       - Build and store matrix representation    ║
+║    .matrix(dim=N, hilbert=H)      - Generate matrix (returns without storing)║
+║                                                                              ║
+║  Matrix-Vector Product:                                                      ║
+║    .matvec(v, hilbert=H)          - Compute matrix-vector product            ║
+║    .matvec_fun                    - Get matvec function for scipy            ║
+║                                                                              ║
+║  Key Parameters for matrix():                                                ║
+║    dim         : int              - Matrix dimension (Hilbert space size)    ║
+║    hilbert     : HilbertSpace     - Hilbert space for symmetry handling      ║
+║    matrix_type : str              - 'sparse' or 'dense'                      ║
+║    verbose     : bool             - Print progress information               ║
+║                                                                              ║
+║  Properties (after build):                                                   ║
+║    .matrix_data                   - Get the stored matrix                    ║
+║    .shape                         - Matrix dimensions                        ║
+║    .sparse                        - Whether using sparse format              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'inherited': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                   Operator: Inherited from GeneralMatrix                     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Operator inherits all GeneralMatrix functionality:                          ║
+║                                                                              ║
+║  Diagonalization:                                                            ║
+║    .diagonalize(method='auto', k=None, ...)                                  ║
+║    .eigenvalues, .eigenvectors                                               ║
+║    .ground_state, .ground_energy                                             ║
+║                                                                              ║
+║  Spectral Analysis:                                                          ║
+║    .spectral_gap, .spectral_width                                            ║
+║    .participation_ratio(n), .degeneracy(tol)                                 ║
+║    .level_spacing(), .level_spacing_ratio()                                  ║
+║                                                                              ║
+║  Matrix Operations:                                                          ║
+║    .expectation_value(ψ, φ), .overlap(v1, v2)                                ║
+║    .trace_matrix(), .frobenius_norm(), .spectral_norm()                      ║
+║    .commutator(O), .anticommutator(O)                                        ║
+║                                                                              ║
+║  Memory & Control:                                                           ║
+║    .memory, .memory_mb, .memory_gb                                           ║
+║    .to_sparse(), .to_dense(), .clear()                                       ║
+║                                                                              ║
+║  Use GeneralMatrix.help() for full details on inherited methods.             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'kspace': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      Operator: K-Space Transformations                       ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Transform operators between real-space and momentum-space (k-space).        ║
+║  Only valid for single-particle operators (dimension = ns or 2*ns).          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Methods:                                                                    ║
+║    .to_kspace(return_transform=False)                                        ║
+║        Transform operator matrix to k-space                                  ║
+║        Returns: (O_k, kgrid, kgrid_frac) or with W if return_transform=True  ║
+║                                                                              ║
+║    .from_kspace(O_k, kgrid=None)                                             ║
+║        Transform k-space operator back to real space                         ║
+║        Returns: O_real (ns x ns matrix)                                      ║
+║                                                                              ║
+║    .transform_to_kspace(return_grid=True)                                    ║
+║        Alias for to_kspace() for backward compatibility                      ║
+║                                                                              ║
+║  Dimension Requirements:                                                     ║
+║    Matrix dimension must be:                                                 ║
+║    • ns     : Standard single-particle operators                             ║
+║    • 2*ns   : BdG (Bogoliubov-de Gennes) with particle-hole doubling         ║
+║    Many-body matrices (dim = 2^ns) are NOT supported!                        ║
+║                                                                              ║
+║  Helper:                                                                     ║
+║    ._is_single_particle_matrix()  - Check if matrix has valid dimensions     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Examples:                                                                   ║
+║    >>> model.build()                                                         ║
+║    >>> H_k, kgrid, kgrid_frac = model.to_kspace()                            ║
+║    >>>                                                                       ║
+║    >>> # Get Bloch unitary for consistent operator transforms                ║
+║    >>> H_k, kgrid, kgrid_frac, W = model.to_kspace(return_transform=True)    ║
+║    >>> O_k = W.conj().T @ O_real @ W  # Transform another operator           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+        }
+        
+        overview = r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                 Operator                                     ║
+║           Quantum operator class for acting on basis states.                 ║
+║       Supports integer, NumPy, and JAX representations.                      ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Inheritance: Operator → GeneralMatrix → LinearOperator                      ║
+║  Subclasses:  Hamiltonian                                                    ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Quick Start:                                                                ║
+║    1. Create operator: op = sig_x(ns=4, type_act='local')                    ║
+║    2. Apply to state:  states, vals = op(state, site_index)                  ║
+║    3. Build matrix:    op.build(dim=16)                                      ║
+║    4. Diagonalize:     op.diagonalize()                                      ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Topics (use .help('topic') for details):                                    ║
+║    'types'       - Operator types (Global, Local, Correlation)               ║
+║    'creation'    - How to create operators                                   ║
+║    'application' - Applying operators to states                              ║
+║    'matrix'      - Matrix representation and matvec                          ║
+║    'kspace'      - K-space (momentum space) transformations                  ║
+║    'inherited'   - Methods inherited from GeneralMatrix                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+        
+        if topic is None or topic == 'all':
+            result = overview
+            for t in topics.values():
+                result += t
+            print(result)
+            return result
+        
+        if topic in topics:
+            print(topics[topic])
+            return topics[topic]
+        
+        print(f"Unknown topic '{topic}'. Available: {list(topics.keys())}")
+        return f"Unknown topic '{topic}'. Available: {list(topics.keys())}"
 
 ####################################################################################################
 
@@ -1899,15 +2434,15 @@ def operator_identity(backend : str = 'default') -> Operator:
     def identity_fun(state):
         return state, 1.0
     
-    return Operator(fun_int = identity_fun,
-                    fun_np  = identity_fun,
-                    fun_jax = identity_fun, 
-                    eigval  = 1.0,
-                    ns      = 1, 
-                    backend = backend, 
-                    name    = SymmetryGenerators.E, 
-                    modifies=False, 
-                    quadratic=False)
+    return Operator(fun_int     = identity_fun,
+                    fun_np      = identity_fun,
+                    fun_jax     = identity_fun, 
+                    eigval      = 1.0,
+                    ns          = 1, 
+                    backend     = backend, 
+                    name        = SymmetryGenerators.E, 
+                    modifies    = False, 
+                    quadratic   = False)
 
 ####################################################################################################
 
@@ -2331,9 +2866,13 @@ def initial_states(ns       : int,
                 np_state    : Optional[np.ndarray]  = None) -> tuple:
     '''
     Create initial states for testing the operator. It generates:
-        - int_state: a random integer state (int) in the range [0, 2**ns)
-        - np_state: a random NumPy state (np.ndarray) of size ns
-        - jnp_state: a random JAX state (jnp.ndarray) of size ns
+    - int_state: 
+        a random integer state (int) in the range [0, 2**ns)
+    - np_state: 
+        a random NumPy state (np.ndarray) of size ns
+    - jnp_state: 
+        a random JAX state (jnp.ndarray) of size ns
+    
     The function also checks if the integer state is out of bounds and generates a random state if necessary.
     The function returns the generated states as a tuple.
     Parameters:
@@ -2347,13 +2886,16 @@ def initial_states(ns       : int,
             The NumPy state to be used. If None, a random state is generated.
     Returns:
         tuple:
-            A tuple containing the generated states:
-            - int_state: a random integer state (int) in the range [0, 2**ns)
-            - np_state: a random NumPy state (np.ndarray) of size ns
-            - jnp_state: a random JAX state (jnp.ndarray) of size ns
+        A tuple containing the generated states:
+        - int_state:
+            a random integer state (int) in the range [0, 2**ns)
+        - np_state: 
+            a random NumPy state (np.ndarray) of size ns
+        - jnp_state: 
+            a random JAX state (jnp.ndarray) of size ns
     '''
     import QES.general_python.common.binary as _bin_mod
-    from QES.general_python.common.display import display_state
+    from QES.general_python.common.display  import display_state
     
     #! Take the integer state as input
     int_state = np.random.randint(0, 2**(ns%64), dtype=np.int32) if int_state is None else int_state
@@ -2383,7 +2925,7 @@ def initial_states(ns       : int,
 
 def _dispatch(op    : Operator,
             state   : Union[int, np.ndarray],
-            lat     : Lattice,
+            lat     : 'Lattice',
             is_int  : bool,
             to_bin  : Optional[Callable[[int, int], str]] = None,
             lab     : Optional[str] = None,
@@ -2479,7 +3021,7 @@ def _dispatch(op    : Operator,
     return new_state, new_coeff
 
 def test_operator_on_state(op           : Union[Operator, Sequence[Operator]],
-                        lat             : Lattice,
+                        lat             : 'Lattice',
                         state           : Union[int, np.ndarray],
                         *,
                         ns              : Optional[int] = None,

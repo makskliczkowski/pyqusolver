@@ -379,7 +379,7 @@ class HilbertSpace(ABC):
                 from QES.Algebra.Operator.operator import operator_identity
             except ImportError as e:
                 raise RuntimeError("Failed to import operator_identity. Ensure QES.Algebra.Operator.operator is available.") from e
-            self._sym_group = [operator_identity(self._backend)]
+            self._sym_group = [operator_identity(self._backend_str)]
     
     # --------------------------------------------------------------------------------------------------
     #! Configuration from HilbertConfig
@@ -441,7 +441,7 @@ class HilbertSpace(ABC):
         """
         from QES.Algebra.Operator.operator import operator_identity
         self._log("Reseting the local symmetries. Can be now recreated.", lvl = 2, log = 'debug')
-        self._sym_group = [operator_identity(self._backend)]
+        self._sym_group = [operator_identity(self._backend_str)]
     
     # --------------------------------------------------------------------------------------------------
     

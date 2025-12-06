@@ -16,11 +16,10 @@ date        : 2025-10-29
 version     : 2.2.0
 --------------------------------------------------------------------------------------------
 """
-from __future__ import annotations
-import time
-import numpy as np
-import scipy.sparse as sp
-from typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
+from    __future__ import annotations
+import  numpy as np
+import  scipy.sparse as sp
+from    typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
 
 try:
     import numba
@@ -30,11 +29,6 @@ except ImportError:
     NUMBA_AVAILABLE = False
 
 # ------------------------------------------------------------------------------------------
-
-try:
-    from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE
-except ImportError:
-    raise ImportError("QES.general_python.algebra.utils module is required for matrix building.")
 
 try:
     from QES.Algebra.Symmetries.symmetry_container import _binary_search_representative_list
@@ -393,8 +387,8 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
     
     # Sparse matrix
     max_nnz                 = nh * max_local_changes * (ns) # estimate
-    rows                    = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
-    cols                    = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
+    rows                    = np.zeros(max_nnz, dtype=np.int64)
+    cols                    = np.zeros(max_nnz, dtype=np.int64)
     data                    = np.zeros(max_nnz, dtype=alloc_dtype)
 
     # If there are no symmetries present (no representative_list/repr arrays and no
@@ -483,8 +477,8 @@ def _build_sector_change(hilbert_in         : object,
     
     # Sparse matrix
     max_nnz         = nh_in * max_local_changes * ns
-    rows            = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
-    cols            = np.zeros(max_nnz, dtype=DEFAULT_NP_INT_TYPE)
+    rows            = np.zeros(max_nnz, dtype=np.int64)
+    cols            = np.zeros(max_nnz, dtype=np.int64)
     data            = np.zeros(max_nnz, dtype=alloc_dtype)
 
     # Python assembly that uses HilbertSpace.find_representative
@@ -736,9 +730,9 @@ def build_operator_matrix(
     else:
         return _build_sector_change(hilbert_space, hilbert_space_out, operator_func, sparse, max_local_changes, dtype)
 
-# -------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------------
 #! Matrix-Free Operator Application (optimized!)
-# -------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------------------
 
 @numba.njit(fastmath=True, parallel=True)
 def _apply_op_batch_jit(
@@ -752,67 +746,94 @@ def _apply_op_batch_jit(
     repr_idx            : Optional[np.ndarray],
     repr_phase          : Optional[np.ndarray]) -> None:
     
-    nh, n_batch     = vecs_in.shape
-    has_symmetry    = representative_list is not None
-    has_basis       = basis is not None
-
-    n_threads       = numba.get_num_threads()
+    nh, n_batch         = vecs_in.shape
+    has_symmetry        = representative_list is not None
+    has_basis           = basis is not None
+    n_threads           = numba.get_num_threads()
+    
+    # We process the batch in small chunks to prevent VRAM/RAM explosion.
+    # Chunk size of 1 is safest for memory. 
+    # If one has massive RAM, you can increase this to 2 or 4.
+    chunk_size          = 1
+    
     # Create a buffer for EACH thread to write to safely
-    # Shape: (n_threads, nh, n_batch)
-    thread_buffers  = np.zeros((n_threads, nh, n_batch), dtype=vecs_out.dtype)
+    # Shape: (n_threads, nh, chunk_size)
+    thread_buffers      = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
 
-    # Parallel Loop
-    for k in numba.prange(nh):
-        tid         = numba.get_thread_id()
+    # Loop over the batch in chunks
+    for b_start in range(0, n_batch, chunk_size):
+        b_end           = min(b_start + chunk_size, n_batch)
+        actual_width    = b_end - b_start
         
-        # --- [State Decoding] ---
-        if has_symmetry:
-            # Ensure integer!
-            state   = np.int64(representative_list[k])
-            norm_k  = normalization[k]
-        elif has_basis:
-            state   = np.int64(basis[k])
-        else:
-            state   = np.int64(k)
-                
-        # [Compute]
-        new_states, values = op_func(state, *args)
-        
-        # [Map & Write]
-        for i in range(len(new_states)):
-            new_state   = new_states[i]
-            val         = values[i]
+        # Reset buffers for this chunk (crucial!)
+        thread_buffers[:, :, :actual_width].fill(0.0)
+
+        # Parallel Loop over Hilbert Space
+        for k in numba.prange(nh):
+            tid         = numba.get_thread_id()
             
-            if abs(val) < 1e-15: continue
-            
-            target_idx  = -1
-            sym_factor  = 1.0 + 0j
-            
+            # State Decoding
             if has_symmetry:
-                if repr_idx is not None:
-                    target_idx = repr_idx[new_state]
-                    if target_idx >= 0:
-                        phase       = repr_phase[new_state]
-                        norm_idx    = normalization[target_idx]
-                        sym_factor  = np.conj(phase) * (norm_idx / norm_k)
+                state   = np.int64(representative_list[k])
+                norm_k  = normalization[k]
             elif has_basis:
-                idx = np.searchsorted(basis, new_state)
-                if idx < nh and basis[idx] == new_state:
-                    target_idx = idx
+                state   = np.int64(basis[k])
             else:
-                target_idx = new_state
-
-            # WRITE TO PRIVATE THREAD BUFFER
-            if 0 <= target_idx < nh:
+                state   = np.int64(k)
+                    
+            # [Compute Operator Action]
+            # This returns new states and values (independent of batch index)
+            new_states, values  = op_func(state, *args)
+            
+            # [Map & Write]
+            for i in range(len(new_states)):
+                new_state       = new_states[i]
+                val             = values[i]
+                
+                if abs(val) < 1e-15: continue
+                
+                target_idx      = -1
+                sym_factor      = 1.0 + 0j
+                
                 if has_symmetry:
-                    thread_buffers[tid, target_idx, :] += val * sym_factor * vecs_in[k, :]
+                    if repr_idx is not None:
+                        target_idx = repr_idx[new_state]
+                        if target_idx >= 0:
+                            phase       = repr_phase[new_state]
+                            norm_idx    = normalization[target_idx]
+                            sym_factor  = np.conj(phase) * (norm_idx / norm_k)
+                            
+                elif has_basis:
+                    idx = np.searchsorted(basis, new_state)
+                    if idx < nh and basis[idx] == new_state:
+                        target_idx = idx
+                        
                 else:
-                    thread_buffers[tid, target_idx, :] += val * vecs_in[k, :]
+                    target_idx = new_state
 
-    # Reduction (Sum all thread buffers into final output)
-    # This sequential sum is very fast compared to the physics calculation
-    for t in range(n_threads):
-        vecs_out += thread_buffers[t]
+                # WRITE TO PRIVATE THREAD BUFFER
+                if 0 <= target_idx < nh:
+                    # Apply to the current batch slice
+                    # thread_buffers[tid, row, batch_col]
+                    # vecs_in[k, global_batch_col]
+                    
+                    if has_symmetry:
+                        # Vectorized operation over the small chunk
+                        for b_local in range(actual_width):
+                            thread_buffers[tid, target_idx, b_local] += val * sym_factor * vecs_in[k, b_start + b_local]
+                    else:
+                        for b_local in range(actual_width):
+                            thread_buffers[tid, target_idx, b_local] += val * vecs_in[k, b_start + b_local]
+        
+        # [Reduction Step]
+        # Sum thread buffers into the final output for this chunk
+        for t in range(n_threads):
+            for b_local in range(actual_width):
+                # We can vectorize the sum over NH if memory bandwidth allows, 
+                # but looping column-wise is cache-friendly for the reduction 
+                # if vecs_out is column-major (F-contiguous) or row-major (C-contiguous).
+                # Assuming standard C-contiguous (row-major), strict loops are fine.
+                vecs_out[:, b_start + b_local] += thread_buffers[t, :, b_local]
 
 @numba.njit(parallel=False, fastmath=True)
 def _apply_fourier_batch_jit(

@@ -105,9 +105,7 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         #! Build the Hamiltonian Terms
         self.set_couplings(j=j, hx=hx, hz=hz)
         self._set_local_energy_operators()
-        self._lookup_codes              = operators_spin_module.SPIN_LOOKUP_CODES.to_dict()
-        self._instr_function            = operators_spin_module.sigma_composition_integer(is_complex = self._iscpx)
-        self._instr_max_out             = len(self._instr_codes) + 1
+        self.setup_instruction_codes()          # automatic physics-based setup
         self._set_local_energy_functions()
         self._log(f"TFIM Hamiltonian initialized for {self.ns} sites.", lvl=1, log='debug')
 

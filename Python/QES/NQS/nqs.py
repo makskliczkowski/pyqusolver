@@ -406,20 +406,8 @@ class NQS(MonteCarloSolver):
         #   e.g. "RBM_shape=12_dtype=complex128"
         #   Note: seed is NOT included here (saved in metadata/stats instead)
         
-        net_cls             = type(self._net).__name__
-        try:
-            dim             = self._net.input_dim
-            dtype           = getattr(self._net, "dtype",   self._dtype)
-            self._net_seed  = getattr(self._net, "seed",    self._seed)  # Store seed for metadata
-        except AttributeError:
-            dim, dtype      = None, None
-            self._net_seed  = self._seed
-
-        parts               = [net_cls]
-        if dim   is not None: parts.append(f"shape={dim}")
-        if dtype is not None: parts.append(f"dtype={dtype}")
-
-        net_folder          = "_".join(parts)
+        net_cls             = str(self._net)
+        net_folder          = net_cls
         final_dir           = detailed.join(net_folder, create=False)
 
         #! actually mkdir them all
@@ -1672,7 +1660,7 @@ class NQS(MonteCarloSolver):
         self._ansatz_func                   = self._ansatz_base_func
         
         self.log("State modifier unset. Reverted to ground state ansatz.", lvl=1, color='blue')    
-                    
+    
     def set_modifier(self, modifier: Union[Operator, Callable], **kwargs):
         r"""
         Apply a linear operator $\hat{O}$ to the ansatz state: $|\tilde{\Psi}\rangle = \hat{O} |\Psi_\theta\rangle$.
@@ -2282,7 +2270,7 @@ class NQS(MonteCarloSolver):
                 **kwargs
             )
             
-            if not reset_stats: 
+            if not reset_stats and old_stats is not None:
                 self._trainer.stats = old_stats
 
         # Updates in sampler
@@ -2409,6 +2397,7 @@ class NQS(MonteCarloSolver):
                 - Requires 'ar' or 'made' network architecture.
                 - Exact likelihoods P(s) available.
                 """
+        
         elif topic == "usage":
             msg = f"""
                 {border}
@@ -2748,7 +2737,7 @@ class NQS(MonteCarloSolver):
     #####################################
 
     @staticmethod
-    def get_auto_config(system_size, target_total_samples=4096, dtype=jnp.complex64, logger: Logger = None, *, net_depth_estimate: int = 64) -> dict:
+    def get_auto_config(system_size, target_total_samples=4096, dtype=jnp.complex64, logger: Logger = None, *, net_depth_estimate: int = 64, num_therm: Optional[int] = None, num_sweep: Optional[int] = None) -> dict:
         """
         Automatically detects hardware and returns optimal VMC parameters.
         
@@ -2861,8 +2850,8 @@ class NQS(MonteCarloSolver):
             config                  = {
                 's_numchains'       : optimal_chains,
                 's_numsamples'      : num_samples_per_chain,
-                's_therm_steps'     : 10,   # Quick re-adjustment
-                's_sweep_steps'     : 1,    # Reliance on ensemble averaging
+                's_therm_steps'     : num_therm if num_therm is not None else 10,   # Quick re-adjustment
+                's_sweep_steps'     : num_sweep if num_sweep is not None else 1,    # Reliance on ensemble averaging
                 'hardware'          : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}'
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
@@ -2885,8 +2874,8 @@ class NQS(MonteCarloSolver):
             config = {
                 's_numchains'       : optimal_chains,
                 's_numsamples'      : num_samples_per_chain,
-                's_therm_steps'     : max(20, system_size),      # Rule of thumb: N
-                's_sweep_steps'     : max(1, system_size // 2),  # Rule of thumb: N/2
+                's_therm_steps'     : num_therm if num_therm is not None else max(20, system_size),      # Rule of thumb: N
+                's_sweep_steps'     : num_sweep if num_sweep is not None else max(1,  system_size // 2), # Rule of thumb: N/2
                 'hardware'          : 'cpu'
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
@@ -2896,7 +2885,6 @@ class NQS(MonteCarloSolver):
         logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.")
         
         return config
-
 
 #########################################
 #! EOF

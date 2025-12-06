@@ -8,42 +8,47 @@ Author          : Maksymilian Kliczkowski
 Date            : 2025-11-24
 Copyright       : (c) 2025
 License         : MIT
+Description     : Generic matrix class for operators and Hamiltonians.
+                It provides matrix storage, diagonalization, and logging.
 -------------------------------------------------------------------------------
 '''
 
 from __future__ import annotations
 import numpy as np
 
-import time
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
-from typing import Optional, Union, Callable, Any
+import  time
+import  scipy.sparse as sp
+import  scipy.sparse.linalg as spla
+from    typing import Optional, Union, Callable, Any, Tuple, Dict, TYPE_CHECKING
 
 try:
-    from QES.general_python.algebra.utils import get_backend, JAX_AVAILABLE, Array
-    from QES.general_python.common.flog import Logger
-    from QES.Algebra.Hamil.hamil_diag_engine import DiagonalizationEngine
-    import QES.Algebra.Hamil.hamil_diag_helpers as diag_helpers
+    if TYPE_CHECKING:
+        from QES.general_python.common.flog     import  Logger
+        from QES.general_python.algebra.utils   import  Array
+        
+    import QES.Algebra.Hamil.hamil_diag_helpers as      diag_helpers
+    from QES.Algebra.Hamil.hamil_diag_engine    import  DiagonalizationEngine
 
 except ImportError as exc:
     raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.") from exc
 
-# -------------------------------
+# --------------------------------------------------------------------------------
 
-if JAX_AVAILABLE:
-    import jax
-    import jax.lax as lax
-    import jax.numpy as jnp
-    from jax.experimental.sparse import BCOO, CSR
-else:
-    jax                     = None
-    jnp                     = None
-    lax                     = None
-    BCOO                    = None
-    CSR                     = None
-    local_energy_jax_wrap   = None
+try:
+    import          jax
+    import          jax.lax as lax
+    import          jax.numpy as jnp
+    from            jax.experimental.sparse import BCOO, CSR
+    JAX_AVAILABLE   = True
+except ImportError:
+    jax             = None
+    jnp             = None
+    lax             = None
+    BCOO            = None
+    CSR             = None
+    JAX_AVAILABLE   = False
 
-# -------------------------------
+# --------------------------------------------------------------------------------
 
 class DummyVector:
     """
@@ -93,6 +98,11 @@ class DummyVector:
         -----
         *The method never materialises a full array*, so it's O(1) in memory.
         """
+        try:
+            from QES.general_python.algebra.utils import distinguish_type
+        except ImportError:
+            raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.")
+        
         backend = backend or self._backend
         tgt_dt  = distinguish_type(dtype)
 
@@ -182,58 +192,97 @@ class DummyVector:
         """
         backend = backend if backend is not None else __import__('numpy')
         return backend.full(self.ns, self.val, dtype=dtype)
-    
+
 ##################################################################################
 #! General Matrix Class
 ##################################################################################
 
 class GeneralMatrix(spla.LinearOperator):
-    """Generic linear-algebra helper providing matrix storage, diagonalization, and logging."""
+    """
+    Generic linear-algebra helper providing matrix storage, diagonalization, 
+    and logging. This class serves as the foundation for operators and 
+    Hamiltonians that need matrix representations.
+    
+    Provides:
+        - Backend handling (NumPy, JAX, SciPy)
+        - Matrix storage (sparse/dense)
+        - Diagonalization via DiagonalizationEngine
+        - Eigenvalue/eigenvector storage
+        - Krylov basis management
+        - Memory estimation
+        - SciPy LinearOperator interface
+    
+    Subclasses (Operator, Hamiltonian) can override specific methods while
+    inheriting the common matrix infrastructure.
+    """
 
     _ERR_MATRIX_NOT_BUILT        = "Matrix representation has not been built. Call build() first."
     _ERR_INVALID_BACKEND         = "Invalid backend specified."
     _ERR_UNSUPPORTED_OPERATION   = "The requested operation is not supported for this matrix type."
 
-    def __init__(self,
-                 shape              : Optional[tuple[int, int]]                         = None,
-                 *,
-                 matvec             : Optional[Callable[[np.ndarray], np.ndarray]]      = None,
-                 is_sparse          : bool                                              = True,
-                 backend            : str                                               = 'default',
-                 backend_components : Optional[tuple[Any, Any, Any, tuple[Any, Any]]]   = None,
-                 logger             : Optional[Logger]                                  = None,
-                 seed               : Optional[int]                                     = None,
-                 dtype              : Optional[Union[str, np.dtype]]                    = None) -> None:
+    # -------------------------------------------------------
 
-        self._shape = tuple(shape) if shape is not None else (0, 0)
-        self._dim   = self._shape[0]
+    def __init__(self,
+                shape              : Optional[tuple[int, int]]                         = None,
+                *,
+                ns                 : Optional[int]                                     = None,
+                matvec             : Optional[Callable[[np.ndarray], np.ndarray]]      = None,
+                is_sparse          : bool                                              = True,
+                backend            : str                                               = 'default',
+                backend_components : Optional[tuple[Any, Any, Any, tuple[Any, Any]]]   = None,
+                logger             : Optional['Logger']                                = None,
+                seed               : Optional[int]                                     = None,
+                dtype              : Optional[Union[str, np.dtype]]                    = None) -> None:
+        """
+        Initialize the GeneralMatrix.
+        
+        Parameters
+        ----------
+        shape : tuple[int, int], optional
+            Shape of the matrix. If None, defaults to (0, 0).
+        ns : int, optional
+            Number of sites/modes. Used by subclasses for physical systems.
+        matvec : callable, optional
+            Custom matrix-vector product function.
+        is_sparse : bool, default True
+            Whether to use sparse matrix representation.
+        backend : str, default 'default'
+            Computational backend ('default', 'np', 'numpy', 'jax').
+        backend_components : tuple, optional
+            Pre-computed backend components (backendstr, backend, backend_sp, (rng, rng_k)).
+        logger : Logger, optional
+            Logger instance for logging messages.
+        seed : int, optional
+            Random seed for reproducibility.
+        dtype : dtype, optional
+            Data type for matrix elements.
+        """
+        
+        logger              = GeneralMatrix._check_logger(logger)
+        self._shape         = tuple(shape) if shape is not None else (0, 0)
+        self._dim           = self._shape[0]
+        self._ns            = ns  # Number of sites/modes (optional, for physical systems)
 
         if backend_components is not None:
-            (self._backendstr,
-             self._backend,
-             self._backend_sp,
-             (self._rng, self._rng_k)) = backend_components
+            (self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k)) = backend_components
         else:
-            (self._backendstr,
-             self._backend,
-             self._backend_sp,
-             (self._rng, self._rng_k)) = GeneralMatrix._set_backend(backend, seed)
+            (self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k)) = GeneralMatrix._set_backend(backend, seed)
 
-        self._is_jax       = JAX_AVAILABLE and self._backend is not np
-        self._is_numpy     = not self._is_jax
-        self._is_sparse    = is_sparse
-        self._dtypeint     = self._backend.int64
-        self._logger       = logger
-        self._name         = "GeneralMatrix"
-        self._custom_matvec= matvec
+        self._seed              = seed
+        self._is_jax            = JAX_AVAILABLE and self._backend is not np
+        self._is_numpy          = not self._is_jax
+        self._is_sparse         = is_sparse
+        self._dtypeint          = self._backend.int64
+        self._name              = "GeneralMatrix"
+        self._custom_matvec     = matvec
 
-        self._matrix       : Optional[Union[np.ndarray, Any]] = None
+        self._matrix            : Optional[Union[np.ndarray, Any]]  = None
         self._is_built                                              = False
         self._eig_vec           : Optional[Union[np.ndarray, Any]]  = None
         self._eig_val           : Optional[Union[np.ndarray, Any]]  = None
         self._krylov            : Optional[Any]                     = None
-        self._max_local_ch = 1
-        self._max_local_ch_o = 1
+        self._max_local_ch      : int                               = 1
+        self._max_local_ch_o    : int                               = 1
 
         self._diag_engine       : Optional[DiagonalizationEngine]   = None
         self._diag_method       : str                               = 'exact'
@@ -244,6 +293,14 @@ class GeneralMatrix(spla.LinearOperator):
         self._is_transformed    : bool                              = False
         self._transformed_grid  : Optional[Any]                     = None
         self._symmetry_info     : dict                              = {}
+
+        # -----------------------
+        
+        self._av_en_idx         = 0
+        self._av_en             = 0.0
+        self._std_en            = 0.0
+        self._min_en            = 0.0
+        self._max_en            = 0.0
 
         self._handle_dtype(dtype)
         super().__init__(dtype=self._dtype, shape=self._shape)
@@ -278,8 +335,34 @@ class GeneralMatrix(spla.LinearOperator):
     # -------------------------------------------------------
 
     @staticmethod
+    def _check_logger(logger: Optional['Logger']) -> Optional['Logger']:
+        ''' Ensure a valid logger is available. '''
+        
+        if logger is None:
+            try:
+                from general_python.common.flog import get_global_logger
+                logger = get_global_logger()
+            except ImportError:
+                pass
+        return logger
+
+    @staticmethod
     def _set_backend(backend: str, seed: Optional[int] = None):
+        '''
+        Set the computational backend.
+        - backend : str
+            Backend to use ('default', 'np', 'numpy', 'jax').
+        - seed : Optional[int]
+            Random seed for reproducibility.
+        '''
+        
         if isinstance(backend, str):
+            
+            try:
+                from QES.general_python.algebra.utils import get_backend
+            except ImportError:
+                raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.")
+            
             bck = get_backend(backend, scipy=True, random=True, seed=seed)
             if isinstance(bck, tuple):
                 module, module_sp = bck[0], bck[1]
@@ -291,11 +374,14 @@ class GeneralMatrix(spla.LinearOperator):
                 module, module_sp = bck, None
                 _rng, _rng_k      = None, None
             return backend, module, module_sp, (_rng, _rng_k)
-
-        target = 'jax' if JAX_AVAILABLE and backend == 'default' else 'np'
+        if isinstance(backend, str):
+            target = 'np' if backend.lower() in ['default', 'np', 'numpy'] or not JAX_AVAILABLE else 'jax'
+        else:
+            target = 'jax' if JAX_AVAILABLE else 'np'
         return GeneralMatrix._set_backend(target)
 
     def _handle_dtype(self, dtype: Optional[Union[str, np.dtype]]) -> None:
+        ''' Handle the data type for the matrix elements. '''
         if dtype is not None:
             self._dtype = dtype
             if self._is_jax:
@@ -350,6 +436,11 @@ class GeneralMatrix(spla.LinearOperator):
         self._eig_val     = None
         self._krylov      = None
         self._diag_engine = None
+        self._av_en_idx   = 0
+        self._av_en       = 0.0
+        self._std_en      = 0.0
+        self._min_en      = 0.0
+        self._max_en      = 0.0
         self._diag_method = 'exact'
 
     # -------------------------------------------------------
@@ -367,6 +458,10 @@ class GeneralMatrix(spla.LinearOperator):
     @property
     def dtype(self):
         return self._dtype
+    
+    @dtype.setter
+    def dtype(self, value) -> None:
+        self._dtype = value
 
     @property
     def dtypeint(self):
@@ -391,45 +486,265 @@ class GeneralMatrix(spla.LinearOperator):
     def max_operator_changes(self):
         return self._max_local_ch_o
 
-    @property
-    def energies(self):
-        return self._eig_val
+    # -------------------------------------------------------
 
     @property
-    def eigenvalues(self):
-        return self._eig_val
+    def energies(self):             return self._eig_val
+    @property
+    def eigenvalues(self):          return self._eig_val
+    @property
+    def eig_val(self):              return self._eig_val
+    @property
+    def eigenvals(self):            return self._eig_val
+    @property
+    def eig_vals(self):             return self._eig_val
+    @property
+    def eigen_vals(self):           return self._eig_val
+
+    # -------------------------------------------------------
 
     @property
-    def eig_val(self):
-        return self._eig_val
+    def av_en_idx(self):
+        '''
+        Returns the index of the average energy/eigenvalue of the matrix.
+        This is used to track the average energy during calculations.
+        '''
+        if self._av_en_idx is not None or self._av_en_idx == 0:
+            self._av_en_idx = int(np.argmin(np.abs(self.eig_val - self.av_en)))
+        return self._av_en_idx
 
     @property
-    def eigenvals(self):
-        return self._eig_val
+    def av_en_idx_and_value(self):
+        '''
+        Returns the index and value of the average energy of the Hamiltonian.
+        This is used to track the average energy during calculations.
+        
+        Returns:
+            tuple : (index, value) of the average energy.
+        '''
+        return self.av_en_idx, self.av
+
+    # energy properties
+    @property
+    def av_en(self):                return self._av_en
+    @property
+    def std_en(self):               return self._std_en
+    @property
+    def min_en(self):               return self._min_en
+    @property
+    def max_en(self):               return self._max_en
+
+    # -------------------------------------------------------
 
     @property
-    def eig_vals(self):
-        return self._eig_val
-
+    def eig_vec(self):              return self._eig_vec
     @property
-    def eigen_vals(self):
-        return self._eig_val
-
+    def eigenvectors(self):         return self._eig_vec
     @property
-    def eig_vec(self):
-        return self._eig_vec
-
-    @property
-    def eigenvectors(self):
-        return self._eig_vec
-
-    @property
-    def eigenvecs(self):
-        return self._eig_vec
+    def eigenvecs(self):            return self._eig_vec
 
     @property
     def krylov(self):
         return self._krylov
+
+    # -------------------------------------------------------
+    # Eigenvalue/Eigenvector Getters
+    # -------------------------------------------------------
+
+    def get_eigvec(self, *args):
+        """
+        Returns the eigenvectors of the matrix.
+        
+        - No arguments: return all eigenvectors (matrix Nh x Nh, each column is an eigenvector)
+        - One argument: return the eigenvector at that index
+        - Two arguments: return a specific element
+        
+        Parameters
+        ----------
+        *args : int
+            Optional indices for selecting specific eigenvectors or elements.
+            
+        Returns
+        -------
+        ndarray
+            The requested eigenvector(s) or element.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available or invalid arguments provided.
+        """
+        if self._eig_vec is None:
+            raise ValueError("Eigenvectors not available. Call diagonalize() first.")
+        if len(args) == 0:
+            return self._eig_vec
+        elif len(args) == 1 and len(self._eig_vec.shape) == 2:
+            return self._eig_vec[:, args[0]]
+        elif len(args) == 2 and len(self._eig_vec.shape) == 2:
+            return self._eig_vec[args[0], args[1]]
+        else:
+            raise ValueError("Invalid arguments provided for eigenvector retrieval.")
+    
+    def get_eigval(self, *args):
+        """
+        Returns the eigenvalues of the matrix.
+        
+        - No arguments: return all eigenvalues (a vector in ascending order)
+        - One argument: return a single eigenvalue at that index
+        
+        Parameters
+        ----------
+        *args : int
+            Optional index for selecting a specific eigenvalue.
+            
+        Returns
+        -------
+        ndarray or scalar
+            The requested eigenvalue(s).
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available or invalid arguments provided.
+        """
+        if self._eig_val is None:
+            raise ValueError("Eigenvalues not available. Call diagonalize() first.")
+        if len(args) == 0:
+            return self._eig_val
+        elif len(args) == 1 and len(self._eig_val) > 0:
+            return self._eig_val[args[0]]
+        else:
+            raise ValueError("Invalid arguments provided for eigenvalue retrieval.")
+
+    # -------------------------------------------------------
+    # Ground State and Excited States
+    # -------------------------------------------------------
+
+    @property
+    def ground_state(self) -> np.ndarray:
+        """
+        Return the ground state (first eigenvector corresponding to the lowest eigenvalue).
+        
+        Returns
+        -------
+        ndarray
+            The ground state eigenvector.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvectors are not available (diagonalize() not called).
+        """
+        if self._eig_vec is None:
+            raise ValueError("Ground state not available. Call diagonalize() first.")
+        return self._eig_vec[:, 0]
+    
+    @property
+    def ground_energy(self) -> float:
+        """
+        Return the ground state energy (lowest eigenvalue).
+        
+        Returns
+        -------
+        float
+            The ground state energy.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available (diagonalize() not called).
+        """
+        if self._eig_val is None:
+            raise ValueError("Ground energy not available. Call diagonalize() first.")
+        return float(self._eig_val[0])
+
+    def excited_state(self, n: int) -> np.ndarray:
+        """
+        Return the n-th excited state eigenvector.
+        
+        Parameters
+        ----------
+        n : int
+            The excitation index (0 = ground state, 1 = first excited, etc.).
+            
+        Returns
+        -------
+        ndarray
+            The n-th excited state eigenvector.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvectors are not available or index is out of bounds.
+        """
+        if self._eig_vec is None:
+            raise ValueError("Excited states not available. Call diagonalize() first.")
+        if n < 0 or n >= self._eig_vec.shape[1]:
+            raise IndexError(f"Excited state index {n} out of bounds (0 to {self._eig_vec.shape[1] - 1}).")
+        return self._eig_vec[:, n]
+
+    def excited_energy(self, n: int) -> float:
+        """
+        Return the n-th excited state energy.
+        
+        Parameters
+        ----------
+        n : int
+            The excitation index (0 = ground energy, 1 = first excited energy, etc.).
+            
+        Returns
+        -------
+        float
+            The n-th excited state energy.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available or index is out of bounds.
+        """
+        if self._eig_val is None:
+            raise ValueError("Excited energies not available. Call diagonalize() first.")
+        if n < 0 or n >= len(self._eig_val):
+            raise IndexError(f"Energy index {n} out of bounds (0 to {len(self._eig_val) - 1}).")
+        return float(self._eig_val[n])
+
+    @property
+    def spectral_gap(self) -> float:
+        """
+        Return the spectral gap (difference between first excited and ground state energies).
+        
+        Returns
+        -------
+        float
+            The spectral gap E_1 - E_0.
+            
+        Raises
+        ------
+        ValueError
+            If fewer than 2 eigenvalues are available.
+        """
+        if self._eig_val is None or len(self._eig_val) < 2:
+            raise ValueError("Spectral gap requires at least 2 eigenvalues. Call diagonalize() first.")
+        return float(self._eig_val[1] - self._eig_val[0])
+
+    @property
+    def spectral_width(self) -> float:
+        """
+        Return the spectral width (difference between largest and smallest eigenvalues).
+        
+        Returns
+        -------
+        float
+            The spectral width E_max - E_min.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available.
+        """
+        if self._eig_val is None:
+            raise ValueError("Spectral width not available. Call diagonalize() first.")
+        return float(self._eig_val[-1] - self._eig_val[0])
 
     # -------------------------------------------------------
     # Diagonalization
@@ -559,7 +874,9 @@ class GeneralMatrix(spla.LinearOperator):
 
     @property
     def diag(self) -> Optional[Union[np.ndarray, Any]]:
+        
         target = self._get_matrix_reference()
+        
         if target is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
 
@@ -575,6 +892,455 @@ class GeneralMatrix(spla.LinearOperator):
         if isinstance(target, np.ndarray):
             return target.diagonal()
         return None
+
+    # -------------------------------------------------------
+    # Expectation Values and Matrix Operations
+    # -------------------------------------------------------
+
+    def expectation_value(self, state: np.ndarray, other_state: Optional[np.ndarray] = None) -> complex:
+        """
+        Compute the expectation value ⟨state|M|other_state⟩ or ⟨state|M|state⟩.
+        
+        Parameters
+        ----------
+        state : ndarray
+            The ket vector |ψ⟩.
+        other_state : ndarray, optional
+            The bra vector. If None, uses state (computes ⟨ψ|M|ψ⟩).
+            
+        Returns
+        -------
+        complex
+            The expectation value.
+            
+        Raises
+        ------
+        ValueError
+            If matrix is not built.
+        """
+        if other_state is None:
+            other_state = state
+        
+        matrix = self._get_matrix_reference()
+        if matrix is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+        
+        # Compute M|other_state⟩
+        if sp.issparse(matrix):
+            M_state = matrix @ other_state
+        elif JAX_AVAILABLE and BCOO is not None and isinstance(matrix, BCOO):
+            M_state = matrix @ other_state
+        else:
+            M_state = self._backend.dot(matrix, other_state)
+        
+        # Compute <state|M|other_state>
+        return self._backend.vdot(state, M_state)
+
+    def trace_matrix(self) -> complex:
+        r"""
+        Compute the trace of the matrix.
+        
+        Returns
+        -------
+        complex
+            Tr(M) = \sum_i M_ii.
+            
+        Raises
+        ------
+        ValueError
+            If matrix is not built.
+        """
+        matrix = self._get_matrix_reference()
+        if matrix is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+        
+        if sp.issparse(matrix):
+            return matrix.diagonal().sum()
+        
+        if JAX_AVAILABLE and BCOO is not None and isinstance(matrix, BCOO):
+            return matrix.todense().trace()
+        
+        return self._backend.trace(matrix)
+
+    def frobenius_norm(self) -> float:
+        r"""
+        Compute the Frobenius norm of the matrix.
+        
+        Returns
+        -------
+        float
+            ||M||_F = \sqrt{\sum_{i,j} |M_{i,j}|^2} = \sqrt{\mathrm{Tr}(M^\dagger M)}.
+            
+        Raises
+        ------
+        ValueError
+            If matrix is not built.
+        """
+        
+        matrix = self._get_matrix_reference()
+        if matrix is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+        
+        if sp.issparse(matrix):
+            return np.sqrt(np.abs(matrix.data ** 2).sum())
+        
+        if JAX_AVAILABLE and BCOO is not None and isinstance(matrix, BCOO):
+            return float(jnp.sqrt(jnp.sum(jnp.abs(matrix.data) ** 2)))
+        
+        return float(self._backend.linalg.norm(matrix, 'fro'))
+
+    def spectral_norm(self) -> float:
+        """
+        Compute the spectral norm of the matrix (largest singular value).
+        
+        Returns
+        -------
+        float
+            ||M||_2 = largest singular value.
+            
+        Raises
+        ------
+        ValueError
+            If matrix is not built.
+        """
+        matrix = self._get_matrix_reference()
+        if matrix is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+        
+        if sp.issparse(matrix):
+            # Use sparse SVD for largest singular value
+            try:
+                from scipy.sparse.linalg import svds
+                u, s, v = svds(matrix, k=1, which='LM')
+                return float(s[0])
+            except Exception:
+                # Fall back to dense computation
+                matrix = matrix.toarray()
+        
+        if JAX_AVAILABLE and BCOO is not None and isinstance(matrix, BCOO):
+            matrix = np.asarray(matrix.todense())
+        
+        return float(np.linalg.norm(matrix, 2))
+
+    def eigenvector_norm(self, n: int = 0) -> float:
+        """
+        Compute the norm of the n-th eigenvector.
+        
+        Parameters
+        ----------
+        n : int, default 0
+            Index of the eigenvector to compute norm for.
+            
+        Returns
+        -------
+        float
+            ||ψₙ||₂ = √(⟨ψₙ|ψₙ⟩).
+            
+        Raises
+        ------
+        ValueError
+            If eigenvectors are not available.
+        """
+        if self._eig_vec is None:
+            raise ValueError("Eigenvector norm not available. Call diagonalize() first.")
+        if n < 0 or n >= self._eig_vec.shape[1]:
+            raise IndexError(f"Eigenvector index {n} out of bounds.")
+        
+        vec = self._eig_vec[:, n]
+        return float(self._backend.linalg.norm(vec))
+
+    def overlap(self, vec1: np.ndarray, vec2: Optional[np.ndarray] = None) -> complex:
+        """
+        Compute the overlap ⟨vec1|vec2⟩.
+        
+        Parameters
+        ----------
+        vec1 : ndarray
+            First vector.
+        vec2 : ndarray, optional
+            Second vector. If None, computes ⟨vec1|vec1⟩ = ||vec1||².
+            
+        Returns
+        -------
+        complex
+            The inner product ⟨vec1|vec2⟩.
+        """
+        if vec2 is None:
+            vec2 = vec1
+        return self._backend.vdot(vec1, vec2)
+
+    # -------------------------------------------------------
+    # Commutators and Anticommutators
+    # -------------------------------------------------------
+
+    def commutator(self, other: 'GeneralMatrix') -> np.ndarray:
+        """
+        Compute the commutator [self, other] = self @ other - other @ self.
+        
+        Parameters
+        ----------
+        other : GeneralMatrix
+            The other matrix/operator.
+            
+        Returns
+        -------
+        ndarray
+            The commutator matrix [M, O].
+            
+        Raises
+        ------
+        ValueError
+            If either matrix is not built.
+        """
+        M = self._get_matrix_reference()
+        if M is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+        
+        O = other._get_matrix_reference() if hasattr(other, '_get_matrix_reference') else other
+        if O is None:
+            raise ValueError("Other matrix representation has not been built.")
+        
+        return M @ O - O @ M
+
+    def anticommutator(self, other: 'GeneralMatrix') -> np.ndarray:
+        """
+        Compute the anticommutator {self, other} = self @ other + other @ self.
+        
+        Parameters
+        ----------
+        other : GeneralMatrix
+            The other matrix/operator.
+            
+        Returns
+        -------
+        ndarray
+            The anticommutator matrix {M, O}.
+            
+        Raises
+        ------
+        ValueError
+            If either matrix is not built.
+        """
+        M = self._get_matrix_reference()
+        if M is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+        
+        O = other._get_matrix_reference() if hasattr(other, '_get_matrix_reference') else other
+        if O is None:
+            raise ValueError("Other matrix representation has not been built.")
+        
+        return M @ O + O @ M
+
+    def apply(self, state: np.ndarray) -> np.ndarray:
+        """
+        Apply the matrix to a state vector: M|ψ⟩.
+        
+        This is equivalent to matrix-vector multiplication.
+        
+        Parameters
+        ----------
+        state : ndarray
+            The state vector to apply the matrix to.
+            
+        Returns
+        -------
+        ndarray
+            The resulting state M|ψ⟩.
+            
+        Raises
+        ------
+        ValueError
+            If matrix is not built.
+        """
+        matrix = self._get_matrix_reference()
+        if matrix is None:
+            raise ValueError(self._ERR_MATRIX_NOT_BUILT)
+        return matrix @ state
+
+    # -------------------------------------------------------
+    # Spectral Analysis
+    # -------------------------------------------------------
+
+    def density_of_states(self, bins: int = 50, range: Optional[Tuple[float, float]] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute the density of states (histogram of eigenvalues).
+        
+        Parameters
+        ----------
+        bins : int, default 50
+            Number of bins for the histogram.
+        range : tuple of float, optional
+            Range (min, max) for the histogram. If None, uses eigenvalue range.
+            
+        Returns
+        -------
+        tuple of ndarray
+            (counts, bin_edges) - the histogram counts and bin edges.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available.
+        """
+        if self._eig_val is None:
+            raise ValueError("Density of states not available. Call diagonalize() first.")
+        
+        return np.histogram(self._eig_val, bins=bins, range=range)
+
+    def participation_ratio(self, n: int = 0) -> float:
+        """
+        Compute the inverse participation ratio (IPR) for the n-th eigenstate.
+        
+        IPR = 1 / Σᵢ |ψᵢ|⁴
+        
+        The IPR measures localization:
+        - IPR ≈ 1: fully localized on one site
+        - IPR ≈ N: fully delocalized (uniform distribution)
+        
+        Parameters
+        ----------
+        n : int, default 0
+            Index of the eigenvector (0 = ground state).
+            
+        Returns
+        -------
+        float
+            The inverse participation ratio.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvectors are not available.
+        """
+        if self._eig_vec is None:
+            raise ValueError("Participation ratio not available. Call diagonalize() first.")
+        if n < 0 or n >= self._eig_vec.shape[1]:
+            raise IndexError(f"Eigenvector index {n} out of bounds.")
+        
+        vec = self._eig_vec[:, n]
+        probs_sq = np.abs(vec) ** 4
+        ipr_inv = np.sum(probs_sq)
+        
+        if ipr_inv < 1e-15:
+            return float('inf')
+        return 1.0 / ipr_inv
+
+    def degeneracy(self, tol: float = 1e-10) -> Dict[float, int]:
+        """
+        Find degenerate energy levels.
+        
+        Parameters
+        ----------
+        tol : float, default 1e-10
+            Tolerance for considering eigenvalues equal.
+            
+        Returns
+        -------
+        dict
+            Dictionary mapping unique energy levels to their degeneracy count.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available.
+        """
+        if self._eig_val is None:
+            raise ValueError("Degeneracy analysis not available. Call diagonalize() first.")
+        
+        energies = np.sort(self._eig_val)
+        unique_energies = []
+        degeneracies = []
+        
+        i = 0
+        while i < len(energies):
+            current = energies[i]
+            count = 1
+            while i + count < len(energies) and abs(energies[i + count] - current) < tol:
+                count += 1
+            unique_energies.append(float(current))
+            degeneracies.append(count)
+            i += count
+        
+        return dict(zip(unique_energies, degeneracies))
+
+    def degenerate_subspace(self, energy: float, tol: float = 1e-10) -> np.ndarray:
+        """
+        Get all eigenvectors corresponding to a degenerate energy level.
+        
+        Parameters
+        ----------
+        energy : float
+            The energy level to find eigenvectors for.
+        tol : float, default 1e-10
+            Tolerance for energy matching.
+            
+        Returns
+        -------
+        ndarray
+            Matrix of eigenvectors (columns) with the given energy.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues/eigenvectors are not available or energy not found.
+        """
+        if self._eig_val is None or self._eig_vec is None:
+            raise ValueError("Degenerate subspace not available. Call diagonalize() first.")
+        
+        mask = np.abs(self._eig_val - energy) < tol
+        if not np.any(mask):
+            raise ValueError(f"No eigenvalue found within tolerance of {energy}.")
+        
+        return self._eig_vec[:, mask]
+
+    def level_spacing(self) -> np.ndarray:
+        """
+        Compute the level spacings (differences between consecutive eigenvalues).
+        
+        Returns
+        -------
+        ndarray
+            Array of level spacings Δₙ = Eₙ₊₁ - Eₙ.
+            
+        Raises
+        ------
+        ValueError
+            If eigenvalues are not available.
+        """
+        if self._eig_val is None:
+            raise ValueError("Level spacing not available. Call diagonalize() first.")
+        return np.diff(self._eig_val)
+
+    def level_spacing_ratio(self) -> np.ndarray:
+        """
+        Compute the level spacing ratios rₙ = min(sₙ, sₙ₊₁) / max(sₙ, sₙ₊₁).
+        
+        This is used to distinguish integrable (Poisson) from chaotic (GOE/GUE) systems.
+        - Poisson (integrable): ⟨r⟩ ≈ 0.386
+        - GOE (chaotic, real symmetric): ⟨r⟩ ≈ 0.530
+        - GUE (chaotic, complex Hermitian): ⟨r⟩ ≈ 0.603
+        
+        Returns
+        -------
+        ndarray
+            Array of level spacing ratios.
+            
+        Raises
+        ------
+        ValueError
+            If fewer than 3 eigenvalues are available.
+        """
+        if self._eig_val is None or len(self._eig_val) < 3:
+            raise ValueError("Level spacing ratio requires at least 3 eigenvalues.")
+        
+        spacings = np.diff(self._eig_val)
+        ratios = np.zeros(len(spacings) - 1)
+        
+        for i in range(len(spacings) - 1):
+            s1, s2 = spacings[i], spacings[i + 1]
+            ratios[i] = min(s1, s2) / max(s1, s2) if max(s1, s2) > 1e-15 else 0.0
+        
+        return ratios
 
     # -------------------------------------------------------
     # Memory helpers
@@ -760,7 +1526,202 @@ class GeneralMatrix(spla.LinearOperator):
     def fmt(name, value, prec=1):
         """Choose scalar vs array formatter."""
         return GeneralMatrix._fmt_scalar(name, value, prec=prec) if np.isscalar(value) else GeneralMatrix._fmt_array(name, value, prec=prec)
+
+    # -------------------------------------------------------
+    # Help and Documentation
+    # -------------------------------------------------------
+
+    @classmethod
+    def help(cls, topic: Optional[str] = None) -> str:
+        """
+        Display help information about GeneralMatrix capabilities.
         
-# -------------------------------------------------------
+        Parameters
+        ----------
+        topic : str, optional
+            Specific topic to get help on. Options:
+            - None or 'all':
+                Full overview
+            - 'properties': 
+                Available properties
+            - 'diagonalization': 
+                Diagonalization methods
+            - 'spectral': 
+                Spectral analysis methods
+            - 'memory': 
+                Memory estimation
+            - 'matrix': 
+                Matrix operations
+            
+        Returns
+        -------
+        str
+            Help text for the requested topic.
+            
+        Examples
+        --------
+        >>> GeneralMatrix.help()            # Full overview
+        >>> GeneralMatrix.help('spectral')  # Spectral analysis help
+        """
+        topics = {
+            'properties': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         GeneralMatrix: Properties                            ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Eigenvalue/Eigenvector Access:                                              ║
+║    .eigenvalues, .eig_val    - All eigenvalues (sorted ascending)            ║
+║    .eigenvectors, .eig_vec   - All eigenvectors (columns)                    ║
+║    .ground_state             - Ground state eigenvector (first eigenvector)  ║
+║    .ground_energy            - Ground state energy (lowest eigenvalue)       ║
+║    .get_eigval(n)            - Get n-th eigenvalue                           ║
+║    .get_eigvec(n)            - Get n-th eigenvector                          ║
+║    .excited_state(n)         - Get n-th excited state                        ║
+║    .excited_energy(n)        - Get n-th excited energy                       ║
+║                                                                              ║
+║  Matrix Properties:                                                          ║
+║    .shape                    - Matrix dimensions (N, N)                      ║
+║    .dtype                    - Data type (float64, complex128, etc.)         ║
+║    .sparse                   - Whether using sparse representation           ║
+║    .backend                  - Computational backend ('numpy', 'jax')        ║
+║    .diag                     - Diagonal elements of the matrix               ║
+║    .matrix_data              - Raw matrix data (raises if not built)         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'diagonalization': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      GeneralMatrix: Diagonalization                          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Main Method:                                                                ║
+║    .diagonalize(method='auto', k=None, which='smallest', ...)                ║
+║                                                                              ║
+║  Methods Available:                                                          ║
+║    'auto'   - Automatic selection based on matrix size                       ║
+║    'exact'  - Full diagonalization (all eigenvalues)                         ║
+║    'lanczos'- Lanczos iteration for sparse symmetric matrices                ║
+║    'arnoldi'- Arnoldi iteration for general matrices                         ║
+║                                                                              ║
+║  Key Parameters:                                                             ║
+║    method     : str  - Diagonalization method                                ║
+║    k          : int  - Number of eigenvalues to compute                      ║
+║    which      : str  - 'smallest', 'largest', or 'both'                      ║
+║    tol        : float- Convergence tolerance (default: 1e-10)                ║
+║    backend    : str  - 'numpy', 'scipy', or 'jax'                            ║
+║    store_basis: bool - Store Krylov basis for transformations                ║
+║                                                                              ║
+║  Krylov Basis Methods (after iterative diagonalization):                     ║
+║    .has_krylov_basis()       - Check if Krylov basis available               ║
+║    .get_krylov_basis()       - Get the Krylov basis                          ║
+║    .to_original_basis(vec)   - Transform from Krylov to original basis       ║
+║    .to_krylov_basis(vec)     - Transform from original to Krylov basis       ║
+║    .get_diagonalization_method() - Get method used                           ║
+║    .get_diagonalization_info()   - Get full diagonalization info             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'spectral': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      GeneralMatrix: Spectral Analysis                        ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Energy Gaps and Widths:                                                     ║
+║    .spectral_gap             - E₁ - E₀ (first excited - ground)              ║
+║    .spectral_width           - E_max - E_min (total width)                   ║
+║    .level_spacing()          - Array of \Delta_n = E_{n+1} - E_n             ║
+║    .level_spacing_ratio()    - Array of r_n for chaos analysis               ║
+║                               (Poisson ≈ 0.386, GOE ≈ 0.530, GUE ≈ 0.603)    ║
+║                                                                              ║
+║  Degeneracy Analysis:                                                        ║
+║    .degeneracy(tol)          - Dict of {energy: degeneracy_count}            ║
+║    .degenerate_subspace(E)   - All eigenvectors at energy E                  ║
+║                                                                              ║
+║  Localization:                                                               ║
+║    .participation_ratio(n)   - IPR = 1/\sum_i|\psi_i|2 for n-th state        ║
+║                               (1 = localized, N = delocalized)               ║
+║    .density_of_states(bins)  - Histogram of eigenvalues                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'matrix': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      GeneralMatrix: Matrix Operations                        ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Expectation Values:                                                         ║
+║    .expectation_value(ψ, φ)  - Compute ⟨ψ|M|φ⟩ (or ⟨ψ|M|ψ⟩ if φ=None)        ║
+║    .overlap(v1, v2)          - Compute ⟨v1|v2⟩                               ║
+║                                                                              ║
+║  Matrix Norms:                                                               ║
+║    .trace_matrix()           - Tr(M) = Σᵢ Mᵢᵢ                                ║
+║    .frobenius_norm()         - ||M||_F = √(Σᵢⱼ |Mᵢⱼ|²)                       ║
+║    .spectral_norm()          - ||M||₂ = largest singular value               ║
+║    .eigenvector_norm(n)      - ||ψₙ||₂                                       ║
+║                                                                              ║
+║  Commutators:                                                                ║
+║    .commutator(O)            - [M, O] = MO - OM                              ║
+║    .anticommutator(O)        - {M, O} = MO + OM                              ║
+║                                                                              ║
+║  Application:                                                                ║
+║    .apply(ψ)                 - Compute M|ψ⟩                                  ║
+║    .matvec_fun               - Get matvec function for LinearOperator        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""",
+            'memory': r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      GeneralMatrix: Memory Estimation                        ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Memory Properties (in bytes):                                               ║
+║    .mat_memory               - Memory used by matrix                         ║
+║    .eigvec_memory            - Memory used by eigenvectors                   ║
+║    .eigval_memory            - Memory used by eigenvalues                    ║
+║    .memory                   - Total memory (matrix + eigenvectors + vals)   ║
+║                                                                              ║
+║  Memory Properties (in MB):                                                  ║
+║    .mat_memory_mb, .eigvec_memory_mb, .eigval_memory_mb, .memory_mb          ║
+║                                                                              ║
+║  Memory Properties (in GB):                                                  ║
+║    .mat_memory_gb, .eigvec_memory_gb, .eigval_memory_gb, .memory_gb          ║
+║                                                                              ║
+║  Representation Control:                                                     ║
+║    .to_sparse()              - Switch to sparse representation               ║
+║    .to_dense()               - Switch to dense representation                ║
+║    .clear()                  - Clear cached matrix and eigendecomposition    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+        }
+        
+        overview = r"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              GeneralMatrix                                   ║
+║          Base class for matrix operations, diagonalization, and              ║
+║          spectral analysis in quantum systems.                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Inheritance: GeneralMatrix → scipy.sparse.linalg.LinearOperator            ║
+║  Subclasses:  Operator → Hamiltonian                                         ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Quick Start:                                                                ║
+║    1. Build the matrix:     obj.build()                                      ║
+║    2. Diagonalize:          obj.diagonalize()                                ║
+║    3. Access results:       obj.ground_state, obj.eigenvalues                ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Topics (use .help('topic') for details):                                    ║
+║    'properties'      - Eigenvalue/eigenvector access, matrix properties      ║
+║    'diagonalization' - Diagonalization methods and Krylov basis              ║
+║    'spectral'        - Spectral analysis (gaps, degeneracy, localization)    ║
+║    'matrix'          - Matrix operations (expectation values, norms)         ║
+║    'memory'          - Memory estimation and representation control          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+        
+        if topic is None or topic == 'all':
+            result = overview
+            for t in topics.values():
+                result += t
+            print(result)
+            return result
+        
+        if topic in topics:
+            print(topics[topic])
+            return topics[topic]
+        
+        print(f"Unknown topic '{topic}'. Available: {list(topics.keys())}")
+        return f"Unknown topic '{topic}'. Available: {list(topics.keys())}"
+
+# --------------------------------------------------------------------------------
 #! EOF
-# -------------------------------------------------------
+# --------------------------------------------------------------------------------

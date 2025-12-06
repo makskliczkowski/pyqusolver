@@ -508,6 +508,7 @@ class NQSTrainer:
                             sr_lin_x0       =   kwargs.get('sr_lin_x0', None),
                             sr_maxiter      =   kwargs.get('sr_maxiter', 1000),
                             sr_pinv_cutoff  =   kwargs.get('sr_pinv_cutoff', 1e-8),
+                            use_timing      =   kwargs.get('use_timing', False)
                         )                    
             if self.logger: self.logger.info(f"Created default TDVP engine {self.tdvp}", lvl=1, color='yellow')
         
@@ -549,6 +550,7 @@ class NQSTrainer:
             return new_params, new_t, (loss_info, meta)
         
         # NOTE: Do NOT JIT train_step_logic because TDVP has side effects (stores global phase).
+        # TODO: Investigate if there's a way to JIT this without side effects.
         # JIT compilation would cause tracer leaks from compute_global_phase_evolution.
         self._step_jit          = train_step_logic
         # self._step_jit          = jax.jit(train_step_logic, static_argnames=['f', 'est_fn', 'lower_states'])
