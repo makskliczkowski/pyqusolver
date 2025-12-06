@@ -106,6 +106,24 @@ class NQS(MonteCarloSolver):
     
     Implements a Monte Carlo-based training method for optimizing NQS models.
     Supports both NumPy and JAX backends for efficiency and flexibility.
+    
+    Parallel Tempering (PT)
+    -----------------------
+    When `replica > 1` is passed, the sampler automatically enables Parallel Tempering:
+    
+        - Multiple replicas run MCMC at different temperatures (betas).
+        - A geometric temperature ladder is generated: `betas = logspace(0, log10(0.1), replica)`.
+        - Periodic replica exchanges between adjacent temperatures improve mixing.
+        - Only samples from the physical replica (beta=1.0) are used for training.
+    
+    This is useful for systems with rugged energy landscapes where standard MCMC
+    gets trapped in local minima. PT allows sampling at higher temperatures where
+    barriers are easier to cross, then exchanges bring low-energy configurations
+    to the physical temperature.
+    
+    Example (PT mode):
+        >>> nqs = NQS(logansatz=net, model=hamiltonian, shape=(4,4), replica=5)
+        >>> nqs.train(...)  # Uses 5 temperature replicas with geometric ladder
     '''
     
     _ERROR_ALL_DTYPE_SAME       = "All weights must have the same dtype!"
@@ -191,7 +209,15 @@ class NQS(MonteCarloSolver):
                 Mu parameter for the NQS. This is used for collecting different sampling distribution.
                 By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
             replica [int]:
-                Number of replicas for parallel tempering.
+                Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
+                When `replica > 1`:
+                
+                - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
+                  to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
+                - MCMC runs in parallel across all temperature replicas.
+                - Periodic replica exchanges improve mixing and help escape local minima.
+                - Only samples from the physical replica (beta=1.0) are used for training.
+                - The return signature of `sample()` and `train()` remains unchanged.
             shape [Union[list, tuple]]:
                 Shape of the input data, e.g., `(n_spins,)`.
             hilbert:
@@ -230,6 +256,10 @@ class NQS(MonteCarloSolver):
                     - s_logprob_fact    : Log probability factor (default: 0.5).
                     - s_makediffer      : Whether to make the sampler differentiable (default: True).
                     - Other sampler-specific parameters as needed.
+                - Parallel Tempering parameters (when replica > 1):
+                    - pt_betas          : Custom array of inverse temperatures (optional).
+                                        If not provided, a geometric ladder from 1.0 to 0.1 is generated.
+                    - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
         '''
         
         if shape is None and hilbert is None:
@@ -543,8 +573,33 @@ class NQS(MonteCarloSolver):
             sampler_kwargs['makediffer']    = kwargs.get('s_makediffer', True)
             sampler_kwargs.pop('s_makediffer', None)
 
-            sampler_kwargs.pop('upd_fun', None)
-            self._sampler                   = get_sampler(sampler_type, upd_fun=upd_fun, **sampler_kwargs)
+            # -----------------------------------------------------------------
+            #! Parallel Tempering Setup
+            # -----------------------------------------------------------------
+            # If replicas > 1 is requested but no explicit pt_betas provided,
+            # automatically generate a geometric temperature ladder
+            n_replicas = kwargs.get('replica', 1)
+            if n_replicas > 1 and 'pt_betas' not in kwargs:
+                # Geometric progression from 1.0 (physical) down to min_beta (hot)
+                # Beta=1.0 is the physical temperature, lower betas are hotter
+                min_beta = kwargs.get('pt_min_beta', 0.1)
+                if self._isjax:
+                    import jax.numpy as jnp
+                    betas = jnp.logspace(0, np.log10(min_beta), n_replicas)
+                else:
+                    betas = np.logspace(0, np.log10(min_beta), n_replicas)
+                sampler_kwargs['pt_betas'] = betas
+                self._logger.info(f"Parallel Tempering enabled: {n_replicas} replicas, betas={betas}", lvl=1)
+            elif 'pt_betas' in kwargs:
+                # User provided explicit betas
+                sampler_kwargs['pt_betas'] = kwargs['pt_betas']
+                self._logger.info(f"Parallel Tempering enabled with custom betas: {kwargs['pt_betas']}", lvl=1)
+            # -----------------------------------------------------------------
+
+            sampler_kwargs.pop('upd_fun',       None)
+            sampler_kwargs.pop('replica',       None)  # Remove replica from kwargs after processing
+            sampler_kwargs.pop('pt_min_beta',   None)  # Remove pt_min_beta if present
+            self._sampler = get_sampler(sampler_type, upd_fun=upd_fun, **sampler_kwargs)
             self._logger.warning(f"Using {self._sampler}", lvl=0, color='blue')
         else:
             self._sampler = get_sampler(sampler, self._net, self._shape, self._rng, self._rng_k, dtype=self._dtype, upd_fun=upd_fun, **kwargs)

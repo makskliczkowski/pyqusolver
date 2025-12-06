@@ -69,6 +69,88 @@ def _binary_search_representative_list(mapping, state):
             right = mid - 1
     return numba.int64(-1)
 
+
+# --------------------------------------------------------------------------
+#! JIT-compiled compact symmetry lookup functions
+# --------------------------------------------------------------------------
+
+_INVALID_REPR_IDX_NB  = numba.uint32(0xFFFFFFFF)  # Max uint32 for numba
+_INVALID_PHASE_IDX_NB = numba.uint8(0xFF)         # Max uint8 for numba
+
+@numba.njit(cache=True, fastmath=True)
+def _compact_get_sym_factor(
+    state           : numba.int64,
+    k               : numba.int64,
+    repr_map        : np.ndarray,  # uint32
+    phase_idx       : np.ndarray,  # uint8
+    phase_table     : np.ndarray,  # complex128
+    normalization   : np.ndarray,  # float64
+) -> Tuple[numba.int64, numba.complex128]:
+    """
+    JIT-compiled O(1) lookup for symmetry factor in matrix element computation.
+    
+    Given a new_state produced by an operator acting on representative k,
+    returns (representative_index, symmetry_factor) for the matrix element.
+    
+    Parameters
+    ----------
+    state : int
+        The new state produced by operator action
+    k : int
+        Index of the input representative
+    repr_map : ndarray[uint32]
+        Maps state -> representative index
+    phase_idx : ndarray[uint8]
+        Maps state -> phase table index
+    phase_table : ndarray[complex128]
+        Array of distinct phase values
+    normalization : ndarray[float64]
+        Normalization factors per representative
+        
+    Returns
+    -------
+    idx : int
+        Representative index (-1 if state not in sector)
+    sym_factor : complex
+        Symmetry factor: conj(phase) * N_idx / N_k
+    """
+    idx         = repr_map[state]
+    if idx == _INVALID_REPR_IDX_NB:
+        return numba.int64(-1), numba.complex128(0.0)
+    
+    pidx        = phase_idx[state]
+    phase       = phase_table[pidx]
+    norm_idx    = normalization[idx]
+    norm_k      = normalization[k]
+    
+    sym_factor  = np.conj(phase) * norm_idx / norm_k
+    return numba.int64(idx), sym_factor
+
+@numba.njit(cache=True, fastmath=True)
+def _compact_is_in_sector(state: numba.int64, repr_map: np.ndarray) -> bool:
+    """Check if a state belongs to this symmetry sector (O(1) lookup)."""
+    return repr_map[state] != _INVALID_REPR_IDX_NB
+
+@numba.njit(cache=True, fastmath=True)
+def _compact_get_repr_idx(state: numba.int64, repr_map: np.ndarray) -> numba.int64:
+    """Get representative index for a state (-1 if not in sector)."""
+    idx = repr_map[state]
+    if idx == _INVALID_REPR_IDX_NB:
+        return numba.int64(-1)
+    return numba.int64(idx)
+
+@numba.njit(cache=True, fastmath=True)
+def _compact_get_phase(
+    state       : numba.int64,
+    phase_idx   : np.ndarray,
+    phase_table : np.ndarray
+) -> numba.complex128:
+    """Get symmetry phase for a state (O(1) lookup)."""
+    pidx = phase_idx[state]
+    if pidx == _INVALID_PHASE_IDX_NB:
+        return numba.complex128(0.0)
+    return phase_table[pidx]
+
 # --------------------------------------------------------------------------
 
 try:
@@ -95,6 +177,112 @@ except ImportError as e:
 
 _SYM_NORM_THRESHOLD = 1e-12
 _INT_HUGE           = np.iinfo(np.int64).max
+_INVALID_REPR_IDX   = np.iinfo(np.uint32).max   # ~4 billion, marks state not in sector
+_INVALID_PHASE_IDX  = np.iinfo(np.uint8).max    # 255, marks invalid phase index
+
+#############################################################################
+#! Compact Symmetry Data Structure
+#############################################################################
+
+@dataclass
+class CompactSymmetryData:
+    """
+    Memory-efficient compact representation of symmetry data for JIT-friendly O(1) lookups.
+    
+    This structure stores the symmetry mapping in a compact format:
+    - repr_map      : uint32 array mapping each state -> representative INDEX (not state value)
+    - phase_idx     : uint8 array mapping each state -> index into phase_table  
+    - phase_table   : small complex128 array of distinct phases (size = group order)
+    - normalization : float64 array of normalization factors per representative
+    
+    Memory Usage
+    ------------
+    Per state: 4 bytes (repr_map) + 1 byte (phase_idx) = 5 bytes
+    This is a ~5x reduction from the previous object-based array (~24+ bytes/state).
+    
+    For a 2^20 (~1M) state Hilbert space:
+    - Old format: ~24 MB
+    - New format: ~5 MB
+    
+    JIT Compatibility
+    -----------------
+    All arrays use fixed-size dtypes suitable for numba.njit:
+    - repr_map      : np.uint32 (supports up to 4 billion representatives)
+    - phase_idx     : np.uint8 (supports up to 255 distinct phases)
+    - phase_table   : np.complex128
+    - normalization : np.float64
+    
+    The structure enables O(1) lookup for matrix element computation:
+    ```python
+    @njit
+    def get_sym_factor(state, k, repr_map, phase_idx, phase_table, normalization):
+        idx = repr_map[state]
+        if idx == INVALID_REPR_IDX:
+            return 0, 0.0  # state not in sector
+        phase = phase_table[phase_idx[state]]
+        norm_idx = normalization[idx]
+        norm_k = normalization[k]
+        return idx, np.conj(phase) * norm_idx / norm_k
+    ```
+    
+    Attributes
+    ----------
+    repr_map : np.ndarray
+        Shape (nh_full,), dtype uint32. Maps state -> representative index.
+        Value = _INVALID_REPR_IDX if state not in this symmetry sector.
+    phase_idx : np.ndarray
+        Shape (nh_full,), dtype uint8. Maps state -> index in phase_table.
+    phase_table : np.ndarray
+        Shape (n_phases,), dtype complex128. Distinct phase values.
+        Typically n_phases <= group_order (often just a few values like 1, -1, i, -i).
+    normalization : np.ndarray
+        Shape (n_representatives,), dtype float64. Normalization per representative.
+    representative_list : np.ndarray
+        Shape (n_representatives,), dtype int64. Maps index -> actual state value.
+    """
+    repr_map            : np.ndarray  # uint32[nh_full]         : state -> representative index
+    phase_idx           : np.ndarray  # uint8[nh_full]          : state -> phase table index
+    phase_table         : np.ndarray  # complex128[n_phases]    : distinct phases
+    normalization       : np.ndarray  # float64[n_repr]         : normalization per representative
+    representative_list : np.ndarray  # int64[n_repr]           : representative state values
+    
+    @property
+    def n_representatives(self) -> int:
+        """Number of representatives (reduced Hilbert space dimension)."""
+        return len(self.representative_list)
+    
+    @property
+    def n_phases(self) -> int:
+        """Number of distinct phases in the phase table."""
+        return len(self.phase_table)
+    
+    @property 
+    def nh_full(self) -> int:
+        """Full Hilbert space dimension."""
+        return len(self.repr_map)
+    
+    def get_representative_state(self, idx: int) -> int:
+        """Get the actual state value for a representative index."""
+        return int(self.representative_list[idx])
+    
+    def get_phase(self, state: int) -> complex:
+        """Get the symmetry phase for a state."""
+        pidx = self.phase_idx[state]
+        if pidx == _INVALID_PHASE_IDX:
+            return 0.0
+        return self.phase_table[pidx]
+    
+    def get_repr_idx(self, state: int) -> int:
+        """Get the representative index for a state (-1 if not in sector)."""
+        idx = self.repr_map[state]
+        if idx == _INVALID_REPR_IDX:
+            return -1
+        return int(idx)
+    
+    def is_in_sector(self, state: int) -> bool:
+        """Check if a state belongs to this symmetry sector."""
+        return self.repr_map[state] != _INVALID_REPR_IDX
+
 
 #############################################################################
 #! Type Aliases
@@ -450,12 +638,12 @@ class SymmetryContainer:
     generators          : List[Tuple[SymmetryOperator, SymmetrySpec]]   = field(default_factory=list)
     global_symmetries   : List[GlobalSymmetry]                          = field(default_factory=list)
     symmetry_group      : List[GroupElement]                            = field(default_factory=list)
-    _repr_list          : Optional[np.ndarray]                          = None      # representatives list -> state
-    _repr_norms         : Optional[np.ndarray]                          = None      # representatives normalization factors
+    _repr_list          : Optional[np.ndarray]                          = None      # representatives list -> state (int64)
+    _repr_norms         : Optional[np.ndarray]                          = None      # representatives normalization factors (float64)
     _repr_get_norm      : Callable[[StateInt], complex]                 = lambda x  : 1.0 # function to get normalization for a state
     _repr_active        : Optional[bool]                                = False     # if one adds new element, it stops being valid
-    # Cached data
-    _repr_map           : Optional[np.ndarray]                          = None      # Optional - if stored it means that representatives have been precomputed
+    # Compact O(1) lookup structure (primary storage, always built when symmetries present)
+    _compact_data       : Optional[CompactSymmetryData]                 = None
     _compatibility      : Optional[SymmetryCompatibility]               = None      # Compatibility checker instance
     logger              : Optional[Callable[[str], None]]               = None      # Logger function
     
@@ -474,14 +662,10 @@ class SymmetryContainer:
     def set_repr_info(self, repr_list: np.ndarray, repr_norms: np.ndarray) -> None:
         """Set the representatives and their normalization factors."""
         # Ensure repr_list is a numpy array to avoid numba warnings
-        self._repr_list     = np.asarray(repr_list) if not isinstance(repr_list, np.ndarray) else repr_list
-        self._repr_norms    = np.asarray(repr_norms) if not isinstance(repr_norms, np.ndarray) else repr_norms
+        self._repr_list     = np.asarray(repr_list, dtype=np.int64) if not isinstance(repr_list, np.ndarray) else repr_list
+        self._repr_norms    = np.asarray(repr_norms, dtype=np.float64) if not isinstance(repr_norms, np.ndarray) else repr_norms
         self._repr_get_norm = lambda x: self._repr_norms[x]
         self._repr_active   = True
-
-    def set_repr_map(self, repr_map: np.ndarray) -> None:
-        """Set the representatives mapping array."""
-        self._repr_map      = repr_map
         
     # -----------------------------------------------------
 
@@ -497,14 +681,16 @@ class SymmetryContainer:
 
     @property
     def repr_active(self) -> bool:                      return self._repr_active
+    
     @property
-    def repr_map(self) -> Optional[np.ndarray]:         return self._repr_map
-    @repr_map.setter
-    def repr_map(self, value: np.ndarray) -> None:      self._repr_map = value
+    def compact_data(self) -> Optional[CompactSymmetryData]:
+        """Get the compact symmetry data structure for O(1) JIT lookups."""
+        return self._compact_data
+    
     @property
-    def repr_map_states(self) -> Optional[np.ndarray]:  return self._repr_map[:,0]
-    @property
-    def repr_map_eigs(self) -> Optional[np.ndarray]:    return self._repr_map[:,1]
+    def has_compact_data(self) -> bool:
+        """Check if compact symmetry data is available."""
+        return self._compact_data is not None
 
     # -----------------------------------------------------
     #! Generator Management
@@ -824,21 +1010,21 @@ class SymmetryContainer:
         if not self._repr_active or (self._repr_list is None) or len(self.symmetry_group) == 0:
             return state, 1.0 # No mapping - return state itself
 
-        # Check cache - stores (representative_INDEX, phase), NOT state value
-        # IMPORTANT: _repr_map[state, 0] is the INDEX in _repr_list, not the state value
-        if use_cache and self._repr_map is not None and state < len(self._repr_map):
-            rep_idx     = int(self._repr_map[state, 0])
-            sym_eig     = self._repr_map[state, 1]
+        # Check compact data cache - O(1) lookup via uint32 repr_map + uint8 phase_idx
+        if use_cache and self._compact_data is not None and state < len(self._compact_data.repr_map):
+            cd          = self._compact_data
+            rep_idx     = int(cd.repr_map[state])
             
-            # Check if state is in this sector (rep_idx == -1 or _INT_HUGE means not in sector)
-            if rep_idx != _INT_HUGE and rep_idx != -1 and rep_idx >= 0 and rep_idx < len(self._repr_list):
-                # Get the actual representative state from the list
-                rep_state = int(self._repr_list[rep_idx])
-                return rep_state, self._repr_get_norm(rep_idx) * np.conjugate(sym_eig) / normalization_b
+            # Check if state is in this sector (_INVALID_REPR_IDX = 0xFFFFFFFF means not in sector)
+            if rep_idx != _INVALID_REPR_IDX and rep_idx >= 0 and rep_idx < len(self._repr_list):
+                # Get the actual representative state and phase from compact data
+                rep_state   = int(self._repr_list[rep_idx])
+                phase       = cd.phase_table[cd.phase_idx[state]]
+                norm        = cd.normalization[rep_idx]
+                return rep_state, norm * np.conjugate(phase) / normalization_b
             
             # Cache indicates state not in sector - return zero
-            if rep_idx == -1 or rep_idx == 0:
-                return 0, 0.0
+            return 0, 0.0
 
         from QES.general_python.common.embedded.binary_search import binary_search_numpy, _BAD_BINARY_SEARCH_STATE
         
@@ -992,32 +1178,106 @@ class SymmetryContainer:
     # -----------------------------------------------------
     #! Full Mapping Management
     # -----------------------------------------------------
-    
-    def build_representative_map(self, nh_full: int) -> None:
+
+    def build_compact_map(self, nh_full: int, repr_idx: np.ndarray, repr_phase: np.ndarray) -> CompactSymmetryData:
         """
-        Build the full representative mapping for all states in the Hilbert space.
+        Build the compact symmetry data structure for O(1) JIT-friendly lookups.
+        
+        This method creates a memory-efficient representation using:
+        - repr_map      : uint32 array (state -> representative INDEX)
+        - phase_idx     : uint8 array (state -> index in phase_table)
+        - phase_table   : complex128 array (distinct phases, typically small)
+        - normalization : float64 array (per representative)
+        
+        Memory usage: ~5 bytes per state vs ~24+ bytes for object-based arrays.
         
         Parameters
         ----------
         nh_full : int
-            Full Hilbert space dimension (nhl ** ns)
+            Full Hilbert space dimension
+        repr_idx : np.ndarray
+            Array mapping state -> representative index (-1 if not in sector)
+        repr_phase : np.ndarray
+            Array mapping state -> symmetry phase (complex)
         
-        Algorithm
-        ---------
-        1. Initialize mapping array of size nh_full
-        2. For each state, find its representative and normalization
-        3. Store in mapping: (representative, symmetry_eigenvalue)
+        Returns
+        -------
+        compact_data : CompactSymmetryData
+            The compact representation
+        
+        Notes
+        -----
+        The phase_table is built by collecting unique phases from repr_phase.
+        Phases are compared with tolerance to handle floating point precision.
+        The maximum number of distinct phases is 255 (uint8 limit), which is
+        typically sufficient (group order is usually much smaller).
         """
-        t0      = time.time()
-        mapping = np.full((nh_full, 2), _INT_HUGE, dtype=object) # (representative, symmetry_eigenvalue)
+        t0 = time.time()
         
-        for state in numba.prange(nh_full):
-            rep, sym_eig        = self.find_representative(state, use_cache=False)
-            mapping[state, 0]   = rep
-            mapping[state, 1]   = sym_eig
-
-        self._repr_map          = mapping
-        self.logger.info(f"Built full representative map for {nh_full} states in {time.time() - t0:.2f} seconds")
+        # Build phase table from unique phases
+        # Use a tolerance-based approach for floating point comparison
+        phase_tolerance = 1e-10
+        unique_phases = []
+        phase_to_idx = {}
+        
+        # Allocate compact arrays
+        compact_repr_map = np.full(nh_full, _INVALID_REPR_IDX, dtype=np.uint32)
+        compact_phase_idx = np.full(nh_full, _INVALID_PHASE_IDX, dtype=np.uint8)
+        
+        for state in range(nh_full):
+            idx = repr_idx[state]
+            if idx < 0:
+                # State not in this sector
+                continue
+                
+            phase = repr_phase[state]
+            
+            # Store representative index
+            compact_repr_map[state] = np.uint32(idx)
+            
+            # Find or add phase to table
+            found_idx = None
+            for pidx, existing_phase in enumerate(unique_phases):
+                if abs(phase - existing_phase) < phase_tolerance:
+                    found_idx = pidx
+                    break
+            
+            if found_idx is None:
+                if len(unique_phases) >= 255:
+                    raise ValueError(
+                        f"Too many distinct phases ({len(unique_phases)+1}) for uint8 indexing. "
+                        f"This should not happen for typical symmetry groups."
+                    )
+                found_idx = len(unique_phases)
+                unique_phases.append(phase)
+            
+            compact_phase_idx[state] = np.uint8(found_idx)
+        
+        # Convert phase list to array
+        phase_table = np.array(unique_phases, dtype=np.complex128)
+        
+        # Get normalization from repr_norms
+        normalization = np.asarray(self._repr_norms, dtype=np.float64) if self._repr_norms is not None else np.ones(len(self._repr_list), dtype=np.float64)
+        representative_list = np.asarray(self._repr_list, dtype=np.int64)
+        
+        # Create compact data structure
+        self._compact_data = CompactSymmetryData(
+            repr_map            = compact_repr_map,
+            phase_idx           = compact_phase_idx,
+            phase_table         = phase_table,
+            normalization       = normalization,
+            representative_list = representative_list
+        )
+        
+        self.logger.info(
+            f"Built compact symmetry map: {nh_full} states, "
+            f"{len(representative_list)} representatives, "
+            f"{len(phase_table)} distinct phases, "
+            f"~{(nh_full * 5 + len(phase_table) * 16 + len(representative_list) * 16) / 1024:.1f} KB, "
+            f"in {time.time() - t0:.3f}s"
+        )
+        
+        return self._compact_data
 
 ####################################################################################################
 #! Utility Functions
@@ -1030,8 +1290,7 @@ def create_symmetry_container_from_specs(
     lattice             : Optional[Lattice] = None,
     nhl                 : int = 2,
     backend             : str = 'default',
-    build_group         : bool = True,
-    build_repr_map      : bool = False
+    build_group         : bool = True
 ) -> SymmetryContainer:
     """
     Factory function to create and initialize a SymmetryContainer.
@@ -1052,13 +1311,16 @@ def create_symmetry_container_from_specs(
         Computation backend
     build_group : bool
         Whether to build symmetry group immediately
-    build_repr_map : bool
-        Whether to build representative map immediately
     
     Returns
     -------
     container : SymmetryContainer
         Initialized container
+        
+    Note
+    ----
+    Compact symmetry data (for O(1) JIT lookups) is built separately by 
+    HilbertSpace after representative generation via build_compact_map().
     """
     container = SymmetryContainer(ns=ns, lattice=lattice, nhl=nhl, backend=backend)
     
@@ -1084,11 +1346,6 @@ def create_symmetry_container_from_specs(
     # Build group if requested
     if build_group:
         container.build_group()
-    
-    # Build representative map if requested
-    if build_repr_map:
-        nh_full = nhl ** ns
-        container.build_representative_map(nh_full)
     
     return container
 
@@ -1142,10 +1399,12 @@ def _create_symmetry_operator(
             return ParitySymmetry(axis='z', sector=sector, ns=ns, nhl=nhl)
         
         else:
+            from QES.general_python.common.flog import get_global_logger
             get_global_logger().warning(f"Unknown symmetry type: {gen_type}")
             return None
     
     except ImportError as e:
+        from QES.general_python.common.flog import get_global_logger
         get_global_logger().error(f"Failed to import symmetry {gen_type}: {e}")
         return None
 

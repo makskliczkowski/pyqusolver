@@ -83,6 +83,44 @@ class ParitySymmetry(SymmetryOperator):
     
     # -------------------------
     
+    @staticmethod
+    def get_sectors(axis: str = 'z') -> list:
+        """
+        Return the valid parity sectors for the given axis.
+        
+        Parameters
+        ----------
+        axis : str, default='z'
+            Parity axis ('x', 'y', or 'z').
+            
+        Returns
+        -------
+        list
+            Valid parity sectors.
+            - For axis='z' or 'x': [+1, -1]
+            - For axis='y': [+1, -1] (with complex phases in application)
+            
+        Examples
+        --------
+        >>> ParitySymmetry.get_sectors('z')
+        [1, -1]
+        """
+        return [1, -1]
+    
+    @staticmethod
+    def get_axes() -> list:
+        """
+        Return the available parity axes.
+        
+        Returns
+        -------
+        list
+            Available axes: ['x', 'y', 'z'].
+        """
+        return ['x', 'y', 'z']
+    
+    # -------------------------
+    
     def __init__(self, axis: str, sector: int, ns: int, nhl: int, lattice: 'Lattice' = None):
         """
         Initialize parity symmetry operator.

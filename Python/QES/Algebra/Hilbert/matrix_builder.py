@@ -16,6 +16,7 @@ date        : 2025-10-29
 version     : 2.2.0
 --------------------------------------------------------------------------------------------
 """
+
 from    __future__ import annotations
 import  numpy as np
 import  scipy.sparse as sp
@@ -122,6 +123,70 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
 #! JITTED FUNCTIONS
 # -----------------------------------------------------------------------------------------------
 
+# Constants for compact structure invalid markers
+_INVALID_REPR_IDX_NB  = numba.uint32(0xFFFFFFFF)
+_INVALID_PHASE_IDX_NB = numba.uint8(0xFF)
+
+
+@numba.njit(cache=True, nogil=True)
+def _build_sparse_same_sector_compact_jit(
+                representative_list : np.ndarray,   # int64[n_repr] - representative state values
+                normalization       : np.ndarray,   # float64[n_repr] - normalization per repr
+                repr_map            : np.ndarray,   # uint32[nh_full] - state -> repr index
+                phase_idx           : np.ndarray,   # uint8[nh_full] - state -> phase table index
+                phase_table         : np.ndarray,   # complex128[n_phases] - distinct phases
+                operator_func       : Callable,
+                rows                : np.ndarray,
+                cols                : np.ndarray,
+                data                : np.ndarray,
+                data_idx            : int
+            ):
+    """
+    JIT-compiled sparse matrix builder using compact O(1) symmetry lookups.
+    
+    This is the preferred path when CompactSymmetryData is available.
+    All lookups are O(1) array accesses - no binary search needed.
+    
+    Memory efficient: uses uint32 + uint8 per state (~5 bytes vs ~24+ bytes).
+    """
+    nh = len(representative_list)
+    invalid_idx = _INVALID_REPR_IDX_NB
+    
+    for k in range(nh):
+        state               = representative_list[k]
+        norm_k              = normalization[k]
+        new_states, values  = operator_func(state)
+
+        for i in range(len(new_states)):
+            new_state = new_states[i]
+            value     = values[i]
+            
+            if np.abs(value) < 1e-14:
+                continue
+
+            # O(1) lookup using compact structure
+            idx = repr_map[new_state]
+            
+            # Check if state is in this sector
+            if idx == invalid_idx:
+                continue
+            
+            # Get phase from phase table
+            pidx        = phase_idx[new_state]
+            phase       = phase_table[pidx]
+            norm_idx    = normalization[idx]
+            sym_factor  = np.conj(phase) * norm_idx / norm_k
+
+            matrix_elem = value * sym_factor
+            if np.abs(matrix_elem) > 1e-14:
+                rows[data_idx]  = idx
+                cols[data_idx]  = k
+                data[data_idx]  = matrix_elem
+                data_idx       += 1
+
+    return data_idx
+
+
 @numba.njit(cache=True, nogil=True)
 def _build_sparse_same_sector_jit(
                 representative_list : np.ndarray,
@@ -136,6 +201,9 @@ def _build_sparse_same_sector_jit(
             ):
     """
     Jitted builder for same-sector operators using precomputed arrays.
+    
+    DEPRECATED: Use _build_sparse_same_sector_compact_jit when CompactSymmetryData
+    is available. This function is kept for backward compatibility.
     """
     nh = len(representative_list)
     for k in range(nh):
@@ -408,22 +476,38 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
              
         data_idx = _build_sparse_same_sector_no_symmetry_jit(basis, operator_func, rows, cols, data, 0, nh)
     else:
-        # Check if we have precomputed arrays for JIT
-        # 'representative_list' here implies symmetry reduction is active.
-        # If 'repr_idx' (lookup table) is available, we use the fast JIT path.
-        # Otherwise, we must calculate representatives on the fly (slow Python path).
-        repr_idx = getattr(hilbert_space, 'repr_idx', None)
-        repr_phase = getattr(hilbert_space, 'repr_phase', None)
+        # PREFERRED: Use compact O(1) lookup if available
+        # This is the new memory-efficient path with CompactSymmetryData
+        compact_data = getattr(hilbert_space, 'compact_symmetry_data', None)
         
-        if repr_idx is not None and repr_phase is not None:
-             data_idx = _build_sparse_same_sector_jit(
-                 representative_list, normalization, repr_idx, repr_phase,
-                 operator_func, rows, cols, data, 0
-             )
+        if compact_data is not None:
+            # Fast path: O(1) lookups using compact structure (~5 bytes/state)
+            data_idx = _build_sparse_same_sector_compact_jit(
+                compact_data.representative_list,
+                compact_data.normalization,
+                compact_data.repr_map,
+                compact_data.phase_idx,
+                compact_data.phase_table,
+                operator_func, rows, cols, data, 0
+            )
         else:
-            # Python assembly that uses HilbertSpace.find_representative
-            # This is necessary when the lookup table is too large to store.
-            data_idx    = _build_sparse_same_sector_py(hilbert_space, representative_list, normalization, operator_func, rows, cols, data, 0)
+            # Legacy fallback: Check for old-style precomputed arrays
+            repr_idx = getattr(hilbert_space, 'repr_idx', None)
+            repr_phase = getattr(hilbert_space, 'repr_phase', None)
+            
+            if repr_idx is not None and repr_phase is not None:
+                # Legacy JIT path with int64 + complex128 arrays (~24 bytes/state)
+                data_idx = _build_sparse_same_sector_jit(
+                    representative_list, normalization, repr_idx, repr_phase,
+                    operator_func, rows, cols, data, 0
+                )
+            else:
+                # Python assembly that uses HilbertSpace.find_representative
+                # This is necessary when the lookup table is too large to store.
+                data_idx = _build_sparse_same_sector_py(
+                    hilbert_space, representative_list, normalization, 
+                    operator_func, rows, cols, data, 0
+                )
 
     return sp.csr_matrix((data[:data_idx], (rows[:data_idx], cols[:data_idx])),shape=(nh, nh), dtype=alloc_dtype)
 
@@ -448,10 +532,16 @@ def _build_sector_change(hilbert_in         : object,
     # Determine appropriate dtype
     alloc_dtype                 = _determine_matrix_dtype(dtype, [hilbert_in, hilbert_out], operator_func, ns)
     
+    # Check for compact symmetry data (preferred O(1) path)
+    compact_data_out            = getattr(hilbert_out, 'compact_symmetry_data', None)
+    use_compact                 = compact_data_out is not None
+    
+    # Legacy fallback check
+    use_precomputed             = hasattr(hilbert_out, 'repr_idx') and hilbert_out.repr_idx is not None
+    
     if not sparse:
         # Dense matrix
         matrix                  = np.zeros((nh_out, nh_in), dtype=alloc_dtype)
-        use_precomputed         = hasattr(hilbert_out, 'repr_idx') and hilbert_out.repr_idx is not None
         
         for idx_col in range(nh_in):
             state_col           = int(hilbert_in[idx_col])
@@ -462,15 +552,27 @@ def _build_sector_change(hilbert_in         : object,
                 if abs(value) < 1e-14:
                     continue
 
-                if use_precomputed:
-                    rep             = int(hilbert_out.repr_idx[int(new_state)])
-                    phase           = hilbert_out.repr_phase[int(new_state)]
-                    norm_rep        = norm_out[rep] if norm_out is not None else 1.0
-                    sym_factor      = phase * norm_col / norm_rep
+                if use_compact:
+                    # O(1) compact lookup
+                    idx_row     = compact_data_out.repr_map[int(new_state)]
+                    if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
+                        continue
+                    pidx        = compact_data_out.phase_idx[int(new_state)]
+                    phase       = compact_data_out.phase_table[pidx]
+                    norm_rep    = compact_data_out.normalization[idx_row]
+                    sym_factor  = np.conj(phase) * norm_rep / norm_col
+                elif use_precomputed:
+                    rep         = int(hilbert_out.repr_idx[int(new_state)])
+                    if rep < 0:
+                        continue
+                    phase       = hilbert_out.repr_phase[int(new_state)]
+                    norm_rep    = norm_out[rep] if norm_out is not None else 1.0
+                    sym_factor  = np.conj(phase) * norm_rep / norm_col
+                    idx_row     = rep
                 else:
                     rep, sym_factor = hilbert_out.find_representative(int(new_state), norm_col)
+                    idx_row     = _binary_search_representative_list(representative_list_out, rep)
 
-                idx_row = _binary_search_representative_list(representative_list_out, rep)
                 if idx_row >= 0:
                     matrix[idx_row, idx_col] += value * sym_factor
         return matrix
@@ -480,9 +582,6 @@ def _build_sector_change(hilbert_in         : object,
     rows            = np.zeros(max_nnz, dtype=np.int64)
     cols            = np.zeros(max_nnz, dtype=np.int64)
     data            = np.zeros(max_nnz, dtype=alloc_dtype)
-
-    # Python assembly that uses HilbertSpace.find_representative
-    use_precomputed = hasattr(hilbert_out, 'repr_idx') and hilbert_out.repr_idx is not None
     data_idx        = 0
     
     # Iterate over input basis states
@@ -495,15 +594,26 @@ def _build_sector_change(hilbert_in         : object,
             if abs(value) < 1e-14:
                 continue
 
-            if use_precomputed:
-                rep             = int(hilbert_out.repr_idx[int(new_state)])
-                phase           = hilbert_out.repr_phase[int(new_state)]
-                norm_rep        = norm_out[rep] if norm_out is not None else 1.0
-                sym_factor      = phase * norm_col / norm_rep
+            if use_compact:
+                # O(1) compact lookup
+                idx_row     = compact_data_out.repr_map[int(new_state)]
+                if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
+                    continue
+                pidx        = compact_data_out.phase_idx[int(new_state)]
+                phase       = compact_data_out.phase_table[pidx]
+                norm_rep    = compact_data_out.normalization[idx_row]
+                sym_factor  = np.conj(phase) * norm_rep / norm_col
+            elif use_precomputed:
+                idx_row     = int(hilbert_out.repr_idx[int(new_state)])
+                if idx_row < 0:
+                    continue
+                phase       = hilbert_out.repr_phase[int(new_state)]
+                norm_rep    = norm_out[idx_row] if norm_out is not None else 1.0
+                sym_factor  = np.conj(phase) * norm_rep / norm_col
             else:
                 rep, sym_factor = hilbert_out.find_representative(int(new_state), norm_col)
+                idx_row     = _binary_search_representative_list(representative_list_out, rep)
 
-            idx_row = _binary_search_representative_list(representative_list_out, rep)
             if idx_row >= 0:
                 matrix_elem = value * sym_factor
                 if abs(matrix_elem) > 1e-14:

@@ -105,6 +105,29 @@ class VMCSampler(Sampler):
             Return final chain states, collected samples, log-ansatz values, and importance weights.
 
     Supports JAX backend for performance via JIT compilation of core loops.
+    
+    Parallel Tempering (PT)
+    -----------------------
+    When `pt_betas` is provided (array of inverse temperatures), the sampler operates
+    in Parallel Tempering mode:
+
+    - Multiple replicas run MCMC at different temperatures (betas).
+    - Periodic replica exchanges between adjacent temperatures improve mixing.
+    - Only samples from the physical replica (beta=1.0, index 0) are returned.
+    - The temperature ladder `pt_betas` should be sorted descending (1.0 -> lower).
+    
+    This is useful for systems with rugged energy landscapes where standard MCMC
+    gets trapped in local minima. PT allows sampling at higher temperatures (lower beta)
+    where barriers are easier to cross, then exchanges bring low-energy configurations
+    to the physical temperature.
+    
+    Example (PT mode):
+        >>> betas = jnp.logspace(0, -1, 5)  # [1.0, 0.56, 0.32, 0.18, 0.1]
+        >>> sampler = VMCSampler(
+        >>>     net=my_network, shape=(4, 4),
+        >>>     pt_betas=betas,  # Enable PT with 5 replicas
+        >>>     numsamples=1000, numchains=4,
+        >>> )
     """
     
     def __init__(self,
@@ -171,8 +194,23 @@ class VMCSampler(Sampler):
                 Default 0.5 corresponds to Born rule :math:`|\psi|^2` when :math:`\mu=1`. Needs careful setting based on :math:`\mu`.
             statetype (Union[np.dtype, jnp.dtype]):
                 Type of the state (e.g., np.float32, jnp.float32, np.int32).
+            makediffer (bool):
+                Whether to make states distinguishable (default: True).
             **kwargs:
-                Additional arguments for the base Sampler class (e.g., `modes`, `mode_repr`).
+                Additional arguments for the base Sampler class and Parallel Tempering:
+                
+                - `modes` (int): Number of local modes per site (e.g., 2 for spin-1/2).
+                - `mode_repr` (str): Mode representation ('spin', 'particle').
+                - `pt_betas` (array-like, optional): Array of inverse temperatures for
+                    Parallel Tempering. If provided, enables PT mode with `len(pt_betas)`
+                    replicas. Should be sorted descending, with `pt_betas[0] = 1.0` being
+                    the physical temperature. Example: `[1.0, 0.5, 0.25, 0.1]`.
+                    When PT is enabled:
+                    
+                    - States are stored as `(n_replicas, n_chains, *shape)`.
+                    - MCMC runs in parallel across all temperature replicas.
+                    - Periodic replica exchanges improve mixing.
+                    - Only physical replica (index 0) samples are returned.
         """
         
         super().__init__(shape, upd_fun, rng, rng_k, seed, hilbert,
@@ -214,7 +252,38 @@ class VMCSampler(Sampler):
         self.set_update_num(self._numupd)
         
         # if self._isjax:                         self._upd_fun = jax.jit(self._upd_fun)
+        
+        # -----------------------------------------------------------------
+        #! Parallel Tempering (PT) Setup
+        # -----------------------------------------------------------------
+        # Check for Parallel Tempering betas passed via kwargs
+        self._pt_betas      = kwargs.get('pt_betas', None)
+        self._is_pt         = self._pt_betas is not None
+        self._n_replicas    = 1
+        
+        if self._is_pt:
+            if self._isjax:
+                self._pt_betas  = jnp.asarray(self._pt_betas)
+            else:
+                self._pt_betas  = np.asarray(self._pt_betas)
+            self._n_replicas    = len(self._pt_betas)
+            
+            # Expand states to (n_replicas, n_chains, *shape) for PT
+            # Current states are (n_chains, *shape)
+            if self._isjax:
+                self._states        = jnp.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+            else:
+                self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+        
+        # -----------------------------------------------------------------
+        # Static sampler function (standard or PT)
+        # -----------------------------------------------------------------
         self._static_sample_fun                 = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
+        self._static_pt_sampler                 = None  # Lazily created on first PT sample call
     
     #####################################################################
     
@@ -1049,6 +1118,245 @@ class VMCSampler(Sampler):
         return final_carry, (configs_flat, batched_log_ansatz), probs_normalized
     
     ###################################################################
+    #! PARALLEL TEMPERING (PT) SUPPORT
+    ###################################################################
+    
+    @staticmethod
+    @partial(jax.jit, static_argnames=('mu',))
+    def _replica_exchange_kernel_jax(states, log_psi, betas, key, mu):
+        r"""
+        Performs Parallel Tempering swaps between adjacent replicas.
+        
+        Uses a checkerboard pattern (even/odd pairs) to allow parallel swaps
+        without conflicts. This is a core PT step that exchanges configurations
+        between temperatures to improve mixing.
+        
+        Args:
+            states: (n_replicas, n_chains, *shape) - Current configurations
+            log_psi: (n_replicas, n_chains) - Real part of log probability
+            betas: (n_replicas,) - Inverse temperatures (1.0 = physical)
+            key: JAX RNG key
+            mu: Distribution power (usually 2.0 for Born rule)
+            
+        Returns:
+            Tuple of (swapped_states, swapped_log_psi)
+        """
+        n_replicas, n_chains    = states.shape[0], states.shape[1]
+        
+        # 1. Choose Swap Phase (Even vs Odd pairs) for parallel disjoint swaps
+        # Phase 0: (0,1), (2,3)... | Phase 1: (1,2), (3,4)...
+        key, subkey             = jax.random.split(key)
+        swap_odd                = jax.random.bernoulli(subkey, 0.5)
+        start_idx               = jnp.where(swap_odd, 1, 0)
+        
+        # 2. Identify pairs (i, j) where j = i + 1
+        beta_i                  = betas[:-1]    # (n_replicas-1,)
+        beta_j                  = betas[1:]     # (n_replicas-1,)
+        lpsi_i                  = log_psi[:-1]  # (n_replicas-1, n_chains)
+        lpsi_j                  = log_psi[1:]   # (n_replicas-1, n_chains)
+        
+        # 3. Acceptance Probability (Log Space)
+        # A = min(1, exp( (beta_i - beta_j) * mu * (log_psi_j - log_psi_i) ))
+        log_acc                 = (beta_i[:, None] - beta_j[:, None]) * mu * (lpsi_j - lpsi_i)
+        
+        # 4. Metropolis Check
+        key, subkey             = jax.random.split(key)
+        log_u                   = jnp.log(jax.random.uniform(subkey, shape=(n_replicas - 1, n_chains)))
+        accept_raw              = log_u < log_acc  # (n_replicas-1, n_chains)
+        
+        # 5. Apply Phase Mask (Ensure disjoint pairs)
+        pair_indices            = jnp.arange(n_replicas - 1)[:, None]  # (n_replicas-1, 1)
+        phase_mask              = (pair_indices % 2) == start_idx
+        do_swap                 = accept_raw & phase_mask  # (n_replicas-1, n_chains)
+        
+        # 6. Perform Swaps using jnp.where
+        # Get views of neighbors
+        s_up, s_down            = states[1:], states[:-1]  # (n_replicas-1, n_chains, *shape)
+        p_up, p_down            = log_psi[1:], log_psi[:-1]  # (n_replicas-1, n_chains)
+        
+        # Reshape mask for broadcasting against states
+        mask_state              = do_swap.reshape(do_swap.shape + (1,) * (states.ndim - 2))
+        
+        # Swap logic: 
+        # New Down = Up if swap else Down
+        # New Up   = Down if swap else Up
+        new_down                = jnp.where(mask_state, s_up, s_down)
+        new_up                  = jnp.where(mask_state, s_down, s_up)
+        
+        new_p_down              = jnp.where(do_swap, p_up, p_down)
+        new_p_up                = jnp.where(do_swap, p_down, p_up)
+        
+        # 7. Update arrays using .at[].set() (functionally pure in JAX)
+        states_out              = states.at[:-1].set(new_down)
+        states_out              = states_out.at[1:].set(new_up)
+        
+        log_psi_out             = log_psi.at[:-1].set(new_p_down)
+        log_psi_out             = log_psi_out.at[1:].set(new_p_up)
+        
+        return states_out, log_psi_out
+    
+    @staticmethod
+    def _static_sample_pt_jax(
+            # --- Initial State (Dynamic) ---
+            states_init         : jnp.ndarray,  # (n_replicas, n_chains, *shape)
+            rng_k_init          : jnp.ndarray,
+            num_proposed_init   : jnp.ndarray,  # (n_replicas, n_chains)
+            num_accepted_init   : jnp.ndarray,  # (n_replicas, n_chains)
+            # --- Network/Model (Dynamic) ---
+            params              : Any,
+            # --- Configuration (Static) ---
+            num_samples         : int,
+            num_chains          : int,
+            n_replicas          : int,
+            total_therm_updates : int,
+            updates_per_sample  : int,
+            shape               : Tuple[int, ...],
+            mu                  : float,
+            pt_betas            : jnp.ndarray,  # (n_replicas,)
+            logprob_fact        : float,
+            # --- Function References (Static) ---
+            update_proposer     : Callable,
+            net_callable_fun    : Callable
+        ):
+        r"""
+        Static JAX sampler with Parallel Tempering support.
+        
+        Runs VMAP over replicas for local MCMC updates, then performs
+        replica exchange swaps between adjacent temperature levels.
+        Only samples from the physical replica (beta=1.0, index 0) are returned.
+        
+        Args:
+            states_init: Initial states (n_replicas, n_chains, *shape)
+            rng_k_init: JAX RNG key
+            num_proposed_init: Proposal counters (n_replicas, n_chains)
+            num_accepted_init: Acceptance counters (n_replicas, n_chains)
+            params: Network parameters
+            num_samples: Number of samples to collect
+            num_chains: Number of parallel chains per replica
+            n_replicas: Number of temperature replicas
+            total_therm_updates: Total thermalization steps
+            updates_per_sample: MCMC steps between sample collection
+            shape: Shape of single configuration
+            mu: Distribution exponent
+            pt_betas: Temperature ladder (n_replicas,)
+            logprob_fact: Log probability factor for importance weights
+            update_proposer: State proposal function
+            net_callable_fun: Network callable
+            
+        Returns:
+            (final_carry, (configs_flat, log_psi_flat), probs_normalized)
+        """
+        
+        # 1. Define vmapped MCMC step over replicas
+        # The base step operates on (n_chains, *shape) for a single replica
+        # We vmap to run in parallel over replicas with different betas
+        
+        def _single_replica_mcmc(chain, lpsi, key, n_prop, n_acc, beta_r):
+            r"""Run MCMC steps for a single replica with its specific beta."""
+            return VMCSampler._run_mcmc_steps_jax(
+                chain_init          = chain,
+                current_val_init    = lpsi,
+                rng_k_init          = key,
+                num_proposed_init   = n_prop,
+                num_accepted_init   = n_acc,
+                params              = params,
+                steps               = updates_per_sample,
+                update_proposer     = update_proposer,
+                net_callable_fun    = net_callable_fun,
+                mu                  = mu,
+                beta                = beta_r  # Per-replica beta
+            )
+        
+        # vmap over replica axis (axis 0 for states, lpsi, keys, counters; axis 0 for betas)
+        vmapped_mcmc_step = jax.vmap(
+            _single_replica_mcmc,
+            in_axes=(0, 0, 0, 0, 0, 0)  # All inputs have replica axis at 0
+        )
+        
+        # 2. Compute initial log probabilities for all replicas
+        def _get_log_p(x):
+            return jnp.real(net_callable_fun(params, x))
+        
+        # vmap over replicas, then over chains: (n_replicas, n_chains, *shape) -> (n_replicas, n_chains)
+        logprobas_init = jax.vmap(jax.vmap(_get_log_p))(states_init)
+        if logprobas_init.ndim > 2:
+            logprobas_init = jnp.squeeze(logprobas_init, axis=-1)
+        
+        # 3. Thermalization with PT swaps
+        def therm_scan_body(carry, _):
+            states, lpsi, key, n_prop, n_acc    = carry
+            
+            # A. Split keys for replicas
+            key, subkey                         = jax.random.split(key)
+            replica_keys                        = jax.random.split(subkey, n_replicas)
+            
+            # B. Local MCMC updates (parallel over replicas)
+            states_new, lpsi_new, keys_new, n_prop_new, n_acc_new = vmapped_mcmc_step(
+                states, lpsi, replica_keys, n_prop, n_acc, pt_betas
+            )
+            
+            # C. Replica Exchange
+            key, swap_key = jax.random.split(key)
+            states_swapped, lpsi_swapped = VMCSampler._replica_exchange_kernel_jax(
+                states_new, lpsi_new, pt_betas, swap_key, mu
+            )
+            
+            return (states_swapped, lpsi_swapped, key, n_prop_new, n_acc_new), None
+        
+        # Run thermalization (divide total therm updates into chunks with swaps)
+        n_therm_sweeps  = max(1, total_therm_updates // updates_per_sample)
+        initial_carry   = (states_init, logprobas_init, rng_k_init, num_proposed_init, num_accepted_init)
+        therm_carry, _  = jax.lax.scan(therm_scan_body, initial_carry, None, length=n_therm_sweeps)
+        
+        # 4. Sampling Loop with PT swaps
+        def sample_scan_body(carry, _):
+            states, lpsi, key, n_prop, n_acc = carry
+            
+            # A. Split keys for replicas
+            key, subkey     = jax.random.split(key)
+            replica_keys    = jax.random.split(subkey, n_replicas)
+            
+            # B. Local MCMC updates (parallel over replicas)
+            states_new, lpsi_new, keys_new, n_prop_new, n_acc_new = vmapped_mcmc_step(
+                states, lpsi, replica_keys, n_prop, n_acc, pt_betas
+            )
+            
+            # C. Replica Exchange
+            key, swap_key                   = jax.random.split(key)
+            states_swapped, lpsi_swapped    = VMCSampler._replica_exchange_kernel_jax(
+                                                states_new, lpsi_new, pt_betas, swap_key, mu
+                                            )
+            
+            new_carry                       = (states_swapped, lpsi_swapped, key, n_prop_new, n_acc_new)
+            
+            # D. Collect only Physical Replica (Index 0, beta=1.0)
+            return new_carry, (states_swapped[0], lpsi_swapped[0])
+        
+        # Run sampling
+        final_carry, (collected_states, collected_log_psi) = jax.lax.scan(
+            sample_scan_body,
+            therm_carry,
+            None,
+            length=num_samples
+        )
+        
+        # 5. Flatten and compute importance weights
+        # collected_states: (num_samples, n_chains, *shape)
+        configs_flat        = collected_states.reshape((-1,) + shape)
+        log_psi_flat        = collected_log_psi.reshape((-1,))
+        
+        # Standard re-weighting for physical beta (pt_betas[0], usually 1.0)
+        phys_beta           = pt_betas[0]
+        log_prob_exponent   = (1.0 / logprob_fact - mu * phys_beta)
+        
+        log_unnorm          = log_prob_exponent * log_psi_flat
+        log_unnorm_max      = jnp.max(log_unnorm)
+        probs               = jnp.exp(log_unnorm - log_unnorm_max)
+        probs_norm          = probs / jnp.maximum(jnp.sum(probs), 1e-10) * (num_samples * num_chains)
+        
+        return final_carry, (configs_flat, log_psi_flat), probs_norm
+    
+    ###################################################################
     
     def _sample_reinitialize(self, used_num_chains, used_num_samples):
         '''
@@ -1162,6 +1470,43 @@ class VMCSampler(Sampler):
             if not isinstance(self._rng_k, jax.Array):
                 raise TypeError(f"Sampler's RNG key is invalid: {type(self._rng_k)}")
 
+            # -----------------------------------------------------------------
+            #! Parallel Tempering Path
+            # -----------------------------------------------------------------
+            if self._is_pt:
+                # Lazily create the PT sampler on first use
+                if self._static_pt_sampler is None:
+                    self._static_pt_sampler = self._get_sampler_pt_jax(
+                        num_samples =   used_num_samples,
+                        num_chains  =   used_num_chains
+                    )
+                
+                # Call the PT sampler
+                final_state_tuple, samples_tuple, probs = self._static_pt_sampler(
+                    states_init             = current_states,
+                    rng_k_init              = self._rng_k,
+                    params                  = current_params,
+                    num_proposed_init       = current_proposed,
+                    num_accepted_init       = current_accepted
+                )
+                
+                # Update Instance State (PT version stores full replica state)
+                final_states, final_logprobas, final_rng_k, final_num_proposed, final_num_accepted = final_state_tuple
+                if not reinitialized_for_call:
+                    self._states            = final_states
+                    self._logprobas         = final_logprobas
+                    self._num_proposed      = final_num_proposed
+                    self._num_accepted      = final_num_accepted
+                    self._rng_k             = final_rng_k
+                
+                # Return only the physical replica state (index 0) for user interface consistency
+                final_state_info = (self._states[0], self._logprobas[0])
+                return final_state_info, samples_tuple, probs
+            
+            # -----------------------------------------------------------------
+            #! Standard (non-PT) Path
+            # -----------------------------------------------------------------
+            
             #! Call the function that is static and JIT-compiled
             final_state_tuple, samples_tuple, probs = self._static_sample_fun(
                 states_init             = current_states,
@@ -1257,6 +1602,81 @@ class VMCSampler(Sampler):
         '''
         return self._sweep_steps
 
+    def _get_sampler_pt_jax(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
+        """
+        Returns a JIT-compiled Parallel Tempering sampling function.
+        
+        Only called when self._is_pt is True. Creates a sampler that runs
+        MCMC in parallel across temperature replicas with periodic exchanges.
+        
+        Parameters:
+            num_samples: Number of samples per chain. Defaults to self._numsamples.
+            num_chains: Number of chains per replica. Defaults to self._numchains.
+            
+        Returns:
+            JIT-compiled PT sampler function.
+        """
+        if not self._isjax:
+            raise RuntimeError("PT JAX sampler only available for JAX backend.")
+        if not self._is_pt:
+            raise RuntimeError("PT sampler requires pt_betas to be set.")
+        
+        static_num_samples = num_samples if num_samples is not None else self._numsamples
+        static_num_chains = num_chains if num_chains is not None else self._numchains
+        
+        # Bake in all static configuration
+        baked_args = {
+            "num_samples"           : static_num_samples,
+            "num_chains"            : static_num_chains,
+            "n_replicas"            : self._n_replicas,
+            "total_therm_updates"   : self._total_therm_updates,
+            "updates_per_sample"    : self._updates_per_sample,
+            "shape"                 : self._shape,
+            "mu"                    : self._mu,
+            "pt_betas"              : self._pt_betas,
+            "logprob_fact"          : self._logprob_fact,
+            "update_proposer"       : self._upd_fun,
+            "net_callable_fun"      : self._net_callable,
+        }
+        
+        partial_sampler = partial(VMCSampler._static_sample_pt_jax, **baked_args)
+        int_dtype = DEFAULT_JP_INT_TYPE
+        n_replicas = self._n_replicas
+        
+        @jax.jit
+        def wrapped_pt_sampler(states_init          : jax.Array,
+                               rng_k_init           : jax.Array,
+                               params               : Any,
+                               num_proposed_init    : Optional[jax.Array] = None,
+                               num_accepted_init    : Optional[jax.Array] = None):
+            """
+            JIT-compiled PT sampler.
+            
+            Args:
+                states_init: (n_replicas, n_chains, *shape)
+                rng_k_init: JAX PRNGKey
+                params: Network parameters
+                num_proposed_init: (n_replicas, n_chains) or None
+                num_accepted_init: (n_replicas, n_chains) or None
+                
+            Returns:
+                (final_state_tuple, samples_tuple, probs)
+            """
+            _num_proposed = (jnp.zeros((n_replicas, static_num_chains), dtype=int_dtype)
+                            if num_proposed_init is None else num_proposed_init)
+            _num_accepted = (jnp.zeros((n_replicas, static_num_chains), dtype=int_dtype)
+                            if num_accepted_init is None else num_accepted_init)
+            
+            return partial_sampler(
+                states_init         = states_init,
+                rng_k_init          = rng_k_init,
+                num_proposed_init   = _num_proposed,
+                num_accepted_init   = _num_accepted,
+                params              = params
+            )
+        
+        return wrapped_pt_sampler
+    
     def _get_sampler_jax(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
         """
         Returns a JIT-compiled static sampling function with baked-in configuration.

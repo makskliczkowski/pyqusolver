@@ -79,6 +79,25 @@ class ReflectionSymmetry(SymmetryOperator):
     # Reflection is universal - works for all local space types
     supported_local_spaces  = set()  # Empty = universal
     
+    @staticmethod
+    def get_sectors() -> list:
+        """
+        Return the valid reflection parity sectors.
+        
+        Returns
+        -------
+        list
+            Valid parity sectors: [+1, -1].
+            - +1: Even parity (symmetric states)
+            - -1: Odd parity (antisymmetric states)
+            
+        Examples
+        --------
+        >>> ReflectionSymmetry.get_sectors()
+        [1, -1]
+        """
+        return [1, -1]
+    
     def __init__(self, lattice: 'Lattice', sector: int, ns: int, base: int = 2):
         """
         Initialize reflection symmetry operator.

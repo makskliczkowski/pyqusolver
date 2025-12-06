@@ -136,6 +136,45 @@ class TranslationSymmetry(SymmetryOperator):
     supported_local_spaces  = set() # Empty = universal
     
     ####################################################################################################
+    # Sector enumeration
+    ####################################################################################################
+    
+    @staticmethod
+    def get_sectors(lattice: 'Lattice', direction: str = 'x') -> range:
+        """
+        Return the valid momentum sector indices for a given lattice and direction.
+        
+        Parameters
+        ----------
+        lattice : Lattice
+            Lattice structure with lx, ly, lz attributes.
+        direction : str, default='x'
+            Translation direction ('x', 'y', or 'z').
+            
+        Returns
+        -------
+        range
+            Valid momentum indices: range(0, L) where L is the extent in the given direction.
+            Momentum k = 2*pi*n/L for each index n in the range.
+            
+        Examples
+        --------
+        >>> lattice = SquareLattice(dim=1, lx=8, bc=LatticeBC.PBC)
+        >>> TranslationSymmetry.get_sectors(lattice, 'x')
+        range(0, 8)  # k = 0, pi/4, pi/2, 3pi/4, pi, 5pi/4, 3pi/2, 7pi/4
+        """
+        direction = direction.lower().strip()
+        if direction == 'x':
+            L = getattr(lattice, 'lx', None) or getattr(lattice, 'Lx', 1)
+        elif direction == 'y':
+            L = getattr(lattice, 'ly', None) or getattr(lattice, 'Ly', 1)
+        elif direction == 'z':
+            L = getattr(lattice, 'lz', None) or getattr(lattice, 'Lz', 1)
+        else:
+            raise ValueError(f"Unknown direction '{direction}'. Use 'x', 'y', or 'z'.")
+        return range(max(1, L))
+    
+    ####################################################################################################
     # INIT
     ####################################################################################################
     

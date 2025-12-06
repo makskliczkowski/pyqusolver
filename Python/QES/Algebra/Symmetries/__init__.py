@@ -42,6 +42,16 @@ from QES.Algebra.Symmetries.momentum_sectors import (
     MomentumSectorAnalyzer,
 )
 
+# Compact symmetry data structure
+from QES.Algebra.Symmetries.symmetry_container import (
+    CompactSymmetryData,
+    SymmetryContainer,
+    _compact_get_sym_factor,
+    _compact_is_in_sector,
+    _compact_get_repr_idx,
+    _compact_get_phase,
+)
+
 ####################################################################################################
 #! Public API
 ####################################################################################################
@@ -67,6 +77,14 @@ __all__ = [
     
     # Momentum analysis
     'MomentumSectorAnalyzer',
+    
+    # Compact symmetry data (O(1) JIT-friendly lookups)
+    'CompactSymmetryData',
+    'SymmetryContainer',
+    '_compact_get_sym_factor',
+    '_compact_is_in_sector',
+    '_compact_get_repr_idx',
+    '_compact_get_phase',
 ]
 
 ####################################################################################################
