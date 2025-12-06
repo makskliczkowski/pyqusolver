@@ -218,6 +218,66 @@ class SymmetryOperator:
     def name(self) -> str:
         return self.__class__.__name__
     
+    @property
+    def directory_name(self) -> str:
+        """
+        Return a clean string suitable for directory names.
+        
+        This method returns a string without special characters, spaces, or 
+        characters that could cause filesystem issues. Override in subclasses
+        for symmetry-specific naming.
+        
+        Returns
+        -------
+        str
+            A filesystem-safe string like 'kx_0', 'pz_p', 'inv_m', etc.
+            
+        Examples
+        --------
+        >>> sym = TranslationSymmetry(lattice, sector=0, direction='x')
+        >>> sym.directory_name
+        'kx_0'
+        
+        >>> sym = ParitySymmetry(axis='z', sector=-1)
+        >>> sym.directory_name
+        'pz_m'
+        """
+        # Default implementation - subclasses should override
+        sector_str = self._sector_to_str(self.sector)
+        return f"{self.__class__.__name__.lower()}_{sector_str}"
+    
+    @staticmethod
+    def _sector_to_str(sector) -> str:
+        """
+        Convert a sector value to a filesystem-safe string.
+        
+        Parameters
+        ----------
+        sector : int, float, or complex
+            The sector value
+            
+        Returns
+        -------
+        str
+            'p' for +1, 'm' for -1, or the numeric value as string
+        """
+        if sector is None:
+            return "none"
+        if sector == 1:
+            return "p"
+        elif sector == -1:
+            return "m"
+        elif isinstance(sector, (int, np.integer)):
+            return str(int(sector))
+        elif isinstance(sector, float):
+            # Handle floats: replace decimal point with 'd'
+            return str(sector).replace('.', 'd').replace('-', 'm')
+        elif isinstance(sector, complex):
+            # Handle complex: format as 're_im'
+            return f"{sector.real:.2f}_{sector.imag:.2f}".replace('.', 'd').replace('-', 'm')
+        else:
+            return str(sector).replace(' ', '').replace('(', '').replace(')', '')
+    
     # ------------------------------------------------
     # Core application methods (must be implemented)
     # ------------------------------------------------

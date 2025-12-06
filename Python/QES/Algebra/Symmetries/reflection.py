@@ -148,6 +148,28 @@ class ReflectionSymmetry(SymmetryOperator):
         # For jax arrays, delegate to integer operations
         new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
         return jnp.array(new_state), phase
+    
+    @property
+    def directory_name(self) -> str:
+        """
+        Return a clean string suitable for directory names.
+        
+        Format: 'r_{p|m}' for reflection parity +1/-1
+        
+        Returns
+        -------
+        str
+            Filesystem-safe string: 'r_p' for +1, 'r_m' for -1.
+        """
+        sector_str = self._sector_to_str(self.sector)
+        return f"r_{sector_str}"
+    
+    def __repr__(self) -> str:
+        return f"ReflectionSymmetry(sector={self.sector:+d}, ns={self.ns})"
+    
+    def __str__(self) -> str:
+        parity_str = "even" if self.sector == 1 else "odd"
+        return f"Reflection({parity_str})"
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -3,7 +3,8 @@ Symmetry operations for quantum many-body systems.
 
 This module provides symmetry operators for Hilbert space construction:
 - Translation symmetry (momentum sectors)
-- Reflection symmetry (spatial inversion)
+- Reflection symmetry (1D bit-reversal)
+- Inversion symmetry (general spatial inversion for any lattice/dimension)
 - Parity symmetry (particle-hole, spin-flip)
 - Compatibility checking and automatic filtering
 
@@ -31,6 +32,11 @@ from QES.Algebra.Symmetries.translation import (
 
 from QES.Algebra.Symmetries.reflection import (
     ReflectionSymmetry,
+)
+
+from QES.Algebra.Symmetries.inversion import (
+    InversionSymmetry,
+    build_inversion_operator_matrix,
 )
 
 from QES.Algebra.Symmetries.parity import (
@@ -66,6 +72,7 @@ __all__ = [
     # Symmetry operators
     'TranslationSymmetry',
     'ReflectionSymmetry',
+    'InversionSymmetry',
     'ParitySymmetry',
     
     # Utilities
@@ -112,6 +119,7 @@ def get_available_symmetries():
     return {
         'translation'   : TranslationSymmetry,
         'reflection'    : ReflectionSymmetry,
+        'inversion'     : InversionSymmetry,
         'parity'        : ParitySymmetry,
     }
 

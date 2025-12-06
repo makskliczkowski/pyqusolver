@@ -517,3 +517,269 @@ def calc_mean_energy_quench(H, state, backend='default'):
     """
     # For complex inner products, use vdot which conjugates the first argument.
     return backend.vdot(state, backend.dot(H, state))
+
+# -----------------------------------------------------------------------------
+#! Time Evolution Module Wrapper
+# -----------------------------------------------------------------------------
+
+class TimeEvolutionModule:
+    """
+    Time evolution module wrapper for Hamiltonian.
+    
+    Provides a convenient interface for time evolution calculations
+    by wrapping the time evolution functions and binding them to a 
+    specific Hamiltonian instance.
+    
+    Usage
+    -----
+    >>> # Via Hamiltonian property
+    >>> H = Hamiltonian(...)
+    >>> H.diagonalize()
+    >>> # Evolve an initial state
+    >>> psi_t = H.time_evo.evolve(psi0, t=1.0)
+    >>> # Batch evolution at multiple times
+    >>> psi_ts = H.time_evo.evolve_batch(psi0, times=[0.1, 0.5, 1.0, 2.0])
+    >>> # Calculate expectation values
+    >>> exp_vals = H.time_evo.expectation(psi0, operator, times)
+    >>> # Create quench initial state
+    >>> psi_quench = H.time_evo.quench_state(QuenchTypes.NEEL)
+    
+    Methods
+    -------
+    evolve(state, t) : Evolve state to time t
+    evolve_batch(state, times) : Evolve state to multiple times
+    expectation(state, observable, times) : Expectation values over time
+    quench_state(quench_type, ...) : Create initial quench state
+    diagonal_ensemble(state) : Compute diagonal ensemble average
+    mean_energy(state) : Mean energy after quench
+    """
+    
+    def __init__(self, hamiltonian):
+        """
+        Initialize the time evolution module.
+        
+        Parameters
+        ----------
+        hamiltonian : Hamiltonian
+            The Hamiltonian instance to use for time evolution.
+        """
+        self._hamil = hamiltonian
+        
+    def _check_diagonalized(self):
+        """Check that the Hamiltonian is diagonalized."""
+        if not hasattr(self._hamil, 'eigenstates') or self._hamil.eigenstates is None:
+            raise RuntimeError("Hamiltonian must be diagonalized first. Call H.diagonalize()")
+            
+    @property
+    def eigenstates(self):
+        """Get eigenstates from Hamiltonian."""
+        self._check_diagonalized()
+        return self._hamil.eigenstates
+    
+    @property
+    def eigenvalues(self):
+        """Get eigenvalues from Hamiltonian."""
+        self._check_diagonalized()
+        return self._hamil.eigenvalues
+    
+    def overlaps(self, state : Array) -> Array:
+        """
+        Compute overlaps of state with eigenstates.
+        
+        Parameters
+        ----------
+        state : Array
+            Initial state vector.
+            
+        Returns
+        -------
+        Array
+            Overlaps with each eigenstate.
+        """
+        return self.eigenstates.conj().T @ state
+    
+    def evolve(self, 
+               state    : Array, 
+               t        : float,
+               overlaps : Array = None) -> Array:
+        """
+        Evolve a quantum state to time t.
+        
+        Parameters
+        ----------
+        state : Array
+            Initial state vector.
+        t : float
+            Time to evolve to.
+        overlaps : Array, optional
+            Pre-computed overlaps. If None, computed from state.
+            
+        Returns
+        -------
+        Array
+            Time-evolved state.
+        """
+        if overlaps is None:
+            overlaps = self.overlaps(state)
+        return time_evolution(self.eigenstates, self.eigenvalues, overlaps, t)
+    
+    def evolve_batch(self, 
+                     state      : Array, 
+                     times      : Array,
+                     overlaps   : Array = None,
+                     optimized  : bool = True) -> Array:
+        """
+        Evolve a quantum state to multiple time points.
+        
+        Parameters
+        ----------
+        state : Array
+            Initial state vector.
+        times : Array
+            Array of time points.
+        overlaps : Array, optional
+            Pre-computed overlaps. If None, computed from state.
+        optimized : bool
+            Use optimized batch evolution.
+            
+        Returns
+        -------
+        Array
+            Time-evolved states, shape (hilbert_dim, n_times).
+        """
+        if overlaps is None:
+            overlaps = self.overlaps(state)
+        if optimized:
+            return time_evo_block_optimized(
+                self.eigenstates, self.eigenvalues, overlaps, times
+            )
+        return time_evo_block(self.eigenstates, self.eigenvalues, overlaps, times)
+    
+    def expectation(self, 
+                    state       : Array, 
+                    observable  : Array,
+                    times       : Array,
+                    overlaps    : Array = None) -> Array:
+        """
+        Compute expectation values of an observable over time.
+        
+        Parameters
+        ----------
+        state : Array
+            Initial state vector.
+        observable : Array
+            Observable matrix.
+        times : Array
+            Array of time points.
+        overlaps : Array, optional
+            Pre-computed overlaps.
+            
+        Returns
+        -------
+        Array
+            Expectation values at each time point.
+        """
+        if overlaps is None:
+            overlaps = self.overlaps(state)
+            
+        # Get time-evolved states
+        psi_t = self.evolve_batch(state, times, overlaps)
+        
+        # Compute expectation values
+        return time_evo_evaluate(psi_t, observable)
+    
+    def quench_state(self, 
+                     quench_type : QuenchTypes,
+                     Ns          : int = None,
+                     Nh          : int = None,
+                     use_jax     : bool = None,
+                     energies    : Array = None,
+                     Eseek       : float = None) -> Array:
+        """
+        Create an initial state for quantum quench.
+        
+        Parameters
+        ----------
+        quench_type : QuenchTypes
+            Type of quench: NEEL, CDW, DW, RANDOM, etc.
+        Ns : int, optional
+            Number of sites. Uses Hamiltonian's Ns if not provided.
+        Nh : int, optional
+            Hilbert space dimension. Uses Hamiltonian's Nh if not provided.
+        use_jax : bool, optional
+            Use JAX arrays.
+        energies : Array, optional
+            Energy array for MEAN/SEEK quench types.
+        Eseek : float, optional
+            Target energy for SEEK quench type.
+            
+        Returns
+        -------
+        Array
+            Initial quench state.
+        """
+        if Ns is None:
+            Ns = self._hamil.ns
+        if Nh is None:
+            Nh = self._hamil.nh
+        if use_jax is None:
+            use_jax = _JAX_AVAILABLE
+        if energies is None and quench_type in (QuenchTypes.MEAN, QuenchTypes.SEEK):
+            energies = self.eigenvalues
+            
+        return create_initial_quench_state(
+            quench_type, Ns, Nh, use_jax=use_jax, 
+            energies=energies, Eseek=Eseek
+        )
+    
+    def diagonal_ensemble(self, state : Array) -> Array:
+        """
+        Compute diagonal ensemble (infinite-time average) occupation probabilities.
+        
+        Parameters
+        ----------
+        state : Array
+            Initial state.
+            
+        Returns
+        -------
+        Array
+            Squared overlaps |<n|ψ>|² for each eigenstate.
+        """
+        overlaps = self.overlaps(state)
+        return diagonal_ensemble(overlaps)
+    
+    def mean_energy(self, state : Array) -> float:
+        """
+        Calculate mean energy after quench.
+        
+        Parameters
+        ----------
+        state : Array
+            State vector.
+            
+        Returns
+        -------
+        float
+            Mean energy <ψ|H|ψ>.
+        """
+        matrix = self._hamil.matrix
+        backend = jnp if _JAX_AVAILABLE else np
+        return calc_mean_energy_quench(matrix, state, backend)
+
+
+def get_time_evolution_module(hamiltonian) -> TimeEvolutionModule:
+    """
+    Factory function to get the time evolution module for a Hamiltonian.
+    
+    Parameters
+    ----------
+    hamiltonian : Hamiltonian
+        The Hamiltonian instance.
+        
+    Returns
+    -------
+    TimeEvolutionModule
+        Time evolution module wrapper.
+    """
+    return TimeEvolutionModule(hamiltonian)

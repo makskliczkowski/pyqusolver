@@ -430,6 +430,20 @@ class TranslationSymmetry(SymmetryOperator):
 
     def __str__(self) -> str:
         return f'T({str(self.direction)};{self.momentum_index})'
+    
+    @property
+    def directory_name(self) -> str:
+        """
+        Return a clean string suitable for directory names.
+        
+        Format: 'k{direction}_{sector}' e.g., 'kx_0', 'ky_3', 'kz_1'
+        
+        Returns
+        -------
+        str
+            Filesystem-safe string for this translation symmetry sector.
+        """
+        return f"k{self.direction}_{self.momentum_index}"
 
     # -----------------------------------------------------
     #! Character computation

@@ -1020,8 +1020,8 @@ class Hamiltonian(Operator):
     
     @property
     def entanglement(self):
-        """
-        Lazy-loaded entanglement module for convenient entanglement entropy calculations.
+        r"""
+        Lazy-loaded entanglement module for comprehensive entanglement entropy calculations.
         
         Returns
         -------
@@ -1030,35 +1030,225 @@ class Hamiltonian(Operator):
             Supports both correlation matrix (fast, for quadratic Hamiltonians) and 
             many-body (exact, for any state) methods.
             
+        Features
+        --------
+        **Single-Particle Methods (Quadratic Hamiltonians)**:
+            - Fast O(L³) entropy from correlation matrix C_ij = <c_i† c_j>
+            - Supports both NumPy and JAX backends (GPU acceleration)
+            - Batch calculation for multiple bipartitions
+            - Works for ANY bipartition (contiguous or non-contiguous)
+            
+        **Many-Body Methods (Any State)**:
+            - Exact Schmidt decomposition for arbitrary states
+            - Works for contiguous AND non-contiguous bipartitions
+            - Required for interacting systems
+            
+        **Topological Entanglement Entropy**:
+            - Kitaev-Preskill construction: \gamma = S_A + S_B + S_C - S_AB - S_BC - S_AC + S_ABC
+            - Levin-Wen construction for disk geometry
+            - Extracts universal topological term
+            
+        **Wick's Theorem Verification**:
+            - Check if a state is a valid Slater determinant
+            - Verify Wick contractions: <c†c†cc> = <c†c><c†c> - <c†c><c†c>
+            
+        **Mask Generation Utilities** (via MaskGenerator class):
+            - Contiguous, alternating, random subsystems
+            - Sublattice masks for bipartite lattices
+            - Kitaev-Preskill regions for TEE
+            - Bitmask conversions
+            
         Examples
         --------
-        >>> # For quadratic Hamiltonians (fast correlation matrix method)
-        >>> hamil       = FreeFermions(ns=12, t=1.0)
-        >>> hamil.diagonalize()
-        >>> ent         = hamil.entanglement
-        >>> bipart      = ent.bipartition([0, 1, 2, 3, 4])  # First 5 sites
-        >>> S           = ent.entropy_correlation(bipart, orbitals=[0,1,2,3,4])
+        Basic entropy calculation:
+            >>> hamil = FreeFermions(ns=12, t=1.0)
+            >>> hamil.diagonalize()
+            >>> ent = hamil.entanglement
+            >>> 
+            >>> # Contiguous bipartition (correlation method is exact)
+            >>> bipart = ent.bipartition([0, 1, 2, 3, 4])
+            >>> S = ent.entropy_correlation(bipart, orbitals=[0,1,2,3,4,5])
         
-        >>> # For any Hamiltonian (exact many-body method)
-        >>> state       = hamil.many_body_state([0,1,2,3,4])
-        >>> S           = ent.entropy_many_body(bipart, state)
+        Non-contiguous bipartition (works correctly!):
+            >>> bipart_nc = ent.bipartition([0, 2, 4, 6, 8])  # Even sites
+            >>> state = hamil.many_body_state([0,1,2,3,4,5])
+            >>> S_corr = ent.entropy_correlation(bipart_nc, orbitals)  # Fast
+            >>> S_mb = ent.entropy_many_body(bipart_nc, state)  # Also works
+            >>> # Both methods give same result for free fermions!
         
-        >>> # Non-contiguous bipartitions
-        >>> bipart      = ent.bipartition([0, 2, 4, 6, 8])  # Even sites
-        >>> S           = ent.entropy_correlation(bipart, [0,1,2])
+        Compare methods:
+            >>> result = ent.compare_methods(bipart, orbitals)
+            >>> print(f"Correlation: {result['correlation']:.4f}")
+            >>> print(f"Many-body:   {result['many_body']:.4f}")
         
-        >>> # Entropy scaling
-        >>> results     = ent.entropy_scan([0,1,2,3,4])
-        >>> import matplotlib.pyplot as plt
-        >>> plt.plot(results['sizes'], results['entropies'])
+        Topological entanglement entropy:
+            >>> result = ent.topological_entropy(orbitals, construction='kitaev_preskill')
+            >>> gamma = result['gamma']  # TEE
+            >>> print(f"γ = {gamma:.4f} (γ=log(2) for toric code)")
         
-        >>> # Get help
-        >>> hamil.entanglement.help()
+        Wick's theorem verification:
+            >>> result = ent.verify_wicks_theorem(orbitals)
+            >>> print(f"Is Slater determinant: {result['is_valid']}")
+            >>> print(f"Max Wick error: {result['max_error']:.2e}")
+        
+        Mask generation:
+            >>> from QES.general_python.physics.entanglement_module import MaskGenerator
+            >>> mask = MaskGenerator.contiguous(ns=12, size_a=4)
+            >>> even, odd = MaskGenerator.alternating(ns=12)
+            >>> regions = MaskGenerator.kitaev_preskill(ns=12)
+        
+        Entropy scaling:
+            >>> results = ent.entropy_scan([0,1,2,3,4])
+            >>> import matplotlib.pyplot as plt
+            >>> plt.plot(results['sizes'], results['entropies'])
+            >>> plt.xlabel('Subsystem size')
+            >>> plt.ylabel('Entanglement entropy')
+        
+        Get detailed help:
+            >>> hamil.entanglement.help()
+            
+        See Also
+        --------
+        - entropy_correlation : Fast method for quadratic Hamiltonians
+        - entropy_many_body : Exact method for any state
+        - topological_entropy : Kitaev-Preskill/Levin-Wen TEE
+        - verify_wicks_theorem : Check Slater determinant property
+        - MaskGenerator : Utility class for generating subsystem masks
         """
         if not hasattr(self, '_entanglement_module') or self._entanglement_module is None:
             from QES.general_python.physics.entanglement_module import get_entanglement_module
             self._entanglement_module = get_entanglement_module(self)
         return self._entanglement_module
+    
+    @property
+    def statistical(self):
+        r"""
+        Lazy-loaded statistical properties module.
+        
+        Provides functions for calculating statistical properties of eigenstates
+        and eigenvalues: LDOS, DOS, matrix element distributions, IPR, etc.
+        
+        Returns
+        -------
+        StatisticalModule
+            Module with statistical analysis methods.
+            
+        Examples
+        --------
+        Density of States:
+            >>> hamil.diagonalize()
+            >>> dos = hamil.statistical.dos(nbins=100)
+        
+        Local DOS (strength function):
+            >>> psi0 = hamil.eig_vec[:, 0]  # Ground state
+            >>> ldos = hamil.statistical.ldos(overlaps=psi0)
+        
+        Inverse Participation Ratio:
+            >>> ipr = hamil.statistical.ipr(hamil.eig_vec[:, 0])
+        
+        See Also
+        --------
+        QES.Algebra.Properties.statistical : Full module documentation
+        """
+        if not hasattr(self, '_statistical_module') or self._statistical_module is None:
+            from QES.Algebra.Properties.statistical import get_statistical_module
+            self._statistical_module = get_statistical_module(self)
+        return self._statistical_module
+    
+    @property
+    def time_evo(self):
+        r"""
+        Lazy-loaded time evolution module.
+        
+        Provides efficient methods for quantum quench dynamics and time evolution
+        of states using the eigenbasis decomposition.
+        
+        Returns
+        -------
+        TimeEvolutionModule
+            Module with time evolution methods.
+            
+        Features
+        --------
+        - Efficient time evolution via eigenbasis decomposition
+        - Batch evolution for multiple time points (one BLAS call)
+        - Expectation value calculation for observables
+        - Quench state construction (AF, FM, domain wall, random, etc.)
+        - Diagonal ensemble calculations
+        - JAX support for GPU acceleration
+        
+        Examples
+        --------
+        Basic time evolution:
+            >>> hamil.diagonalize()
+            >>> psi0 = np.zeros(hamil.nh); psi0[0] = 1.0  # Initial state
+            >>> psi_t = hamil.time_evo.evolve(psi0, t=1.0)
+        
+        Multiple times efficiently:
+            >>> times = np.linspace(0, 10, 100)
+            >>> psi_all = hamil.time_evo.evolve_batch(psi0, times)  # (dim, 100)
+        
+        Expectation value dynamics:
+            >>> O = ...  # Observable operator
+            >>> O_t = hamil.time_evo.expectation(psi0, O, times)
+        
+        Create quench initial states:
+            >>> from QES.Algebra.Properties.time_evo import QuenchTypes
+            >>> psi0 = hamil.time_evo.quench_state(QuenchTypes.NEEL)
+        
+        See Also
+        --------
+        QES.Algebra.Properties.time_evo : Full module documentation
+        """
+        if not hasattr(self, '_time_evo_module') or self._time_evo_module is None:
+            from QES.Algebra.Properties.time_evo import get_time_evolution_module
+            self._time_evo_module = get_time_evolution_module(self)
+        return self._time_evo_module
+    
+    @property
+    def spectral(self):
+        r"""
+        Lazy-loaded spectral function module.
+        
+        Provides Green's functions, spectral functions, and dynamical
+        correlation functions using full ED or Lanczos methods.
+        
+        Returns
+        -------
+        SpectralModule
+            Module with spectral function methods.
+            
+        Features
+        --------
+        - Green's function G(ω) from eigenbasis or Lanczos
+        - Spectral function A(ω) = -Im[G(ω)]/π
+        - Dynamic structure factor S(q,ω)
+        - Dynamical susceptibility χ(ω)
+        - Finite temperature support
+        
+        Examples
+        --------
+        Spectral function:
+            >>> hamil.diagonalize()
+            >>> omega = np.linspace(-5, 5, 200)
+            >>> A = hamil.spectral.spectral_function(omega, operator, eta=0.1)
+        
+        Dynamic structure factor (Lanczos - no full diag needed):
+            >>> S_omega = hamil.spectral.dynamic_structure_factor(
+            ...     omega, S_q_operator, use_lanczos=True, max_krylov=100
+            ... )
+        
+        Susceptibility:
+            >>> chi = hamil.spectral.susceptibility(omega, Sx_op, Sx_op)
+        
+        See Also
+        --------
+        QES.general_python.physics.spectral.spectral_backend : Full module
+        """
+        if not hasattr(self, '_spectral_module') or self._spectral_module is None:
+            from QES.general_python.physics.spectral.spectral_backend import get_spectral_module
+            self._spectral_module = get_spectral_module(self)
+        return self._spectral_module
     
     # ----------------------------------------------------------------------------------------------
     

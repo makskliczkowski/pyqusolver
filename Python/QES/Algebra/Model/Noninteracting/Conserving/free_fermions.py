@@ -11,10 +11,15 @@ date    : 2025-05-01
 
 import numpy as np
 import numba
-from typing import Optional, Union
+from typing import Optional, Union, TYPE_CHECKING
 
 # import the quadratic base
-from QES.Algebra.hamil_quadratic import QuadraticHamiltonian, JAX_AVAILABLE, Array
+try:
+    from QES.Algebra.hamil_quadratic import QuadraticHamiltonian, JAX_AVAILABLE
+    if TYPE_CHECKING:
+        from QES.general_python.algebra.utils import Array
+except ImportError as e:
+    raise ImportError("Could not import QuadraticHamiltonian base class. Ensure that QES package is properly installed.") from e
 
 # ---------------------------------------------------------------------
 #! Spectrum
@@ -117,7 +122,7 @@ class FreeFermions(QuadraticHamiltonian):
 
     def __init__(self,
                 ns                  : int,
-                t                   : Union[Array, float]   = 1.0,
+                t                   : Union['Array', float] = 1.0,
                 constant_offset     : float                 = 0.0,
                 dtype               : Optional[np.dtype]    = None,
                 backend             : str                   = "default",

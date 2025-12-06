@@ -20,15 +20,13 @@ date    : 2025-11-01
 import numpy as np
 import scipy as sp
 
-from typing import Any, Dict, List, Tuple, Union, Optional, Sequence
-from enum import Enum, unique
-from abc import ABC
-from functools import partial
-from scipy.special import comb
-from itertools import combinations
-from collections import defaultdict
-from scipy.stats import unitary_group
-from dataclasses import dataclass, field
+from typing         import Any, Dict, List, Tuple, Union, Optional, Sequence, TYPE_CHECKING
+from enum           import Enum, unique
+from scipy.special  import comb
+from itertools      import combinations
+from collections    import defaultdict
+from scipy.stats    import unitary_group
+from dataclasses    import dataclass
 
 ##############################################################################
 
@@ -120,9 +118,15 @@ class SolvabilityInfo:
 ##############################################################################
 
 try:
-    from QES.Algebra.hamil import Hamiltonian, HilbertSpace, Lattice, JAX_AVAILABLE, Logger, Array
-    from QES.Algebra.hamil_config import HamiltonianConfig, register_hamiltonian
-    from QES.Algebra.Hilbert.hilbert_jit_states import (
+    from QES.Algebra.hamil                          import Hamiltonian, HilbertSpace, JAX_AVAILABLE
+    from QES.Algebra.hamil_config                   import HamiltonianConfig, register_hamiltonian
+    if TYPE_CHECKING:
+        from QES.general_python.lattices.lattice    import Lattice
+        from QES.general_python.common.flog         import Logger
+        from QES.general_python.algebra.utils       import Array
+    
+    
+    from QES.Algebra.Hilbert.hilbert_jit_states     import (
         calculate_slater_det,
         bogolubov_decompose,
         pairing_matrix,
@@ -657,7 +661,7 @@ class QuadraticHamiltonian(Hamiltonian):
                 *,
                 # Allow passing lattice/logger
                 hilbert_space           : Optional[HilbertSpace]= None,
-                lattice                 : Optional[Lattice]     = None,
+                lattice                 : Optional['Lattice']   = None,
                 logger                  : Optional['Logger']    = None,
                 seed                    : Optional[int]         = None,
                 **kwargs):
@@ -748,7 +752,7 @@ class QuadraticHamiltonian(Hamiltonian):
 
     @classmethod
     def from_hermitian_matrix(cls,
-                            hermitian_part      : Array,
+                            hermitian_part      : 'Array',
                             constant            : float = 0.0,
                             particles           : str = 'fermions',
                             dtype               : Optional[np.dtype] = None,
@@ -801,8 +805,8 @@ class QuadraticHamiltonian(Hamiltonian):
 
     @classmethod
     def from_bdg_matrices(cls,
-                         hermitian_part         : Array,
-                         antisymmetric_part     : Array,
+                         hermitian_part         : 'Array',
+                         antisymmetric_part     : 'Array',
                          constant               : float = 0.0,
                          particles              : str = 'fermions',
                          dtype                  : Optional[np.dtype] = None,
@@ -1180,7 +1184,7 @@ class QuadraticHamiltonian(Hamiltonian):
     #! Basis transformation state queries
     ##########################################################################
 
-    def set_single_particle_matrix(self, H: Array):
+    def set_single_particle_matrix(self, H: 'Array'):
         if not self._particle_conserving:
             raise RuntimeError("Use set_bdg_matrices for non-conserving case")
         if H.shape != (self._ns, self._ns):
@@ -2085,7 +2089,7 @@ class QuadraticHamiltonian(Hamiltonian):
     #! Thermal Properties
     ###########################################################################
 
-    def thermal_scan(self, temperatures: Array, particle_number: Optional[float] = None) -> dict:
+    def thermal_scan(self, temperatures: 'Array', particle_number: Optional[float] = None) -> dict:
         """
         Compute thermal properties over a range of temperatures.
 
@@ -2120,7 +2124,7 @@ class QuadraticHamiltonian(Hamiltonian):
             particle_number=particle_number
         )
 
-    def fermi_occupation(self, beta: float, mu: float = 0.0) -> Array:
+    def fermi_occupation(self, beta: float, mu: float = 0.0) -> 'Array':
         """
         Compute Fermi-Dirac occupation numbers.
 
@@ -2146,7 +2150,7 @@ class QuadraticHamiltonian(Hamiltonian):
 
         return fermi_occupation(self.eig_val, beta, mu)
 
-    def bose_occupation(self, beta: float, mu: float = 0.0) -> Array:
+    def bose_occupation(self, beta: float, mu: float = 0.0) -> 'Array':
         """
         Compute Bose-Einstein occupation numbers.
 
@@ -2176,7 +2180,7 @@ class QuadraticHamiltonian(Hamiltonian):
     #! Time Evolution
     ###########################################################################
 
-    def time_evolution_operator(self, time: float, backend: str = 'auto') -> Array:
+    def time_evolution_operator(self, time: float, backend: str = 'auto') -> 'Array':
         """
         Compute the time evolution operator exp(-i H t) for the quadratic Hamiltonian.
 

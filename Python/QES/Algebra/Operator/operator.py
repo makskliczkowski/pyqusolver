@@ -118,6 +118,7 @@ class SymmetryGenerators(Enum):
     Translation_y   = auto()
     Translation_z   = auto()
     Reflection      = auto()
+    Inversion       = auto()    # spatial inversion (general lattice)
     ParityX         = auto()    # spin-only (sigma-x parity)
     ParityY         = auto()    # spin-only (sigma-y parity)
     ParityZ         = auto()    # spin-only (sigma-z parity)
@@ -139,6 +140,9 @@ class SymmetryGenerators(Enum):
     
     def has_reflection(self):
         return self in [SymmetryGenerators.Reflection]
+    
+    def has_inversion(self):
+        return self in [SymmetryGenerators.Inversion]
     
     def supported_kind(self) -> Set['LocalSpaceTypes']:
         ''' Return the set of LocalSpaceTypes supported by this symmetry generator '''

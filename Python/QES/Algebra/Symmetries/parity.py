@@ -220,6 +220,28 @@ class ParitySymmetry(SymmetryOperator):
             return False, "Parity Z acts trivially with U(1) (redundant)"
         
         return True, "Compatible"
+    
+    @property
+    def directory_name(self) -> str:
+        """
+        Return a clean string suitable for directory names.
+        
+        Format: 'p{axis}_{p|m}' e.g., 'pz_p', 'px_m', 'py_p'
+        
+        Returns
+        -------
+        str
+            Filesystem-safe string for this parity symmetry sector.
+        """
+        sector_str = self._sector_to_str(self.sector)
+        return f"p{self.axis}_{sector_str}"
+    
+    def __repr__(self) -> str:
+        return f"ParitySymmetry(axis={self.axis}, sector={self.sector:+d}, ns={self.ns})"
+    
+    def __str__(self) -> str:
+        parity_str = "even" if self.sector == 1 else "odd"
+        return f"Parity{self.axis.upper()}({parity_str})"
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # EOF

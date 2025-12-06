@@ -1051,6 +1051,76 @@ ACCESS STATES
             yield parity, hilbert
 
     @staticmethod
+    def iter_inversion_sectors(
+        lattice         : 'Lattice',
+        *,
+        momentum_sector : Optional[int]     = None,
+        gen_mapping     : bool              = True,
+        verbose         : bool              = False,
+        **hilbert_kwargs):
+        """
+        Generator that yields HilbertSpaces for all spatial inversion parity sectors.
+        
+        Unlike reflection (which uses bit-reversal), inversion uses lattice coordinates
+        and works correctly for any lattice type (square, honeycomb, triangular, etc.)
+        and any dimension (1D, 2D, 3D).
+        
+        Parameters
+        ----------
+        lattice : Lattice
+            Lattice structure.
+        momentum_sector : int, optional
+            If provided, fix the translation sector to this value.
+            Inversion is only compatible with k=0 and k=pi (L/2).
+        gen_mapping : bool, default=True
+            Whether to generate compact symmetry mapping.
+        verbose : bool, default=False
+            If True, print progress information.
+        **hilbert_kwargs
+            Additional keyword arguments passed to HilbertSpace constructor.
+            
+        Yields
+        ------
+        Tuple[int, HilbertSpace]
+            A tuple of (parity, hilbert_space) where parity is +1 or -1.
+            
+        Examples
+        --------
+        >>> # Works for any lattice type
+        >>> from QES.general_python.lattices.square import SquareLattice
+        >>> lattice = SquareLattice(dim=2, lx=4, ly=4)  # 2D
+        >>> for parity, hilbert in HilbertSpace.iter_inversion_sectors(lattice):
+        ...     print(f"P={parity:+d}: dim={hilbert.dim}")
+        P=+1: dim=...
+        P=-1: dim=...
+        
+        >>> # Also works for honeycomb, triangular, etc.
+        >>> from QES.general_python.lattices.honeycomb import HoneycombLattice
+        >>> lattice = HoneycombLattice(lx=3, ly=3)
+        >>> for parity, hilbert in HilbertSpace.iter_inversion_sectors(lattice):
+        ...     print(f"P={parity:+d}: dim={hilbert.dim}")
+        """
+        from QES.Algebra.Operator.operator      import SymmetryGenerators
+        from QES.Algebra.Symmetries.inversion   import InversionSymmetry
+        
+        symmetry_types = []
+        
+        if momentum_sector is not None:
+            symmetry_types.append((SymmetryGenerators.Translation_x, [momentum_sector]))
+        
+        symmetry_types.append((SymmetryGenerators.Inversion, InversionSymmetry.get_sectors()))
+        
+        for sector_dict, hilbert in HilbertSpace.iter_symmetry_sectors(
+            symmetry_types,
+            lattice     = lattice,
+            gen_mapping = gen_mapping,
+            verbose     = verbose,
+            **hilbert_kwargs
+        ):
+            parity = sector_dict[SymmetryGenerators.Inversion]
+            yield parity, hilbert
+
+    @staticmethod
     def iter_parity_sectors(
         lattice         : 'Lattice',
         axis            : str               = 'z',
@@ -1205,9 +1275,14 @@ ACCESS STATES
                     symmetry_types.append((SymmetryGenerators.Translation_z, TranslationSymmetry.get_sectors(lattice, 'z')))
                     sector_names[SymmetryGenerators.Translation_z] = 'kz'
                     
-            elif sym_lower in ['reflection', 'parityspatial', 'spatial', 'inversion']:
+            elif sym_lower in ['reflection', 'parityspatial', 'spatial', 'mirror']:
                 symmetry_types.append((SymmetryGenerators.Reflection, ReflectionSymmetry.get_sectors()))
                 sector_names[SymmetryGenerators.Reflection] = 'reflection'
+            
+            elif sym_lower in ['inversion', 'inv', 'spatialinversion']:
+                from QES.Algebra.Symmetries.inversion import InversionSymmetry
+                symmetry_types.append((SymmetryGenerators.Inversion, InversionSymmetry.get_sectors()))
+                sector_names[SymmetryGenerators.Inversion] = 'inversion'
                 
             elif sym_lower in ['parityz', 'spinparity', 'pz', 'spinflip']:
                 symmetry_types.append((SymmetryGenerators.ParityZ, ParitySymmetry.get_sectors('z')))
@@ -1222,7 +1297,7 @@ ACCESS STATES
                 sector_names[SymmetryGenerators.ParityY] = 'parity_y'
                 
             else:
-                raise ValueError(f"Unknown symmetry '{sym}'. Options: translation, reflection, parity_z, parity_x, parity_y")
+                raise ValueError(f"Unknown symmetry '{sym}'. Options: translation, reflection, inversion, parity_z, parity_x, parity_y")
         
         for sector_dict, hilbert in HilbertSpace.iter_symmetry_sectors(
             symmetry_types,
@@ -1385,6 +1460,14 @@ ACCESS STATES
                 sector = sym_value
             specs.append((SymmetryGenerators.Reflection, sector))
         
+        # Inversion symmetry (general spatial inversion for any lattice)
+        elif sym_name_lower in ['inversion', 'inv', 'spatial', 'spatialinversion']:
+            if isinstance(sym_value, dict):
+                sector = sym_value.get('sector', 1)
+            else:
+                sector = sym_value
+            specs.append((SymmetryGenerators.Inversion, sector))
+        
         # Fermion parity
         elif sym_name_lower in ['fermionparity', 'fermion', 'fparity']:
             if isinstance(sym_value, dict):
@@ -1411,8 +1494,8 @@ ACCESS STATES
         
         else:
             raise ValueError(f"Unknown symmetry name: '{sym_name}'. "
-                           f"Supported: translation, parity, reflection, fermion_parity, "
-                           f"particle_hole, time_reversal")
+                           f"Supported: translation, parity, reflection, inversion, "
+                           f"fermion_parity, particle_hole, time_reversal")
         
         return specs
     
@@ -2157,6 +2240,136 @@ ACCESS STATES
         if self._sym_container is None:
             return None
         return self._sym_container.compact_data
+    
+    @property
+    def symmetry_directory_name(self) -> str:
+        """
+        Return a combined string of all symmetry sectors suitable for directory names.
+        
+        This property generates a filesystem-safe string by combining the directory
+        names of all active symmetry generators. Useful for organizing data files
+        by symmetry sector.
+        
+        The format is: '{sym1}_{sym2}_{...}' where each sym is the directory_name
+        of the corresponding symmetry operator (e.g., 'kx_0', 'pz_p', 'inv_m').
+        
+        Returns 'nosym' if no symmetries are active.
+        
+        Returns
+        -------
+        str
+            Filesystem-safe combined symmetry name string.
+            
+        Examples
+        --------
+        >>> # Single translation symmetry
+        >>> hilbert = HilbertSpace(lattice, sym_gen={'translation': 0})
+        >>> hilbert.symmetry_directory_name
+        'kx_0'
+        
+        >>> # Multiple symmetries
+        >>> hilbert = HilbertSpace(lattice, sym_gen={
+        ...     'translation': {'kx': 0, 'ky': 2},
+        ...     'inversion': 1
+        ... })
+        >>> hilbert.symmetry_directory_name
+        'kx_0_ky_2_inv_p'
+        
+        >>> # No symmetries
+        >>> hilbert = HilbertSpace(lattice)
+        >>> hilbert.symmetry_directory_name
+        'nosym'
+        """
+        if self._sym_container is None:
+            return "nosym"
+        
+        generators = getattr(self._sym_container, 'generators', [])
+        if not generators:
+            return "nosym"
+        
+        # Collect directory names from all generator operators
+        # generators is a list of (operator, (gen_type, sector)) tuples
+        names = []
+        for item in generators:
+            if isinstance(item, tuple) and len(item) >= 1:
+                op = item[0]  # First element is the operator
+            else:
+                op = item
+            
+            if hasattr(op, 'directory_name'):
+                names.append(op.directory_name)
+            elif hasattr(op, 'sector'):
+                # Fallback for operators without directory_name
+                from QES.Algebra.Symmetries.base import SymmetryOperator
+                sector_str = SymmetryOperator._sector_to_str(op.sector)
+                names.append(f"{op.__class__.__name__.lower()}_{sector_str}")
+        
+        if not names:
+            return "nosym"
+        
+        return "_".join(names)
+    
+    @property
+    def full_directory_name(self) -> str:
+        """
+        Return a complete directory name including lattice info and symmetries.
+        
+        Format: 'L{lx}x{ly}x{lz}_{symmetry_directory_name}'
+        
+        For 1D: 'L8_kx_0_pz_p'
+        For 2D: 'L4x4_kx_0_ky_2'
+        For 3D: 'L2x2x2_inv_p'
+        
+        Returns
+        -------
+        str
+            Complete filesystem-safe directory name.
+            
+        Examples
+        --------
+        >>> hilbert = HilbertSpace(lattice_4x4, sym_gen={'translation': 0})
+        >>> hilbert.full_directory_name
+        'L4x4_kx_0'
+        
+        >>> # Without lattice, uses ns (number of sites)
+        >>> hilbert = HilbertSpace(ns=8, sym_gen={'parity': 1})
+        >>> hilbert.full_directory_name
+        'ns8_pz_p'
+        """
+        return f"{self.lattice_directory_name}_{self.symmetry_directory_name}"
+    
+    @property
+    def lattice_directory_name(self) -> str:
+        """
+        Return the lattice part of the directory name.
+        
+        Format depends on dimensionality:
+        - 1D: 'L{lx}'        e.g., 'L8'
+        - 2D: 'L{lx}x{ly}'   e.g., 'L4x4'
+        - 3D: 'L{lx}x{ly}x{lz}' e.g., 'L2x2x2'
+        - No lattice: 'ns{ns}' e.g., 'ns8'
+        
+        Returns
+        -------
+        str
+            Filesystem-safe lattice string.
+        """
+        if self._lattice is not None:
+            lx = getattr(self._lattice, 'Lx', getattr(self._lattice, 'lx', 1))
+            ly = getattr(self._lattice, 'Ly', getattr(self._lattice, 'ly', 1))
+            lz = getattr(self._lattice, 'Lz', getattr(self._lattice, 'lz', 1))
+            dim = getattr(self._lattice, 'dim', 1)
+            
+            if dim == 1 or (ly == 1 and lz == 1):
+                return f"L{lx}"
+            elif dim == 2 or lz == 1:
+                return f"L{lx}x{ly}"
+            else:
+                return f"L{lx}x{ly}x{lz}"
+        elif self._ns is not None and self._ns > 0:
+            return f"ns{self._ns}"
+        else:
+            return "unknown"
 
     # --------------------------------------------------------------------------------------------------
 

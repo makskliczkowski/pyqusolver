@@ -997,6 +997,357 @@ def microcanonical_average(energies     : np.ndarray,
     return np.nan
 
 # -----------------------------------------------------------------------------
+#! StatisticalModule - Hamiltonian wrapper
+# -----------------------------------------------------------------------------
+
+class StatisticalModule:
+    """
+    Statistical properties module for Hamiltonians.
+    
+    Provides convenient access to LDOS, DOS, matrix element statistics,
+    and ensemble averages. Requires diagonalized Hamiltonian.
+    
+    Examples
+    --------
+    >>> hamil.diagonalize()
+    >>> stats = hamil.statistical
+    >>> 
+    >>> # LDOS for a state
+    >>> psi0 = np.zeros(hamil.hilbert_size); psi0[0] = 1.0
+    >>> overlaps = hamil.eig_vec.conj().T @ psi0
+    >>> ldos_vals = stats.ldos(overlaps)
+    >>> 
+    >>> # DOS histogram
+    >>> dos_vals = stats.dos(nbins=50)
+    >>> 
+    >>> # Diagonal ensemble average
+    >>> observable = np.diag(hamil.hamil)
+    >>> avg = stats.diagonal_ensemble(observable, overlaps)
+    """
+    
+    def __init__(self, hamiltonian):
+        self._hamil = hamiltonian
+    
+    def _check_diagonalized(self):
+        if self._hamil._eig_val is None or len(self._hamil._eig_val) == 0:
+            raise RuntimeError("Hamiltonian must be diagonalized first. Call hamil.diagonalize().")
+    
+    @property
+    def energies(self) -> Array:
+        """Get eigenvalues."""
+        self._check_diagonalized()
+        return self._hamil._eig_val
+    
+    def ldos(self, overlaps: Array, degenerate: bool = False, tol: float = 1e-8) -> Array:
+        """
+        Local density of states (strength function).
+        
+        Parameters
+        ----------
+        overlaps : Array
+            Overlaps <n|psi> of initial state with eigenstates
+        degenerate : bool
+            If True, group degenerate states
+        tol : float
+            Tolerance for degeneracy
+            
+        Returns
+        -------
+        Array
+            LDOS values |<n|psi>|^2
+        """
+        self._check_diagonalized()
+        return ldos(self.energies, overlaps, degenerate=degenerate, tol=tol)
+    
+    def dos(self, nbins: int = 100, **kwargs) -> Array:
+        """
+        Density of states histogram.
+        
+        Parameters
+        ----------
+        nbins : int
+            Number of histogram bins
+            
+        Returns
+        -------
+        Array
+            Histogram counts
+        """
+        self._check_diagonalized()
+        return dos(self.energies, nbins=nbins, **kwargs)
+    
+    def diagonal_ensemble(self, observable: Array, overlaps: Array) -> float:
+        """
+        Diagonal ensemble average <O>_DE = sum_n |c_n|^2 O_nn.
+        
+        Parameters
+        ----------
+        observable : Array
+            Observable matrix or diagonal values
+        overlaps : Array
+            Overlaps <n|psi_0> with initial state
+            
+        Returns
+        -------
+        float
+            Diagonal ensemble average
+        """
+        self._check_diagonalized()
+        probs = np.abs(overlaps) ** 2
+        if observable.ndim == 2:
+            obs_diag = np.diag(observable)
+        else:
+            obs_diag = observable
+        return np.sum(probs * obs_diag)
+    
+    def microcanonical_average(self, 
+                              observable: Array,
+                              e_mean: float,
+                              delta_e: float = 5e-2,
+                              stat: str = 'mean') -> float:
+        """
+        Microcanonical ensemble average around energy e_mean.
+        
+        Parameters
+        ----------
+        observable : Array
+            Observable values for each eigenstate
+        e_mean : float
+            Target energy
+        delta_e : float
+            Energy window width
+        stat : str
+            'mean', 'median', 'max', or 'min'
+            
+        Returns
+        -------
+        float
+            Microcanonical average
+        """
+        self._check_diagonalized()
+        return microcanonical_ensemble_single(
+            self.energies, observable, e_mean, delta_e=delta_e, stat=stat
+        )
+    
+    # -------------------------------------------------------------------------
+    # Fidelity Susceptibility
+    # -------------------------------------------------------------------------
+    
+    def fidelity_susceptibility(self, 
+                                operator_matrix: Array,
+                                state_idx: int = 0,
+                                mu: float = None) -> float:
+        """
+        Compute fidelity susceptibility χ_F for a given perturbation.
+        
+        χ_F = sum_{n≠m} |<n|V|m>|² / (E_n - E_m)²
+        
+        Parameters
+        ----------
+        operator_matrix : Array
+            Perturbation operator V in eigenbasis (shape: n_states x n_states)
+            or full Hilbert space matrix
+        state_idx : int
+            Index of the reference state (default: ground state)
+        mu : float, optional
+            Regularization parameter. If None, uses 1/N_hilbert.
+            
+        Returns
+        -------
+        float
+            Fidelity susceptibility
+            
+        Example
+        -------
+        >>> # Project total S_z onto eigenbasis
+        >>> Sz_proj = eig_vec.conj().T @ Sz_operator @ eig_vec
+        >>> chi_F = hamil.statistical.fidelity_susceptibility(Sz_proj, state_idx=0)
+        """
+        self._check_diagonalized()
+        if mu is None:
+            mu = 1.0 / self._hamil.hilbert_space.nh
+        return fidelity_susceptibility_low_rank(
+            self.energies, operator_matrix, mu=mu, idx=state_idx
+        )
+    
+    # -------------------------------------------------------------------------
+    # Inverse Participation Ratio
+    # -------------------------------------------------------------------------
+    
+    def ipr(self, 
+            state: Array = None, 
+            state_idx: int = None,
+            q: float = 2.0) -> float:
+        """
+        Inverse Participation Ratio: IPR_q = sum_i |ψ_i|^(2q).
+        
+        For q=2 (default): IPR = sum_i |ψ_i|^4
+        
+        Parameters
+        ----------
+        state : Array, optional
+            State vector. If None, uses eigenstate at state_idx.
+        state_idx : int, optional
+            Index of eigenstate to use. Default: 0 (ground state).
+        q : float
+            Rényi parameter. Default: 2.
+            
+        Returns
+        -------
+        float
+            IPR value. 1/IPR gives effective number of basis states.
+        """
+        if state is None:
+            self._check_diagonalized()
+            state_idx = state_idx if state_idx is not None else 0
+            state = self._hamil.eig_vec[:, state_idx]
+        probs = np.abs(state) ** 2
+        return np.sum(probs ** q)
+    
+    def participation_entropy(self, 
+                             state: Array = None,
+                             state_idx: int = None) -> float:
+        """
+        Participation entropy: S_p = -sum_i |ψ_i|^2 log(|ψ_i|^2).
+        
+        Parameters
+        ----------
+        state : Array, optional
+            State vector. If None, uses eigenstate at state_idx.
+        state_idx : int, optional
+            Index of eigenstate. Default: 0 (ground state).
+            
+        Returns
+        -------
+        float
+            Participation entropy.
+        """
+        if state is None:
+            self._check_diagonalized()
+            state_idx = state_idx if state_idx is not None else 0
+            state = self._hamil.eig_vec[:, state_idx]
+        probs = np.abs(state) ** 2
+        probs = probs[probs > 0]
+        return -np.sum(probs * np.log(probs))
+    
+    # -------------------------------------------------------------------------
+    # Level Statistics
+    # -------------------------------------------------------------------------
+    
+    def level_spacing(self, unfolded: bool = False) -> Array:
+        """
+        Level spacings: s_i = E_{i+1} - E_i.
+        
+        Parameters
+        ----------
+        unfolded : bool
+            If True, normalize by mean spacing (for r-statistics).
+            
+        Returns
+        -------
+        Array
+            Level spacings.
+        """
+        self._check_diagonalized()
+        spacings = np.diff(self.energies)
+        if unfolded:
+            mean_spacing = np.mean(spacings)
+            spacings = spacings / mean_spacing
+        return spacings
+    
+    def level_spacing_ratio(self) -> Array:
+        """
+        Level spacing ratio: r_i = min(s_i, s_{i+1}) / max(s_i, s_{i+1}).
+        
+        For GOE (chaotic): <r> ≈ 0.536
+        For Poisson (integrable): <r> ≈ 0.386
+        
+        Returns
+        -------
+        Array
+            Level spacing ratios.
+        """
+        self._check_diagonalized()
+        spacings = np.diff(self.energies)
+        r = np.minimum(spacings[:-1], spacings[1:]) / np.maximum(spacings[:-1], spacings[1:])
+        return r
+    
+    def mean_level_spacing_ratio(self) -> float:
+        """Average level spacing ratio <r>."""
+        return np.mean(self.level_spacing_ratio())
+    
+    # -------------------------------------------------------------------------
+    # Survival Probability
+    # -------------------------------------------------------------------------
+    
+    def survival_probability(self,
+                            initial_state: Array,
+                            times: Array) -> Array:
+        """
+        Survival probability |<ψ(0)|ψ(t)>|².
+        
+        Parameters
+        ----------
+        initial_state : Array
+            Initial state in Hilbert space basis.
+        times : Array
+            Time points.
+            
+        Returns
+        -------
+        Array
+            Survival probability at each time.
+        """
+        self._check_diagonalized()
+        overlaps = self._hamil.eig_vec.conj().T @ initial_state
+        return survival_prob(initial_state, overlaps, self.energies, times)
+    
+    def help(self):
+        """Print help for statistical module."""
+        print("""
+        StatisticalModule - Statistical properties for Hamiltonians
+        ===========================================================
+        
+        Requires: hamil.diagonalize() first
+        
+        Methods:
+        --------
+        # Density of States
+        ldos(overlaps)                  - Local density of states
+        dos(nbins=100)                  - Density of states histogram  
+        
+        # Ensemble Averages
+        diagonal_ensemble(O, c)         - Diagonal ensemble <O>_DE
+        microcanonical_average(...)     - Microcanonical average
+        
+        # Fidelity & Localization
+        fidelity_susceptibility(V)      - Fidelity susceptibility χ_F
+        ipr(state, q=2)                 - Inverse participation ratio
+        participation_entropy(state)    - Participation entropy
+        
+        # Level Statistics
+        level_spacing(unfolded=False)   - Level spacings s_i = E_{i+1} - E_i
+        level_spacing_ratio()           - r_i = min/max ratio
+        mean_level_spacing_ratio()      - <r> average
+        
+        # Dynamics
+        survival_probability(psi0, t)   - |<ψ(0)|ψ(t)>|²
+        
+        Example:
+        --------
+        >>> psi0    = np.zeros(N); psi0[0] = 1.0
+        >>> c       = hamil.eig_vec.conj().T @ psi0
+        >>> ldos    = hamil.statistical.ldos(c)
+        >>> chi_F   = hamil.statistical.fidelity_susceptibility(V_proj)
+        >>> r_mean  = hamil.statistical.mean_level_spacing_ratio()
+        """)
+
+
+def get_statistical_module(hamiltonian) -> StatisticalModule:
+    """Factory function to create statistical module."""
+    return StatisticalModule(hamiltonian)
+
+# -----------------------------------------------------------------------------
 #! EOF 
 # -----------------------------------------------------------------------------
 

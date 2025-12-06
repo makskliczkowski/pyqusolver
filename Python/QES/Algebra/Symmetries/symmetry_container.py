@@ -1385,6 +1385,11 @@ def _create_symmetry_operator(
             from QES.Algebra.Symmetries.reflection import ReflectionSymmetry
             return ReflectionSymmetry(lattice=lattice, sector=sector, ns=ns)
         
+        # Inversion (general spatial inversion for any lattice/dimension)
+        elif gen_type == SymmetryGenerators.Inversion:
+            from QES.Algebra.Symmetries.inversion import InversionSymmetry
+            return InversionSymmetry(lattice=lattice, sector=sector, ns=ns, base=nhl)
+        
         # Parity symmetries
         elif gen_type == SymmetryGenerators.ParityX:
             from QES.Algebra.Symmetries.parity import ParitySymmetry
