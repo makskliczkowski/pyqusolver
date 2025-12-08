@@ -494,11 +494,14 @@ class OperatorModule:
             Dictionary containing 'xx', 'xy'..., 'susceptibility_tensor', etc.
         """
         import gc
+        import numba
 
         # Setup & Dimensions
         ns                  = hilbert.ns
         nh, n_total         = eigenvectors.shape
         n_states            = nstates_to_store if nstates_to_store is not None else n_total
+        n_threads           = numba.config.NUMBA_NUM_THREADS
+        numba.set_num_threads(n_threads)
         
         # Convert to complex once if not already
         ev                  = eigenvectors[:, :n_states]    # (Nh, n_states)
@@ -513,7 +516,6 @@ class OperatorModule:
         # 2. vec_xi, vec_yi, vec_zi (Site i ops)
         # 3. vec_xj, vec_yj, vec_zj (Site j ops)
         # 4. 1-2 Temporary arrays created by numpy during (conj * vec) multiplication
-        # Total ~ 8 to 10 vectors.
         vecs_per_batch_idx  = 10.0
         avail_mem           = get_available_memory_gb()             # GB
         safe_mem            = avail_mem * safety_factor             # GB to use safely
@@ -524,9 +526,9 @@ class OperatorModule:
         
         if logger:
             logger.info(f"Memory Check: Available={avail_mem:.2f}GB. Vector Size={vec_gb:.4f}GB.",  lvl=2               )
-            logger.info(f"Calculated safe batch size: {batch_size} states (out of {n_states}).",    lvl=3, color='green')
+            logger.info(f"Calculated safe batch size: {batch_size} states (out of {n_states}).",Żľ    lvl=3, color='green')
 
-        # 3. Initialize Data Structures
+        # Initialize Data Structures
         ops_list            = ['xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz'] if correlators is None else correlators
         ops_set             = set(ops_list)                         # Fast lookup
         values              = {op: np.zeros((ns, ns, n_states), dtype=np.complex128) for op in ops_list}
@@ -542,11 +544,25 @@ class OperatorModule:
         sig_y               = self.sig_y(lattice=lattice, ns=ns, type_act='local')
         sig_z               = self.sig_z(lattice=lattice, ns=ns, type_act='local')
         
-        need_xj             = not ops_set.isdisjoint({'xx', 'yx', 'zx'})
+        # Site j: ONLY needed if specific pairwise correlations are requested
+        # We look strictly at the second character of the operator string (e.g., 'xz' -> z on j)
+        need_xj             = not ops_set.isdisjoint({'xx', 'yx', 'zx'}) 
         need_yj             = not ops_set.isdisjoint({'xy', 'yy', 'zy'})
         need_zj             = not ops_set.isdisjoint({'xz', 'yz', 'zz'})
-
-        # 4. Main Computation Loop (Batched)
+        
+        # Site i Buffers (Always allocate)
+        buf_xi              = np.zeros((nh, batch_size), dtype=np.complex128)
+        buf_yi              = np.zeros((nh, batch_size), dtype=np.complex128)
+        buf_zi              = np.zeros((nh, batch_size), dtype=np.complex128)
+        
+        # Site j Buffers (Conditionally allocate)
+        buf_xj              = np.zeros((nh, batch_size), dtype=np.complex128) if need_xj else None
+        buf_yj              = np.zeros((nh, batch_size), dtype=np.complex128) if need_yj else None
+        buf_zj              = np.zeros((nh, batch_size), dtype=np.complex128) if need_zj else None
+        JIT_CHUNK_SIZE      = 8
+        thread_buf_cache    = np.zeros((n_threads, nh, JIT_CHUNK_SIZE), dtype=np.complex128)
+        
+        # Main Computation Loop (Batched)
         # Outer loop: Sites i
         for i in range(ns):
             t_site      = time.time()
@@ -554,71 +570,99 @@ class OperatorModule:
             
             # Batched Loop over Eigenstates
             for b_start in range(0, n_states, batch_size):
-                b_end                       = min(b_start + batch_size, n_states)
-            
                 # Slice the batch
                 # Shape: (Nh, current_batch_size)
+                b_end                       = min(b_start + batch_size, n_states)
                 ev_batch                    = ev[:, b_start:b_end] 
+                curr_width                  = b_end - b_start
                 
-                # B. Compute Site i operators on this batch
-                # These use the JIT matvec under the hood
-                vec_xi                      = sig_x.matvec(ev_batch, i, hilbert=hilbert)
-                vec_yi                      = sig_y.matvec(ev_batch, i, hilbert=hilbert)
-                vec_zi                      = sig_z.matvec(ev_batch, i, hilbert=hilbert)
+                # Compute Site i operators on this batch
+                vec_xi, vec_yi, vec_zi      = None, None, None
                 
-                # C. Update Total Magnetization Projections
-                # Sx_proj is (M, M). We update columns [:, b_start:b_end]
-                # ev_c_t is (M, Nh), vec_xi is (Nh, batch) -> (M, batch)
-                Sx_proj[:, b_start:b_end]  += ev_c_t @ vec_xi
-                Sy_proj[:, b_start:b_end]  += ev_c_t @ vec_yi
-                Sz_proj[:, b_start:b_end]  += ev_c_t @ vec_zi
+                if buf_xi is not None:
+                    vec_xi = buf_xi[:, :curr_width]; vec_xi.fill(0)
+                    sig_x.matvec(ev_batch, i, hilbert=hilbert, out=vec_xi, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                
+                if buf_yi is not None:
+                    vec_yi = buf_yi[:, :curr_width]; vec_yi.fill(0)
+                    sig_y.matvec(ev_batch, i, hilbert=hilbert, out=vec_yi, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                if buf_zi is not None:
+                    vec_zi = buf_zi[:, :curr_width]; vec_zi.fill(0)
+                    sig_z.matvec(ev_batch, i, hilbert=hilbert, out=vec_zi, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+
+                # Update Projections
+                if vec_xi is not None       : Sx_proj[:, b_start:b_end] += ev_c_t @ vec_xi
+                if vec_yi is not None       : Sy_proj[:, b_start:b_end] += ev_c_t @ vec_yi
+                if vec_zi is not None       : Sz_proj[:, b_start:b_end] += ev_c_t @ vec_zi
                 
                 # Pre-conjugate for inner loop dot products
-                vec_xi_c                    = vec_xi.conj()
-                vec_yi_c                    = vec_yi.conj()
-                vec_zi_c                    = vec_zi.conj()
+                vec_xi_c                    = vec_xi.conj() if vec_xi is not None else None
+                vec_yi_c                    = vec_yi.conj() if vec_yi is not None else None
+                vec_zi_c                    = vec_zi.conj() if vec_zi is not None else None
 
-            for j in range(i, ns):
-                
-                    # Optimization: Reuse vectors if i == j, otherwise compute if needed
-                    if i == j:
-                        vec_xj, vec_yj, vec_zj = vec_xi, vec_yi, vec_zi
-                    else:
-                        if need_xj: vec_xj = sig_x.matvec(ev_batch, j, hilbert=hilbert)
-                        if need_yj: vec_yj = sig_y.matvec(ev_batch, j, hilbert=hilbert)
-                        if need_zj: vec_zj = sig_z.matvec(ev_batch, j, hilbert=hilbert)
+                for j in range(i, ns):
                     
-                    # Compute Expectations (Check existence of vectors before multiplying)
-                    # The 'and vec_xj is not None' part prevents crashes
-                    if 'xx' in ops_set and vec_xj is not None:
-                        values['xx'][i, j, b_start:b_end] = np.sum(vec_xi_c * vec_xj, axis=0) * 4
-                        values['xx'][j, i, b_start:b_end] = values['xx'][i, j, b_start:b_end].conj()
-                    if 'xy' in ops_set and vec_yj is not None:
-                        values['xy'][i, j, b_start:b_end] = np.sum(vec_xi_c * vec_yj, axis=0) * 4
-                        values['xy'][j, i, b_start:b_end] = values['xy'][i, j, b_start:b_end].conj()
-                    if 'xz' in ops_set and vec_zj is not None:
-                        values['xz'][i, j, b_start:b_end] = np.sum(vec_xi_c * vec_zj, axis=0) * 4
-                        values['xz'][j, i, b_start:b_end] = values['xz'][i, j, b_start:b_end].conj()
+                    vec_xj, vec_yj, vec_zj  = None, None, None
 
-                    if 'yx' in ops_set and vec_xj is not None:
-                        values['yx'][i, j, b_start:b_end] = np.sum(vec_yi_c * vec_xj, axis=0) * 4
-                        values['yx'][j, i, b_start:b_end] = values['yx'][i, j, b_start:b_end].conj()
-                    if 'yy' in ops_set and vec_yj is not None:
-                        values['yy'][i, j, b_start:b_end] = np.sum(vec_yi_c * vec_yj, axis=0) * 4
-                        values['yy'][j, i, b_start:b_end] = values['yy'][i, j, b_start:b_end].conj()
-                    if 'yz' in ops_set and vec_zj is not None:
-                        values['yz'][i, j, b_start:b_end] = np.sum(vec_yi_c * vec_zj, axis=0) * 4
-                        values['yz'][j, i, b_start:b_end] = values['yz'][i, j, b_start:b_end].conj()
+                    # Optimization: Point to existing 'i' vectors if i==j
+                    if i == j:
+                        vec_xj, vec_yj, vec_zj  = vec_xi, vec_yi, vec_zi
+                    else:
+                        # Otherwise compute into 'j' buffers
+                        if buf_xj is not None:
+                            vec_xj              = buf_xj[:, :curr_width]; vec_xj.fill(0)
+                            sig_x.matvec(ev_batch, j, hilbert=hilbert, out=vec_xj, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                        
+                        if buf_yj is not None:
+                            vec_yj              = buf_yj[:, :curr_width]; vec_yj.fill(0)
+                            sig_y.matvec(ev_batch, j, hilbert=hilbert, out=vec_yj, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                            
+                        if buf_zj is not None:
+                            vec_zj              = buf_zj[:, :curr_width]; vec_zj.fill(0)
+                            sig_z.matvec(ev_batch, j, hilbert=hilbert, out=vec_zj, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                    # Compute Expectations
+                    # Inner product: sum(v_i.conj * v_j)
+                    
+                    if 'xx' in ops_set and vec_xi_c is not None and vec_xj is not None:
+                        val                                 = np.sum(vec_xi_c * vec_xj, axis=0) * 4
+                        values['xx'][i, j, b_start:b_end]   = val
+                        values['xx'][j, i, b_start:b_end]   = val.conj()
 
-                    if 'zx' in ops_set and vec_xj is not None:
-                        values['zx'][i, j, b_start:b_end] = np.sum(vec_zi_c * vec_xj, axis=0) * 4
-                        values['zx'][j, i, b_start:b_end] = values['zx'][i, j, b_start:b_end].conj()
-                    if 'zy' in ops_set and vec_yj is not None:
-                        values['zy'][i, j, b_start:b_end] = np.sum(vec_zi_c * vec_yj, axis=0) * 4
-                        values['zy'][j, i, b_start:b_end] = values['zy'][i, j, b_start:b_end].conj()
-                    if 'zz' in ops_set and vec_zj is not None:
-                        values['zz'][i, j, b_start:b_end] = np.sum(vec_zi_c * vec_zj, axis=0) * 4
-                        values['zz'][j, i, b_start:b_end] = values['zz'][i, j, b_start:b_end].conj()
+                    if 'xy' in ops_set and vec_xi_c is not None and vec_yj is not None:
+                        val                                 = np.sum(vec_xi_c * vec_yj, axis=0) * 4
+                        values['xy'][i, j, b_start:b_end]   = val
+                        values['xy'][j, i, b_start:b_end]   = val.conj()
+
+                    if 'xz' in ops_set and vec_xi_c is not None and vec_zj is not None:
+                        val                                 = np.sum(vec_xi_c * vec_zj, axis=0) * 4
+                        values['xz'][i, j, b_start:b_end]   = val
+                        values['xz'][j, i, b_start:b_end]   = val.conj()
+                    
+                    if 'yx' in ops_set and vec_yi_c is not None and vec_xj is not None:
+                        val                                 = np.sum(vec_yi_c * vec_xj, axis=0) * 4
+                        values['yx'][i, j, b_start:b_end]   = val
+                        values['yx'][j, i, b_start:b_end]   = val.conj()
+                    if 'yy' in ops_set and vec_yi_c is not None and vec_yj is not None:
+                        val                                 = np.sum(vec_yi_c * vec_yj, axis=0) * 4
+                        values['yy'][i, j, b_start:b_end]   = val
+                        values['yy'][j, i, b_start:b_end]   = val.conj()
+                    if 'yz' in ops_set and vec_yi_c is not None and vec_zj is not None:
+                        val                                 = np.sum(vec_yi_c * vec_zj, axis=0) * 4
+                        values['yz'][i, j, b_start:b_end]   = val
+                        values['yz'][j, i, b_start:b_end]   = val.conj()
+                        
+                    if 'zx' in ops_set and vec_zi_c is not None and vec_xj is not None:
+                        val                                 = np.sum(vec_zi_c * vec_xj, axis=0) * 4
+                        values['zx'][i, j, b_start:b_end]   = val
+                        values['zx'][j, i, b_start:b_end]   = val.conj()
+                    if 'zy' in ops_set and vec_zi_c is not None and vec_yj is not None:
+                        val                                 = np.sum(vec_zi_c * vec_yj, axis=0) * 4
+                        values['zy'][i, j, b_start:b_end]   = val
+                        values['zy'][j, i, b_start:b_end]   = val.conj()
+                    if 'zz' in ops_set and vec_zi_c is not None and vec_zj is not None:
+                        val                                 = np.sum(vec_zi_c * vec_zj, axis=0) * 4
+                        values['zz'][i, j, b_start:b_end]   = val
+                        values['zz'][j, i, b_start:b_end]   = val.conj()
             
             # End of batch loop
             gc.collect()

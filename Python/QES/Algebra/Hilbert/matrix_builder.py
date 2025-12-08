@@ -852,10 +852,49 @@ def _apply_op_batch_jit(
         basis               : Optional[np.ndarray],
         representative_list : Optional[np.ndarray],
         normalization       : Optional[np.ndarray],
+        #! TODO FIX THIS TO INCLUDE FACTORS MAP!!! SEE NEW HILBERTSPACE!!!
         repr_idx            : Optional[np.ndarray],
         repr_phase          : Optional[np.ndarray],
-        chunk_size          : int = 4
+        *,
+        chunk_size          : int                   = 6,
+        thread_buffers      : Optional[np.ndarray]  = None
     ) -> None:
+    '''
+    Jitted batch operator application with symmetry support and chunking.
+    Parameters
+    ----------
+    vecs_in : np.ndarray
+        Input vectors (shape: nh x n_batch)
+    vecs_out : np.ndarray
+        Output vectors (shape: nh x n_batch)
+    op_func : Callable
+        Jitted operator function: (state, *args) -> (new_states, values)
+    args : Tuple
+        Additional arguments for op_func
+    basis : Optional[np.ndarray]
+        Basis states for no-symmetry case
+    representative_list : Optional[np.ndarray]
+        List of representative states for symmetry sectors
+    normalization : Optional[np.ndarray]
+        Normalization factors for representative states
+    repr_idx : Optional[np.ndarray]
+        Indices mapping states to their representatives (in representative_list array)
+    repr_phase : Optional[np.ndarray]
+        Phases associated with representative states
+    chunk_size : int
+        Size of chunks for batch processing
+    thread_buffers : Optional[np.ndarray]
+        Buffers for thread-safe writes
+    
+    Returns
+    -------
+    None (results are written to vecs_out)
+    
+    Example
+    -------
+    >>> _apply_op_batch_jit(vecs_in, vecs_out, op_func, args, basis, representative_list, normalization, repr_idx, repr_phase, chunk_size=4)
+    
+    '''
     
     nh, n_batch         = vecs_in.shape
     has_symmetry        = representative_list is not None
@@ -866,10 +905,15 @@ def _apply_op_batch_jit(
     # Chunk size of 1 is safest for memory. 
     # If one has massive RAM, you can increase this to 2 or 4.
     chunk_size          = min(chunk_size, n_batch)
+    bufs                = thread_buffers
     
     # Create a buffer for EACH thread to write to safely
     # Shape: (n_threads, nh, chunk_size)
-    thread_buffers      = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
+    if thread_buffers is None:
+        bufs            = np.zeros((n_threads, nh, chunk_size), dtype=np.complex128)
+    elif thread_buffers.shape[0] < n_threads:
+        # mismatched buffer size, we need to allocate ;/
+        bufs            = np.zeros((n_threads, nh, chunk_size), dtype=np.complex128)
 
     # Loop over the batch in chunks
     for b_start in range(0, n_batch, chunk_size):
@@ -877,7 +921,7 @@ def _apply_op_batch_jit(
         actual_width    = b_end - b_start
         
         # Reset buffers for this chunk (crucial!)
-        thread_buffers[:, :, :actual_width].fill(0.0)
+        bufs[:, :, :actual_width].fill(0.0)
 
         # Parallel Loop over Hilbert Space
         for k in numba.prange(nh):
@@ -885,30 +929,32 @@ def _apply_op_batch_jit(
             
             # State Decoding
             if has_symmetry:
+                # use representative_list and normalization
                 state   = np.int64(representative_list[k])
                 norm_k  = normalization[k]
             elif has_basis:
+                # use basis array
                 state   = np.int64(basis[k])
             else:
                 state   = np.int64(k)
-                    
+            
             # [Compute Operator Action]
             # This returns new states and values (independent of batch index)
             new_states, values  = op_func(state, *args)
             
-            # [Map & Write]
+            # [Map & Write], assume it returns many states
             for i in range(len(new_states)):
-                new_state       = new_states[i]
-                val             = values[i]
+                new_state               = new_states[i]
+                val                     = values[i]
+
+                if abs(val) < 1e-15:    continue
                 
-                if abs(val) < 1e-15: continue
-                
-                target_idx      = -1
-                sym_factor      = 1.0 + 0j
-                
+                target_idx              = -1
+                sym_factor              = 1.0 + 0j
+
                 if has_symmetry:
                     if repr_idx is not None:
-                        target_idx = repr_idx[new_state]
+                        target_idx      = repr_idx[new_state]
                         if target_idx >= 0:
                             phase       = repr_phase[new_state]
                             norm_idx    = normalization[target_idx]
@@ -931,10 +977,10 @@ def _apply_op_batch_jit(
                     if has_symmetry:
                         # Vectorized operation over the small chunk
                         for b_local in range(actual_width):
-                            thread_buffers[tid, target_idx, b_local] += val * sym_factor * vecs_in[k, b_start + b_local]
+                            bufs[tid, target_idx, b_local] += val * sym_factor * vecs_in[k, b_start + b_local]
                     else:
                         for b_local in range(actual_width):
-                            thread_buffers[tid, target_idx, b_local] += val * vecs_in[k, b_start + b_local]
+                            bufs[tid, target_idx, b_local] += val * vecs_in[k, b_start + b_local]
         
         # [Reduction Step]
         # Sum thread buffers into the final output for this chunk
@@ -944,79 +990,106 @@ def _apply_op_batch_jit(
                 # but looping column-wise is cache-friendly for the reduction 
                 # if vecs_out is column-major (F-contiguous) or row-major (C-contiguous).
                 # Assuming standard C-contiguous (row-major), strict loops are fine.
-                vecs_out[:, b_start + b_local] += thread_buffers[t, :, b_local]
+                vecs_out[:, b_start + b_local] += bufs[t, :, b_local]
 
 @numba.njit(parallel=False, fastmath=True)
 def _apply_fourier_batch_jit(
-    vecs_in             : np.ndarray,
-    vecs_out            : np.ndarray,
-    phases              : np.ndarray,
-    op_func             : Callable,
-    basis               : Optional[np.ndarray],
-    representative_list : Optional[np.ndarray],
-    normalization       : Optional[np.ndarray],
-    repr_idx            : Optional[np.ndarray],
-    repr_phase          : Optional[np.ndarray]) -> None:
+        vecs_in             : np.ndarray,
+        vecs_out            : np.ndarray,
+        phases              : np.ndarray,
+        op_func             : Callable,
+        basis               : Optional[np.ndarray],
+        representative_list : Optional[np.ndarray],
+        normalization       : Optional[np.ndarray],
+        repr_idx            : Optional[np.ndarray],
+        repr_phase          : Optional[np.ndarray],
+        thread_buffers      : Optional[np.ndarray]  = None,
+        chunk_size          : int                   = 4
+    ) -> None:
     
     nh, n_batch     = vecs_in.shape
     n_sites         = len(phases)
+    n_threads       = numba.get_num_threads()
     
     has_symmetry    = representative_list is not None
     has_basis       = basis is not None
 
-    # Loop Hilbert Space
-    for k in range(nh):
-        # Optimization: Skip empty input rows if using iterative solvers on sparse states
-        # if np.abs(vecs_in[k, 0]) < 1e-15: continue 
+    # Buffer Management (Same logic as matvec)
+    bufs            = thread_buffers
+    
+    # Check if we need to allocate a fallback buffer
+    # (If buffer is missing OR too small for current thread count)
+    if bufs is None or bufs.shape[0] < n_threads:
+        bufs        = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
+        
+    # Main Chunked Loop
+    for b_start in range(0, n_batch, chunk_size):
+        b_end           = min(b_start + chunk_size, n_batch)
+        actual_width    = b_end - b_start
+        
+        # Reset active buffer area
+        bufs[:n_threads, :, :actual_width].fill(0.0)
 
-        # Decode State (Once per basis state)
-        if has_symmetry:
-            state   = representative_list[k]
-            norm_k  = normalization[k]
-        elif has_basis:
-            state   = basis[k]
-        else:
-            state   = k
-
-        # Loop Sites (Accumulate operator terms)
-        for site_idx in range(n_sites):
-            c_site              = phases[site_idx]
-            new_states, values  = op_func(state, site_idx)
+        # PARALLEL LOOP over Hilbert Space
+        for k in numba.prange(nh):
+            tid         = numba.get_thread_id()
             
-            for j in range(len(new_states)):
-                new_state       = new_states[j]
-                val             = values[j]
+            # 1. State Decoding
+            if has_symmetry:
+                state   = representative_list[k]
+                norm_k  = normalization[k]
+            elif has_basis:
+                state   = basis[k]
+            else:
+                state   = k
+
+            # 2. Site Loop (Summation for Fourier Transform)
+            for site_idx in range(n_sites):
+                c_site              = phases[site_idx]
                 
-                # Combined factor
-                factor          = val * c_site 
-                if abs(factor) < 1e-15: continue
+                # Apply Operator
+                new_states, values  = op_func(state, site_idx)
+                
+                for j in range(len(new_states)):
+                    new_state       = new_states[j]
+                    val             = values[j]
+                    
+                    # Compute Factor: Operator Value * Fourier Phase
+                    factor          = val * c_site 
+                    if abs(factor) < 1e-15: continue
 
-                # Find Target
-                target_idx      = -1
-                sym_factor      = 1.0 + 0j
+                    # 3. Find Target Index
+                    target_idx      = -1
+                    sym_factor      = 1.0 + 0j
 
-                if has_symmetry:
-                    if repr_idx is not None:
-                        target_idx = repr_idx[new_state]
-                        if target_idx >= 0:
-                            ph          = repr_phase[new_state]
-                            norm_new    = normalization[target_idx]
-                            sym_factor  = np.conj(ph) * (norm_new / norm_k)
-                elif has_basis:
-                    # Binary Search
-                    target_idx = np.searchsorted(basis, new_state)
-                    if target_idx >= nh or basis[target_idx] != new_state:
-                        target_idx = -1
-                else:
-                    target_idx = new_state
-
-                # Vectorized Batch Update
-                if 0 <= target_idx < nh:
                     if has_symmetry:
-                        # vecs_in[k] is a contiguous view of the batch row
-                        vecs_out[target_idx] += (factor * sym_factor) * vecs_in[k]
+                        if repr_idx is not None:
+                            target_idx = repr_idx[new_state]
+                            if target_idx >= 0:
+                                ph          = repr_phase[new_state]
+                                norm_new    = normalization[target_idx]
+                                sym_factor  = np.conj(ph) * (norm_new / norm_k)
+                    elif has_basis:
+                        target_idx = np.searchsorted(basis, new_state)
+                        if target_idx >= nh or basis[target_idx] != new_state:
+                            target_idx = -1
                     else:
-                        vecs_out[target_idx] += factor * vecs_in[k]
+                        target_idx = new_state
+
+                    # 4. Safe Write to Thread-Local Buffer
+                    if 0 <= target_idx < nh:
+                        if has_symmetry:
+                            for b in range(actual_width):
+                                bufs[tid, target_idx, b] += (factor * sym_factor) * vecs_in[k, b_start + b]
+                        else:
+                            for b in range(actual_width):
+                                bufs[tid, target_idx, b] += factor * vecs_in[k, b_start + b]
+
+        # Reduction Step
+        # Sum all thread buffers into the final output for this chunk
+        for t in range(n_threads):
+            for b in range(actual_width):
+                vecs_out[:, b_start + b] += bufs[t, :, b]
 
 # -------------------------------------------------------------------------------
 #! Symmetry rotation matrix construction

@@ -1870,7 +1870,7 @@ class Operator(GeneralMatrix):
     
     #################################
     
-    def matvec(self, vecs: Array, *args, hilbert: HilbertSpace = None, **kwargs) -> Array:
+    def matvec(self, vecs: Array, *args, hilbert: HilbertSpace = None, out: Array = None, thread_buffer: Array = None, chunk_size: int = 1, dtype=None, **kwargs) -> Array:
         """
         Apply the operator matrix to a vector.
         
@@ -1926,10 +1926,10 @@ class Operator(GeneralMatrix):
             raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
         
         # Extract Hilbert Space Data
-        basis = getattr(hilbert, 'basis', None)
+        basis               = getattr(hilbert, 'basis', None)
         if basis is not None and not isinstance(basis, np.ndarray):
             basis = np.array(basis)
-            
+        
         representative_list = getattr(hilbert, 'representative_list',   None)
         normalization       = getattr(hilbert, 'normalization',         None)
         repr_idx            = getattr(hilbert, 'repr_idx',              None)
@@ -1943,30 +1943,30 @@ class Operator(GeneralMatrix):
         else:
             vecs_in = vecs
         
-        if kwargs.get('out', None) is not None:
-            vecs_out = kwargs['out']
-        else:
-            vecs_out = np.zeros_like(vecs_in, dtype=np.complex128)
-        
-        op_func = self._fun._fun_int
+        # output
+        vecs_out        = out if out is not None else np.zeros_like(vecs_in, dtype=dtype if dtype is not None else np.complex128)
+        th_buffer       = thread_buffer if thread_buffer is not None else None
+        op_func         = self._fun._fun_int
         
         _apply_op_batch_jit(
             vecs_in, 
             vecs_out, 
             op_func, 
-            args,           # Pass tuple of args (e.g., (site_i,) or (site_i, site_j))
-            basis, 
+            args,       # Pass tuple of args (e.g., (site_i,) or (site_i, site_j))
+            basis,  
             representative_list, 
             normalization, 
             repr_idx, 
-            repr_phase
+            repr_phase,
+            chunk_size      = chunk_size,
+            thread_buffers  = th_buffer
         )
 
         if is_1d:
             return vecs_out.flatten() # Return in original shape
         return vecs_out
     
-    def matvec_fourier(self, phases: np.ndarray, vec: np.ndarray, hilbert: HilbertSpace) -> np.ndarray:
+    def matvec_fourier(self, phases: Array, vec: Array, hilbert: HilbertSpace, *, out: Optional[Array] = None, thread_buffer: Optional[Array] = None, chunk_size: int = 4) -> Array:
         """
         Computes |out> = O_q |in> without constructing the matrix O_q.
         
@@ -1975,11 +1975,27 @@ class Operator(GeneralMatrix):
         
         Parameters:
         -----------
-        lattice (Lattice)         : The lattice object containing site positions.
-        hilbert (HilbertSpace)    : The Hilbert space for the system.
-        vec (np.ndarray)          : The input state vector |in>.
-        k_vec (np.ndarray)        : The momentum vector k.
-        dagger (bool)             : If True, computes the Hermitian conjugate O_q^dagger.
+        lattice (Lattice):
+            The lattice object containing site positions.
+        hilbert (HilbertSpace):
+            The Hilbert space for the system.
+        vec (np.ndarray):
+            The input state vector |in>.
+        k_vec (np.ndarray):
+            The momentum vector k.
+        out (np.ndarray, optional):
+            Preallocated output array for |out>. If None, a new array is created.
+        thread_buffer (np.ndarray, optional):
+            Buffer for thread-local storage to optimize performance.
+        chunk_size (int, optional):
+            Number of vectors to process in each chunk for performance optimization. Default is 4.
+        
+        Returns:
+        --------
+        np.ndarray:
+            The resulting state vector |out> after applying the Fourier operator.
+            
+        
         """
 
         if hilbert is None:
@@ -1995,8 +2011,11 @@ class Operator(GeneralMatrix):
             vecs_in = vec[:, np.newaxis]
         else:
             vecs_in = vec
-            
-        vecs_out                = np.zeros_like(vecs_in, dtype=np.complex128)
+        
+        # output
+        vecs_out                = np.zeros_like(vecs_in, dtype=np.complex128) if out is None else out
+        
+        
         basis                   = getattr(hilbert, 'basis', None)
         if basis is not None:   basis = np.array(basis)
         
@@ -2008,18 +2027,20 @@ class Operator(GeneralMatrix):
         # This function must have signature (state, site_idx, *args)
 
         if not self.type_acting.is_local():
-            raise ValueError("Fourier operator application requires a local operator.")
+            raise ValueError("Fourier operator application requires a local operator. This means it needs to accept 'i' argument...")
 
         _apply_fourier_batch_jit(
-                                    vecs_in,
-                                    vecs_out,
-                                    phases,
-                                    self._fun._fun_int,
-                                    basis,
-                                    representative_list,
-                                    normalization,
-                                    repr_idx,
-                                    repr_phase,
+                                vecs_in,
+                                vecs_out,
+                                phases,
+                                self._fun._fun_int,
+                                basis,
+                                representative_list,
+                                normalization,
+                                repr_idx,
+                                repr_phase,
+                                thread_buffers  = thread_buffer,
+                                chunk_size      = chunk_size
                                 )
         
         if is_1d:
