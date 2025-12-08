@@ -169,10 +169,6 @@ class HeisenbergKitaev(Hamiltonian):
                         is_sparse       = True,
                         dtype           = dtype if (hy is None and Gamma is None) else np.complex128, # enforce complex dtype if hy field is used
                         backend=backend, use_forward=use_forward, **kwargs)
-
-        # Initialize the Hamiltonian
-        if hilbert_space is None:
-            self._hilbert_space         = HilbertSpace(ns=self.ns, backend=backend, dtype=dtype, nhl=2)
         
         # setup the fields
         self._hx                        = hx    if isinstance(hx, (list, np.ndarray, tuple)) else [hx] * self.ns if hx is not None else None
@@ -384,15 +380,14 @@ class HeisenbergKitaev(Hamiltonian):
         op_sz_sz_c      =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
         
         # Create Gamma operators as products of correlation operators
-        op_sx_sy_c      =   operators_spin_module.make_sigma_mixed("xy", lattice=lattice)
-        op_sy_sx_c      =   operators_spin_module.make_sigma_mixed("yx", lattice=lattice)
+        op_sx_sy_c      =   operators_spin_module.sig_xy(lattice=lattice)
+        op_sy_sx_c      =   operators_spin_module.sig_yx(lattice=lattice)
         
-        op_sz_sx_c      =   operators_spin_module.make_sigma_mixed("zx", lattice=lattice)
-        op_sx_sz_c      =   operators_spin_module.make_sigma_mixed("xz", lattice=lattice)
+        op_sz_sx_c      =   operators_spin_module.sig_zx(lattice=lattice)
+        op_sx_sz_c      =   operators_spin_module.sig_xz(lattice=lattice)
         
-        op_sy_sz_c      =   operators_spin_module.make_sigma_mixed("yz", lattice=lattice)
-        op_sz_sy_c      =   operators_spin_module.make_sigma_mixed("zy", lattice=lattice)
-
+        op_sy_sz_c      =   operators_spin_module.sig_yz(lattice=lattice)
+        op_sz_sy_c      =   operators_spin_module.sig_zy(lattice=lattice)
         nn_nums         =   [lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else \
                             [lattice.get_nn_num(i) for i in range(self.ns)]
 

@@ -118,8 +118,10 @@ def _ensure_operator_modules_for(local_type: LocalSpaceTypes) -> None:
     are executed before we try to instantiate kernels.
     """
     try:
-        if local_type in (LocalSpaceTypes.SPIN_1_2, LocalSpaceTypes.SPIN_1):
+        if local_type == LocalSpaceTypes.SPIN_1_2:
             import QES.Algebra.Operator.operators_spin                  # noqa: F401
+        elif local_type == LocalSpaceTypes.SPIN_1:
+            import QES.Algebra.Operator.operators_spin_1                # noqa: F401
         elif local_type == LocalSpaceTypes.SPINLESS_FERMIONS:
             import QES.Algebra.Operator.operators_spinless_fermions     # noqa: F401,E402
         elif local_type == LocalSpaceTypes.ANYON_ABELIAN:
@@ -226,6 +228,8 @@ class LocalSpace:
         s_lower = s.lower()
         if s_lower == LocalSpaceTypes.SPIN_1_2.value:
             return LocalSpace.default_spin_half(**kwargs)
+        elif s_lower == LocalSpaceTypes.SPIN_1.value:
+            return LocalSpace.default_spin_1(**kwargs)
         elif s_lower == LocalSpaceTypes.SPINLESS_FERMIONS.value:
             return LocalSpace.default_fermion_spinless(**kwargs)
         elif s_lower == LocalSpaceTypes.BOSONS.value:
@@ -245,6 +249,21 @@ class LocalSpace:
             cutoff              =   0,
             max_occupation      =   1,
             typ                 =   LocalSpaceTypes.SPIN_1_2,
+            onsite_operators    =   {},
+        )
+        return base.with_catalog_operators(**kwargs)
+
+    @staticmethod
+    def default_spin_1(**kwargs):
+        # Spin-1: dim=3 (states |+1⟩, |0⟩, |-1⟩), no cutoff, sign +1
+        # Uses 2 bits per site for state encoding
+        base = LocalSpace(
+            name                =   LocalSpaceTypes.SPIN_1.value,
+            local_dim           =   3,
+            sign_rule           =   +1,
+            cutoff              =   0,
+            max_occupation      =   2,  # max m value + 1
+            typ                 =   LocalSpaceTypes.SPIN_1,
             onsite_operators    =   {},
         )
         return base.with_catalog_operators(**kwargs)

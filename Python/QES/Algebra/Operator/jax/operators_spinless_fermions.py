@@ -37,7 +37,7 @@ Notes:
 - For further documentation, see the corresponding `operators_spinless_fermions.py` file.
 
 ----------------------------------------------------------------------------
-File        : Algebra/Operator/operators_spinless_fermions_jax.py
+File        : Algebra/Operator/jax/operators_spinless_fermions.py
 Author      : Maksymilian Kliczkowski
 Date        : 30.10.2025
 Version     : 0.9.0

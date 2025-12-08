@@ -23,9 +23,10 @@ from enum import IntEnum
 
 try:
     # main imports
-    from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, create_operator, ensure_operator_output_shape_numba
-    from QES.Algebra.Operator.catalog import register_local_operator
-    from QES.Algebra.Hilbert.hilbert_local import LocalOpKernels, LocalSpaceTypes
+    from QES.Algebra.Operator.operator          import Operator, OperatorTypeActing, create_operator, ensure_operator_output_shape_numba
+    from QES.Algebra.Operator.catalog           import register_local_operator
+    from QES.Algebra.Operator.special_operator  import CUSTOM_OP_BASE, CUSTOM_OP_MAX, is_custom_code
+    from QES.Algebra.Hilbert.hilbert_local      import LocalOpKernels, LocalSpaceTypes
 except ImportError as e:
     raise ImportError("Failed to import required modules. Ensure that the QES package is correctly installed.") from e
 
@@ -46,26 +47,25 @@ JAX_AVAILABLE = os.getenv("PY_JAX_AVAILABLE", "0") == "1"
 
 if JAX_AVAILABLE:
     import jax
-    # import Algebra.Operator.operators_spin_jax as jaxpy
     import jax.numpy as jnp
     # sigma x
-    from QES.Algebra.Operator.operators_spin_jax import sigma_x_int_jnp, sigma_x_jnp, sigma_x_inv_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_x_int_jnp, sigma_x_jnp, sigma_x_inv_jnp
     # sigma y
-    from QES.Algebra.Operator.operators_spin_jax import sigma_y_int_jnp, sigma_y_jnp, sigma_y_real_jnp, sigma_y_inv_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_y_int_jnp, sigma_y_jnp, sigma_y_real_jnp, sigma_y_inv_jnp
     # sigma z
-    from QES.Algebra.Operator.operators_spin_jax import sigma_z_int_jnp, sigma_z_jnp, sigma_z_inv_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_z_int_jnp, sigma_z_jnp, sigma_z_inv_jnp
     # sigma plus
-    from QES.Algebra.Operator.operators_spin_jax import sigma_plus_int_jnp, sigma_plus_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_plus_int_jnp, sigma_plus_jnp
     # sigma minus
-    from QES.Algebra.Operator.operators_spin_jax import sigma_minus_int_jnp, sigma_minus_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_minus_int_jnp, sigma_minus_jnp
     # sigma pm
-    from QES.Algebra.Operator.operators_spin_jax import sigma_pm_int_jnp, sigma_pm_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_pm_int_jnp, sigma_pm_jnp
     # sigma mp
-    from QES.Algebra.Operator.operators_spin_jax import sigma_mp_int_jnp, sigma_mp_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_mp_int_jnp, sigma_mp_jnp
     # sigma k
-    from QES.Algebra.Operator.operators_spin_jax import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
     # sigma z total
-    from QES.Algebra.Operator.operators_spin_jax import sigma_z_total_int_jnp, sigma_z_total_jnp
+    from QES.Algebra.Operator.jax.operators_spin import sigma_z_total_int_jnp, sigma_z_total_jnp
 else:
     print("JAX is not available. JAX-based implementations of spin operators will not be accessible.")
     sigma_x_int_jnp         = sigma_x_jnp       = None
@@ -992,6 +992,11 @@ class SpinLookupCodes(IntEnum):
     sig_mp_corr:    int = 32
     
     @staticmethod
+    def is_custom_code(code: int) -> bool:
+        """Check if a code represents a custom operator."""
+        return code > 32 or code < 0
+    
+    @staticmethod
     def to_dict() -> Dict[str, int]:
         return {
             'Sx'            : SpinLookupCodes.sig_x_global,
@@ -1395,8 +1400,23 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
 #? Int
 
 def create_sigma_mixed_int(op1_fun: Callable, op2_fun: Callable):
+    r'''
+    Create a mixed sigma operator function for integer states.
+    Applies two spin operators in sequence on an integer-represented quantum state.
     
-    @numba.njit(cache=True, inline='always')
+    Parameters
+    ----------
+    op1_fun : Callable
+        The first spin operator function to apply.
+    op2_fun : Callable
+        The second spin operator function to apply.
+    Returns
+    -------
+    Callable
+        A function that applies the mixed sigma operators on integer states.
+    '''
+    
+    @numba.njit(inline='always')
     def sigma_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
         if sites is None or len(sites) < 2:
             s_dumb, c_dumb = op1_fun(state, ns, sites, spin, spin_value)
@@ -1420,7 +1440,23 @@ def create_sigma_mixed_int(op1_fun: Callable, op2_fun: Callable):
     return sigma_mixed_int_np
 
 def create_sigma_mixed_int_core(op1_fun: Callable, op2_fun: Callable):
-    @numba.njit(cache=True, inline='always')
+    r'''
+    Create a mixed sigma operator function for integer states.
+    Applies two spin operators in sequence on an integer-represented quantum state.
+    
+    Parameters
+    ----------
+    op1_fun : Callable
+        The first spin operator function to apply.
+    op2_fun : Callable
+        The second spin operator function to apply.
+    Returns
+    -------
+    Callable
+        A function that applies the mixed sigma operators on integer states.
+    '''
+    
+    @numba.njit(inline='always')
     def sigma_mixed_int_core(state, ns, sites):
         
         if sites is None or len(sites) < 2:
@@ -1446,12 +1482,14 @@ def create_sigma_mixed_np(op1_fun: Callable, op2_fun: Callable):
     @numba.njit(cache=True)
     def sigma_mixed_np(state, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
         if sites is None or len(sites) < 2:
-            raise ValueError("sigma_mixed_np requires at least two sites.")
-        s_arr1, c_arr1 = op1_fun(state, [sites[0]], spin, spin_value)
-        coeff1 = c_arr1[0] if c_arr1.shape[0] == 1 else c_arr1
+            s_dumb, c_dumb = op1_fun(state, sites, spin, spin_value)
+            return s_dumb, c_dumb * 0.0
+        
+        s_arr1, c_arr1  = op1_fun(state, [sites[0]], spin, spin_value)
+        coeff1          = c_arr1[0] if c_arr1.shape[0] == 1 else c_arr1
         if coeff1 == 0.0 or (coeff1 == 0.0 + 0.0j):
             return s_arr1, c_arr1 * 0.0
-        s_arr2, c_arr2 = op2_fun(s_arr1, [sites[1]], spin, spin_value)
+        s_arr2, c_arr2  = op2_fun(s_arr1, [sites[1]], spin, spin_value)
         return s_arr2, c_arr1 * c_arr2
     return sigma_mixed_np
 
@@ -1512,20 +1550,13 @@ sigma_xz_mixed_np       = create_sigma_mixed_np(sigma_x_np, sigma_z_np)
 sigma_zy_mixed_np       = create_sigma_mixed_np(sigma_z_np, sigma_y_np)
 
 #? JNP
-if JAX_AVAILABLE:
-    sigma_xy_mixed_jnp  = create_sigma_mixed_jnp(sigma_x_jnp, sigma_y_jnp)
-    sigma_yx_mixed_jnp  = create_sigma_mixed_jnp(sigma_y_jnp, sigma_x_jnp)
-    sigma_yz_mixed_jnp  = create_sigma_mixed_jnp(sigma_y_jnp, sigma_z_jnp)
-    sigma_zx_mixed_jnp  = create_sigma_mixed_jnp(sigma_z_jnp, sigma_x_jnp)
-    sigma_xz_mixed_jnp  = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
-    sigma_zy_mixed_jnp  = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
-else:
-    sigma_xy_mixed_jnp  = None
-    sigma_yx_mixed_jnp  = None
-    sigma_yz_mixed_jnp  = None
-    sigma_zx_mixed_jnp  = None
-    sigma_xz_mixed_jnp  = None
-    sigma_zy_mixed_jnp  = None
+sigma_xy_mixed_jnp      = create_sigma_mixed_jnp(sigma_x_jnp, sigma_y_jnp)
+sigma_yx_mixed_jnp      = create_sigma_mixed_jnp(sigma_y_jnp, sigma_x_jnp)
+sigma_yz_mixed_jnp      = create_sigma_mixed_jnp(sigma_y_jnp, sigma_z_jnp)
+sigma_zx_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_x_jnp)
+sigma_xz_mixed_jnp      = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
+sigma_zy_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
+
 
 def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None) -> Operator:
     r''' Factory for mixed sigma operators (e.g., \sigma _x \sigma _y). '''
@@ -1593,7 +1624,7 @@ def sig_yx(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BA
 def sig_yz(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _y \sigma _z operator. '''
     return make_sigma_mixed('yz', lattice, ns, type_act=type_act, sites=sites)
-def sig_zy(lattice=None, ns=None, type_act='global',sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
+def sig_zy(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _z \sigma _y operator. '''
     return make_sigma_mixed('zy', lattice, ns, type_act=type_act, sites=sites)
 def sig_zx(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
@@ -1604,15 +1635,275 @@ def sig_xz(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BA
     return make_sigma_mixed('xz', lattice, ns, type_act=type_act, sites=sites)
 
 # -----------------------------------------------------------------------------
+#! N-SITE CORRELATOR FACTORY (for arbitrary multi-site operators)
+# -----------------------------------------------------------------------------
+
+def make_nsite_correlator(pauli_ops: List[str], ns: int, sites: Optional[List[int]] = None, lattice: Optional[Lattice] = None, name: Optional[str] = None,) -> Operator:
+    r"""
+    Factory for creating arbitrary n-site spin correlators.
+    
+    Creates a numba-compatible operator that applies a sequence of Pauli operators
+    at specified sites. For example, to create a 3-site correlator \sigma _x \otimes \sigma _y \otimes \sigma _z
+    acting on sites [0, 1, 2], you would call:
+    
+    Parameters
+    ----------
+    pauli_ops : List[str]
+        List of Pauli operator names: 'x', 'y', 'z', 'p' (plus), 'm' (minus).
+        The order corresponds to the order of sites.
+    ns : int
+        Number of sites in the system.
+    sites : List[int], optional
+        Sites where each operator acts. Must have same length as pauli_ops.
+        If None, uses sites [0, 1, 2, ...] up to len(pauli_ops).
+    lattice : Lattice, optional
+        The lattice object (can provide ns if not given directly).
+    name : str, optional
+        Custom name for the operator. If None, auto-generated from operators.
+        
+    Returns
+    -------
+    Operator
+        A numba-compatible operator for the n-site correlator.
+        
+    Examples
+    --------
+    >>> # Create \sigma_x \otimes \sigma_y \otimes \sigma_z on sites 0, 1, 2
+    >>> xyz_op = make_nsite_correlator(['x', 'y', 'z'], ns=4, sites=[0, 1, 2])
+    >>> hamil.add(xyz_op, multiplier=1.0, sites=[0, 1, 2])
+    
+    >>> # Create 4-site correlator \sigma_z \otimes \sigma_z \otimes \sigma_z \otimes \sigma_z
+    >>> zzzz_op = make_nsite_correlator(['z', 'z', 'z', 'z'], ns=8, sites=[0, 2, 4, 6])
+    >>> hamil.add(zzzz_op, multiplier=0.5, sites=[0, 2, 4, 6])
+    
+    Notes
+    -----
+    This operator is registered as a custom operator in the Hamiltonian's
+    instruction registry. It will be slower than predefined operators but
+    maintains full numba JIT compatibility.
+    """
+    if ns is None:
+        if lattice is not None:
+            ns = lattice.ns
+        else:
+            raise ValueError("Either 'ns' or 'lattice' must be provided.")
+    
+    n_ops = len(pauli_ops)
+    
+    if sites is None:
+        sites = list(range(n_ops))
+    
+    if len(sites) != n_ops:
+        raise ValueError(f"Number of sites ({len(sites)}) must match number of operators ({n_ops}).")
+    
+    # Map operator names to core functions
+    op_map = {
+        'x': _sigma_x_core,
+        'y': _sigma_y_core,
+        'z': _sigma_z_core,
+        'p': sigma_plus_int_np,
+        'm': sigma_minus_int_np,
+    }
+    
+    # Validate operator names
+    for op in pauli_ops:
+        if op.lower() not in op_map:
+            raise ValueError(f"Unknown Pauli operator: '{op}'. Use 'x', 'y', 'z', 'p', or 'm'.")
+    
+    # Generate name if not provided
+    if name is None:
+        name = 'S' + ''.join(pauli_ops)
+    
+    # Create the JIT-compiled function for this specific operator composition
+    # Convert operator names to integer codes for numba compatibility
+    OP_X, OP_Y, OP_Z, OP_P, OP_M    = 0, 1, 2, 3, 4
+    op_name_to_code                 = {'x': OP_X, 'y': OP_Y, 'z': OP_Z, 'p': OP_P, 'm': OP_M}
+    
+    # Create numpy arrays for the operator codes and sites (numba-friendly)
+    op_codes_arr                    = np.array([op_name_to_code[op.lower()] for op in pauli_ops], dtype=np.int32)
+    sites_arr                       = np.array(sites, dtype=np.int32)
+    n_ops_val                       = n_ops
+    
+    # Create the numba-compatible integer function
+    @numba.njit(cache=True)
+    def nsite_correlator_int(state: int, ns_val: int, sites_tuple: tuple):
+        """
+        Apply n-site correlator: product of Pauli operators at specified sites.
+        Returns (new_state, coefficient).
+        """
+        current_state = state
+        current_coeff = 1.0 + 0.0j
+        
+        for i in range(n_ops_val):
+            op_code = op_codes_arr[i]
+            # Use provided sites if available, otherwise use stored sites
+            if i < len(sites_tuple):
+                site = sites_tuple[i]
+            else:
+                site = sites_arr[i]
+            site_tuple = (site,)
+            
+            if op_code == 0:  # x
+                new_s, new_c = _sigma_x_core(current_state, ns_val, sites=site_tuple)
+            elif op_code == 1:  # y
+                new_s, new_c = _sigma_y_core(current_state, ns_val, sites=site_tuple)
+            elif op_code == 2:  # z
+                new_s, new_c = _sigma_z_core(current_state, ns_val, sites=site_tuple)
+            elif op_code == 3:  # p (plus)
+                s_arr, c_arr = sigma_plus_int_np(current_state, ns_val, sites=site_tuple)
+                new_s, new_c = s_arr[0], c_arr[0]
+            elif op_code == 4:  # m (minus)
+                s_arr, c_arr = sigma_minus_int_np(current_state, ns_val, sites=site_tuple)
+                new_s, new_c = s_arr[0], c_arr[0]
+            else:
+                # Should not happen
+                new_s, new_c = current_state, 1.0 + 0.0j
+            
+            current_state = new_s
+            current_coeff = current_coeff * new_c
+            
+            # Early exit if coefficient becomes zero
+            if abs(current_coeff) < 1e-15:
+                return state, 0.0 + 0.0j
+        
+        return current_state, current_coeff
+    
+    # Determine if the operator is diagonal (all z operators)
+    is_diagonal                     = all(op.lower() == 'z' for op in pauli_ops)
+    
+    # Create the Operator object
+    return create_operator(
+        type_act    = OperatorTypeActing.Correlation,
+        op_func_int = nsite_correlator_int,
+        op_func_np  = None,  # No numpy version for custom correlators (use int version)
+        op_func_jnp = None,  # No JAX version for custom correlators
+        lattice     = lattice,
+        ns          = ns,
+        sites       = sites,
+        name        = name,
+        modifies    = not is_diagonal,
+        code        = None,  # Will be assigned a custom code when added to Hamiltonian
+    )
+
+def sig_xyz(ns: int, sites: Optional[List[int]] = None, lattice: Optional[Lattice] = None) -> Operator:
+    r"""Factory for the 3-site \sigma_x \otimes \sigma_y \otimes \sigma_z correlator."""
+    return make_nsite_correlator(['x', 'y', 'z'], ns=ns, sites=sites, lattice=lattice, name='SxSySz')
+
+# -----------------------------------------------------------------------------
 #? COMPOSITION FUNCTION BASED ON THE CODES!
 # -----------------------------------------------------------------------------
 
-def sigma_composition_integer(is_complex: bool):
-    ''' 
+def sigma_composition_integer(is_complex: bool, only_apply: bool = False) -> Callable:
+    r'''
     Creates a sigma operator composition kernel based on a list of operator codes. 
     It supports both real and complex coefficients.
+    
+    Parameters
+    ----------
+    is_complex : bool
+        Whether the operator coefficients are complex.
+    only_apply : bool, optional
+        If True, only applies the operators without combining coefficients.
     '''
-    dtype = np.complex128 if is_complex else np.float64
+    dtype           = np.complex128 if is_complex else np.float64
+    
+    @numba.njit(nogil=True) # compile separately for real/complex
+    def sigma_operator_composition_single_op(state: int, code: int, site1: int, site2: int, ns: int):
+        ''' Applies a single operator based on the code. '''
+        
+        current_s   = state
+        current_c   = dtype(1.0 + 0.0j)
+        is_diagonal = False
+        sites_1     = (site1,)
+        sites_2     = (site1, site2)
+        
+        #! 1) GLOBAL OPERATORS
+        if code <= 10:
+            raise ValueError("Global operators not allowed in composition function.")
+        
+        #! 2) LOCAL OPERATORS
+        if code == SPIN_LOOKUP_CODES.sig_x_local:
+            s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_1)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_y_local:
+            s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_1)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_z_local:
+            s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_1)
+            is_diagonal     = True
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_p_local:
+            s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_1)
+            current_s       = s_arr[0]
+            current_c       = dtype(c_arr[0])
+        elif code == SPIN_LOOKUP_CODES.sig_m_local:
+            s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_1)
+            current_s       = s_arr[0]
+            current_c       = dtype(c_arr[0])
+        #! 3) CORRELATION OPERATORS
+        elif code == SPIN_LOOKUP_CODES.sig_x_corr:
+            s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_y_corr:
+            s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_z_corr:
+            s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+            is_diagonal     = True
+        elif code == SPIN_LOOKUP_CODES.sig_p_corr:
+            s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_2)
+            current_s       = s_arr[0]
+            current_c       = dtype(c_arr[0])
+        elif code == SPIN_LOOKUP_CODES.sig_m_corr:
+            s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_2)
+            current_s       = s_arr[0]
+            current_c       = dtype(c_arr[0])
+        elif code == SPIN_LOOKUP_CODES.sig_xy_corr:
+            s_arr, c_arr    = sigma_xy_mixed_int_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_yx_corr:
+            s_arr, c_arr    = sigma_yx_mixed_int_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_xz_corr:
+            s_arr, c_arr    = sigma_xz_mixed_int_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_zx_corr:
+            s_arr, c_arr    = sigma_zx_mixed_int_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_yz_corr:
+            s_arr, c_arr    = sigma_yz_mixed_int_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_zy_corr:
+            s_arr, c_arr    = sigma_zy_mixed_int_core(state, ns, sites=sites_2)
+            current_s       = s_arr
+            current_c       = dtype(c_arr)
+        elif code == SPIN_LOOKUP_CODES.sig_pm_corr:
+            s_arr, c_arr    = sigma_pm_int_np(state, ns, sites=sites_2)
+            current_s       = s_arr[0]
+            current_c       = dtype(c_arr[0])
+        elif code == SPIN_LOOKUP_CODES.sig_mp_corr:
+            s_arr, c_arr    = sigma_mp_int_np(state, ns, sites=sites_2)
+            current_s       = s_arr[0]
+            current_c       = dtype(c_arr[0])
+        else:
+            pass
+        
+        return current_s, current_c, is_diagonal
+    
+    if only_apply:
+        return sigma_operator_composition_single_op
     
     @numba.njit(nogil=True) # compile separately for real/complex
     def sigma_operator_composition_int(state: int, nops: int, codes, sites, coeffs, ns: int, out_states, out_vals):
@@ -1621,104 +1912,14 @@ def sigma_composition_integer(is_complex: bool):
         diag_sum    = 0.0
 
         for k in range(nops):
-            code        = codes[k]
-            coeff       = coeffs[k]
-            s1          = sites[k, 0]
-            s2          = sites[k, 1]
-            
-            current_s   = state
-            current_c   = 1.0 + 0.0j
-            is_diagonal = False
-            # Helper tuple for single-site calls
-            sites_1     = (s1,)
-            # Helper tuple for two-site calls
-            sites_2     = (s1, s2)
-            
-            #! 1) GLOBAL OPERATORS ARE NOT ALLOWED, WE DON'T WANT CLOSURES!
-            if code <= 10:
-                raise ValueError("Global operators not allowed in composition function.")
-            
-            #! 2) LOCAL OPERATORS
-            if code == SPIN_LOOKUP_CODES.sig_x_local:
-                s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_1)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_y_local:
-                s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_1)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_z_local:
-                s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_1)
-                is_diagonal     = True
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_p_local:
-                s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_1)
-                current_s       = s_arr[0]
-                current_c       = dtype(c_arr[0])
-            elif code == SPIN_LOOKUP_CODES.sig_m_local:
-                s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_1)
-                current_s       = s_arr[0]
-                current_c       = dtype(c_arr[0])
-            #! 3) CORRELATION OPERATORS
-            elif code == SPIN_LOOKUP_CODES.sig_x_corr:
-                s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_y_corr:
-                s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_z_corr:
-                s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-                is_diagonal     = True
-            elif code == SPIN_LOOKUP_CODES.sig_p_corr:
-                s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_2)
-                current_s       = s_arr[0]
-                current_c       = dtype(c_arr[0])
-            elif code == SPIN_LOOKUP_CODES.sig_m_corr:
-                s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_2)
-                current_s       = s_arr[0]
-                current_c       = dtype(c_arr[0])
-            elif code == SPIN_LOOKUP_CODES.sig_xy_corr:
-                s_arr, c_arr    = sigma_xy_mixed_int_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_yx_corr:
-                s_arr, c_arr    = sigma_yx_mixed_int_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_xz_corr:
-                s_arr, c_arr    = sigma_xz_mixed_int_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_zx_corr:
-                s_arr, c_arr    = sigma_zx_mixed_int_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_yz_corr:
-                s_arr, c_arr    = sigma_yz_mixed_int_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_zy_corr:
-                s_arr, c_arr    = sigma_zy_mixed_int_core(state, ns, sites=sites_2)
-                current_s       = s_arr
-                current_c       = dtype(c_arr)
-            elif code == SPIN_LOOKUP_CODES.sig_pm_corr:
-                s_arr, c_arr    = sigma_pm_int_np(state, ns, sites=sites_2)
-                current_s       = s_arr[0]
-                current_c       = dtype(c_arr[0])
-            elif code == SPIN_LOOKUP_CODES.sig_mp_corr:
-                s_arr, c_arr    = sigma_mp_int_np(state, ns, sites=sites_2)
-                current_s       = s_arr[0]
-                current_c       = dtype(c_arr[0])
-            else:
-                continue #! ONE CAN IMPLEMENT MORE OPERATORS -> JUST CALL THIS FUNCTION AND EXTEND WITH YOUR OWN
+            code                                = codes[k]
+            coeff                               = coeffs[k]
+            s1                                  = sites[k, 0]
+            s2                                  = sites[k, 1]
+            current_s, current_c, is_diagonal   = sigma_operator_composition_single_op(state, code, s1, s2, ns)
             
             # Multiply by coefficient
-            final_val                   = current_c * coeff
+            final_val = current_c * coeff
             if abs(final_val) < 1e-15:  continue
             
             # Accumulate results
@@ -1728,7 +1929,7 @@ def sigma_composition_integer(is_complex: bool):
                 out_states[ptr] = current_s
                 out_vals[ptr]   = final_val
                 ptr            += 1
-            
+        
         # Save Diagonal
         if abs(diag_sum) > 1e-15:
             out_states[ptr] = state
@@ -1738,6 +1939,158 @@ def sigma_composition_integer(is_complex: bool):
         return out_states[:ptr], out_vals[:ptr]
     
     return sigma_operator_composition_int
+
+def sigma_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int, Callable], custom_op_arity: Dict[int, int]):
+    r"""
+    Creates a sigma operator composition kernel that supports both predefined and custom operators.
+    
+    This function creates a hybrid composition kernel that:
+    1. Uses fast predefined lookups for standard operators (codes < 1000)
+    2. Falls back to custom operator functions for codes >= 1000
+    
+    Parameters
+    ----------
+    is_complex : bool
+        Whether to use complex coefficients.
+    custom_op_funcs : Dict[int, Callable]
+        Dictionary mapping custom operator codes to their numba-compiled functions.
+        Each function should have signature: (state: int, ns: int, sites: tuple) -> (new_state, coeff)
+    custom_op_arity : Dict[int, int]
+        Dictionary mapping custom operator codes to their arity (number of sites).
+        
+    Returns
+    -------
+    Callable
+        A numba-compiled composition function.
+        
+    Notes
+    -----
+    Custom operators support arbitrary arity (not limited to 3 sites).
+    The sites tuple passed to custom operators will have length equal to the operator's arity.
+    
+    Example
+    -------
+    >>> # Register a 3-site correlator: \sigma_x \otimes \sigma_y \otimes \sigma_z
+    >>> @numba.njit
+    ... def sig_xyz_int(state, ns, sites):
+    ...     s1, c1 = _sigma_x_core(state, ns, sites=(sites[0],))
+    ...     s2, c2 = _sigma_y_core(s1, ns, sites=(sites[1],))
+    ...     s3, c3 = _sigma_z_core(s2, ns, sites=(sites[2],))
+    ...     return s3, c1 * c2 * c3
+    >>> 
+    >>> custom_funcs = {1000: sig_xyz_int}
+    >>> custom_arity = {1000: 3}
+    >>> comp_func = sigma_composition_with_custom(True, custom_funcs, custom_arity)
+    """
+    
+    dtype       = np.complex128 if is_complex else np.float64
+    n_custom    = len(custom_op_funcs)
+    
+    if n_custom == 0:
+        # No custom operators - just use the standard composition
+        return sigma_composition_integer(is_complex)
+    
+    # Create arrays of custom operator info for numba
+    from numba.typed import List as NList
+    custom_codes_arr    = np.array(sorted(custom_op_funcs.keys()), dtype=np.int64)
+    custom_arity_arr    = np.array([custom_op_arity.get(code, 1) for code in custom_codes_arr], dtype=np.int32)
+    
+    # Create typed list of custom functions
+    custom_funcs_list   = NList()
+    for code in custom_codes_arr:
+        custom_funcs_list.append(custom_op_funcs[code])
+    
+    @numba.njit(nogil=True)
+    def find_custom_idx(code, codes_arr):
+        """Linear search for custom operator index."""
+        for i in range(len(codes_arr)):
+            if codes_arr[i] == code:
+                return i
+        return -1
+    
+    apply_predefined_operator = sigma_composition_integer(is_complex, only_apply=True)
+    
+    @numba.njit(nogil=True)
+    def sigma_operator_composition_with_custom_int(state: int, nops: int, codes, sites, coeffs, ns: int, out_states, out_vals):
+        """
+        Composition function that handles both predefined and custom operators.
+        Supports arbitrary arity for custom operators.
+        """
+        ptr         = 0
+        diag_sum    = 0.0
+
+        for k in range(nops):
+            code        = codes[k]
+            coeff       = coeffs[k]
+            current_s   = state
+            current_c   = 1.0 + 0.0j
+            is_diagonal = False
+            handled     = False
+            custom_app  = code >= CUSTOM_OP_BASE
+            
+            # Check for custom operators first (codes >= CUSTOM_OP_BASE)
+            if custom_app:
+                idx = find_custom_idx(code, custom_codes_arr)
+                if idx >= 0:
+                    custom_func = custom_funcs_list[idx]
+                    arity       = custom_arity_arr[idx]
+                    
+                    # Build sites tuple dynamically based on arity
+                    # Numba requires static tuple construction, so we handle common cases
+                    if arity == 1:
+                        sites_tuple = (sites[k, 0],)
+                    elif arity == 2:
+                        sites_tuple = (sites[k, 0], sites[k, 1])
+                    elif arity == 3:
+                        sites_tuple = (sites[k, 0], sites[k, 1], sites[k, 2])
+                    elif arity == 4:
+                        sites_tuple = (sites[k, 0], sites[k, 1], sites[k, 2], sites[k, 3])
+                    elif arity == 5:
+                        sites_tuple = (sites[k, 0], sites[k, 1], sites[k, 2], sites[k, 3], sites[k, 4])
+                    elif arity == 6:
+                        sites_tuple = (sites[k, 0], sites[k, 1], sites[k, 2], sites[k, 3], sites[k, 4], sites[k, 5])
+                    elif arity == 7:
+                        sites_tuple = (sites[k, 0], sites[k, 1], sites[k, 2], sites[k, 3], sites[k, 4], sites[k, 5], sites[k, 6])
+                    elif arity == 8:
+                        sites_tuple = (sites[k, 0], sites[k, 1], sites[k, 2], sites[k, 3], sites[k, 4], sites[k, 5], sites[k, 6], sites[k, 7])
+                    else:
+                        # For very high arity, fall back to max supported
+                        sites_tuple = (sites[k, 0], sites[k, 1], sites[k, 2], sites[k, 3], sites[k, 4], sites[k, 5], sites[k, 6], sites[k, 7])
+                    
+                    s_arr, c_arr    = custom_func(state, ns, sites_tuple)
+                    current_s       = s_arr
+                    current_c       = dtype(c_arr)
+                    handled         = True
+            else:
+                # Try predefined operators
+                current_s, current_c, is_diagonal   = apply_predefined_operator(state, code, sites[k, 0], sites[k, 1], coeff, ns)
+                handled                             = True
+                
+            if not handled:
+                continue  # Unknown operator
+            
+            # Multiply by coefficient
+            final_val = current_c * coeff
+            if abs(final_val) < 1e-15:
+                continue
+            
+            # Accumulate results
+            if is_diagonal:
+                diag_sum       += final_val
+            else:
+                out_states[ptr] = current_s
+                out_vals[ptr]   = final_val
+                ptr            += 1
+        
+        # Save diagonal contribution
+        if abs(diag_sum) > 1e-15:
+            out_states[ptr]     = state
+            out_vals[ptr]       = diag_sum
+            ptr                += 1
+        
+        return out_states[:ptr], out_vals[:ptr]
+    
+    return sigma_operator_composition_with_custom_int
 
 # -----------------------------------------------------------------------------
 #! Finalize

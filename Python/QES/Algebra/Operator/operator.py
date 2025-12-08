@@ -1512,7 +1512,17 @@ class Operator(GeneralMatrix):
     def npy(self):              self._backend = np;     return self._fun.npy
     @property
     def jax(self):              self._backend = jnp;    return self._fun.jax
-    
+
+    @property
+    def matvec_fun(self):
+        '''
+        Returns the matrix-vector multiplication function for the Hamiltonian.
+        This is useful for iterative diagonalization methods.
+        '''        
+        def _matvec(x, *args):
+            return self.matvec(x, *args, hilbert=self._hilbert_space)
+        return _matvec
+
     # -------------------------------
     
     def override_matrix_function(self, function : Callable):
@@ -1752,15 +1762,13 @@ class Operator(GeneralMatrix):
             else:
                 return self._backend.asarray(self._matrix_fun(dim1, matrix_type, *args), dtype=dtype)
         
-        # wrap the function
-        wrapped_fun     = self._fun.wrap(*args)
-        dtype           = dtype if dtype is not None else self._backend.complex128
-        max_loc_upd     = kwargs.get('max_loc_upd', 1)
-
         # Create JIT wrapper for matrix builder
         # This ensures we pass a JIT-compiled function to the JIT-compiled builder
+        # wrap the function with necessary parameters
+        dtype           = dtype if dtype is not None else self._backend.complex128
+        max_loc_upd     = kwargs.get('max_loc_upd', 1)
         op_int_jit      = self._fun._fun_int
-        
+
         # Check cache first
         cache_key       = args if not any(isinstance(a, (np.ndarray, list, dict)) for a in args) else None
         op_wrapper_jit  = None
@@ -1801,9 +1809,8 @@ class Operator(GeneralMatrix):
                     hilbert_1.log(f"Time taken to create the matrix {self._name}: {time.time() - t1:.2e} seconds", lvl=2)
                 return matrix
             else:
-                #!TODO: Implement the JAX version of the matrix function for single Hilbert space
                 raise NotImplementedError("JAX backend for single Hilbert space matrix construction is not yet implemented.")
-                
+        
         # Case3: two Hilbert spaces provided
         elif matrix_hilbert == 'double':
             if not jax_maybe_av or use_numpy:
@@ -1828,7 +1835,6 @@ class Operator(GeneralMatrix):
                         hilbert_1.log(f"Time taken to create the matrix {self._name}: {time.time() - t1:.2e} seconds", lvl=2)
                 return matrix
             else:
-                #!TODO: Implement the JAX version of the matrix function for two Hilbert spaces
                 raise NotImplementedError("JAX backend for two Hilbert spaces matrix construction is not yet implemented.")
         else:
             raise ValueError("Invalid Hilbert space provided.")
@@ -1937,8 +1943,12 @@ class Operator(GeneralMatrix):
         else:
             vecs_in = vecs
         
-        vecs_out            = np.zeros_like(vecs_in, dtype=np.complex128)
-        op_func             = self._fun._fun_int
+        if kwargs.get('out', None) is not None:
+            vecs_out = kwargs['out']
+        else:
+            vecs_out = np.zeros_like(vecs_in, dtype=np.complex128)
+        
+        op_func = self._fun._fun_int
         
         _apply_op_batch_jit(
             vecs_in, 
@@ -2486,62 +2496,68 @@ def _make_local_closure(op, ns_val, args):
     n = len(args)
     if n == 2:
         a0, a1 = args
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i): 
-            return op(state, ns_val, np.array([i], dtype=np.int32), a0, a1)
+            return op(state, ns_val, (i,), a0, a1)
         return impl
     elif n == 3:
         a0, a1, a2 = args
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i): 
-            return op(state, ns_val, np.array([i], dtype=np.int32), a0, a1, a2)
+            return op(state, ns_val, (i,), a0, a1, a2)
         return impl
     elif n == 1:
         a0 = args[0]
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i): 
-            return op(state, ns_val, np.array([i], dtype=np.int32), a0)
+            return op(state, ns_val, (i,), a0, a1, a2)
+        return impl
+    elif n == 1:
+        a0 = args[0]
+        @numba.njit(inline='always')
+        def impl(state, i): 
+            return op(state, ns_val, (i,), a0)
         return impl
     elif n == 0:
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i): 
-            return op(state, ns_val, np.array([i], dtype=np.int32))
+            return op(state, ns_val, (i,))
         return impl
     else:
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i): 
-            return op(state, ns_val, np.array([i], dtype=np.int32), *args)
+            return op(state, ns_val, (i,), *args)
         return impl
 
 def _make_corr_closure(op, ns_val, args):
     n = len(args)
     if n == 2:
         a0, a1 = args
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i, j): 
-            return op(state, ns_val, np.array([i, j], dtype=np.int32), a0, a1)
+            return op(state, ns_val, (i, j), a0, a1)
         return impl
     elif n == 3:
         a0, a1, a2 = args
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i, j): 
-            return op(state, ns_val, np.array([i, j], dtype=np.int32), a0, a1, a2)
+            return op(state, ns_val, (i, j), a0, a1, a2)
         return impl
     elif n == 1:
         a0 = args[0]
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i, j): 
-            return op(state, ns_val, np.array([i, j], dtype=np.int32), a0)
+            return op(state, ns_val, (i, j), a0)
         return impl
     elif n == 0:
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i, j): 
-            return op(state, ns_val, np.array([i, j], dtype=np.int32))
+            return op(state, ns_val, (i, j))
         return impl
     else:
-        @numba.njit
+        @numba.njit(inline='always')
         def impl(state, i, j): 
-            return op(state, ns_val, np.array([i, j], dtype=np.int32), *args)
+            return op(state, ns_val, (i, j), *args)
         return impl
 
 def create_operator(type_act        : int | OperatorTypeActing,
@@ -2661,8 +2677,8 @@ def create_operator(type_act        : int | OperatorTypeActing,
             fun_int = _make_local_closure(op_func_int, ns, extra_args)
         else:
             def fun_int(state, i):
-                sites_1 = np.array([i], dtype=np.int32)
-                return op_func_int(state, ns, sites_1, *extra_args)
+                # sites_1 = np.array([i], dtype=np.int32)
+                return op_func_int(state, ns, (i,), *extra_args)
 
         def fun_np(state, i):
             sites_1 = np.array([i], dtype=np.int32)

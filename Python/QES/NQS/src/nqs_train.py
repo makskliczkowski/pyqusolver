@@ -492,7 +492,7 @@ class NQSTrainer:
         self.tdvp       = tdvp
         self.grad_clip  = grad_clip  # Store for later use
         if self.tdvp is None:
-            if self.logger: self.logger.warning("No TDVP engine provided. Creating default TDVP instance.", lvl=0, color='yellow')
+            self.logger.warning("No TDVP engine provided. Creating default TDVP instance.", lvl=0, color='yellow')
             self.tdvp = TDVP(
                             use_sr          =   use_sr, 
                             use_minsr       =   use_minsr,
@@ -510,12 +510,12 @@ class NQSTrainer:
                             sr_pinv_cutoff  =   kwargs.get('sr_pinv_cutoff', 1e-8),
                             use_timing      =   kwargs.get('use_timing', False)
                         )                    
-            if self.logger: self.logger.info(f"Created default TDVP engine {self.tdvp}", lvl=1, color='yellow')
+            self.logger.info(f"Created default TDVP engine {self.tdvp}", lvl=1, color='yellow')
         
         # Set gradient clipping on TDVP
         if grad_clip is not None:
             self.tdvp.set_grad_clip(grad_clip)
-            if self.logger: self.logger.info(f"Gradient clipping enabled: max_norm={grad_clip:.2e}", lvl=1, color='cyan')
+            self.logger.info(f"Gradient clipping enabled: max_norm={grad_clip:.2e}", lvl=1, color='cyan')
             
         # Setup ODE Solver
         try:
@@ -638,7 +638,7 @@ class NQSTrainer:
             elif isinstance(sched, str):
                 # String scheduler type -> create via factory
                 init = init_val if init_val is not None else (1e-2 if param_name == 'lr' else 1e-3)
-                if self.logger: self.logger.debug(f"Creating '{sched}' scheduler for {param_name} (init={init:.2e})", lvl=2, color='blue')
+                self.logger.debug(f"Creating '{sched}' scheduler for {param_name} (init={init:.2e})", lvl=2, color='blue')
                 return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs)
             
             elif callable(sched) or isinstance(sched, PhaseScheduler):
@@ -658,7 +658,7 @@ class NQSTrainer:
         
         # Case 2: Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
         elif isinstance(phases, str):
-            if self.logger: self.logger.debug(f"Initializing training phases with preset: '{phases}'")
+            self.logger.debug(f"Initializing training phases with preset: '{phases}'")
             self.lr_scheduler, self.reg_scheduler   = create_phase_schedulers(phases, self.logger)
             # diag_scheduler is separate from phase presets
             self.diag_scheduler                     = _resolve_scheduler(diag_scheduler, diag_shift, 'diag', n_epochs, **diag_kwargs)
@@ -739,7 +739,7 @@ class NQSTrainer:
             timer_list                  = getattr(self.stats.timings, phase, None)
             if timer_list is not None:  timer_list.append(np.nan) # Placeholder for no timing
             return fn(*args, **kwargs)
-        
+    
     # ------------------------------------------------------    
     #! Hyperparameter Updates
     # ------------------------------------------------------
@@ -861,13 +861,12 @@ class NQSTrainer:
         """
         # Timer for the WHOLE epoch (BASIC mode)
         import time
-        t0                  = time.time()
         checkpoint_every    = max(1, checkpoint_every)
         
         # Auto-detect epochs from scheduler if not provided
         if n_epochs is None and isinstance(self.lr_scheduler, PhaseScheduler):
             n_epochs = sum(p.epochs for p in self.lr_scheduler.phases)
-            if self.logger: self.logger.info(f"Auto-detected total epochs from phases: {n_epochs}")
+            self.logger.info(f"Auto-detected total epochs from phases: {n_epochs}")
         
         # Reset stats if needed, if not we continue accumulating
         if reset_stats:
@@ -878,7 +877,8 @@ class NQSTrainer:
             start_epoch = len(self.stats.history)
             if self.logger and start_epoch > 0:
                 self.logger.info(f"Continuing training from epoch {start_epoch} (reset_stats=False)", lvl=1, color='cyan')
-            
+        
+        t0          = (time.time() + self.stats.timings.total[-1]) if len(self.stats.timings.total) > 0 else time.time()
         n_epochs    = n_epochs or 100
         pbar        = trange(n_epochs, desc="NQS Training", leave=True) if use_pbar else range(n_epochs)
         
@@ -888,7 +888,7 @@ class NQSTrainer:
                 global_epoch                    = start_epoch + epoch
                 
                 # 1. Scheduling (use global_epoch so schedulers continue properly)
-                last_E                          = self.stats.history[-1] if self.stats.history else 0.0
+                last_E                          = self.stats.history[-1] if len(self.stats.history) > 0 else 0.0
                 lr, reg, diag                   = self._update_hyperparameters(epoch, last_E) # use local epoch for schedulers as we are in a single phase
 
                 # 2. Sampling (Timed)
@@ -967,7 +967,7 @@ class NQSTrainer:
                         
                     pbar.set_postfix(postfix)
                 else:
-                    if self.logger: self.logger.info(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
+                    self.logger.info(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
 
                 # Checkpointing (use global_epoch for consistent checkpoint naming)
                 if epoch % checkpoint_every == 0 or epoch == n_epochs - 1:
@@ -975,19 +975,19 @@ class NQSTrainer:
 
                 # Early Stopping
                 if np.isnan(mean_loss):
-                    if self.logger: self.logger.error("Energy is NaN. Stopping training.")
+                    self.logger.error("Energy is NaN. Stopping training.")
                     break
 
                 if self.early_stopper and self.early_stopper(mean_loss):
-                    if self.logger: self.logger.info(f"Early stopping triggered at epoch G:{global_epoch},L:{epoch}")
+                    self.logger.info(f"Early stopping triggered at epoch G:{global_epoch},L:{epoch}")
                     break
                 
         except KeyboardInterrupt:
-            if self.logger: self.logger.warning("Training interrupted by user.")
+            self.logger.warning("Training interrupted by user.")
         except StopIteration as e:
-            if self.logger: self.logger.info(f"Training stopped: {e}")
+            self.logger.info(f"Training stopped: {e}")
         except Exception as e:
-            if self.logger: self.logger.error(f"An error occurred during training: {e}")
+            self.logger.error(f"An error occurred during training: {e}")
             if use_pbar: pbar.close()
             raise e
         
@@ -1062,7 +1062,7 @@ class NQSTrainer:
             os.makedirs(str(Path(path).parent), exist_ok=True)
 
         if not overwrite and os.path.exists(final_path):
-            if self.logger: self.logger.warning(f"Checkpoint file {final_path} already exists and overwrite is False. Skipping save.", lvl=1, color='yellow')
+            self.logger.warning(f"Checkpoint file {final_path} already exists and overwrite is False. Skipping save.", lvl=1, color='yellow')
             return None
         
         # Save training history/stats
@@ -1071,7 +1071,7 @@ class NQSTrainer:
             filename    = os.path.basename(final_path_stats), 
             data        = self.stats.to_dict()
         )
-        if self.logger: self.logger.say(f"Saved training stats to {final_path_stats}", lvl=2, verbose=kwargs.get('verbose', False))
+        self.logger.say(f"Saved training stats to {final_path_stats}", lvl=2, verbose=kwargs.get('verbose', False))
 
         # Delegate weight saving to NQS (which uses checkpoint manager)
         return self.nqs.save_weights(
@@ -1080,16 +1080,20 @@ class NQSTrainer:
             metadata    = meta, 
         )
         
-    def load_checkpoint(self, step: Optional[int] = None, path: Optional[Union[str, Path]] = None, *, fmt: str = "h5", load_weights: bool = True) -> NQSTrainStats:
+    def load_checkpoint(self, step: Optional[Union[int, str]] = None, path: Optional[Union[str, Path]] = None, *, fmt: str = "h5", load_weights: bool = True, fallback_latest: bool = True) -> NQSTrainStats:
         """
         Loads training history from checkpoint.
         
         Parameters:
         -----------
-        step : Optional[int]
-            Training step or epoch to load. If None:
-            - Orbax: loads the latest checkpoint
-            - HDF5: requires path or finds latest in default directory
+        step : Optional[Union[int, str]]
+            Training step or epoch to load. Can be:
+            - int: 
+                specific step number
+            - 'latest': 
+                load the most recent checkpoint
+            - None: 
+                same as 'latest' for Orbax, or finds latest for HDF5
         path : Union[str, Path], optional
             Path to the checkpoint directory or file.
             If None, uses NQS default directory.
@@ -1097,16 +1101,40 @@ class NQSTrainer:
             Format of the saved weights ('h5', 'json', etc.)
         load_weights : bool
             Whether to load the weights from the checkpoint.
+        fallback_latest : bool
+            If True and the requested step is not found, try to load the latest 
+            available checkpoint instead of raising an error.
             
         Returns:
         --------
         NQSTrainStats
             Loaded training statistics.
+            
+        Examples:
+        ---------
+        >>> stats = trainer.load_checkpoint(step=100)        # Load specific step
+        >>> stats = trainer.load_checkpoint(step='latest')   # Load most recent
+        >>> stats = trainer.load_checkpoint()                # Same as 'latest'
         """
         import os
         
-        path_str        = str(path) if path is not None else str(self.nqs.defdir)
-        filename_stats  = "stats.h5"
+        # Handle 'latest' string -> resolve to actual latest step
+        load_latest                         = step is None or (isinstance(step, str) and step.lower() == 'latest')
+        no_checkpoints_available            = False
+        
+        # If loading latest, find the latest step first
+        if load_latest:
+            available = self.nqs.ckpt_manager.list_checkpoints()
+            if available:
+                step                        = max(available) if all(isinstance(s, int) for s in available) else available[-1]
+                self.logger.info(f"Loading latest checkpoint: step {step}", lvl=1, color='cyan')
+            else:
+                step                        = None  # Will trigger error or use stats only
+                no_checkpoints_available    = True
+                self.logger.warning(f"No checkpoints found. Will load stats only.", lvl=1, color='yellow')
+        
+        path_str            = str(path) if path is not None else str(self.nqs.defdir)
+        filename_stats      = "stats.h5"
         
         # Resolve paths
         if path_str.endswith(os.sep) or os.path.isdir(path_str):
@@ -1120,37 +1148,57 @@ class NQSTrainer:
         try:
             stats_data = HDF5Manager.read_hdf5(file_path=Path(filename_stats))
             self.stats = NQSTrainStats(
-                                history             = stats_data.get("/history/val",        []),
-                                history_std         = stats_data.get("/history/std",        []),
-                                lr_history          = stats_data.get("/history/lr",         []),
-                                reg_history         = stats_data.get("/history/reg",        []),
-                                diag_history        = stats_data.get('/history/diag_shift', []),
-                                global_phase        = stats_data.get("/history/theta0",     []),
+                                history             = list(stats_data.get("/history/val",        [])),
+                                history_std         = list(stats_data.get("/history/std",        [])),
+                                lr_history          = list(stats_data.get("/history/lr",         [])),
+                                reg_history         = list(stats_data.get("/history/reg",        [])),
+                                diag_history        = list(stats_data.get('/history/diag_shift', [])),
+                                global_phase        = list(stats_data.get("/history/theta0",     [])),
                                 seed                = stats_data.get("/seed",               None),
                                 exact_predictions   = stats_data.get("/exact/predictions",  None),
                                 exact_method        = stats_data.get("/exact/method",       None),
                                 timings             = NQSTrainTime(
                                                         n_steps = stats_data.get("/timings/n_steps", 0),
-                                                        step    = stats_data.get("/timings/step", []),
-                                                        sample  = stats_data.get("/timings/sample", []),
-                                                        update  = stats_data.get("/timings/update", []),
-                                                        total   = stats_data.get("/timings/total", []),
+                                                        step    = list(stats_data.get("/timings/step",      [])),
+                                                        sample  = list(stats_data.get("/timings/sample",    [])),
+                                                        update  = list(stats_data.get("/timings/update",    [])),
+                                                        total   = list(stats_data.get("/timings/total",     [])),
                                                     )
                             )
-            if self.logger: self.logger.info(f"Loaded training history from {filename_stats}", lvl=1, color='green')
+            self.logger.info(f"Loaded training history from {filename_stats}", lvl=1, color='green')
             if self.stats.has_exact:
-                if self.logger: self.logger.info(f"Loaded exact predictions ({self.stats.exact_method}): ground state = {self.stats.exact_gs:.6f}", lvl=2, color='green')
+                self.logger.info(f"Loaded exact predictions ({self.stats.exact_method}): ground state = {self.stats.exact_gs:.6f}", lvl=2, color='green')
         except Exception as e:
-            if self.logger: self.logger.warning(f"Could not load training stats from {filename_stats}: {e}", lvl=0, color='yellow')
+            self.logger.warning(f"Could not load training stats from {filename_stats}: {e}", lvl=0, color='yellow')
         
-        # Load weights
-        if load_weights:
+        # Load weights with fallback logic (skip if no checkpoints and we already know it)
+        if load_weights and not no_checkpoints_available:
             try:
                 self.nqs.load_weights(step=step, filename=final_path)
-                if self.logger: self.logger.info(f"Loaded weights for step {step} from {final_path}", lvl=2, color='green')
+                self.logger.info(f"Loaded weights for step {step} from {final_path}", lvl=2, color='green')
+            except (FileNotFoundError, ValueError) as e:
+                # Try fallback to latest checkpoint if enabled
+                if fallback_latest and step is not None:
+                    self.logger.warning(f"Checkpoint step {step} not found. Trying latest available...", lvl=1, color='yellow')
+                    try:
+                        # Get available checkpoints
+                        available = self.nqs.ckpt_manager.list_checkpoints()
+                        if available:
+                            latest_step = max(available) if all(isinstance(s, int) for s in available) else available[-1]
+                            self.logger.info(f"Found {len(available)} checkpoints. Loading latest: step {latest_step}", lvl=1, color='cyan')
+                            self.nqs.load_weights(step=latest_step, filename=None)
+                            self.logger.info(f"Successfully loaded weights from step {latest_step}", lvl=1, color='green')
+                        else:
+                            self.logger.warning(f"No checkpoints available. Using current weights.", lvl=1, color='yellow')
+                    except Exception as e2:
+                        self.logger.warning(f"Could not load weights: {e2}. Using current weights.", lvl=1, color='yellow')
+                else:
+                    self.logger.warning(f"Could not load weights: {e}. Using current weights.", lvl=1, color='yellow')
             except Exception as e:
-                if self.logger: self.logger.error(f"Failed to load weights: {e}", lvl=0, color='red')
-                raise
+                self.logger.warning(f"Could not load weights: {e}. Using current weights.", lvl=1, color='yellow')
+                
+        elif load_weights and no_checkpoints_available:
+            self.logger.info(f"No checkpoints to load. Using current (random) weights.", lvl=1, color='yellow')
         
         return self.stats
     

@@ -2109,8 +2109,10 @@ class NQS(MonteCarloSolver):
     def train(self,
             n_epochs            : int                       = 300,
             checkpoint_every    : int                       = 50,
+            load_checkpoint     : bool                      = False,
             *,
             # Trainer configuration (only used if override=True or no trainer exists)
+            checkpoint_step     : Union[int, str]           = None,
             reset_weights       : bool                      = False,
             override            : bool                      = True,
             # Solvers
@@ -2290,8 +2292,8 @@ class NQS(MonteCarloSolver):
         if override or self._trainer is None:
             from QES.NQS.src.nqs_train import NQSTrainer
             
-            old_stats = self._trainer.stats if self._trainer is not None else None
-            
+            old_stats       = self._trainer.stats if self._trainer is not None else None
+
             self._trainer = NQSTrainer(
                 nqs             = self,
                 # Solvers
@@ -2310,8 +2312,12 @@ class NQS(MonteCarloSolver):
                 lower_states    = lower_states,
                 # Schedulers
                 lr_scheduler    = lr_scheduler,
+                lr_max_epochs   = kwargs.pop('lr_max_epochs', n_epochs),
                 reg_scheduler   = reg_scheduler,
+                reg_max_epochs  = kwargs.pop('reg_max_epochs', n_epochs),
                 diag_scheduler  = diag_scheduler,
+                diag_max_epochs = kwargs.pop('diag_max_epochs', n_epochs),
+                # Training options
                 lr              = lr,
                 reg             = reg,
                 diag_shift      = diag_shift,
@@ -2334,6 +2340,13 @@ class NQS(MonteCarloSolver):
             self.log(f"Sampler update number set to {n_update}", lvl=2, color='blue')
 
         # Run training
+        if load_checkpoint:
+            try:
+                self._trainer.load_checkpoint(step=checkpoint_step)
+                return self._trainer.stats
+            except Exception as e:
+                pass
+
         stats = self._trainer.train(
             n_epochs            = n_epochs,
             checkpoint_every    = checkpoint_every,

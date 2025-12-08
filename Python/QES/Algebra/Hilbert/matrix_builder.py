@@ -127,7 +127,6 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
 _INVALID_REPR_IDX_NB  = numba.uint32(0xFFFFFFFF)
 _INVALID_PHASE_IDX_NB = numba.uint8(0xFF)
 
-
 @numba.njit(cache=True, nogil=True)
 def _build_sparse_same_sector_compact_jit(
                 representative_list : np.ndarray,   # int64[n_repr] - representative state values
@@ -846,15 +845,17 @@ def build_operator_matrix(
 
 @numba.njit(fastmath=True, parallel=True)
 def _apply_op_batch_jit(
-    vecs_in             : np.ndarray,
-    vecs_out            : np.ndarray,
-    op_func             : Callable,
-    args                : Tuple,
-    basis               : Optional[np.ndarray],
-    representative_list : Optional[np.ndarray],
-    normalization       : Optional[np.ndarray],
-    repr_idx            : Optional[np.ndarray],
-    repr_phase          : Optional[np.ndarray]) -> None:
+        vecs_in             : np.ndarray,
+        vecs_out            : np.ndarray,
+        op_func             : Callable,
+        args                : Tuple,
+        basis               : Optional[np.ndarray],
+        representative_list : Optional[np.ndarray],
+        normalization       : Optional[np.ndarray],
+        repr_idx            : Optional[np.ndarray],
+        repr_phase          : Optional[np.ndarray],
+        chunk_size          : int = 4
+    ) -> None:
     
     nh, n_batch         = vecs_in.shape
     has_symmetry        = representative_list is not None
@@ -864,7 +865,7 @@ def _apply_op_batch_jit(
     # We process the batch in small chunks to prevent VRAM/RAM explosion.
     # Chunk size of 1 is safest for memory. 
     # If one has massive RAM, you can increase this to 2 or 4.
-    chunk_size          = 1
+    chunk_size          = min(chunk_size, n_batch)
     
     # Create a buffer for EACH thread to write to safely
     # Shape: (n_threads, nh, chunk_size)

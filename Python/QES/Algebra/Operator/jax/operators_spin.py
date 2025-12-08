@@ -1,38 +1,33 @@
 """
-file        : Algebra/Operator/operators_spin_jax.py
-
-This module implements spin operators for quantum systems using the JAX library.
+This module implements spin-1/2 operators for quantum systems using the JAX library.
 It includes functions for sigma_x, sigma_y, sigma_z, sigma_plus (raising),
 sigma_minus (lowering), their products, and a Fourier-transformed sigma_k operator.
-The implementation is based on the provided C++ code and uses a general Operator class.
 
+----------------------------------------------------------------------------
 Author      : Maksymilian Kliczkowski, WUST, Poland
 Date        : February 2025
 Version     : 1.0
+----------------------------------------------------------------------------
 """
 
-import numpy as np
-from typing import List, Union
-from functools import partial
+import  numpy as np
+from    typing import List, Union
+from    functools import partial
 
 ################################################################################
-from QES.Algebra.Operator.operator import Operator, OperatorTypeActing, SymmetryGenerators, ensure_operator_output_shape_jax
+try:
+    from QES.Algebra.Operator.operator      import ensure_operator_output_shape_jax
+    from QES.general_python.common.binary   import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
+    import QES.general_python.common.binary as _binary
+except ImportError as e:
+    raise ImportError("Failed to import Operator base class or utilities. Ensure that the QES package is correctly installed and accessible.") from e
 ################################################################################
-
-################################################################################
-from QES.general_python.common.tests import GeneralAlgebraicTest
-from QES.general_python.lattices.lattice import Lattice
-from QES.general_python.algebra.utils import DEFAULT_BACKEND, get_backend
-from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN, JAX_AVAILABLE
-
-# binary operations
-import QES.general_python.common.binary as _binary
 
 # JAX imports
 if JAX_AVAILABLE:
-    import jax
-    from jax import lax
-    from jax import numpy as jnp
+    import  jax
+    from    jax import lax
+    from    jax import numpy as jnp
 
     # transform the matrices to JAX arrays
     _SIG_0_jnp = jnp.array([[1, 0],
@@ -875,4 +870,7 @@ if not JAX_AVAILABLE:
     sigma_mp_int_jnp = np
     sigma_k_int_jnp = np
     sigma_k_jnp = np
-    
+
+# -----------------------------------------------------------------------------
+#! EOF
+# -----------------------------------------------------------------------------
