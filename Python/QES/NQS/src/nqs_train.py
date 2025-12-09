@@ -868,6 +868,15 @@ class NQSTrainer:
             n_epochs = sum(p.epochs for p in self.lr_scheduler.phases)
             self.logger.info(f"Auto-detected total epochs from phases: {n_epochs}")
         
+        # Set exact information on NQS object if provided
+        if 'exact_predictions' in kwargs:
+            ex_pred         = kwargs['exact_predictions']
+            self.nqs.exact  = {
+                'exact_predictions' : ex_pred,
+                'exact_method'      : kwargs.get('exact_method', None),
+                'exact_energy'      : float(ex_pred) if np.ndim(ex_pred) == 0 else ex_pred[len(self.lower_states)] if self.lower_states else ex_pred[0]
+            }
+
         # Reset stats if needed, if not we continue accumulating
         if reset_stats:
             self.stats  = NQSTrainStats() # Reset stats
@@ -887,14 +896,14 @@ class NQSTrainer:
                 # Global epoch accounts for previous training when continuing
                 global_epoch                    = start_epoch + epoch
                 
-                # 1. Scheduling (use global_epoch so schedulers continue properly)
+                # Scheduling (use global_epoch so schedulers continue properly)
                 last_E                          = self.stats.history[-1] if len(self.stats.history) > 0 else 0.0
                 lr, reg, diag                   = self._update_hyperparameters(epoch, last_E) # use local epoch for schedulers as we are in a single phase
 
-                # 2. Sampling (Timed)
+                # Sampling (Timed)
                 # Returns: ((keys), (configs, ansatz_vals), probs)
                 # Note: reset=(epoch==0) resets sampler only at start of this train() call
-                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(epoch==0), epoch=global_epoch)
+                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(epoch==0), epoch=global_epoch, num_samples=kwargs.get('num_samples', None), num_chains=kwargs.get('num_chains', None))
                 (_, _), (cfgs, cfgs_psi), probs = sample_out
                 if self.logger and epoch == 0:  self.logger.info(f"Sampled {cfgs.shape[0]} configurations with batch size {self.n_batch}", lvl=1, color='green')
                 
@@ -902,7 +911,7 @@ class NQSTrainer:
                 lower_contr                     = self._prepare_lower_states(cfgs, cfgs_psi)
                 if self.logger and epoch == 0:  self.logger.info(f"Prepared lower states for excited state handling", lvl=1, color='green')
 
-                # 3. Physics Step (TDVP + ODE) (Timed)
+                # Physics Step (TDVP / ODE) (Timed)
                 params_flat                     = self.nqs.get_params(unravel=True)
                 step_out                        = self._timed_execute(
                                                     "step", 

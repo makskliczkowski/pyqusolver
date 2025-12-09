@@ -90,7 +90,8 @@ class ARSampler(Sampler):
         self._dtype                     = dtype
         self._mu                        = kwargs.get('mu', 2.0)  # Scaling factor for log-prob to log-psi
         self._sample_jit                = jax.jit(self._static_sample_ar, static_argnames=['net_apply', 'shape', 'total_count', 'statetype'])
-
+        self._name                      = "AR"
+        
     @staticmethod
     def _static_sample_ar(net_apply, params, rng_key, shape, total_count, statetype: Any = jnp.float32, mu: float = 2.0) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """

@@ -524,6 +524,8 @@ class Sampler(ABC):
     A base class for the sampler.     
     """
     
+    _name = "BaseSampler"
+    
     def __init__(self,
                 shape       : Tuple[int, ...],
                 upd_fun     : Callable,
@@ -709,6 +711,8 @@ class Sampler(ABC):
     #! PROPERTIES
     ###################################################################
     
+    @property
+    def name(self): return self._name
     @property
     def hilbert(self): return self._hilbert
     @property

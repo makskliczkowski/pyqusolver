@@ -342,7 +342,7 @@ class NQS(MonteCarloSolver):
         #! Sampler
         # --------------------------------------------------
         
-        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), **kwargs)     
+        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)     
 
         # --------------------------------------------------
         #! Handle gradients
@@ -391,6 +391,11 @@ class NQS(MonteCarloSolver):
         
         # Initialize the Manager
         self.ckpt_manager = NQSCheckpointManager(directory=self._dir_detailed, use_orbax=kwargs.get('use_orbax', True), max_to_keep=kwargs.get('orbax_max_to_keep', 3), logger=self._logger)
+        
+        # --------------------------------------------------
+        #! Exact information (Ground Truth)
+        # --------------------------------------------------
+        self._exact_info            = None
     
     #####################################
     #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
@@ -448,6 +453,7 @@ class NQS(MonteCarloSolver):
         self._dir           = base
         self._dir_detailed  = final_dir
         self.defdir         = self._dir_detailed
+        self.defdirpar      = self._dir_detailed.parent().resolve()
     
     # ---
     
@@ -498,6 +504,23 @@ class NQS(MonteCarloSolver):
             self._nparams           = self._net.nparams
             self._initialized       = True
     
+    @property
+    def exact(self):
+        """
+        Return the exact information (ground truth) if available.
+        This is a dictionary containing exact energy, method, etc.
+        """
+        return self._exact_info
+    
+    @exact.setter
+    def exact(self, info: dict):
+        """
+        Set the exact information (ground truth).
+        """
+        self._exact_info = info
+        if info is not None:
+            self.log(f"Exact information set: {info}", lvl=1)
+
     #####################################
     #! SETTERS FOR HELP
     #####################################
@@ -516,7 +539,7 @@ class NQS(MonteCarloSolver):
         self._ansatz_func, self._eval_func, self._apply_func    = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         self._ansatz_base_func                                  = self._ansatz_func
     
-    def set_sampler(self, sampler: Union[VMCSampler, str], upd_fun: Optional[Callable] = None, **kwargs) -> VMCSampler:
+    def set_sampler(self, sampler: Union[VMCSampler, str], upd_fun: Optional[Callable] = None, replica: int = 1, **kwargs) -> VMCSampler:
         ''' Set a new sampler for the NQS solver. '''  
         
         if isinstance(sampler, Sampler):
@@ -532,7 +555,6 @@ class NQS(MonteCarloSolver):
                 sampler_type = sampler
     
             if self._isjax:
-                import jax
                 import jax.numpy as jnp
                 
             sampler_kwargs                  = kwargs.copy()
@@ -577,27 +599,15 @@ class NQS(MonteCarloSolver):
             # -----------------------------------------------------------------
             # If replicas > 1 is requested but no explicit pt_betas provided,
             # automatically generate a geometric temperature ladder
-            n_replicas = kwargs.get('replica', 1)
-            if n_replicas > 1 and 'pt_betas' not in kwargs:
-                # Geometric progression from 1.0 (physical) down to min_beta (hot)
-                # Beta=1.0 is the physical temperature, lower betas are hotter
-                min_beta = kwargs.get('pt_min_beta', 0.1)
-                if self._isjax:
-                    import jax.numpy as jnp
-                    betas = jnp.logspace(0, np.log10(min_beta), n_replicas)
-                else:
-                    betas = np.logspace(0, np.log10(min_beta), n_replicas)
-                sampler_kwargs['pt_betas'] = betas
-                self._logger.info(f"Parallel Tempering enabled: {n_replicas} replicas, betas={betas}", lvl=1)
-            elif 'pt_betas' in kwargs:
-                # User provided explicit betas
-                sampler_kwargs['pt_betas'] = kwargs['pt_betas']
-                self._logger.info(f"Parallel Tempering enabled with custom betas: {kwargs['pt_betas']}", lvl=1)
+            n_replicas  = replica
+            pt_betas    = kwargs.get('pt_betas', None)
+            if n_replicas > 1 or pt_betas is not None:
+                sampler_kwargs['pt_replicas']   = n_replicas
+                sampler_kwargs['pt_betas']      = pt_betas
+                self._logger.info(f"Parallel Tempering enabled with {n_replicas if pt_betas is None else pt_betas} replicas.", lvl=1, color='blue')
+                
             # -----------------------------------------------------------------
 
-            sampler_kwargs.pop('upd_fun',       None)
-            sampler_kwargs.pop('replica',       None)  # Remove replica from kwargs after processing
-            sampler_kwargs.pop('pt_min_beta',   None)  # Remove pt_min_beta if present
             self._sampler = get_sampler(sampler_type, upd_fun=upd_fun, **sampler_kwargs)
             self._logger.warning(f"Using {self._sampler}", lvl=0, color='blue')
         else:
@@ -1816,6 +1826,10 @@ class NQS(MonteCarloSolver):
             if hasattr(self._model, 'lattice') and self._model.lattice is not None:
                 metadata['lattice'] = str(self._model.lattice)
         
+        # Add exact info if available
+        if self.exact is not None:
+            metadata['exact'] = self.exact
+
         saved_path = self.ckpt_manager.save(
             step        = step if isinstance(step, int) else 'final', 
             params      = params, 
@@ -1859,6 +1873,12 @@ class NQS(MonteCarloSolver):
                 target_par  = self.get_params()
             )
             self.set_params(params)
+            
+            # Load metadata and set exact info
+            metadata = self.ckpt_manager.load_metadata(step=step if isinstance(step, int) else 'final', filename=filename)
+            if 'exact' in metadata:
+                self.exact = metadata['exact']
+                
             self.log(f"Loaded weights (step={step}, file={filename})", lvl=1)
         except Exception as e:
             self.log(f"Failed to load weights: {e}", lvl=0, color='red')
@@ -2115,13 +2135,20 @@ class NQS(MonteCarloSolver):
             reset_weights       : bool                      = False,
             override            : bool                      = True,
             # Solvers
-            lin_solver          : Union[str, Callable]      = 'scipy_cg',
-            pre_solver          : Union[str, Callable]      = None,
+            lin_solver          : Union[str, Callable]      = 'minres_qlp',
+            pre_solver          : Union[str, Callable]      = 'jacobi',
             ode_solver          : Union[str, Any]           = 'Euler',
             tdvp                : Any                       = None,
+            grad_clip           : Optional[float]           = None,
             # Configuration
             n_batch             : int                       = 128,
             n_update            : Optional[int]             = None,
+            num_samples         : Optional[int]             = None,
+            num_chains          : Optional[int]             = None,
+            num_thermal         : Optional[int]             = None,
+            num_sweep           : Optional[int]             = None,
+            pt_betas            : Optional[List[float]]     = None,    
+            # Learning Rate and Phase Scheduling
             phases              : Union[str, tuple]         = 'default',
             # Utilities
             timing_mode         : str                       = 'detailed',
@@ -2141,7 +2168,8 @@ class NQS(MonteCarloSolver):
             use_sr              : bool                      = True,
             use_minsr           : bool                      = False,
             rhs_prefactor       : float                     = -1.0,
-            diag_shift          : float                     = 1e-5,
+            # Diagonal shift
+            diag_shift          : float                     = 1e-1,    
             # Training options
             save_path           : str                       = None,
             reset_stats         : bool                      = True,
@@ -2287,6 +2315,23 @@ class NQS(MonteCarloSolver):
             self.reset()
             self.log("Network parameters reset before training.", lvl=1, color='blue')
 
+        if self._sampler.name == 'VMC':
+            if num_samples is not None:
+                self._sampler.set_numsamples(num_samples)
+            if num_chains is not None:
+                self._sampler.set_numchains(num_chains)
+            if num_thermal is not None and hasattr(self._sampler, 'set_therm_steps'):
+                self._sampler.set_therm_steps(num_thermal)
+            if num_sweep is not None and hasattr(self._sampler, 'set_sweep_steps'):
+                self._sampler.set_sweep_steps(num_sweep)
+            if pt_betas is not None and hasattr(self._sampler, 'set_pt_betas'):
+                self._sampler.set_pt_betas(pt_betas)
+        
+            if any(param is not None for param in [num_samples, num_chains, num_thermal, num_sweep, pt_betas]):
+                self.log(f"Sampler (re)configured: num_samples={self._sampler.numsamples}, num_chains={self._sampler.numchains}", lvl=2, color='blue')
+                if pt_betas is not None and hasattr(self._sampler, 'pt_betas'):
+                    self.log(f"  PT Betas: {self._sampler.pt_betas}", lvl=2, color='blue')
+            
         # Create or reuse trainer
         if override or self._trainer is None:
             from QES.NQS.src.nqs_train import NQSTrainer
@@ -2327,6 +2372,7 @@ class NQS(MonteCarloSolver):
                 use_sr          = use_sr,
                 use_minsr       = use_minsr,
                 rhs_prefactor   = rhs_prefactor,
+                grad_clip       = grad_clip,
                 **kwargs
             )
             
@@ -2358,6 +2404,7 @@ class NQS(MonteCarloSolver):
             use_pbar            = use_pbar,
             exact_predictions   = exact_predictions,
             exact_method        = exact_method,
+            **kwargs
         )
 
         return stats
@@ -2368,7 +2415,7 @@ class NQS(MonteCarloSolver):
         return f"NQS(logansatz={self._net},sampler={self._sampler},backend={self._backend_str},mod={self.modified})"
     
     def __str__(self):
-        return f"NQS(logansatz={self._net},sampler={self._sampler},backend={self._backend_str},mod={self.modified})"    
+        return self.__repr__() 
 
     def help(self, topic: str = "general"):
         """
@@ -2807,6 +2854,30 @@ class NQS(MonteCarloSolver):
     #! SAMPLES FOR MCMC, IF APPLICABLE
     #####################################
 
+    @staticmethod
+    def est(loss: np.ndarray, last_el: float = 10):
+        ''' Estimate value from last elements of loss array '''
+        if isinstance(loss, (list, tuple, np.ndarray)):
+            loss        = np.array(loss)
+            if 0 < last_el < 1:
+                n       = int(len(loss) * last_el)
+                lossr   = loss[-n:]
+            else:
+                last_el = min(last_el, len(loss))
+                lossr   = loss[-last_el:]
+                
+            lossv = np.mean(lossr)
+        else:
+            lossv = loss
+        return lossv
+
+    @staticmethod
+    def relative_error(loss: np.ndarray, reference: float, last_el: float = 10):
+        ''' '''
+        if np.isclose(reference, 0.0):
+            raise ValueError("Reference value is zero, cannot compute relative error.")
+        return np.abs(NQS.est(loss, last_el=last_el) - reference) / np.abs(reference)
+        
     @staticmethod
     def get_auto_config(system_size, target_total_samples=4096, dtype=jnp.complex64, logger: Logger = None, *, net_depth_estimate: int = 64, num_therm: Optional[int] = None, num_sweep: Optional[int] = None) -> dict:
         """

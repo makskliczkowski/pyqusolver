@@ -18,13 +18,13 @@ Description : Checkpoint Manager for NQS parameters and metadata.
 ---------------------------------------------------------
 '''
 
-import json
-import os
-import shutil
-import logging
-from pathlib import Path
-from typing import Optional, Dict, Any, Union
-import numpy as np
+import  os
+import  json
+import  shutil
+import  numpy as np
+import  warnings
+from    pathlib import Path
+from    typing import Optional, Dict, Any, Union
 
 # Try importing HDF5 and JAX/Orbax
 try:
@@ -99,12 +99,25 @@ class NQSCheckpointManager:
                             )
                 
         # Define the checkpointer (Required!)
-        checkpointer        = ocp.StandardCheckpointer()
-        self._orbax_manager = ocp.CheckpointManager(
-                                target_dir, 
-                                {'params': checkpointer},
-                                options=options
-                            )
+        # Try to use the new API if possible to avoid deprecation warnings
+        try:
+            # New API (>=0.5.0) - Checkpointer is provided via save_args/restore_args
+            self._orbax_manager = ocp.CheckpointManager(
+                                    target_dir, 
+                                    options=options
+                                )
+            self._legacy_api = False
+        except (TypeError, ValueError):
+            # Legacy API - Checkpointer provided in constructor
+            checkpointer        = ocp.PyTreeCheckpointer()
+            self._orbax_manager = ocp.CheckpointManager(
+                                    target_dir, 
+                                    checkpointer, 
+                                    options=options
+                                )
+            self._legacy_api = True
+        
+        self._log(f"Initialized Orbax Manager (Legacy API: {self._legacy_api})", lvl=2)
             
     def _resolve_path(self, filename: Optional[str], step: Union[int, str], extension: str = "h5") -> Path:
         """Resolve the full path for a checkpoint file."""
@@ -136,41 +149,32 @@ class NQSCheckpointManager:
         else:
             return self._save_hdf5_wrapper(step, params, metadata, filename)
 
-    def _save_orbax(self, step: Union[int, str], params: Any, metadata: Dict[str, Any], **kwargs) -> Path:
+    def _save_orbax(self, step: Union[int, str], params: Any, metadata: Dict[str, Any], force: bool = True, **kwargs) -> Path:
         """
-        Save using Orbax backend.
+        Save using Orbax backend. Always saves a single PyTree using PyTreeCheckpointer.
+        This ensures the directory structure is always .../checkpoints/<step>/default/...
         """
         if isinstance(step, str) and step.isdigit():
             step = int(step)
-        
-        # If step is still a string (e.g., 'final'), do not use 0. 
-        # Orbax requires integer steps. We use the internal counter or a high number.
-        if isinstance(step, int):
-            save_key    = step
-        else:
-            # metadata['_string_step'] = step # Redundant if you save metadata_json
-            # Use the max_epochs or a large constant to avoid overwriting step 0
-            save_key    = kwargs.get('current_epoch', 999999) 
-
-        # We wrap params in a Composite arg with key 'params'. 
+        save_key = step if isinstance(step, int) else kwargs.get('current_epoch', 999999)
         try:
-            save_args   = ocp.args.Composite(params=ocp.args.StandardSave(params))
-            self._orbax_manager.save(save_key, args=save_args)
+            if os.path.exists(self._checkpoint_dir / str(save_key)):
+                if force:
+                    self._log(f"Overwriting existing Orbax checkpoint for step {save_key}", lvl=1, color='yellow')
+                    shutil.rmtree(self._checkpoint_dir / str(save_key), ignore_errors=True)
+                else:
+                    raise FileExistsError(f"Checkpoint for step {save_key} already exists.")
             
-            # This line is REQUIRED to fix your "NOT_FOUND" / "Zarr" errors.
-            # It forces the script to pause until the file is physically on thze disk.
-            self._orbax_manager.wait_until_finished()
+            # Always use PyTreeCheckpointer for a single PyTree
+            save_args = ocp.args.PyTreeSave(params)
+            self._orbax_manager.save(save_key, args=save_args, force=force)
             
         except Exception as e:
             self._log(f"CRITICAL: Orbax save failed: {e}", lvl=0, color='red')
             shutil.rmtree(self._checkpoint_dir / str(save_key), ignore_errors=True)
             raise e
-        
-        # Save your custom metadata after we are sure Orbax finished
-        # Use save_key, not step (to match folder)
-        self._save_metadata_json(save_key, metadata) 
+        self._save_metadata_json(save_key, metadata)
         self._log(f"Saved Orbax checkpoint for step {save_key}", lvl=1, color='green')
-        
         return self._checkpoint_dir / str(save_key)
 
     def _save_hdf5_wrapper(self, step: Union[int, str], params: Any, metadata: Dict[str, Any], filename: Optional[str]) -> Path:
@@ -201,100 +205,75 @@ class NQSCheckpointManager:
 
     def _load_orbax(self, step: Optional[Union[int, str]], filename: Optional[str], target_par: Optional[Any]) -> Any:
         """
-        Robust Load: 
-        1. If 'filename' (absolute path) is provided, bypasses Manager and loads directly via PyTreeCheckpointer.
+        Robust Load: Always loads a single PyTree using PyTreeCheckpointer.
+        1. If 'filename' (absolute path) is provided, loads directly via PyTreeCheckpointer.
         2. If 'step' is provided, uses Manager to load from default directory.
+        This matches the save logic and ensures the directory structure is always .../checkpoints/<step>/default/...
         """
-        
-        # ---------------------------------------------------------------------
-        # PRE-CHECK: Is the filename just pointing to the Manager's directory?
-        # ---------------------------------------------------------------------
-        # If the user passed a filename like ".../checkpoints/144", and that matches 
-        # our current manager directory, we should just use the Manager logic (Case B).
-        # This avoids re-initializing checkpointers and is safer.
-        if filename is not None and step is not None:
-            path_obj        = Path(filename).resolve()
-            expected_path   = (self._checkpoint_dir / str(step)).resolve()
-            if path_obj == expected_path:
-                self._log(f"Path matches Manager directory. Switching to Manager load for step {step}.", lvl=1)
-                filename = None # Disable direct load, proceed to Case B
-        
-        # ---------------------------------------------------------------------
-        # CASE A: Direct Path Load (Custom Location / External File)
-        # ---------------------------------------------------------------------
+        # Case 1: Direct filename load
         if filename is not None:
             path_obj = Path(filename)
             if not path_obj.exists():
-                raise FileNotFoundError(f"Orbax checkpoint path not found: {path_obj}")
+                raise FileNotFoundError(f"Path not found: {path_obj}")
             
-            self._log(f"Loading Orbax via Direct Path (OCDBT-compatible): {path_obj}", lvl=1)
-
-            # Use Composite + StandardHandler for OCDBT
-            # PyTreeCheckpointer fails on OCDBT. We must construct a specific handler.
+            # Direct load using Checkpointer
+            ckptr = ocp.PyTreeCheckpointer()
             try:
-                # We expect the structure: {'params': ...}
-                handler         = ocp.CompositeCheckpointHandler(params=ocp.StandardCheckpointHandler())
-                checkpointer    = ocp.Checkpointer(handler)
-                
-                # Create args matching target params
-                restore_args    = ocp.args.Composite(params=ocp.args.StandardRestore(target_par))
-                
-                # Restore
-                restored        = checkpointer.restore(path_obj, args=restore_args)
-                
-                if isinstance(restored, dict) and 'params' in restored:
-                    self._log("Success: Loaded via Direct Path (Composite/OCDBT).", lvl=1, color='green')
-                    return restored['params']
-                    
-            except Exception as e:
-                self._log(f"Direct Composite load failed: {e}. Trying fallback...", lvl=2)
-
-            # Fallback: Try raw PyTree (only works for legacy non-OCDBT folders)
-            try:
-                ckptr = ocp.PyTreeCheckpointer()
                 if target_par is not None:
                     return ckptr.restore(path_obj, item=target_par)
                 return ckptr.restore(path_obj)
-            except Exception as e2:
-                raise RuntimeError(f"Could not load checkpoint from {path_obj}. \nComposite Error: {e}\nPyTree Error: {e2}")
+            except Exception as e:
+                self._log(f"Direct load failed: {e}", lvl=0, color='red')
+                raise e
 
-        # ---------------------------------------------------------------------
-        # CASE B: Managed Load (via Step)
-        # ---------------------------------------------------------------------
+        # Case 2: Load via Manager (step based)
         if step is None:
             step = self._orbax_manager.latest_step()
-            if step is None: raise FileNotFoundError("No Orbax checkpoints found in manager directory.")
+            if step is None:
+                raise FileNotFoundError("No checkpoints found in manager.")
         
-        step_int = step if isinstance(step, int) else 0
-        self._log(f"Loading Orbax step {step_int} from Manager...", lvl=1)
-
-        try:
-            # We must use Composite args because we saved with Composite args
-            restore_args    = ocp.args.Composite(params=ocp.args.StandardRestore(item=None))
-            restored        = self._orbax_manager.restore(step_int, args=restore_args)
+        if step == 'final':
+            step = 999999
             
-            if hasattr(restored, 'params'): 
-                return restored.params
-            if isinstance(restored, dict) and 'params' in restored: 
-                return restored['params']
-
+        step_int = int(step) if isinstance(step, (int, str)) and str(step).isdigit() else 0
+        self._log(f"Loading Orbax step {step_int}...", lvl=1)
+        
+        try:
+            # Try loading using arguments (New/Standard API)
+            restore_args = ocp.args.PyTreeRestore(item=target_par)
+            restored_params = self._orbax_manager.restore(step_int, args=restore_args)
+            return restored_params
         except Exception as e:
-            self._log(f"Blind OCDBT load failed ({e}). Attempting legacy Guided Load...", lvl=2)
-
-            # Guided Load (Legacy Folder Structure)
-            # Only if the above fails do we try to map target_par to folders.
-            try:
-                restore_args    = ocp.args.Composite(params=ocp.args.StandardRestore(target_par))
-                restored        = self._orbax_manager.restore(step_int, args=restore_args)
-                
-                if hasattr(restored, 'params'): 
-                    return restored.params
-                if isinstance(restored, dict) and 'params' in restored: 
-                    return restored['params']
-                
-            except Exception as e2:
-                # If both fail, raise the original error
-                raise e
+            self._log(f"Manager load failed with args: {e}. Attempting fallback...", lvl=1, color='yellow')
+            
+            # Fallback 1: Legacy restore (if manager was initialized with checkpointer)
+            if getattr(self, '_legacy_api', False):
+                try:
+                    # In legacy, sometimes restore returns the item directly without args
+                    return self._orbax_manager.restore(step_int, items=target_par)
+                except Exception as e2:
+                    self._log(f"Legacy fallback 1 failed: {e2}", lvl=1)
+            
+            # Fallback 2: Manual path construction (safest resort)
+            # Try to guess the path: <dir>/<step>/default or <dir>/<step>
+            potential_paths = [
+                self._checkpoint_dir / str(step_int) / "default",
+                self._checkpoint_dir / str(step_int)
+            ]
+            
+            for p in potential_paths:
+                if p.exists():
+                    self._log(f"Attempting manual load from {p}", lvl=1)
+                    try:
+                        ckptr = ocp.PyTreeCheckpointer()
+                        if target_par is not None:
+                            return ckptr.restore(p, item=target_par)
+                        return ckptr.restore(p)
+                    except Exception as e3:
+                        self._log(f"Manual load failed from {p}: {e3}", lvl=1)
+            
+            # If all fail
+            raise e
 
     def _load_hdf5_wrapper(self, step: Optional[Union[int, str]], filename: Optional[str]) -> Any:
         """Load using HDF5 backend."""
@@ -318,6 +297,7 @@ class NQSCheckpointManager:
     def load_metadata(self, step: Optional[Union[int, str]] = None, filename: Optional[str] = None) -> Dict[str, Any]:
         """Load metadata for a given checkpoint."""
         if self.use_orbax:
+            if step == 'final': step = 999999
             meta_path       = self._checkpoint_dir / f"metadata_{step}.json"
         else:
             if filename:
