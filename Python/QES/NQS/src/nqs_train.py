@@ -1210,20 +1210,27 @@ class NQSTrainer:
         except Exception as e:
             self.logger.warning(f"Stats load failed ({e}). Starting fresh stats.", lvl=1, color='yellow')
 
-        # Load Weights
+        # Load Weights Logic
         if load_weights and target_step is not None:
             try:
-                # Construct specific filename if we are not using the default manager directory
                 ckpt_filename = None
+                
+                # Logic: Only set ckpt_filename if the user explicitly provided a DIFFERENT path
+                # or if we found a file that is NOT in the standard manager structure.
+                
                 if path is not None:
-                    # Try to guess standard naming
-                    candidate = os.path.join(search_dir, f"checkpoint_{target_step}.{fmt}")
-                    if os.path.exists(candidate):
-                        ckpt_filename = candidate
-                    elif os.path.exists(os.path.join(search_dir, str(target_step))):
-                        # Orbax style directory
-                        ckpt_filename = os.path.join(search_dir, str(target_step))
+                    # Check if this path is actually just the standard manager dir
+                    # (This helps the CheckpointManager logic I added above work better)
+                    candidate_orbax     = os.path.join(search_dir, str(target_step))
+                    
+                    if os.path.exists(candidate_orbax):
+                        ckpt_filename   = candidate_orbax
+                    
+                    # If user provided a path to a specific .h5 file, use it
+                    elif str(path).endswith('.h5'):
+                        ckpt_filename   = str(path)
 
+                # NQS.load_weights will pass this to Manager. 
                 self.nqs.load_weights(step=target_step, filename=ckpt_filename)
                 self.logger.info(f"Successfully loaded weights for step {target_step}", lvl=1, color='green')
                 return self.stats
@@ -1232,10 +1239,7 @@ class NQSTrainer:
                 self.logger.error(f"Critical: Failed to load weights for step {target_step}: {e}", lvl=0)
                 if not fallback_latest:
                     raise e
-        
-        elif load_weights and target_step is None:
-            self.logger.info("Skipping weight load (no step resolved). Using current initialization.", lvl=1)
-
+            
         return self.stats
     
 # ------------------------------------------------------

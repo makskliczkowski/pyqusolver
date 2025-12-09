@@ -232,7 +232,9 @@ class GeneralMatrix(spla.LinearOperator):
                 backend_components : Optional[tuple[Any, Any, Any, tuple[Any, Any]]]   = None,
                 logger             : Optional['Logger']                                = None,
                 seed               : Optional[int]                                     = None,
-                dtype              : Optional[Union[str, np.dtype]]                    = None) -> None:
+                dtype              : Optional[Union[str, np.dtype]]                    = None,
+                **kwargs,
+                ) -> None:
         """
         Initialize the GeneralMatrix.
         

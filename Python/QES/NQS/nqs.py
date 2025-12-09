@@ -968,11 +968,10 @@ class NQS(MonteCarloSolver):
             probabilities = self._backend.ones_like(ansatze).astype(ansatze.dtype)
             
         output = []
-        for f in functions:
+        for i, f in enumerate(functions):
             
             if log_progress:
                 t0 = time.time()
-                self._logger.info(f"Applying function {f}", lvl=1, color='green')
             
             result = self._apply_func(
                 f,
@@ -986,7 +985,7 @@ class NQS(MonteCarloSolver):
             )
             
             if log_progress:
-                self._logger.info(f"Function {f} applied in {(time.time() - t0)*1000:.2f} ms", lvl=1, color='green')
+                self._logger.info(f"Function ({i+1}/{len(functions)}) applied in {(time.time() - t0)*1000:.2f} ms", lvl=3, color='green')
                 
             output.append(result)
         
@@ -1823,6 +1822,7 @@ class NQS(MonteCarloSolver):
             metadata    = metadata, 
             filename    = filename
         )
+        
         self.log(f"Saved weights for step {step} to {saved_path}", lvl=1, color='green')
         return saved_path
 
@@ -1855,7 +1855,7 @@ class NQS(MonteCarloSolver):
         try:
             params = self.ckpt_manager.load(
                 step        = step if isinstance(step, int) else 'final' if step is not None else None, 
-                filename    = filename, 
+                filename    = filename,  
                 target_par  = self.get_params()
             )
             self.set_params(params)

@@ -1019,7 +1019,10 @@ class Operator(GeneralMatrix):
         
         # Filter out Operator-specific kwargs before passing to GeneralMatrix
         _operator_only_kwargs = {
-            'acton', 'necessary_args', 'instr_code',
+            'acton', 'necessary_args', 'instr_code', 
+            'shape', 'ns', 'lattice', '_shape', '_ns', '_lattice',
+            'backend', 'is_sparse', 'logger', 'seed', 'dtype',
+            'op_fun',
             'fun_int', 'fun_np', 'fun_jax', 'fun_jnp'       # function kwargs handled by Operator
         }
         _general_matrix_kwargs = {k: v for k, v in kwargs.items() if k not in _operator_only_kwargs}
@@ -1278,10 +1281,11 @@ class Operator(GeneralMatrix):
     # -------------------------------
     
     def __mul__(self, other):
-        new_kwargs = self.__dict__.copy()
-        new_kwargs.pop('_fun', None)    # Remove _fun, it will be new
-        new_kwargs.pop('_name', None)   # Remove _name, it will be new
-        new_kwargs.pop('_eigval', None) # Eigval handled separately or combined if meaningful
+        new_kwargs  = self.__dict__.copy()
+        new_kwargs.pop('_fun', None)                                        # Remove _fun, it will be new
+        new_kwargs.pop('_name', None)                                       # Remove _name, it will be new
+        new_kwargs.pop('_eigval', None)                                     # Eigval handled separately or combined if meaningful
+        dtype       = new_kwargs.get('_dtype', None)
 
         if isinstance(other, Operator):
             new_fun                 = self._fun * other._fun
@@ -1298,10 +1302,15 @@ class Operator(GeneralMatrix):
             new_name                =   f"({self._name} * {other})"
         else:
             return NotImplementedError("Incompatible operator function")
-        return Operator(op_fun=new_fun, name=new_name, eigval=new_eigval,
+        return Operator(op_fun      =   new_fun, 
+                        name        =   new_name, 
+                        eigval      =   new_eigval,
                         ns          =   new_kwargs['_ns'],
-                        lattice     =   new_kwargs['_lattice'], modifies=new_kwargs['_modifies'],
-                        backend     =   new_kwargs['_backend'], **new_kwargs)
+                        lattice     =   new_kwargs['_lattice'], 
+                        modifies    =   new_kwargs['_modifies'],
+                        backend     =   new_kwargs['_backend'], 
+                        logger      =   new_kwargs.get('_logger', None),
+                        **new_kwargs)
         
 
     def __rmul__(self, other):
