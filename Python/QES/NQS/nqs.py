@@ -210,8 +210,7 @@ class NQS(MonteCarloSolver):
                 By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
             replica [int]:
                 Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
-                When `replica > 1`:
-                
+                When replica > 1:
                 - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
                   to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
                 - MCMC runs in parallel across all temperature replicas.
@@ -2342,10 +2341,14 @@ class NQS(MonteCarloSolver):
         # Run training
         if load_checkpoint:
             try:
-                self._trainer.load_checkpoint(step=checkpoint_step)
-                return self._trainer.stats
+                # Load the state (weights + stats)
+                stats           = self._trainer.load_checkpoint(step=checkpoint_step)
+                reset_stats     = False
+                return stats
+            
             except Exception as e:
-                pass
+                self.log(f"Requested checkpoint load failed: {e}", lvl=0, color='red', log='warning')
+                raise e
 
         stats = self._trainer.train(
             n_epochs            = n_epochs,

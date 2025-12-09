@@ -1116,90 +1116,126 @@ class NQSTrainer:
         >>> stats = trainer.load_checkpoint(step='latest')   # Load most recent
         >>> stats = trainer.load_checkpoint()                # Same as 'latest'
         """
-        import os
+        import os, re
         
-        # Handle 'latest' string -> resolve to actual latest step
-        load_latest                         = step is None or (isinstance(step, str) and step.lower() == 'latest')
-        no_checkpoints_available            = False
-        
-        # If loading latest, find the latest step first
-        if load_latest:
-            available = self.nqs.ckpt_manager.list_checkpoints()
-            if available:
-                step                        = max(available) if all(isinstance(s, int) for s in available) else available[-1]
-                self.logger.info(f"Loading latest checkpoint: step {step}", lvl=1, color='cyan')
-            else:
-                step                        = None  # Will trigger error or use stats only
-                no_checkpoints_available    = True
-                self.logger.warning(f"No checkpoints found. Will load stats only.", lvl=1, color='yellow')
-        
-        path_str            = str(path) if path is not None else str(self.nqs.defdir)
-        filename_stats      = "stats.h5"
-        
-        # Resolve paths
-        if path_str.endswith(os.sep) or os.path.isdir(path_str):
-            final_path      = os.path.join(path_str, f"checkpoint_{step}.{fmt}") if step is not None else None
-            filename_stats  = os.path.join(path_str, "stats.h5")
+        # Resolve the search directory
+        if path is None:
+            search_dir      = self.nqs.ckpt_manager.directory
+            path_str        = str(self.nqs.defdir) # Fallback for stats file
         else:
-            final_path      = path_str
-            filename_stats  = os.path.join(str(Path(path_str).parent), "stats.h5")
+            path_obj        = Path(path)
+            if path_obj.is_file():
+                search_dir  = path_obj.parent
+                path_str    = str(path)
+            else:
+                search_dir  = path_obj
+                path_str    = str(path)
 
-        # Load training stats
-        try:
-            stats_data = HDF5Manager.read_hdf5(file_path=Path(filename_stats))
-            self.stats = NQSTrainStats(
-                                history             = list(stats_data.get("/history/val",        [])),
-                                history_std         = list(stats_data.get("/history/std",        [])),
-                                lr_history          = list(stats_data.get("/history/lr",         [])),
-                                reg_history         = list(stats_data.get("/history/reg",        [])),
-                                diag_history        = list(stats_data.get('/history/diag_shift', [])),
-                                global_phase        = list(stats_data.get("/history/theta0",     [])),
-                                seed                = stats_data.get("/seed",               None),
-                                exact_predictions   = stats_data.get("/exact/predictions",  None),
-                                exact_method        = stats_data.get("/exact/method",       None),
-                                timings             = NQSTrainTime(
-                                                        n_steps = stats_data.get("/timings/n_steps", 0),
-                                                        step    = list(stats_data.get("/timings/step",      [])),
-                                                        sample  = list(stats_data.get("/timings/sample",    [])),
-                                                        update  = list(stats_data.get("/timings/update",    [])),
-                                                        total   = list(stats_data.get("/timings/total",     [])),
-                                                    )
-                            )
-            self.logger.info(f"Loaded training history from {filename_stats}", lvl=1, color='green')
-            if self.stats.has_exact:
-                self.logger.info(f"Loaded exact predictions ({self.stats.exact_method}): ground state = {self.stats.exact_gs:.6f}", lvl=2, color='green')
-        except Exception as e:
-            self.logger.warning(f"Could not load training stats from {filename_stats}: {e}", lvl=0, color='yellow')
-        
-        # Load weights with fallback logic (skip if no checkpoints and we already know it)
-        if load_weights and not no_checkpoints_available:
-            try:
-                self.nqs.load_weights(step=step, filename=final_path)
-                self.logger.info(f"Loaded weights for step {step} from {final_path}", lvl=2, color='green')
-            except (FileNotFoundError, ValueError) as e:
-                # Try fallback to latest checkpoint if enabled
-                if fallback_latest and step is not None:
-                    self.logger.warning(f"Checkpoint step {step} not found. Trying latest available...", lvl=1, color='yellow')
-                    try:
-                        # Get available checkpoints
-                        available = self.nqs.ckpt_manager.list_checkpoints()
-                        if available:
-                            latest_step = max(available) if all(isinstance(s, int) for s in available) else available[-1]
-                            self.logger.info(f"Found {len(available)} checkpoints. Loading latest: step {latest_step}", lvl=1, color='cyan')
-                            self.nqs.load_weights(step=latest_step, filename=None)
-                            self.logger.info(f"Successfully loaded weights from step {latest_step}", lvl=1, color='green')
-                        else:
-                            self.logger.warning(f"No checkpoints available. Using current weights.", lvl=1, color='yellow')
-                    except Exception as e2:
-                        self.logger.warning(f"Could not load weights: {e2}. Using current weights.", lvl=1, color='yellow')
-                else:
-                    self.logger.warning(f"Could not load weights: {e}. Using current weights.", lvl=1, color='yellow')
-            except Exception as e:
-                self.logger.warning(f"Could not load weights: {e}. Using current weights.", lvl=1, color='yellow')
+        # Scan directory for available steps (Independent of Manager)
+        available_steps     = []
+        if os.path.exists(search_dir):
+            # Scan for explicit checkpoint folders or files (e.g. checkpoint_100.h5 or /100/)
+            for item in os.listdir(search_dir):
                 
-        elif load_weights and no_checkpoints_available:
-            self.logger.info(f"No checkpoints to load. Using current (random) weights.", lvl=1, color='yellow')
+                # Match "checkpoint_123.h5" or directory names that are integers "123"
+                if item.isdigit():
+                    available_steps.append(int(item))
+                    
+                elif item.startswith("checkpoint_") and (item.endswith(f".{fmt}") or os.path.isdir(os.path.join(search_dir, item))):
+                    try:
+                        # Extract number from "checkpoint_123.h5"
+                        num = re.search(r'(\d+)', item)
+                        if num: 
+                            available_steps.append(int(num.group(1)))
+                    except: 
+                        pass
         
+        # Determine the Target Step
+        available_steps     = sorted(list(set(available_steps)))
+        target_step         = None
+        
+        # User asked for 'latest' or didn't specify
+        if step is None or (isinstance(step, str) and step.lower() == 'latest'):
+            if available_steps:
+                target_step = available_steps[-1]
+                self.logger.info(f"Auto-resolved latest step: {target_step}", lvl=1, color='cyan')
+            else:
+                self.logger.warning(f"No checkpoints found in {search_dir}. Cannot load latest.", lvl=1, color='yellow')
+
+        # User asked for specific step
+        else:
+            requested_step  = int(step)
+            if requested_step in available_steps:
+                target_step     = requested_step
+            else:
+                # Fallback Logic
+                if fallback_latest and available_steps:
+                    target_step = available_steps[-1]
+                    self.logger.warning(f"Requested step {requested_step} not found. Fallback to latest: {target_step}", lvl=1, color='yellow')
+                else:
+                    target_step = requested_step # Try anyway (let the loader fail if it must)
+
+        # Load Statistics (History)
+        # Determine stats filename
+        if os.path.isfile(path_str) and "stats" in path_str:
+            stats_file = path_str
+        elif os.path.isdir(path_str):
+            stats_file = os.path.join(path_str, "stats.h5")
+        else:
+            stats_file = os.path.join(os.path.dirname(path_str), "stats.h5")
+
+        try:
+            # Assuming HDF5Manager is available in context
+            # Reconstruct NQSTrainStats object (abbreviated for clarity, use your full constructor)
+            stats_data = HDF5Manager.read_hdf5(file_path=Path(stats_file))
+            self.stats = NQSTrainStats(
+                            history             = list(stats_data.get("/history/val",        [])),
+                            history_std         = list(stats_data.get("/history/std",        [])),
+                            lr_history          = list(stats_data.get("/history/lr",         [])),
+                            reg_history         = list(stats_data.get("/history/reg",        [])),
+                            diag_history        = list(stats_data.get('/history/diag_shift', [])),
+                            global_phase        = list(stats_data.get("/history/theta0",     [])),
+                            seed                = stats_data.get("/seed",               None),
+                            exact_predictions   = stats_data.get("/exact/predictions",  None),
+                            exact_method        = stats_data.get("/exact/method",       None),
+                            timings             = NQSTrainTime(
+                                                    n_steps = stats_data.get("/timings/n_steps", 0),
+                                                    step    = list(stats_data.get("/timings/step",      [])),
+                                                    sample  = list(stats_data.get("/timings/sample",    [])),
+                                                    update  = list(stats_data.get("/timings/update",    [])),
+                                                    total   = list(stats_data.get("/timings/total",     [])),
+                                                    )
+                        )
+            self.logger.info(f"Loaded stats from {stats_file}", lvl=1, color='green')
+        except Exception as e:
+            self.logger.warning(f"Stats load failed ({e}). Starting fresh stats.", lvl=1, color='yellow')
+
+        # Load Weights
+        if load_weights and target_step is not None:
+            try:
+                # Construct specific filename if we are not using the default manager directory
+                ckpt_filename = None
+                if path is not None:
+                    # Try to guess standard naming
+                    candidate = os.path.join(search_dir, f"checkpoint_{target_step}.{fmt}")
+                    if os.path.exists(candidate):
+                        ckpt_filename = candidate
+                    elif os.path.exists(os.path.join(search_dir, str(target_step))):
+                        # Orbax style directory
+                        ckpt_filename = os.path.join(search_dir, str(target_step))
+
+                self.nqs.load_weights(step=target_step, filename=ckpt_filename)
+                self.logger.info(f"Successfully loaded weights for step {target_step}", lvl=1, color='green')
+                return self.stats
+                
+            except Exception as e:
+                self.logger.error(f"Critical: Failed to load weights for step {target_step}: {e}", lvl=0)
+                if not fallback_latest:
+                    raise e
+        
+        elif load_weights and target_step is None:
+            self.logger.info("Skipping weight load (no step resolved). Using current initialization.", lvl=1)
+
         return self.stats
     
 # ------------------------------------------------------

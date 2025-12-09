@@ -116,30 +116,16 @@ class NQSCheckpointManager:
 
     def _init_orbax(self, checkpoint_dir: Path = None):
         """Initialize Orbax CheckpointManager for a given directory."""
+        # Options: keep max N checkpoints, create dir if missing
         target_dir          = checkpoint_dir or self._checkpoint_dir
-        target_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_options  = ocp.CheckpointManagerOptions(max_to_keep=self.max_to_keep)
+        options             = ocp.CheckpointManagerOptions(max_to_keep=self.max_to_keep, create=True)
         
-        # For orbax >= 0.6.0, use the new API without explicit checkpointers
-        # The CheckpointManager will handle PyTree checkpointing automatically
-        try:
-            # New orbax API (>= 0.6.0) - no checkpointers argument needed
-            self._orbax_manager         = ocp.CheckpointManager(target_dir, options=checkpoint_options)
-            self._orbax_use_composite   = False  # Track API style
-        except TypeError as e:
-            # Fallback for older orbax versions
-            try:
-                if hasattr(ocp, 'StandardCheckpointer'):
-                    checkpointer = ocp.StandardCheckpointer()
-                elif hasattr(ocp, 'PyTreeCheckpointer'):
-                    checkpointer = ocp.PyTreeCheckpointer()
-                else:
-                    raise ImportError("Could not find a valid Checkpointer class.")
-                self._orbax_manager = ocp.CheckpointManager(target_dir, checkpointers=checkpointer, options=checkpoint_options)
-                self._orbax_use_composite = True
-            except Exception as e2:
-                self._log(f"Orbax init failed: {e}, {e2}. Falling back to HDF5.", lvl=0, color='red')
-                self.use_orbax = False
+        # This prevents the "Unknown key" error by treating the whole network dict as one PyTree.
+        self._orbax_manager = ocp.CheckpointManager(
+                                target_dir, 
+                                item_names  =   ('params',), 
+                                options     =   options
+                            )
             
     def _resolve_path(self, filename: Optional[str], step: Union[int, str], extension: str = "h5") -> Path:
         """
@@ -223,52 +209,34 @@ class NQSCheckpointManager:
         Orbax requires integer steps for its directory structure.
         String steps (e.g., 'final') are mapped to step 0 with a special key.
         """
+        
         if isinstance(step, int):
             save_key = step
         elif isinstance(step, str):
-            # String identifiers saved at step 0 with named key
             save_key = 0 
-            # Store the string step in metadata for later retrieval
             metadata['_string_step'] = step
         else:
             raise TypeError(f"Step must be int or str, got {type(step)}")
 
-        # Handle overwrite: delete existing checkpoint if force=True
-        force = kwargs.get('force', True)
-        if force:
-            # Check if step already exists and delete it
-            existing_steps = self._orbax_manager.all_steps()
-            
-            if save_key in existing_steps:
-                self._log(f"Overwriting existing checkpoint at step {save_key}", lvl=2, log='debug')
-                step_dir = self._checkpoint_dir / str(save_key)
-                if step_dir.exists():
-                    shutil.rmtree(step_dir)
-        
-        # Save params via Orbax - use simple PyTreeSave for new API
+        # Prepare Arguments
+        # We wrap the params in a Composite arg matching the 'params' item defined in _init
         try:
-            # New orbax API (>= 0.6.0) - use StandardSave directly
-            save_arg = ocp.args.StandardSave(params)
-            self._orbax_manager.save(save_key, args=save_arg)
-        except (TypeError, ValueError) as e:
-            # Fallback: try without args (some versions accept pytree directly)
-            try:
-                self._orbax_manager.save(save_key, params, force = force)
-            except Exception as e2:
-                self._log(f"Orbax save failed: {e}, {e2}", lvl=0, color='red')
-                pass # Should not reach here if Orbax is working
+            # We use StandardSave (works for PyTrees/Dicts) wrapped in Composite
+            # This tells Orbax: "Put this data into the 'params' slot we defined earlier"
+            save_args = ocp.args.Composite(params=ocp.args.StandardSave(params))
+            
+            # Ensure write is done before proceeding
+            self._orbax_manager.save(save_key, args=save_args)
+            self._orbax_manager.wait_until_finished()
+            
+        except Exception as e:
+            self._log(f"CRITICAL: Orbax save failed: {e}", lvl=0, color='red')
+            raise e
         
-        # Without this, the checkpoint may not be written to disk before we try to access it
-        self._orbax_manager.wait_until_finished()
-        
-        # Verify the checkpoint was actually saved
-        saved_step_dir = self._checkpoint_dir / str(save_key)
-        saved_step_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Always save metadata as JSON alongside Orbax checkpoint
+        # Save Metadata (JSON)
         self._save_metadata_json(step, metadata)
         
-        self._log(f"Saved Orbax checkpoint for step {step}", lvl=1, color='green', log='debug')
+        self._log(f"Saved Orbax checkpoint for step {step} (key={save_key})", lvl=1, color='green')
         return self._checkpoint_dir / str(save_key)
 
     def _save_hdf5_wrapper(self, step: Union[int, str], params: Any, metadata: Dict[str, Any], filename: Optional[str]) -> Path:
@@ -328,62 +296,34 @@ class NQSCheckpointManager:
     def _load_orbax(self, step: Optional[Union[int, str]], target_par: Optional[Any]) -> Any:
         """Load using Orbax backend."""
         
-        if isinstance(step, int) or step is None:
-            if step is None:
-                restore_key = self._orbax_manager.latest_step()
-                if restore_key is None:
-                    raise FileNotFoundError("No Orbax checkpoints found.")
-                self._log(f"Loading latest Orbax checkpoint (step={restore_key})", lvl=1)
-            else:
-                restore_key = step
-            
-            # Try multiple restore strategies to handle different checkpoint formats
-            # Strategy 1: New orbax API (>= 0.6.0) - use StandardRestore directly
-            try:
-                restore_arg     = ocp.args.StandardRestore(target_par)
-                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
-                return restored_items
-            except (ValueError, KeyError, TypeError) as e1:
-                pass
-            
-            # Strategy 2: Try without args (raw pytree restore)
-            try:
-                restored_items  = self._orbax_manager.restore(restore_key)
-                return restored_items
-            except (ValueError, KeyError, TypeError) as e2:
-                pass
-                
-            # Strategy 3: Legacy format with Composite wrapper
-            try:
-                restore_arg     = ocp.args.Composite(default=ocp.args.StandardRestore(target_par))
-                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
-                # Extract from composite
-                if hasattr(restored_items, 'default'):
-                    return restored_items.default
-                elif isinstance(restored_items, dict) and 'default' in restored_items:
-                    return restored_items['default']
-                return restored_items
-            except (ValueError, KeyError, TypeError) as e3:
-                self._log(f"All restore strategies failed: {e1}, {e2}, {e3}", lvl=2)
-                raise ValueError(f"Could not restore checkpoint at step {restore_key}.")
-        
+        # Resolve Key
+        if step is None:
+            restore_key = self._orbax_manager.latest_step()
+            if restore_key is None:
+                raise FileNotFoundError("No Orbax checkpoints found.")
+            self._log(f"Loading latest Orbax checkpoint (step={restore_key})", lvl=1)
         elif isinstance(step, str):
-            # String identifiers were saved at step 0
-            restore_key = 0 
-            # Try simple restore first
-            try:
-                restore_arg     = ocp.args.StandardRestore(target_par)
-                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
-                return restored_items
-            except (ValueError, KeyError, TypeError):
-                # Fallback to composite
-                restore_arg     = ocp.args.Composite(**{step: ocp.args.StandardRestore(target_par)})
-                restored_items  = self._orbax_manager.restore(restore_key, args=restore_arg)
-                if hasattr(restored_items, step):
-                    return getattr(restored_items, step)
-                return restored_items[step]
+            restore_key     = 0
         else:
-            raise TypeError(f"Step must be int, str, or None, got {type(step)}")
+            restore_key     = step
+
+        # Restore
+        # We must mirror the save structure: Composite -> 'params' -> StandardRestore
+        try:
+            restore_args    = ocp.args.Composite(params=ocp.args.StandardRestore(target_par))
+            restored        = self._orbax_manager.restore(restore_key, args=restore_args)
+            
+            # The result is a Composite object (or dict), we need to extract 'params'
+            if hasattr(restored, 'params'):
+                return restored.params
+            elif isinstance(restored, dict) and 'params' in restored:
+                return restored['params']
+            else:
+                return restored # Fallback if structure is different
+                
+        except Exception as e:
+            self._log(f"Orbax load failed: {e}", lvl=0, color='red')
+            raise e        
 
     def _load_hdf5_wrapper(self, step: Optional[Union[int, str]], filename: Optional[str]) -> Any:
         """Load using HDF5 backend."""
