@@ -32,7 +32,7 @@ except ImportError:
 # ------------------------------------------------------------------------------------------
 
 try:
-    from QES.Algebra.Symmetries.symmetry_container import _binary_search_representative_list
+    from QES.Algebra.Symmetries.symmetry_container import _binary_search_representative_list, _INVALID_REPR_IDX_NB, _INVALID_PHASE_IDX_NB
 except ImportError as e:
     raise ImportError("QES.Algebra.Symmetries.symmetry_container module is required for matrix building: " + str(e))
 
@@ -64,18 +64,18 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
         The dtype to use for matrix storage
     """
     if isinstance(hilbert_spaces, list):
-        h_spaces = hilbert_spaces
+        h_spaces    = hilbert_spaces
     else:
-        h_spaces = [hilbert_spaces]
+        h_spaces    = [hilbert_spaces]
     
-    is_real_dtype = np.issubdtype(dtype, np.floating)
-    alloc_dtype = dtype
+    is_real_dtype           = np.issubdtype(dtype, np.floating)
+    alloc_dtype             = dtype
     
     # Check for complex symmetries
-    has_complex_sym = any(getattr(hs, 'has_complex_symmetries', False) for hs in h_spaces)
+    has_complex_sym         = any(getattr(hs, 'has_complex_symmetries', False) for hs in h_spaces)
     
     # Check repr_phase arrays
-    repr_phase_is_complex = False
+    repr_phase_is_complex   = False
     for hs in h_spaces:
         repr_phase = getattr(hs, 'repr_phase', None)
         if repr_phase is not None and np.iscomplexobj(repr_phase):
@@ -123,10 +123,6 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
 #! JITTED FUNCTIONS
 # -----------------------------------------------------------------------------------------------
 
-# Constants for compact structure invalid markers
-_INVALID_REPR_IDX_NB  = numba.uint32(0xFFFFFFFF)
-_INVALID_PHASE_IDX_NB = numba.uint8(0xFF)
-
 @numba.njit(cache=True, nogil=True)
 def _build_sparse_same_sector_compact_jit(
                 representative_list : np.ndarray,   # int64[n_repr] - representative state values
@@ -173,58 +169,6 @@ def _build_sparse_same_sector_compact_jit(
             # Get phase from phase table
             pidx        = phase_idx[new_state]
             phase       = phase_table[pidx]
-            norm_idx    = normalization[idx]
-            sym_factor  = np.conj(phase) * norm_idx / norm_k
-
-            matrix_elem = value * sym_factor
-            if np.abs(matrix_elem) > 1e-14:
-                rows[data_idx]  = idx
-                cols[data_idx]  = k
-                data[data_idx]  = matrix_elem
-                data_idx       += 1
-
-    return data_idx
-
-
-@numba.njit(cache=True, nogil=True)
-def _build_sparse_same_sector_jit(
-                representative_list : np.ndarray,
-                normalization       : np.ndarray,
-                repr_idx            : np.ndarray,
-                repr_phase          : np.ndarray,
-                operator_func       : Callable,
-                rows                : np.ndarray,
-                cols                : np.ndarray,
-                data                : np.ndarray,
-                data_idx            : int
-            ):
-    """
-    Jitted builder for same-sector operators using precomputed arrays.
-    
-    DEPRECATED: Use _build_sparse_same_sector_compact_jit when CompactSymmetryData
-    is available. This function is kept for backward compatibility.
-    """
-    nh = len(representative_list)
-    for k in range(nh):
-        state               = representative_list[k]
-        norm_k              = normalization[k]
-        new_states, values  = operator_func(state)
-
-        for i in range(len(new_states)):
-            new_state = new_states[i]
-            value     = values[i]
-            
-            if np.abs(value) < 1e-14:
-                continue
-
-            # Use precomputed lookup
-            idx = repr_idx[new_state]
-            
-            # Check if state is in this sector (idx == -1 means not in sector)
-            if idx < 0:
-                continue
-                
-            phase       = repr_phase[new_state]
             norm_idx    = normalization[idx]
             sym_factor  = np.conj(phase) * norm_idx / norm_k
 
@@ -285,149 +229,79 @@ def _build_sparse_same_sector_no_symmetry_jit(
             data_idx      += 1            
     return data_idx
 
-def _build_sparse_same_sector_py(
-                hilbert_space       : HilbertSpace,
+@numba.njit(cache=True, nogil=True)
+def _build_dense_same_sector_compact_jit(
                 representative_list : np.ndarray,
                 normalization       : np.ndarray,
-                operator_func       : Callable[[int], Tuple[np.ndarray, np.ndarray]],
-                rows                : np.ndarray,
-                cols                : np.ndarray,
-                data                : np.ndarray,
-                data_idx            : int
+                repr_map            : np.ndarray,
+                phase_idx           : np.ndarray,
+                phase_table         : np.ndarray,
+                operator_func       : Callable,
+                matrix              : np.ndarray
             ):
     """
-    Pure-Python fallback builder for same-sector operators that uses
-    HilbertSpace.find_representative(...) to obtain the representative index
-    and the correct normalization/phase factor. This mirrors the C++
-    findRep(baseIdx, nB) semantics and ensures the matrix element is set as
-    val * sym_factor where sym_factor includes normalization ratio and
-    conjugation when required.
+    JIT-compiled dense matrix builder using compact O(1) symmetry lookups.
     """
-    nh              = len(representative_list)
-    use_precomputed = hasattr(hilbert_space, 'repr_idx') and hilbert_space.repr_idx is not None
-
-    for k in range(nh):
-        state   = int(representative_list[k])
-        norm_k  = normalization[k] if normalization is not None else 1.0
-
-        new_states, values = operator_func(state)
-
-        # support Python sequences and numpy arrays
-        for new_state, value in zip(new_states, values):
-            if abs(value) < 1e-14:
-                continue
-
-            if use_precomputed:
-                idx             = int(hilbert_space.repr_idx[int(new_state)])
-                # Check if state is in this sector (idx == -1 means not in sector)
-                if idx < 0:
-                    continue
-                # repr_phase stores: conj(phase_to_rep) for non-rep states, 1.0 for rep states
-                # Matrix element formula: conj(phase) x norm_idx / norm_k
-                phase           = hilbert_space.repr_phase[int(new_state)]
-                norm_idx        = normalization[idx] if normalization is not None else 1.0
-                sym_factor      = np.conj(phase) * norm_idx / norm_k
-            else:
-                rep, sym_factor = hilbert_space._sym_container.find_representative(int(new_state), norm_k)
-                # Binary search returns -1 if state not in this sector
-                idx             = _binary_search_representative_list(representative_list, rep)
-                if idx < 0:
-                    continue  # State not in this symmetry sector, skip
-
-            # idx is valid (>= 0), add matrix element
-            matrix_elem = value * sym_factor
-            if abs(matrix_elem) > 1e-14:
-                # C++ does H(idx, k) where idx is output state, k is input state
-                # This matches operator convention: H|k⟩ gives contributions to state |idx⟩
-                rows[data_idx]  = int(idx)  # Row = output state
-                cols[data_idx]  = int(k)    # Col = input state  
-                data[data_idx]  = matrix_elem
-                data_idx       += 1
-
-    return data_idx
-
-def _build_sparse_same_sector_no_symmetry_py(
-                hilbert_space       : HilbertSpace,
-                operator_func       : Callable[[int], Tuple[np.ndarray, np.ndarray]],
-                rows                : np.ndarray,
-                cols                : np.ndarray,
-                data                : np.ndarray,
-                data_idx            : int,
-            ):
-    """
-    Optimized Python builder for the no-symmetry case where the representative_list is
-    a contiguous identity representative_list (state index == representative index).
-
-    This avoids calling HilbertSpace.find_representative and is the fast
-    fallback for systems without symmetries.
-    """
+    nh          = len(representative_list)
+    invalid_idx = _INVALID_REPR_IDX_NB
     
-    # iterate over reduced basis indices without allocating a representative_list array
-    nh          = hilbert_space.dim
     for k in range(nh):
-        # obtain the full-state integer for reduced-basis index k
-        state               = int(hilbert_space[k]) # get mapped state[k]
+        state               = representative_list[k]
+        norm_k              = normalization[k]
         new_states, values  = operator_func(state)
 
-        for new_state, value in zip(new_states, values):
-            if abs(value) < 1e-14:
+        for i in range(len(new_states)):
+            new_state = new_states[i]
+            value     = values[i]
+            
+            if np.abs(value) < 1e-14:
                 continue
 
-            idx             = int(new_state)
+            idx = repr_map[new_state]
+            if idx == invalid_idx:
+                continue
             
-            # if the operator returned an index outside the reduced space skip
+            pidx        = phase_idx[new_state]
+            phase       = phase_table[pidx]
+            norm_idx    = normalization[idx]
+            sym_factor  = np.conj(phase) * norm_idx / norm_k
+
+            matrix[idx, k] += value * sym_factor
+
+@numba.njit(cache=True, nogil=True)
+def _build_dense_same_sector_no_symmetry_jit(
+                basis               : Optional[np.ndarray],
+                operator_func       : Callable,
+                matrix              : np.ndarray,
+                nh                  : int
+            ):
+    """
+    Jitted dense matrix builder for no-symmetry case.
+    """
+    for k in range(nh):
+        if basis is not None:
+            state = basis[k]
+        else:
+            state = k
+            
+        new_states, values = operator_func(state)
+
+        for i in range(len(new_states)):
+            new_state = new_states[i]
+            value     = values[i]
+            
+            if np.abs(value) < 1e-14:
+                continue
+
+            if basis is not None:
+                idx = _binary_search_representative_list(basis, new_state)
+            else:
+                idx = new_state
+            
             if idx < 0 or idx >= nh:
                 continue
             
-            matrix_elem     = value
-
-            if abs(matrix_elem) > 1e-14:
-                rows[data_idx] = int(k)
-                cols[data_idx] = int(idx)
-                data[data_idx] = matrix_elem
-                data_idx      += 1            
-    return data_idx
-
-def _build_dense_same_sector_py(
-                hilbert_space       : HilbertSpace,
-                normalization       : np.ndarray,
-                operator_func       : Callable[[int], Tuple[np.ndarray, np.ndarray]],
-                matrix              : np.ndarray,
-            ):
-    """
-    Build dense matrix for operator within same sector.
-    """
-    # Get the number of basis states
-    nh                      = hilbert_space.dim
-    representative_list     = hilbert_space.representative_list if hasattr(hilbert_space, 'representative_list') else np.arange(nh, dtype=np.int64)
-    use_precomputed         = hasattr(hilbert_space, 'repr_idx') and hilbert_space.repr_idx is not None
-
-    # Iterate over reduced basis indices
-    for k in range(nh):
-        
-        # Obtain the full-state integer for reduced-basis index k
-        state               = int(hilbert_space[k])
-        norm_k              = normalization[k] if normalization is not None else 1.0
-        new_states, values  = operator_func(state)
-
-        for new_state, value in zip(new_states, values):
-            if abs(value) < 1e-14:
-                continue
-
-            if use_precomputed:
-                idx             = int(hilbert_space.repr_idx[int(new_state)])
-                phase           = hilbert_space.repr_phase[int(new_state)]
-                norm_rep        = normalization[idx] if normalization is not None else 1.0
-                sym_factor      = phase * norm_k / norm_rep
-            else:
-                rep, sym_factor = hilbert_space.find_repr(int(new_state), norm_k)
-                idx             = _binary_search_representative_list(representative_list, rep)
-
-            if idx >= 0:
-                # accumulate (multiple contributions may map to same repr)
-                matrix[k, idx] += value * sym_factor
-
-    return matrix
+            matrix[k, idx] += value
 
 # ------------------------------------------------------------------------------------------
 
@@ -447,22 +321,42 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
     # Determine appropriate dtype
     alloc_dtype             = _determine_matrix_dtype(dtype, hilbert_space, operator_func, ns)
     
+    # If there are no symmetries present (no representative_list/repr arrays and no
+    # symmetry group), use a simple optimized builder that iterates the
+    # HilbertSpace directly (no representative_list allocation). Otherwise use the
+    # Python assembly that uses HilbertSpace.find_representative
+    has_symmetry            = representative_list is not None
+
     if not sparse:
         # Dense matrix
         matrix              = np.zeros((nh, nh), dtype=alloc_dtype)
-        return _build_dense_same_sector_py(hilbert_space, normalization, operator_func, ns, matrix)
+        if not has_symmetry:
+            basis = getattr(hilbert_space, 'basis', None)
+            if basis is not None and not isinstance(basis, np.ndarray):
+                 basis = np.array(basis)
+            _build_dense_same_sector_no_symmetry_jit(basis, operator_func, matrix, nh)
+        else:
+            compact_data = getattr(hilbert_space, 'compact_symmetry_data', None)
+            if compact_data is not None:
+                _build_dense_same_sector_compact_jit(
+                    compact_data.representative_list,
+                    compact_data.normalization,
+                    compact_data.repr_map,
+                    compact_data.phase_idx,
+                    compact_data.phase_table,
+                    operator_func, matrix
+                )
+            else:
+                # If no compact data but symmetries present, we should ideally fail or implement legacy fallback.
+                # Given the mandate to remove legacy, we assume compact data is always built for symmetries.
+                raise ValueError("Compact symmetry data missing for symmetric Hilbert space in dense build.")
+        return matrix
     
     # Sparse matrix
     max_nnz                 = nh * max_local_changes * (ns) # estimate
     rows                    = np.zeros(max_nnz, dtype=np.int64)
     cols                    = np.zeros(max_nnz, dtype=np.int64)
     data                    = np.zeros(max_nnz, dtype=alloc_dtype)
-
-    # If there are no symmetries present (no representative_list/repr arrays and no
-    # symmetry group), use a simple optimized builder that iterates the
-    # HilbertSpace directly (no representative_list allocation). Otherwise use the
-    # Python assembly that uses HilbertSpace.find_representative
-    has_symmetry            = representative_list is not None
 
     if not has_symmetry:
         # Optimized no-symmetry builder
@@ -475,8 +369,7 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
              
         data_idx = _build_sparse_same_sector_no_symmetry_jit(basis, operator_func, rows, cols, data, 0, nh)
     else:
-        # PREFERRED: Use compact O(1) lookup if available
-        # This is the new memory-efficient path with CompactSymmetryData
+        # Use compact O(1) lookup
         compact_data = getattr(hilbert_space, 'compact_symmetry_data', None)
         
         if compact_data is not None:
@@ -490,23 +383,7 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
                 operator_func, rows, cols, data, 0
             )
         else:
-            # Legacy fallback: Check for old-style precomputed arrays
-            repr_idx = getattr(hilbert_space, 'repr_idx', None)
-            repr_phase = getattr(hilbert_space, 'repr_phase', None)
-            
-            if repr_idx is not None and repr_phase is not None:
-                # Legacy JIT path with int64 + complex128 arrays (~24 bytes/state)
-                data_idx = _build_sparse_same_sector_jit(
-                    representative_list, normalization, repr_idx, repr_phase,
-                    operator_func, rows, cols, data, 0
-                )
-            else:
-                # Python assembly that uses HilbertSpace.find_representative
-                # This is necessary when the lookup table is too large to store.
-                data_idx = _build_sparse_same_sector_py(
-                    hilbert_space, representative_list, normalization, 
-                    operator_func, rows, cols, data, 0
-                )
+             raise ValueError("Compact symmetry data missing for symmetric Hilbert space in sparse build.")
 
     return sp.csr_matrix((data[:data_idx], (rows[:data_idx], cols[:data_idx])),shape=(nh, nh), dtype=alloc_dtype)
 
@@ -535,8 +412,8 @@ def _build_sector_change(hilbert_in         : object,
     compact_data_out            = getattr(hilbert_out, 'compact_symmetry_data', None)
     use_compact                 = compact_data_out is not None
     
-    # Legacy fallback check
-    use_precomputed             = hasattr(hilbert_out, 'repr_idx') and hilbert_out.repr_idx is not None
+    if not use_compact:
+         raise ValueError("Compact symmetry data missing for output Hilbert space in sector change build.")
     
     if not sparse:
         # Dense matrix
@@ -551,29 +428,16 @@ def _build_sector_change(hilbert_in         : object,
                 if abs(value) < 1e-14:
                     continue
 
-                if use_compact:
-                    # O(1) compact lookup
-                    idx_row     = compact_data_out.repr_map[int(new_state)]
-                    if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
-                        continue
-                    pidx        = compact_data_out.phase_idx[int(new_state)]
-                    phase       = compact_data_out.phase_table[pidx]
-                    norm_rep    = compact_data_out.normalization[idx_row]
-                    sym_factor  = np.conj(phase) * norm_rep / norm_col
-                elif use_precomputed:
-                    rep         = int(hilbert_out.repr_idx[int(new_state)])
-                    if rep < 0:
-                        continue
-                    phase       = hilbert_out.repr_phase[int(new_state)]
-                    norm_rep    = norm_out[rep] if norm_out is not None else 1.0
-                    sym_factor  = np.conj(phase) * norm_rep / norm_col
-                    idx_row     = rep
-                else:
-                    rep, sym_factor = hilbert_out.find_representative(int(new_state), norm_col)
-                    idx_row     = _binary_search_representative_list(representative_list_out, rep)
+                # O(1) compact lookup
+                idx_row     = compact_data_out.repr_map[int(new_state)]
+                if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
+                    continue
+                pidx        = compact_data_out.phase_idx[int(new_state)]
+                phase       = compact_data_out.phase_table[pidx]
+                norm_rep    = compact_data_out.normalization[idx_row]
+                sym_factor  = np.conj(phase) * norm_rep / norm_col
 
-                if idx_row >= 0:
-                    matrix[idx_row, idx_col] += value * sym_factor
+                matrix[idx_row, idx_col] += value * sym_factor
         return matrix
     
     # Sparse matrix
@@ -593,33 +457,21 @@ def _build_sector_change(hilbert_in         : object,
             if abs(value) < 1e-14:
                 continue
 
-            if use_compact:
-                # O(1) compact lookup
-                idx_row     = compact_data_out.repr_map[int(new_state)]
-                if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
-                    continue
-                pidx        = compact_data_out.phase_idx[int(new_state)]
-                phase       = compact_data_out.phase_table[pidx]
-                norm_rep    = compact_data_out.normalization[idx_row]
-                sym_factor  = np.conj(phase) * norm_rep / norm_col
-            elif use_precomputed:
-                idx_row     = int(hilbert_out.repr_idx[int(new_state)])
-                if idx_row < 0:
-                    continue
-                phase       = hilbert_out.repr_phase[int(new_state)]
-                norm_rep    = norm_out[idx_row] if norm_out is not None else 1.0
-                sym_factor  = np.conj(phase) * norm_rep / norm_col
-            else:
-                rep, sym_factor = hilbert_out.find_representative(int(new_state), norm_col)
-                idx_row     = _binary_search_representative_list(representative_list_out, rep)
+            # O(1) compact lookup
+            idx_row     = compact_data_out.repr_map[int(new_state)]
+            if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
+                continue
+            pidx        = compact_data_out.phase_idx[int(new_state)]
+            phase       = compact_data_out.phase_table[pidx]
+            norm_rep    = compact_data_out.normalization[idx_row]
+            sym_factor  = np.conj(phase) * norm_rep / norm_col
 
-            if idx_row >= 0:
-                matrix_elem = value * sym_factor
-                if abs(matrix_elem) > 1e-14:
-                    rows[data_idx]       = int(idx_row)
-                    cols[data_idx]       = int(idx_col)
-                    data[data_idx]       = matrix_elem
-                    data_idx            += 1
+            matrix_elem = value * sym_factor
+            if abs(matrix_elem) > 1e-14:
+                rows[data_idx]       = int(idx_row)
+                cols[data_idx]       = int(idx_col)
+                data[data_idx]       = matrix_elem
+                data_idx            += 1
 
     return sp.csr_matrix((data[:data_idx], (rows[:data_idx], cols[:data_idx])), shape=(nh_out, nh_in), dtype=alloc_dtype)
 
@@ -849,13 +701,8 @@ def _apply_op_batch_jit(
         vecs_out            : np.ndarray,
         op_func             : Callable,
         args                : Tuple,
-        basis               : Optional[np.ndarray],
-        representative_list : Optional[np.ndarray],
-        normalization       : Optional[np.ndarray],
-        #! TODO FIX THIS TO INCLUDE FACTORS MAP!!! SEE NEW HILBERTSPACE!!!
-        repr_idx            : Optional[np.ndarray],
-        repr_phase          : Optional[np.ndarray],
         *,
+        basis               : Optional[np.ndarray]  = None,
         chunk_size          : int                   = 6,
         thread_buffers      : Optional[np.ndarray]  = None
     ) -> None:
@@ -873,14 +720,6 @@ def _apply_op_batch_jit(
         Additional arguments for op_func
     basis : Optional[np.ndarray]
         Basis states for no-symmetry case
-    representative_list : Optional[np.ndarray]
-        List of representative states for symmetry sectors
-    normalization : Optional[np.ndarray]
-        Normalization factors for representative states
-    repr_idx : Optional[np.ndarray]
-        Indices mapping states to their representatives (in representative_list array)
-    repr_phase : Optional[np.ndarray]
-        Phases associated with representative states
     chunk_size : int
         Size of chunks for batch processing
     thread_buffers : Optional[np.ndarray]
@@ -897,7 +736,6 @@ def _apply_op_batch_jit(
     '''
     
     nh, n_batch         = vecs_in.shape
-    has_symmetry        = representative_list is not None
     has_basis           = basis is not None
     n_threads           = numba.get_num_threads()
     
@@ -927,12 +765,7 @@ def _apply_op_batch_jit(
         for k in numba.prange(nh):
             tid         = numba.get_thread_id()
             
-            # State Decoding
-            if has_symmetry:
-                # use representative_list and normalization
-                state   = np.int64(representative_list[k])
-                norm_k  = normalization[k]
-            elif has_basis:
+            if has_basis:
                 # use basis array
                 state   = np.int64(basis[k])
             else:
@@ -951,16 +784,8 @@ def _apply_op_batch_jit(
                 
                 target_idx              = -1
                 sym_factor              = 1.0 + 0j
-
-                if has_symmetry:
-                    if repr_idx is not None:
-                        target_idx      = repr_idx[new_state]
-                        if target_idx >= 0:
-                            phase       = repr_phase[new_state]
-                            norm_idx    = normalization[target_idx]
-                            sym_factor  = np.conj(phase) * (norm_idx / norm_k)
                             
-                elif has_basis:
+                if has_basis:
                     idx = np.searchsorted(basis, new_state)
                     if idx < nh and basis[idx] == new_state:
                         target_idx = idx
@@ -974,13 +799,8 @@ def _apply_op_batch_jit(
                     # thread_buffers[tid, row, batch_col]
                     # vecs_in[k, global_batch_col]
                     
-                    if has_symmetry:
-                        # Vectorized operation over the small chunk
-                        for b_local in range(actual_width):
-                            bufs[tid, target_idx, b_local] += val * sym_factor * vecs_in[k, b_start + b_local]
-                    else:
-                        for b_local in range(actual_width):
-                            bufs[tid, target_idx, b_local] += val * vecs_in[k, b_start + b_local]
+                    for b_local in range(actual_width):
+                        bufs[tid, target_idx, b_local] += val * vecs_in[k, b_start + b_local]
         
         # [Reduction Step]
         # Sum thread buffers into the final output for this chunk
@@ -998,11 +818,8 @@ def _apply_fourier_batch_jit(
         vecs_out            : np.ndarray,
         phases              : np.ndarray,
         op_func             : Callable,
-        basis               : Optional[np.ndarray],
-        representative_list : Optional[np.ndarray],
-        normalization       : Optional[np.ndarray],
-        repr_idx            : Optional[np.ndarray],
-        repr_phase          : Optional[np.ndarray],
+        *,
+        basis               : Optional[np.ndarray]  = None,
         thread_buffers      : Optional[np.ndarray]  = None,
         chunk_size          : int                   = 4
     ) -> None:
@@ -1010,8 +827,6 @@ def _apply_fourier_batch_jit(
     nh, n_batch     = vecs_in.shape
     n_sites         = len(phases)
     n_threads       = numba.get_num_threads()
-    
-    has_symmetry    = representative_list is not None
     has_basis       = basis is not None
 
     # Buffer Management (Same logic as matvec)
@@ -1035,10 +850,7 @@ def _apply_fourier_batch_jit(
             tid         = numba.get_thread_id()
             
             # 1. State Decoding
-            if has_symmetry:
-                state   = representative_list[k]
-                norm_k  = normalization[k]
-            elif has_basis:
+            if has_basis:
                 state   = basis[k]
             else:
                 state   = k
@@ -1062,14 +874,7 @@ def _apply_fourier_batch_jit(
                     target_idx      = -1
                     sym_factor      = 1.0 + 0j
 
-                    if has_symmetry:
-                        if repr_idx is not None:
-                            target_idx = repr_idx[new_state]
-                            if target_idx >= 0:
-                                ph          = repr_phase[new_state]
-                                norm_new    = normalization[target_idx]
-                                sym_factor  = np.conj(ph) * (norm_new / norm_k)
-                    elif has_basis:
+                    if has_basis:
                         target_idx = np.searchsorted(basis, new_state)
                         if target_idx >= nh or basis[target_idx] != new_state:
                             target_idx = -1
@@ -1078,15 +883,151 @@ def _apply_fourier_batch_jit(
 
                     # 4. Safe Write to Thread-Local Buffer
                     if 0 <= target_idx < nh:
-                        if has_symmetry:
-                            for b in range(actual_width):
-                                bufs[tid, target_idx, b] += (factor * sym_factor) * vecs_in[k, b_start + b]
-                        else:
-                            for b in range(actual_width):
-                                bufs[tid, target_idx, b] += factor * vecs_in[k, b_start + b]
+                        for b in range(actual_width):
+                            bufs[tid, target_idx, b] += factor * vecs_in[k, b_start + b]
 
         # Reduction Step
         # Sum all thread buffers into the final output for this chunk
+        for t in range(n_threads):
+            for b in range(actual_width):
+                vecs_out[:, b_start + b] += bufs[t, :, b]
+
+@numba.njit(fastmath=True, parallel=True)
+def _apply_op_batch_compact_jit(
+        vecs_in             : np.ndarray,
+        vecs_out            : np.ndarray,
+        op_func             : Callable,
+        args                : Tuple,
+        representative_list : np.ndarray,
+        normalization       : np.ndarray,
+        repr_map            : np.ndarray,
+        phase_idx           : np.ndarray,
+        phase_table         : np.ndarray,
+        *,
+        chunk_size          : int                   = 6,
+        thread_buffers      : Optional[np.ndarray]  = None
+    ) -> None:
+    '''
+    Jitted batch operator application using CompactSymmetryData for O(1) lookups.
+    '''
+    
+    nh, n_batch         = vecs_in.shape
+    n_threads           = numba.get_num_threads()
+    
+    chunk_size          = min(chunk_size, n_batch)
+    bufs                = thread_buffers
+    
+    if thread_buffers is None or thread_buffers.shape[0] < n_threads:
+        bufs            = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
+
+    # Loop over the batch in chunks
+    for b_start in range(0, n_batch, chunk_size):
+        b_end           = min(b_start + chunk_size, n_batch)
+        actual_width    = b_end - b_start
+        
+        # Reset buffers
+        bufs[:n_threads, :, :actual_width].fill(0.0)
+
+        # Parallel Loop
+        for k in numba.prange(nh):
+            tid         = numba.get_thread_id()
+            
+            state       = representative_list[k]
+            norm_k      = normalization[k]
+            
+            new_states, values  = op_func(state, *args)
+            
+            for i in range(len(new_states)):
+                new_state = new_states[i]
+                val       = values[i]
+
+                if abs(val) < 1e-15: continue
+                
+                # Compact O(1) lookup
+                idx = repr_map[new_state]
+                if idx == _INVALID_REPR_IDX_NB:
+                    continue
+                
+                pidx        = phase_idx[new_state]
+                phase       = phase_table[pidx]
+                norm_new    = normalization[idx]
+                
+                sym_factor  = np.conj(phase) * (norm_new / norm_k)
+                
+                # Vectorized write to thread buffer
+                for b in range(actual_width):
+                    bufs[tid, idx, b] += val * sym_factor * vecs_in[k, b_start + b]
+        
+        # Reduction
+        for t in range(n_threads):
+            for b in range(actual_width):
+                vecs_out[:, b_start + b] += bufs[t, :, b]
+
+@numba.njit(fastmath=True, parallel=True)
+def _apply_fourier_batch_compact_jit(
+        vecs_in             : np.ndarray,
+        vecs_out            : np.ndarray,
+        phases              : np.ndarray,
+        op_func             : Callable,
+        representative_list : np.ndarray,
+        normalization       : np.ndarray,
+        repr_map            : np.ndarray,
+        phase_idx           : np.ndarray,
+        phase_table         : np.ndarray,
+        thread_buffers      : Optional[np.ndarray]  = None,
+        chunk_size          : int                   = 4
+    ) -> None:
+    '''
+    Jitted batch Fourier transform using CompactSymmetryData for O(1) lookups.
+    '''
+    
+    nh, n_batch     = vecs_in.shape
+    n_sites         = len(phases)
+    n_threads       = numba.get_num_threads()
+    
+    bufs            = thread_buffers
+    if bufs is None or bufs.shape[0] < n_threads:
+        bufs        = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
+        
+    for b_start in range(0, n_batch, chunk_size):
+        b_end           = min(b_start + chunk_size, n_batch)
+        actual_width    = b_end - b_start
+        
+        bufs[:n_threads, :, :actual_width].fill(0.0)
+
+        for k in numba.prange(nh):
+            tid         = numba.get_thread_id()
+            
+            state       = representative_list[k]
+            norm_k      = normalization[k]
+
+            for site_idx in range(n_sites):
+                c_site              = phases[site_idx]
+                new_states, values  = op_func(state, site_idx)
+                
+                for j in range(len(new_states)):
+                    new_state       = new_states[j]
+                    val             = values[j]
+                    
+                    factor          = val * c_site 
+                    if abs(factor) < 1e-15: continue
+
+                    # Compact O(1) lookup
+                    idx = repr_map[new_state]
+                    if idx == _INVALID_REPR_IDX_NB:
+                        continue
+                    
+                    pidx        = phase_idx[new_state]
+                    phase       = phase_table[pidx]
+                    norm_new    = normalization[idx]
+                    
+                    sym_factor  = np.conj(phase) * (norm_new / norm_k)
+
+                    # Vectorized write
+                    for b in range(actual_width):
+                        bufs[tid, idx, b] += (factor * sym_factor) * vecs_in[k, b_start + b]
+
+        # Reduction
         for t in range(n_threads):
             for b in range(actual_width):
                 vecs_out[:, b_start + b] += bufs[t, :, b]

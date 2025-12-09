@@ -722,6 +722,7 @@ All names are **case-insensitive** and support variations:
 | Translation | `translation`, `translations`, `trans`, `momentum` |
 | Parity | `parity`, `parityx`, `parityy`, `parityz`, `spin` |
 | Reflection | `reflection`, `reflect`, `mirror` |
+| Inversion | `inversion`, `inv`, `spatial`, `spatialinversion` |
 | Fermion Parity | `fermion_parity`, `fermion`, `fparity` |
 | Particle-Hole | `particle_hole`, `ph`, `charge_conjugation` |
 | Time Reversal | `time_reversal`, `tr`, `time` |

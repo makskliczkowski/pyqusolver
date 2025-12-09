@@ -147,6 +147,7 @@ class Hamiltonian(BasisAwareOperator):
             If False, it is treated as a non-interacting (single-particle) Hamiltonian. Default is True.
         hilbert_space : HilbertSpace, HilbertConfig, or None, optional
             The Hilbert space object describing the system or a blueprint to build it. Required if is_manybody=True.
+            Can be configured with symmetries defined via strings (e.g., `sym_gen={'translation': 0}`) for convenience.
         lattice : str or list of int or None, optional
             Lattice information or list of site indices. Used to infer the number of sites (ns) and optionally construct the Hilbert space.
         is_sparse : bool, optional

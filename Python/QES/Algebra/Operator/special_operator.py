@@ -372,7 +372,7 @@ class SpecialOperator(Operator, ABC):
     
     # -------------------------------------------------------------------------
     
-    def _log(self, msg : str, log : str = 'info', lvl : int = 0, color : str = "white"):
+    def _log(self, msg : str, log : str = 'info', lvl : int = 0, color : str = "white") -> None:
         """
         Log the message.
         

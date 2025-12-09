@@ -525,8 +525,8 @@ class OperatorModule:
         batch_size          = max(1, min(batch_size, n_states)) # Clamp between 1 and total states
         
         if logger:
-            logger.info(f"Memory Check: Available={avail_mem:.2f}GB. Vector Size={vec_gb:.4f}GB.",  lvl=2               )
-            logger.info(f"Calculated safe batch size: {batch_size} states (out of {n_states}).",Żľ    lvl=3, color='green')
+            logger.info(f"Memory Check: Available={avail_mem:.2f}GB. Vector Size={vec_gb:.4f}GB.",  lvl=2, color='cyan')
+            logger.info(f"Calculated safe batch size: {batch_size} states (out of {n_states}).",    lvl=3, color='green')
 
         # Initialize Data Structures
         ops_list            = ['xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz'] if correlators is None else correlators

@@ -1,5 +1,12 @@
 """
 Base classes and registry for symmetry operations in Hilbert space.
+This module defines the abstract base class `SymmetryOperator` that all
+symmetry operations must inherit from, along with enumerations for symmetry
+classification and momentum sectors. It also includes a registry for symmetry
+operator classes to facilitate extensibility.
+
+This registry allows new symmetry types to be added dynamically and retrieved
+by name, enabling flexible integration of custom symmetries into the framework.
 
 --------------------------------------------
 File        : QES/Algebra/Symmetries/base.py
@@ -9,21 +16,18 @@ Date        : 2025-10-26
 --------------------------------------------
 """
 
-import numpy as np
-from typing import Tuple, Any, Dict, Type, Optional, Set, FrozenSet, Union
-from enum import Enum, auto
+import  numpy       as np
+from    typing      import Tuple, Any, Dict, Type, Optional, Set, FrozenSet, Union
+from    enum        import Enum, auto
 
 ###################################################################################################
 
 try:
-    from QES.general_python.algebra.utils import JAX_AVAILABLE
-    if JAX_AVAILABLE:
-        import jax.numpy as jnp
-    else:
-        jnp = np
+    import          jax.numpy as jnp
+    JAX_AVAILABLE   = True
 except ImportError:
-    JAX_AVAILABLE   = False
     jnp             = np
+    JAX_AVAILABLE   = False
     
 try:
     from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
@@ -114,25 +118,26 @@ class SymmetryClass(Enum):
         - Applies to        : Custom symmetries, product groups
         - Quantum numbers   : Model-dependent
     """
+    
     # Spatial symmetries
-    TRANSLATION         = auto()
-    REFLECTION          = auto()
-    POINT_GROUP         = auto()
-    INVERSION           = auto()
+    TRANSLATION         = auto()        # Lattice translations          (IMPLEMENTED)
+    REFLECTION          = auto()        # Spatial reflections           (IMPLEMENTED)
+    POINT_GROUP         = auto()        # Point group symmetries        (NOT IMPLEMENTED)
+    INVERSION           = auto()        # Spatial inversion through P   (IMPLEMENTED)
     
     # Spin/internal symmetries
-    PARITY              = auto()        # Discrete spin flips (sigma^x, sigma^y, sigma^z)
-    U1_PARTICLE         = auto()        # Particle number N
-    U1_SPIN             = auto()        # Spin S^z
+    PARITY              = auto()        # Spin flips (s^x, s^y, s^z)    (IMPLEMENTED)
+    U1_PARTICLE         = auto()        # Particle number N             (IMPLEMENTED)
+    U1_SPIN             = auto()        # Spin S^z                      (IMPLEMENTED)
     
     # Discrete non-spatial
-    TIME_REVERSAL       = auto()
-    CHARGE_CONJUGATION  = auto()
+    TIME_REVERSAL       = auto()        # Anti-unitary time-reversal    (NOT IMPLEMENTED)
+    CHARGE_CONJUGATION  = auto()        # Particle-hole symmetry        (NOT IMPLEMENTED)
     FERMION_PARITY      = auto()
     
-    # Legacy/generic
-    ROTATION            = auto()        # Continuous rotations (rare in lattice)
-    GENERIC             = auto()
+    # Generic
+    ROTATION            = auto()        # Continuous rotations          (NOT IMPLEMENTED)
+    GENERIC             = auto()        # User-defined/composite symmetries (IMPLEMENTED)
 
 class MomentumSector(Enum):
     """Momentum sector classification for translation-dependent compatibility."""
@@ -181,38 +186,38 @@ class SymmetryOperator:
     Implementing a new symmetry:
     
     >>> class MySymmetry(SymmetryOperator):
-    ...     symmetry_class  = SymmetryClass.GENERIC
-    ...     compatible_with = {SymmetryClass.TRANSLATION, SymmetryClass.U1_PARTICLE}
+    ...     symmetry_class          = SymmetryClass.GENERIC
+    ...     compatible_with         = {SymmetryClass.TRANSLATION, SymmetryClass.U1_PARTICLE}
     ...     
     ...     def __init__(self, sector, **kwargs):
-    ...         self.sector = sector
+    ...         self.sector         = sector
     ...     
     ...     def apply_int(self, state: int, ns: int, **kwargs) -> Tuple[int, complex]:
     ...         # Transform integer state
-    ...         new_state = ...  # your transformation
-    ...         phase = ...      # symmetry eigenvalue
+    ...         new_state   = ...   # your transformation
+    ...         phase       = ...   # symmetry eigenvalue
     ...         return new_state, phase
     ...     
     ...     def apply_numpy(self, state: np.ndarray, **kwargs) -> Tuple[np.ndarray, complex]:
     ...         # Transform numpy vector
-    ...         new_state = ...
-    ...         phase = ...
+    ...         new_state   = ...
+    ...         phase       = ...
     ...         return new_state, phase
     ...     
     ...     def apply_jax(self, state: jnp.ndarray, **kwargs) -> Tuple[jnp.ndarray, complex]:
     ...         # Transform JAX vector
     ...         if not JAX_AVAILABLE:
     ...             raise ImportError("JAX not available")
-    ...         new_state = ...
-    ...         phase = ...
+    ...         new_state   = ...
+    ...         phase       = ...
     ...         return new_state, phase
     """
     
-    symmetry_class              : SymmetryClass                             = SymmetryClass.GENERIC
-    compatible_with             : Set[SymmetryClass]                        = set()
-    momentum_dependent          : Dict[MomentumSector, Set[SymmetryClass]]  = {}
-    supported_local_spaces      : Set[LocalSpaceTypes]                      = set()  # Empty = universal
-    sector                      : Optional[Union[int, float, complex]]      = None
+    symmetry_class              : SymmetryClass                             = SymmetryClass.GENERIC     # Default to GENERIC, override in subclasses
+    compatible_with             : Set[SymmetryClass]                        = set()                     # Unconditionally compatible symmetries, e.g., PARITY with U1_*
+    momentum_dependent          : Dict[MomentumSector, Set[SymmetryClass]]  = {}                        # Compatibility at specific momentum sectors, e.g., TRANSLATION-REFLECTION
+    supported_local_spaces      : Set[LocalSpaceTypes]                      = set()                     # Empty = universal, e.g., spin-1/2, fermions, bosons, etc.
+    sector                      : Optional[Union[int, float, complex]]      = None                      # Quantum number for this symmetry
     
     @property
     def name(self) -> str:
@@ -371,11 +376,16 @@ class SymmetryOperator:
     # ------------------------------------------------
     
     def get_character(self, count: int, sector: Union[int, float, complex], **kwargs) -> complex:
-        """
+        r"""
         Compute the character (representation eigenvalue) for this symmetry raised to a power.
         
         This is a key quantum number that determines the eigenvalue of the symmetry operator
-        in a given representation (momentum sector, parity sector, etc.).
+        in a given representation (momentum sector, parity sector, etc.). Mathetmatically,
+        the character chi_sector(op^n) gives the eigenvalue when applying the symmetry
+        operation 'op' 'n' times in the specified sector:
+        $$
+        chi_sector(op^n) = eigenvalue of op^n in sector
+        $$
         
         Parameters
         ----------
@@ -400,9 +410,12 @@ class SymmetryOperator:
         
         Examples
         --------
-        Parity with sector=+1: chi(P^2) = (+1)^2 = 1
-        Parity with sector=-1: chi(P^2) = (-1)^2 = 1
-        Translation: See TranslationSymmetry.get_character() for exp(ikn) formula
+        - Parity with sector=+1:
+            chi(P^2) = (+1)^2 = 1
+        - Parity with sector=-1:
+            chi(P^2) = (-1)^2 = 1
+        - Translation:
+            See TranslationSymmetry.get_character() for exp(ikn) formula
         """
         # Default: discrete symmetry with character = sector^count
         return sector ** count
@@ -464,6 +477,10 @@ class SymmetryOperator:
         - Check unconditional compatibility set
         - Check if both sectors are "real" for conditional compatibility
         - Subclasses can override for custom logic
+        
+        Examples
+        --------
+        - Translation and Reflection commute only at k=0,pi
         """
         # Same class always commutes
         if self.symmetry_class == other.symmetry_class:
@@ -507,6 +524,15 @@ class SymmetryOperator:
         - Translation/Reflection are universal (spatial symmetries)
         - Parity operators require spin systems
         - Fermion parity requires fermionic systems
+        
+        Examples
+        --------
+        - ParitySymmetry with spin-1/2 local space: 
+            - valid
+        - ParitySymmetry with fermionic local space: 
+            - invalid
+        - TranslationSymmetry with any local space: 
+            - valid
         """
         # Empty set means universal - works for all local space types
         if not self.supported_local_spaces:
@@ -535,7 +561,9 @@ class SymmetryOperator:
         Notes
         -----
         Override this method in subclasses that have specific BC requirements.
-        For example:
+        
+        Examples
+        --------
         - TranslationSymmetry requires periodic boundary conditions
         - ReflectionSymmetry may require symmetric boundaries
         
@@ -569,8 +597,11 @@ class SymmetryOperator:
         Notes
         -----
         Override this in subclasses that have specific global symmetry constraints.
-        For example, 
+        
+        Examples
+        --------
         - ParitySymmetry should check U(1) constraints.
+        - TranslationSymmetry is generally compatible with U(1).
         Default implementation returns True (no global symmetry restrictions).
         """
         return True, "Compatible"

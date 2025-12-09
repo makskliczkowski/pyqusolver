@@ -1693,7 +1693,7 @@ class Operator(GeneralMatrix):
         
         dummy_hilbert = HilbertSpace(nh = dim, backend = self._backend)
         if verbose:
-            dummy_hilbert._log("Calculating the Hamiltonian matrix using NumPy...", lvl = 2)
+            dummy_hilbert._log("Calculating the Operator matrix using NumPy...", lvl = 2)
 
         # calculate the time to create the matrix
         t1              = time.time()
@@ -1921,20 +1921,10 @@ class Operator(GeneralMatrix):
         
         # act on states using the Hilbert space and the operator function
         try:
-            from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_jit
+            from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_jit, _apply_op_batch_compact_jit
         except ImportError:
             raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
         
-        # Extract Hilbert Space Data
-        basis               = getattr(hilbert, 'basis', None)
-        if basis is not None and not isinstance(basis, np.ndarray):
-            basis = np.array(basis)
-        
-        representative_list = getattr(hilbert, 'representative_list',   None)
-        normalization       = getattr(hilbert, 'normalization',         None)
-        repr_idx            = getattr(hilbert, 'repr_idx',              None)
-        repr_phase          = getattr(hilbert, 'repr_phase',            None)        
-
         # Prepare Inputs
         # Ensure 2D shape for batch kernel: (N_hilbert, N_batch)
         is_1d = vecs.ndim == 1
@@ -1948,19 +1938,40 @@ class Operator(GeneralMatrix):
         th_buffer       = thread_buffer if thread_buffer is not None else None
         op_func         = self._fun._fun_int
         
-        _apply_op_batch_jit(
-            vecs_in, 
-            vecs_out, 
-            op_func, 
-            args,       # Pass tuple of args (e.g., (site_i,) or (site_i, site_j))
-            basis,  
-            representative_list, 
-            normalization, 
-            repr_idx, 
-            repr_phase,
-            chunk_size      = chunk_size,
-            thread_buffers  = th_buffer
-        )
+        # Check for CompactSymmetryData (O(1) lookup)
+        compact_data    = getattr(hilbert, 'compact_symmetry_data', None)
+        
+        if compact_data is not None and (hilbert.nhfull == hilbert.nh):
+            # Fast path with compact data
+            _apply_op_batch_compact_jit(
+                vecs_in,
+                vecs_out,
+                op_func,
+                args,
+                compact_data.representative_list,
+                compact_data.normalization,
+                compact_data.repr_map,
+                compact_data.phase_idx,
+                compact_data.phase_table,
+                chunk_size      = chunk_size,
+                thread_buffers  = th_buffer
+            )
+        else:
+            # Fallback path (no symmetry)
+            # Extract Hilbert Space Data
+            basis               = getattr(hilbert, 'basis', None)
+            if basis is not None and not isinstance(basis, np.ndarray):
+                basis = np.array(basis)
+            
+            _apply_op_batch_jit(
+                vecs_in, 
+                vecs_out, 
+                op_func, 
+                args,           # Pass tuple of args (e.g., (site_i,) or (site_i, site_j))
+                basis           = basis,  
+                chunk_size      = chunk_size,
+                thread_buffers  = th_buffer
+            )
 
         if is_1d:
             return vecs_out.flatten() # Return in original shape
@@ -2002,7 +2013,7 @@ class Operator(GeneralMatrix):
             raise ValueError("Hilbert space must be provided for Fourier operator application.")
 
         try:
-            from QES.Algebra.Hilbert.matrix_builder import _apply_fourier_batch_jit
+            from QES.Algebra.Hilbert.matrix_builder import _apply_fourier_batch_jit, _apply_fourier_batch_compact_jit
         except ImportError:
             raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
 
@@ -2014,35 +2025,41 @@ class Operator(GeneralMatrix):
         
         # output
         vecs_out                = np.zeros_like(vecs_in, dtype=np.complex128) if out is None else out
-        
-        
         basis                   = getattr(hilbert, 'basis', None)
         if basis is not None:   basis = np.array(basis)
-        
-        representative_list     = getattr(hilbert, 'representative_list', None)
-        normalization           = getattr(hilbert, 'normalization', None)
-        repr_idx                = getattr(hilbert, 'repr_idx', None)
-        repr_phase              = getattr(hilbert, 'repr_phase', None)
 
         # This function must have signature (state, site_idx, *args)
-
         if not self.type_acting.is_local():
             raise ValueError("Fourier operator application requires a local operator. This means it needs to accept 'i' argument...")
-
-        _apply_fourier_batch_jit(
+        
+        compact_data            = getattr(hilbert, 'compact_symmetry_data', None)
+        if compact_data is not None and (hilbert.nhfull == hilbert.nh):
+            # Fast path with compact data
+            _apply_fourier_batch_compact_jit(
                                 vecs_in,
                                 vecs_out,
                                 phases,
                                 self._fun._fun_int,
-                                basis,
-                                representative_list,
-                                normalization,
-                                repr_idx,
-                                repr_phase,
+                                compact_data.representative_list,
+                                compact_data.normalization,
+                                compact_data.repr_map,
+                                compact_data.phase_idx,
+                                compact_data.phase_table,
                                 thread_buffers  = thread_buffer,
                                 chunk_size      = chunk_size
                                 )
-        
+        else:
+            # Fallback path (no symmetry)
+            _apply_fourier_batch_jit(
+                                    vecs_in,
+                                    vecs_out,
+                                    phases,
+                                    self._fun._fun_int,
+                                    basis           = basis,
+                                    thread_buffers  = thread_buffer,
+                                    chunk_size      = chunk_size
+                                    )
+            
         if is_1d:
             return vecs_out.flatten()
         return vecs_out
