@@ -94,7 +94,7 @@ class NQSCheckpointManager:
         options             = ocp.CheckpointManagerOptions(
                                 max_to_keep                 = self.max_to_keep, 
                                 create                      = True, 
-                                enable_async_checkpointing  = False,
+                                enable_async_checkpointing  = True,
                                 step_prefix                 = None
                             )
                 
@@ -148,6 +148,11 @@ class NQSCheckpointManager:
             return self._save_orbax(step, params, metadata, **kwargs)
         else:
             return self._save_hdf5_wrapper(step, params, metadata, filename)
+
+    def wait_until_finished(self):
+        """Block until all pending saves are complete (Orbax only)."""
+        if self.use_orbax and self._orbax_manager is not None:
+            self._orbax_manager.wait_until_finished()
 
     def _save_orbax(self, step: Union[int, str], params: Any, metadata: Dict[str, Any], force: bool = True, **kwargs) -> Path:
         """

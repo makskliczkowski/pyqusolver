@@ -126,11 +126,48 @@ class NQS(MonteCarloSolver):
     to the physical temperature.
     
     Example (PT mode):
-        >>> nqs = NQS(logansatz=net, model=hamiltonian, shape=(4,4), replica=5)
-        >>> nqs.train(...)  # Uses 5 temperature replicas with geometric ladder
+    >>> nqs = NQS(logansatz=net, model=hamiltonian, shape=(4,4), replica=5)
+    >>> nqs.train(...)  # Uses 5 temperature replicas with geometric ladder
+
+    Examples (Physics & Sampling):
+    >>> # Spin-1/2 (Local Updates)
+    >>> # Standard VMC with single spin flip updates
+    >>> model       = Hamiltonian(...)
+    >>> nqs         = NQS(logansatz=RBM, model=model, upd_fun="local")
+
+    >>> # Spinless Fermions (Particle Conservation) -> Exchange Updates
+    >>> # Requires 'hilbert' to define the particle number sector
+    >>> hilbert     = HilbertSpace(lattice=..., local_space=...)
+    >>> model       = Hamiltonian(...)
+    >>> # Exchange updates preserve particle number from initial state
+    >>> nqs         = NQS(logansatz=..., model=model, hilbert=hilbert, 
+    >>>             upd_fun="exchange", initstate="RND_FIXED", n_particles=5)
+
+    >>> # Frustrated Systems (Global Updates)
+    >>> # Use global updates to escape local minima
+    >>> patterns    = model.lattice.get_plaquettes()
+    >>> nqs         = NQS(logansatz=..., model=model, upd_fun="global", patterns=patterns, 
+    >>>             p_global=0.5) # 50% global flips, 50% local flips
+
+    Initialization & Updates
+    ------------------------
+    **Initial States (`initstate`):**
+    - "RND"         : Random configuration (default).
+    - "F_UP"        : All spins Up (+1).
+    - "F_DN"        : All spins Down (-1/0).
+    - "AF"          : Antiferromagnetic (Neel) state.
+    - "RND_FIXED"   : Random state with fixed magnetization/particle number (requires `n_particles` or `magnetization`).
+
+    **Update Rules (`upd_fun`):**
+    - "LOCAL"       : Single spin flip (standard Metropolis).
+    - "EXCHANGE"    : Swaps two sites. Preserves symmetries (U(1), Z_tot). 
+                    Supports `exchange_order=k` for k-th neighbor exchange.
+    - "BOND_FLIP"   : Flips a site and one random neighbor. Useful for moving topological excitations.
+    - "GLOBAL"      : Flips a predefined pattern (e.g., plaquette). Requires `patterns` argument.
+    - "MULTI_FLIP"  : Randomly flips `s_n_flip` sites at once.
     '''
-    
-    _ERROR_ALL_DTYPE_SAME       = "All weights must have the same dtype!"
+        
+    _ERROR_ALL_DTYPE_SAME       = "All weights must have the same dtype!"    
     _ERROR_NOT_INITIALIZED      = "The NQS network is not initialized. Call init_network() first."
     _ERROR_INVALID_PHYSICS      = "Invalid physics problem specified."
     _ERROR_NO_HAMILTONIAN       = "Hamiltonian must be provided for wavefunction physics."
@@ -184,8 +221,8 @@ class NQS(MonteCarloSolver):
                 - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
                 - As a pre-initialized network object (must be a subclass of `GeneralNet`).
                 - As a raw Flax module class for custom networks. The factory will wrap it automatically.
-                  See the documentation of `QES.general_python.ml.networks.choose_network` for details
-                  on custom module requirements.
+                See the documentation of `QES.general_python.ml.networks.choose_network` for details
+                on custom module requirements.
                 - As a callable that returns an ansatz. For example, a function that takes input shape and returns
                     a network instance or it can be some custom logic to create the wavefunction ansatz:
                     - PEPS ansatz function
@@ -219,7 +256,7 @@ class NQS(MonteCarloSolver):
                 Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
                 When replica > 1:
                 - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
-                  to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
+                to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
                 - MCMC runs in parallel across all temperature replicas.
                 - Periodic replica exchanges improve mixing and help escape local minima.
                 - Only samples from the physical replica (beta=1.0) are used for training.
@@ -2411,6 +2448,7 @@ class NQS(MonteCarloSolver):
             # Configure Update Function
             if upd_fun is not None and hasattr(self._sampler, 'set_update_function'):
                 u_kwargs = update_kwargs or {}
+                u_kwargs.update({'hilbert' : u_kwargs.pop('hilbert', self._model.hilbert), 'lattice': self._model.lattice})
                 self._sampler.set_update_function(upd_fun, **u_kwargs)
                 self.log(f"Sampler update function set to: {upd_fun}", lvl=2, color='blue')
         

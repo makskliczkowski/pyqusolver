@@ -32,7 +32,6 @@ date    : 2025-02-01
 
 import  numba
 import  numpy       as np
-from    numba       import prange
 from    functools   import partial
 from    typing      import Union, Tuple, Callable, Optional, Any, List
 from    abc         import ABC, abstractmethod
@@ -48,16 +47,16 @@ except ImportError as e:
 
 # from hilbert
 try:
-    from QES.Algebra.hilbert                import HilbertSpace
-    from QES.Algebra.Hilbert.hilbert_local  import LocalSpaceTypes
+    from QES.Algebra.hilbert                    import HilbertSpace
+    from QES.Algebra.Hilbert.hilbert_local      import LocalSpaceTypes
 except ImportError as e:
     # raise ImportError("Failed to import HilbertSpace module. Ensure QES package is correctly installed.") from e
-    HilbertSpace                            = None
-    LocalSpaceTypes                         = None
+    HilbertSpace                                = None
+    LocalSpaceTypes                             = None
 
 # from updates
 try:
-    from .updates import propose_local_flip, propose_exchange, propose_global_flip, propose_multi_flip, get_neighbor_table, propose_local_flip_np, propose_multi_flip_np
+    from .updates import propose_local_flip, propose_exchange, propose_global_flip, propose_multi_flip, get_neighbor_table, propose_local_flip_np, propose_multi_flip_np, propose_bond_flip
 except ImportError:
     # warnings.warn("Failed to import updates module. Update rules may not be available.")
     pass
@@ -232,11 +231,11 @@ class Sampler(ABC):
         self._modes         = kwargs.get('modes', 2)
         self._mode_repr     = kwargs.get('mode_repr', Binary.BACKEND_REPR)
         state_kwargs        = {
-            'modes'         : self._modes,
-            'mode_repr'     : self._mode_repr,
             'different'     : self._makediffer,
-            'n_particles'   : kwargs.get('n_particles', kwargs.get('nparticles')),
-            'magnetization' : kwargs.get('magnetization'),
+            'modes'         : kwargs.pop('modes', self._modes),
+            'mode_repr'     : kwargs.pop('mode_repr', self._mode_repr),
+            'n_particles'   : kwargs.get('n_particles', kwargs.get('nparticles', 1)),
+            'magnetization' : kwargs.get('magnetization', None),
         }
         self._initstate_t   = initstate
         self._isint         = isinstance(initstate, (int, np.integer, jnp.integer))
@@ -386,17 +385,22 @@ class Sampler(ABC):
         # handle the initial state
         if initstate is None or isinstance(initstate, (str, SolverInitState)):
             try:
-                current_bcknd_str = 'jax' if self._isjax else 'numpy'
+                # Extract modes and mode_repr from kwargs
+                current_bcknd_str   = 'jax' if self._isjax else 'numpy'
+                modes_val           = kwargs.pop('modes', 2)
+                mode_repr_val       = kwargs.pop('mode_repr', 0.5)
+                
                 if self._hilbert is None or True:
                     if different_initials:
                         self._states = self._backend.stack([
                                 initialize_state(initstate,
-                                    modes   =   kwargs.get('modes', 2),
-                                    hilbert =   self._hilbert,
-                                    shape   =   self._shape,
-                                    backend =   current_bcknd_str,
-                                    rng     =   self._rng,
-                                    rng_k   =   self._rng_k,
+                                    modes       =   modes_val,
+                                    hilbert     =   self._hilbert,
+                                    shape       =   self._shape,
+                                    backend     =   current_bcknd_str,
+                                    rng         =   self._rng,
+                                    rng_k       =   self._rng_k,
+                                    mode_repr   = mode_repr_val,
                                     **kwargs)
                                 for _ in range(self._numchains)
                             ], axis=0)
@@ -407,12 +411,13 @@ class Sampler(ABC):
                         return
                     else:
                         self._initstate = initialize_state(initstate,
-                                            modes   =   kwargs.get('modes', 2),
-                                            hilbert =   self._hilbert,
-                                            shape   =   self._shape,
-                                            backend =   current_bcknd_str,
-                                            rng     =   self._rng,
-                                            rng_k   =   self._rng_k,
+                                            modes       =   modes_val,
+                                            hilbert     =   self._hilbert,
+                                            shape       =   self._shape,
+                                            backend     =   current_bcknd_str,
+                                            rng         =   self._rng,
+                                            rng_k       =   self._rng_k,
+                                            mode_repr   = mode_repr_val,
                                             **kwargs)
                         if not self._isint:
                             self._initstate = self._initstate.astype(self._statetype)
@@ -650,6 +655,7 @@ class UpdateRule(Enum):
     EXCHANGE    = auto()
     GLOBAL      = auto()
     MULTI_FLIP  = auto()
+    BOND_FLIP   = auto()
     
     @staticmethod
     def from_str(s: str) -> 'UpdateRule':
@@ -666,6 +672,8 @@ class UpdateRule(Enum):
                 return UpdateRule.GLOBAL
             elif s in ['multi_flip', 'multi', 'n_flip']:
                 return UpdateRule.MULTI_FLIP
+            elif s in ['bond_flip', 'neighbor_flip', 'bond']:
+                return UpdateRule.BOND_FLIP
             raise ValueError(f"Invalid UpdateRule: {s}") from None
 
 def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -> Callable:
@@ -679,7 +687,7 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
             'jax' or 'numpy'. currently only 'jax' supported for advanced rules.
         **kwargs: 
             - hilbert: 
-                HilbertSpace object (required for exchange/global)
+                HilbertSpace object (required for exchange/global/bond)
             - patterns: 
                 List of patterns for global update (required for global if not in hilbert)
             - n_flip: 
@@ -728,10 +736,25 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
                             f"which may not be fully supported or tested. Compatible types: {compatible_types}")
 
         # Precompute neighbor table
-        neighbor_table = get_neighbor_table(hilbert.lattice)
+        # User can specify exchange range/order (default 1 = nearest neighbors)
+        exchange_order = kwargs.get('exchange_order', kwargs.get('order', 1))
+        neighbor_table = get_neighbor_table(hilbert.lattice, order=exchange_order)
         
         # Return partial function
         return partial(propose_exchange, neighbor_table=neighbor_table)
+    
+    elif rule == UpdateRule.BOND_FLIP:
+        hilbert = kwargs.get('hilbert')
+        if hilbert is None:
+            raise ValueError("Hilbert space is required for bond updates.")
+        
+        lattice = kwargs.get('lattice')
+        if hilbert.lattice is None:
+            raise ValueError("Hilbert space with lattice is required for bond updates.")
+            
+        # Precompute neighbor table
+        neighbor_table = get_neighbor_table(lattice, order=1)
+        return partial(propose_bond_flip, neighbor_table=neighbor_table)
         
     elif rule == UpdateRule.GLOBAL:
         patterns = kwargs.get('patterns')

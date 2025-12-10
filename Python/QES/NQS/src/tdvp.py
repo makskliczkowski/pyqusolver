@@ -230,7 +230,7 @@ class TDVP:
             sr_snr_tol      : float                                     = 1e-3,     # for signal-to-noise ratio
             sr_pinv_tol     : float                                     = 1e-14,    # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
             sr_pinv_cutoff  : float                                     = 1e-8,     # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
-            sr_diag_shift   : float                                     = 0.0,      # diagonal shift for the covariance matrix in case of ill-conditioning
+            sr_diag_shift   : float                                     = 1e-3,     # diagonal shift for the covariance matrix in case of ill-conditioning
             sr_lin_solver_t : Optional[Union[solvers.SolverForm, str]]  = 'gram',   # form of the solver - gram, matrix
             sr_lin_x0       : Optional[Array]                           = None,     # initial guess for the solver
             sr_maxiter      : int                                       = 100,      # maximum number of iterations for the linear solver

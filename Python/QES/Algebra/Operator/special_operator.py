@@ -417,7 +417,7 @@ class SpecialOperator(Operator, ABC):
     def is_manybody(self):              return self._is_manybody
 
     @property
-    def max_local_changes(self):        return self._max_local_ch   if self._is_manybody else 2
+    def max_local_changes(self):        return self._max_local_ch if self._is_manybody else 2
     @property
     def max_local(self):                return self.max_local_changes
     @property
@@ -434,6 +434,8 @@ class SpecialOperator(Operator, ABC):
     def modes(self):                    return self._hilbert_space.local_space.local_dim if self._hilbert_space is not None else None
     @property
     def hilbert_space(self):            return self._hilbert_space
+    @property
+    def hilbert(self):                  return self._hilbert_space
     @property
     def hilbert_size(self):             return self._hilbert_space.nh
     @property

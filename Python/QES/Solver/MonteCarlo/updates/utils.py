@@ -1,5 +1,13 @@
 """
 Utility functions for Monte Carlo updates.
+
+----------------------------------------------------------------------
+Author          : Maksymilian Kliczkowski
+Date            : December 2025
+Description     : This module provides utility functions for constructing neighbor tables
+                from lattice objects and creating hybrid proposers that combine local and global updates
+                for spin systems using JAX.
+----------------------------------------------------------------------
 """
 from    typing import Optional, TYPE_CHECKING, Callable
 import  numpy as np
@@ -22,19 +30,26 @@ except ImportError:
 #! Neighbor table construction
 # ----------------------------------------
 
-def get_neighbor_table(lattice: 'Lattice', max_neighbors=None) -> jnp.ndarray:
+def get_neighbor_table(lattice: 'Lattice', max_neighbors=None, order: int = 1) -> jnp.ndarray:
     """
     Constructs a padded neighbor table from a Lattice object.
     
-    Args:
-        lattice: 
-            QES Lattice object with adjacency_matrix() method.
-        max_neighbors: 
-            Optional override for maximum degree.
-        
+    Parameters:
+    -----------
+    
+    lattice: 
+        QES Lattice object with adjacency_matrix() method.
+    max_neighbors: 
+        Optional override for maximum degree.
+    order:
+        Maximum distance (graph hops) to consider as neighbors. 
+        Default is 1 (nearest neighbors).
+    
+    
     Returns:
-        jnp.ndarray: (Ns, max_degree) array where entry [i, k] is the index
-                    of the k-th neighbor of site i. Padded with -1.
+    --------
+    jnp.ndarray: (Ns, max_degree) array where entry [i, k] is the index
+                of the k-th neighbor of site i. Padded with -1.
     """
     
     # Get adjacency matrix (prefer dense for easier processing if small, but sparse is safer for large)
@@ -43,7 +58,24 @@ def get_neighbor_table(lattice: 'Lattice', max_neighbors=None) -> jnp.ndarray:
         adj = lattice.adjacency_matrix(sparse=False)
     except Exception:
         adj = lattice.adjacency_matrix(sparse=True).toarray()
+    
+    # If order > 1, compute powers of adjacency matrix
+    if order > 1:
+        # We want to find all nodes reachable within 'order' hops.
+        # Compute A + A^2 + ... + A^order
+        # Use boolean arithmetic to avoid overflow and just check connectivity
+        adj_bool        = (adj != 0)
+        accum_adj       = adj_bool.copy()
+        current_pow     = adj_bool.copy()
         
+        for _ in range(order - 1):
+            current_pow = current_pow @ adj_bool    # Matrix multiplication for next hop
+            accum_adj   = accum_adj | current_pow   # Accumulate connectivity
+            
+        # Remove self-loops (diagonal)
+        np.fill_diagonal(accum_adj, False)
+        adj             = accum_adj.astype(int)
+
     # List of lists for neighbors
     ns              = adj.shape[0]
     neighbors_list  = []

@@ -107,6 +107,62 @@ def propose_exchange(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.nda
     return new_state
 
 # ----------------------------------------------------------------------
+# Bond Flip Updates (Flip site + random neighbor)
+# ----------------------------------------------------------------------
+
+@jax.jit
+def propose_bond_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray) -> jnp.ndarray:
+    """
+    Propose flipping a random site AND one of its random neighbors.
+    Useful for topological models where single flips create excitations 
+    but bond flips might just move them or preserve sectors.
+    
+    Args:
+        state: Current state (Ns,).
+        key: JAX PRNGKey.
+        neighbor_table: Neighbor table.
+    
+    Returns:
+        New state with two spins flipped.
+    """
+    key_site, key_neigh     = jr.split(key)
+    ns                      = state.shape[0]
+    
+    # 1. Pick random site i
+    i                       = jr.randint(key_site, shape=(), minval=0, maxval=ns)
+    
+    # 2. Pick random neighbor j
+    max_degree              = neighbor_table.shape[1]
+    k                       = jr.randint(key_neigh, shape=(), minval=0, maxval=max_degree)
+    j                       = neighbor_table[i, k]
+    
+    # Check validity
+    is_valid                = (j != -1)
+    j_safe                  = jnp.where(is_valid, j, i) # if invalid, flip i twice (no-op)
+    
+    # Perform Flip
+    if BACKEND_DEF_SPIN:
+        # Spin +/- 1: Flip sign
+        val_i = -state[i]
+        val_j = -state[j_safe]
+    else:
+        # Binary 0/1: 1 - x
+        val_i = 1 - state[i]
+        val_j = 1 - state[j_safe]
+    
+    # Safe update:
+    # new_state = state
+    # if is_valid:
+    #    state[i] = val_i
+    #    state[j] = val_j
+    
+    # JAX way:
+    new_state = state.at[i].set(jnp.where(is_valid, val_i, state[i]))
+    new_state = new_state.at[j_safe].set(jnp.where(is_valid, val_j, state[j_safe]))
+    
+    return new_state
+
+# ----------------------------------------------------------------------
 # Multi-Flip Updates (N-random sites)
 # ----------------------------------------------------------------------
 
@@ -134,17 +190,6 @@ def propose_multi_flip(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> j
     indices = jr.choice(key, state.size, shape=(n_flip,), replace=False)
     
     if BACKEND_DEF_SPIN:
-        # Flip signs at indices
-        # We can use at[].multiply(-1)
-        # But we need to handle if indices has duplicates? replace=False prevents it.
-        # However, at[indices] with duplicates in JAX:
-        # "If indices are not unique, the updates are applied in an undefined order."
-        # For multiply, order doesn't matter, but doing it twice is identity.
-        # Since replace=False, we are safe.
-        
-        # Helper: Create a update mask or direct update
-        # Direct update loop or scatter
-        
         # Vectorized flip
         # new_vals = -state[indices]
         # return state.at[indices].set(new_vals)
@@ -192,7 +237,6 @@ def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarra
     def flip_step(curr_state, idx):
         # Handle padding (-1)
         # If idx == -1, do nothing.
-        # We need a safe index to read/write, even if we discard the result.
         safe_idx    = jnp.where(idx != -1, idx, 0)
         val         = curr_state[safe_idx]
         
