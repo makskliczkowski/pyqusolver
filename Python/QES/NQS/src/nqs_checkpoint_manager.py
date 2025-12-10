@@ -158,15 +158,25 @@ class NQSCheckpointManager:
             step = int(step)
         save_key = step if isinstance(step, int) else kwargs.get('current_epoch', 999999)
         try:
-            if os.path.exists(self._checkpoint_dir / str(save_key)):
+            # Check if step exists in manager OR filesystem (to be safe)
+            step_exists = save_key in self._orbax_manager.all_steps() or os.path.exists(self._checkpoint_dir / str(save_key))
+            
+            if step_exists:
                 if force:
                     self._log(f"Overwriting existing Orbax checkpoint for step {save_key}", lvl=1, color='yellow')
-                    shutil.rmtree(self._checkpoint_dir / str(save_key), ignore_errors=True)
+                    # Use manager to delete if it knows about the step
+                    if save_key in self._orbax_manager.all_steps():
+                        self._orbax_manager.delete(save_key)
+                    
+                    # Fallback cleanup just in case manager didn't clean up everything or didn't know about it
+                    if os.path.exists(self._checkpoint_dir / str(save_key)):
+                         shutil.rmtree(self._checkpoint_dir / str(save_key), ignore_errors=True)
                 else:
                     raise FileExistsError(f"Checkpoint for step {save_key} already exists.")
             
             # Always use PyTreeCheckpointer for a single PyTree
-            save_args = ocp.args.PyTreeSave(params)
+            # Explicitly name the item 'params' to avoid Composite error on load
+            save_args = ocp.args.Composite(params=ocp.args.PyTreeSave(params))
             self._orbax_manager.save(save_key, args=save_args, force=force)
             
         except Exception as e:
@@ -176,6 +186,8 @@ class NQSCheckpointManager:
         self._save_metadata_json(save_key, metadata)
         self._log(f"Saved Orbax checkpoint for step {save_key}", lvl=1, color='green')
         return self._checkpoint_dir / str(save_key)
+
+    # ---
 
     def _save_hdf5_wrapper(self, step: Union[int, str], params: Any, metadata: Dict[str, Any], filename: Optional[str]) -> Path:
         """Save using HDF5 backend."""
@@ -239,13 +251,20 @@ class NQSCheckpointManager:
         self._log(f"Loading Orbax step {step_int}...", lvl=1)
         
         try:
-            # Try loading using arguments (New/Standard API)
-            restore_args = ocp.args.PyTreeRestore(item=target_par)
-            restored_params = self._orbax_manager.restore(step_int, args=restore_args)
-            return restored_params
+            # Try loading as Composite (New explicit structure)
+            restore_args = ocp.args.Composite(params=ocp.args.PyTreeRestore(item=target_par))
+            restored = self._orbax_manager.restore(step_int, args=restore_args)
+            return restored['params']
         except Exception as e:
-            self._log(f"Manager load failed with args: {e}. Attempting fallback...", lvl=1, color='yellow')
+            self._log(f"Manager Composite load failed: {e}. Attempting single item fallback...", lvl=1, color='yellow')
             
+            # Fallback 0: Single Item (Old ambiguous structure)
+            try:
+                restore_args = ocp.args.PyTreeRestore(item=target_par)
+                return self._orbax_manager.restore(step_int, args=restore_args)
+            except Exception as e2:
+                 self._log(f"Single item load failed: {e2}. Attempting Legacy fallback...", lvl=1)
+
             # Fallback 1: Legacy restore (if manager was initialized with checkpointer)
             if getattr(self, '_legacy_api', False):
                 try:
@@ -275,6 +294,8 @@ class NQSCheckpointManager:
             # If all fail
             raise e
 
+    # ---
+    
     def _load_hdf5_wrapper(self, step: Optional[Union[int, str]], filename: Optional[str]) -> Any:
         """Load using HDF5 backend."""
         if filename is not None:

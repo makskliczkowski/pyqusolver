@@ -23,15 +23,19 @@ Description     : Neural Quantum State (NQS) Solver implementation.
 ----------------------------------------------------------
 """
 
+import os
 import time
-import h5py
 import warnings
 
+# Some Globals for safety
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]     = "false" 
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"]    = "0.7"
+warnings.filterwarnings("ignore",               message = ".*Skipped cross-host ArrayMetadata validation.*")
+
 # typing and other imports
-from typing import Union, Tuple, Union, Callable, Optional, Any, List, Dict, Callable, TYPE_CHECKING
-from functools import partial
-from pathlib import Path
-from dataclasses import dataclass
+from typing         import Union, Tuple, Union, Callable, Optional, Any, List, Callable, TYPE_CHECKING
+from functools      import partial
+from dataclasses    import dataclass
 
 # import physical problems
 try:
@@ -150,6 +154,7 @@ class NQS(MonteCarloSolver):
                 # information on the Monte Carlo solver
                 sampler     : Optional[Union[Callable, str, VMCSampler]]    =   None,
                 batch_size  : Optional[int]                                 =   1,
+                nthstate    : Optional[int]                                 =   0,
                 *,
                 # information on the NQS
                 nparticles  : Optional[int]                                 = None,
@@ -199,6 +204,8 @@ class NQS(MonteCarloSolver):
                 - For other physics types, refer to the specific requirements.
             batch_size [Optional[int]]:
                 The batch size for training.
+            nthstate [Optional[int]]:
+                The nth excited state to target (0 for ground state). Informative
             nparticles [Optional[int]]:
                 The number of particles in the system. If not provided, defaults to system size.
             seed [Optional[int]]:
@@ -259,6 +266,8 @@ class NQS(MonteCarloSolver):
                     - pt_betas          : Custom array of inverse temperatures (optional).
                                         If not provided, a geometric ladder from 1.0 to 0.1 is generated.
                     - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
+                                        Sampler-specific parameters (e.g., `p_global`, `global_fraction`) are
+                                        also passed through to the `VMCSampler` constructor via `**kwargs`.
         '''
         
         if shape is None and hilbert is None:
@@ -282,6 +291,7 @@ class NQS(MonteCarloSolver):
         self._batch_size            = batch_size        
         self._initialized           = False
         self._seed                  = seed
+        self._nthstate              = nthstate
         
         self._modifier_wrapper      = None   # type: Optional[AnsatzModifier]
         self._modifier_source       = None   # type: Optional[Union[Operator, Callable]]
@@ -504,6 +514,8 @@ class NQS(MonteCarloSolver):
             self._nparams           = self._net.nparams
             self._initialized       = True
     
+    #####################################
+    
     @property
     def exact(self):
         """
@@ -519,7 +531,39 @@ class NQS(MonteCarloSolver):
         """
         self._exact_info = info
         if info is not None:
-            self.log(f"Exact information set: {info}", lvl=1)
+            self.log(f"Exact information set: {info.get('exact_predictions', [None] * (self._nthstate + 1))[self._nthstate]}", lvl=1)
+
+    def get_exact(self, **kwargs) -> Optional['NQSTrainStats']:
+        '''
+        Get exact predictions, e.g., ground state energy, from the model.
+        This method computes the exact ground state energy using the model's diagonalization method.
+        It updates the trainer's statistics with the exact values if available.
+        '''
+        
+        if self._nqsproblem.typ == 'wavefunction':
+            stats = self.trainer.stats if self.trainer is not None else None
+            
+            if not stats.has_exact:
+                if self.model.eig_val is None:
+                    self.model.diagonalize(method='lanczos', k=50, store_basis=True, verbose=True, use_scipy=True, tol=1e-9, max_iter=500)
+                pred                        =   self.model.eigenvalues
+                if stats is not None:
+                    stats.exact_predictions =   pred
+                    
+                nstate                      =   self._nthstate
+                self.exact                  =   { 
+                                                    'exact_predictions' : self.model.eigenvalues,
+                                                    'exact_method'      : 'scipy_lanczos',
+                                                    'exact_energy'      : float(pred) if np.ndim(pred) == 0 else pred[nstate]
+                                            }
+                if nstate == 0:
+                    logger.info(f"Exact ground state energy: {self.model.eig_val[0]:.6f}", lvl=1, color='green')
+                else:
+                    logger.info(f"Exact state[{nstate}] energy: {self.model.eig_val[nstate]:.6f}", lvl=1, color='green')
+                logger.info(f"Lowest energies: {self.model.eig_val[:max(nstate, 5)]}", lvl=2, color='green')
+            return stats
+        else:
+            raise NotImplementedError("Exact is not implemented for other physics types yet...")                                    
 
     #####################################
     #! SETTERS FOR HELP
@@ -2119,9 +2163,10 @@ class NQS(MonteCarloSolver):
         NQSTrainer or None
             The trainer instance, or None if train() hasn't been called yet.
         """
+        
         if self._trainer is None:
             from QES.NQS.src.nqs_train import NQSTrainer
-            self._trainer = NQSTrainer(nqs = self) # default...
+            self._trainer = NQSTrainer(nqs = self)
             
         return self._trainer
     
@@ -2276,6 +2321,13 @@ class NQS(MonteCarloSolver):
         lin_is_gram : bool, default=True
             Treat linear system as Gram matrix (S) if True, else covariance.
 
+        p_global : float, optional
+            Probability (0.0 to 1.0) of proposing a global update in the sampler (default: 0.0).
+            See `VMCSampler` documentation for details.
+        global_fraction : float, optional
+            Fraction of spins to flip during a global update (default: 0.5).
+            See `VMCSampler` documentation for details.
+
         **kwargs
             Additional arguments passed to NQSTrainer and schedulers.
 
@@ -2326,6 +2378,11 @@ class NQS(MonteCarloSolver):
                 self._sampler.set_sweep_steps(num_sweep)
             if pt_betas is not None and hasattr(self._sampler, 'set_pt_betas'):
                 self._sampler.set_pt_betas(pt_betas)
+            
+            # Configure Global Updates if parameters are present in kwargs
+            if 'p_global' in kwargs or 'global_fraction' in kwargs:
+                if hasattr(self._sampler, 'set_global_update'):
+                    self._sampler.set_global_update(p_global = kwargs.get('p_global', 0.0), global_fraction = kwargs.get('global_fraction', 0.5))
         
             if any(param is not None for param in [num_samples, num_chains, num_thermal, num_sweep, pt_betas]):
                 self.log(f"Sampler (re)configured: num_samples={self._sampler.numsamples}, num_chains={self._sampler.numchains}", lvl=2, color='blue')
@@ -2338,7 +2395,7 @@ class NQS(MonteCarloSolver):
             
             old_stats       = self._trainer.stats if self._trainer is not None else None
 
-            self._trainer = NQSTrainer(
+            self._trainer   = NQSTrainer(
                 nqs             = self,
                 # Solvers
                 lin_solver      = lin_solver,

@@ -162,6 +162,53 @@ if JAX_AVAILABLE:
 
             return jax.vmap(flip_single_state)(state, keys)
 
+    def _propose_global_flip_jax(state: jnp.ndarray, rng_k, fraction: float = 0.5):
+        """
+        Propose a global update by flipping each spin with probability `fraction`.
+        """
+        mask = jax.random.bernoulli(rng_k, p=fraction, shape=state.shape)
+        
+        # Check representation via a heuristic or global config
+        # Assuming typical VMC case: 
+        # If state contains negative values, assume +/- 1. Else 0/1.
+        # This check is done per call, might be slow if not jitted out. 
+        # Better to rely on Binary.BACKEND_DEF_SPIN static config.
+        
+        if Binary.BACKEND_DEF_SPIN: # -1 / 1
+            flipper = jnp.where(mask, -1.0, 1.0).astype(state.dtype)
+            return state * flipper
+        else: # 0 / 1
+            return jnp.where(mask, 1.0 - state, state)
+
+    def make_hybrid_proposer(local_fun: Callable, global_fun: Callable, p_global: float = 0.1):
+        """
+        Creates a JIT-compiled hybrid proposer.
+        
+        Args:
+            local_fun: Function for local updates (e.g., single flip).
+            global_fun: Function for global updates.
+            p_global: Probability of choosing the global update.
+            
+        Returns:
+            A JAX-compatible proposer function.
+        """
+        @jax.jit
+        def hybrid_proposer(state, key):
+            key_choice, key_upd = jax.random.split(key)
+            do_global = jax.random.bernoulli(key_choice, p=p_global)
+            
+            # Use lax.cond for branching
+            # Note: Both branches must return same shape/type
+            return jax.lax.cond(
+                do_global,
+                lambda s, k: global_fun(s, k),
+                lambda s, k: local_fun(s, k),
+                state, 
+                key_upd
+            )
+        return hybrid_proposer
+
+
 @numba.njit
 def _propose_random_flips_np(state: np.ndarray, rng, num = 1):
     """

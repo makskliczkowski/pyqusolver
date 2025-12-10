@@ -35,7 +35,7 @@ from    functools   import partial
 from    enum        import Enum, auto, unique
 
 try:
-    from .sampler   import (Sampler, SamplerErrors, SolverInitState, _propose_random_flip_jax, _propose_random_flip_np, _state_distinguish, _propose_random_flips_np, _propose_random_flips_jax,)
+    from .sampler   import (Sampler, SamplerErrors, SolverInitState, _propose_random_flip_jax, _propose_random_flip_np, make_hybrid_proposer, _propose_global_flip_jax)
 except ImportError as e:
     raise ImportError("Failed to import base Sampler class from MonteCarlo module.") from e
 
@@ -213,6 +213,15 @@ class VMCSampler(Sampler):
                     - MCMC runs in parallel across all temperature replicas.
                     - Periodic replica exchanges improve mixing.
                     - Only physical replica (index 0) samples are returned.
+                - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
+                - p_global          : Probability (0.0 to 1.0) of proposing a global update instead of a local single-spin flip.
+                                      (Only applies to JAX backend). (Default: 0.0, i.e., local updates only).
+                                      This enables a hybrid Metropolis-Hastings update scheme:
+                                      - With probability `p_global`, a global update (e.g., flipping a `global_fraction` of spins) is proposed.
+                                      - With probability `1-p_global`, a local update (single spin flip) is proposed.
+                                      This can help overcome local minima in frustrated systems.
+                - global_fraction   : Fraction of spins to flip during a global flip update (default: 0.5).
+                                      Only relevant when `p_global > 0.0`.
         """
         
         super().__init__(shape, upd_fun, rng, rng_k, seed, hilbert,
@@ -238,19 +247,31 @@ class VMCSampler(Sampler):
         self._total_sample_updates_per_sample   = sweep_steps * self._size                  # Updates between collected samples
         self._updates_per_sample                = self._sweep_steps                         # Steps between samples
         self._total_sample_updates_per_chain    = numsamples * self._updates_per_sample * self._numchains
-        self._org_upd_fun                       = upd_fun
+        self._local_upd_fun                     = upd_fun
         
         # number of times a function is applied per update
         self._numupd                            = numupd
         
-        if self._org_upd_fun is None:
+        if self._local_upd_fun is None:
             if self._isjax:
                 # Bind RNG arguments to the JAX updater, already JIT-compiled.
-                self._org_upd_fun = _propose_random_flip_jax
+                self._local_upd_fun = _propose_random_flip_jax
             else:
                 # For NumPy backend, bind the RNG to the updater.
-                self._org_upd_fun = _propose_random_flip_np
+                self._local_upd_fun = _propose_random_flip_np
         
+        # Check for global update configuration
+        self._org_upd_fun   = self._local_upd_fun
+        p_global            = kwargs.get('p_global', 0.0)
+        global_fraction     = kwargs.get('global_fraction', 0.5)
+        
+        if p_global > 0.0 and self._isjax:
+            # Create a partial for the global flip with the desired fraction
+            global_flip_fn      = partial(_propose_global_flip_jax, fraction=global_fraction)
+            # Wrap the current upd_fun (local) with the hybrid proposer
+            self._org_upd_fun   = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
+            print(f"Hybrid Sampler Enabled: P(glob)={p_global}, fraction={global_fraction}")
+
         self.set_update_num(self._numupd)
         
         # if self._isjax:                         self._upd_fun = jax.jit(self._upd_fun)
@@ -289,6 +310,29 @@ class VMCSampler(Sampler):
                 self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
                 self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
                 self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+
+    def set_numchains(self, numchains):
+        """
+        Set the number of chains.
+        Overrides base method to ensure PT state structure is maintained.
+        """
+        super().set_numchains(numchains)
+        
+        # If PT is enabled, we must reshape/tile the states to (n_replicas, n_chains, *shape)
+        # set_chains (called by super) resets _states to (numchains, *shape)
+        if getattr(self, '_is_pt', False) and self._states.ndim == len(self._shape) + 1:
+            if self._isjax:
+                self._states        = jnp.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+            else:
+                self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+        
+        # Invalidate cached static samplers to force recompilation with new chain count
+        self._static_sample_fun = None
+        self._static_pt_sampler = None
 
     def __repr__(self):
         """
@@ -451,8 +495,7 @@ class VMCSampler(Sampler):
             jnp.ndarray: The acceptance probability(ies).
         '''
         delta   = jnp.real(candidate_val) - jnp.real(current_val)
-        # ratio = jnp.exp(jnp.clip(beta * mu * delta, a_max=30.0)) # prevent overflow
-        ratio   = jnp.exp(beta * mu * delta)
+        ratio   = jnp.exp(jnp.clip(beta * mu * delta, a_max=30.0)) # prevent overflow
         return ratio
     
     @staticmethod
@@ -771,7 +814,7 @@ class VMCSampler(Sampler):
                 # Decide acceptance by comparing against a random uniform sample.
                 rand_vals               = rng.random(size=n_chains)
                 accepted                = rand_vals < acc_probability
-                num_proposed            += chain.shape[0] if len(chain.shape) > 1 else 1
+                num_proposed            += 1
                 num_accepted[accepted]  += 1
                 
                 # Update: if accepted, take candidate, else keep old.
@@ -1092,7 +1135,7 @@ class VMCSampler(Sampler):
         logprobas_init = jnp.squeeze(logprobas_init, axis=-1) if logprobas_init.ndim > 1 else logprobas_init
 
         #! Phase 1: Thermalization
-        states_therm, logprobas_therm, rng_k_therm, _, _ = VMCSampler._run_mcmc_steps_jax(
+        states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm = VMCSampler._run_mcmc_steps_jax(
             chain_init          =   states_init,
             current_val_init    =   logprobas_init,
             rng_k_init          =   rng_k_init,
@@ -1126,7 +1169,7 @@ class VMCSampler(Sampler):
             return new_carry, new_carry[0]
 
         # Initialize the carry for the scan with the thermalized state and counters.
-        initial_scan_carry = (states_therm, logprobas_therm, rng_k_therm, num_proposed_init, num_accepted_init)
+        initial_scan_carry = (states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm)
 
         # Run the scan for the specified number of sample steps.
         final_carry, collected_samples = jax.lax.scan(sample_scan_body, initial_scan_carry, None, length=num_samples)
@@ -1497,14 +1540,14 @@ class VMCSampler(Sampler):
         if betas is not None:   self._set_replicas(betas)
 
         # Handle temporary state if num_chains differs from instance default
+        reinitialized_for_call  = False
         current_states          = self._states
         current_proposed        = self._num_proposed
         current_accepted        = self._num_accepted
-        reinitialized_for_call  = False
         
         #! check if one needs to reconfigure the sampler
-        if used_num_chains != self._numchains or used_num_samples != self._numsamples:
-            print(f"Warning: Running sample with {used_num_chains} chains (instance default is {self._numchains}). State reinitialized for this call.")
+        if used_num_chains != self._numchains or used_num_samples != self._numsamples or used_num_therm != self._therm_steps:
+            print(f"(Warning) Running sample with {used_num_chains} chains (instance default is {self._numchains}). State reinitialized for this call.")
             reinitialized_for_call                              = True
             current_states, current_proposed, current_accepted  = self._sample_reinitialize(used_num_chains, used_num_samples)
             
@@ -1548,6 +1591,8 @@ class VMCSampler(Sampler):
             # -----------------------------------------------------------------
             #! Standard (non-PT) Path
             # -----------------------------------------------------------------
+            if self._static_sample_fun is None:
+                self._static_sample_fun     = self.get_sampler(num_samples=used_num_samples, num_chains=self._numchains)
             
             # Call the function that is static and JIT-compiled
             final_state_tuple, samples_tuple, probs = self._static_sample_fun(
@@ -1621,6 +1666,45 @@ class VMCSampler(Sampler):
             - sweep_steps : The number of sweep steps
         '''
         self._sweep_steps = sweep_steps
+
+    def set_global_update(self, p_global: float, global_fraction: float = 0.5):
+        """
+        Configure the hybrid global-local update settings for the sampler.
+
+        This method allows dynamic adjustment of the probability and fraction of global
+        updates during Monte Carlo sampling. If `p_global > 0.0`, the sampler will
+        stochastically choose between its default local update and a global update (flipping
+        a fraction of spins). This is particularly useful for overcoming critical slowing down
+        and exploring complex energy landscapes in frustrated magnets and spin-liquid systems.
+
+        Args:
+            p_global (float):
+                Probability (0.0 to 1.0) of proposing a global update instead of a local
+                single-spin flip in a given step. If 0.0, only local updates are used.
+                This parameter is only effective when using the JAX backend.
+            global_fraction (float):
+                Fraction of spins to flip during a global flip update (default: 0.5).
+                Only relevant when `p_global > 0.0`.
+        """
+        if not self._isjax:
+            if p_global > 0:
+                print("Warning: Global updates are only supported for JAX backend.")
+            return
+
+        if p_global > 0.0:
+            global_flip_fn      = partial(_propose_global_flip_jax, fraction=global_fraction)
+            self._org_upd_fun   = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
+            print(f"Hybrid Sampler Updated: P(glob)={p_global}, fraction={global_fraction}")
+        else:
+            self._org_upd_fun   = self._local_upd_fun
+            print("Hybrid Sampler Disabled: Reverted to local updates.")
+            
+        # Re-apply numupd wrapping
+        self.set_update_num(self._numupd)
+        
+        # Invalidate cache
+        self._static_sample_fun = None
+        self._static_pt_sampler = None
 
     def set_replicas(self, betas: Optional[Union[List[float], np.ndarray, jnp.ndarray]], n_replicas: Optional[int] = None, min_beta: Optional[float] = None):
         
@@ -1717,11 +1801,11 @@ class VMCSampler(Sampler):
         """
         if not self._isjax:
             raise RuntimeError("PT JAX sampler only available for JAX backend.")
-        if not self._is_pt:
-            raise RuntimeError("PT sampler requires pt_betas to be set.")
+        # if not self._is_pt:
+            # raise RuntimeError("PT sampler requires pt_betas to be set.")
         
-        static_num_samples = num_samples if num_samples is not None else self._numsamples
-        static_num_chains = num_chains if num_chains is not None else self._numchains
+        static_num_samples  = num_samples if num_samples is not None else self._numsamples
+        static_num_chains   = num_chains if num_chains is not None else self._numchains
         
         # Bake in all static configuration
         baked_args = {
