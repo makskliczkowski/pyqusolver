@@ -35,9 +35,10 @@ from    functools   import partial
 from    enum        import Enum, auto, unique
 
 try:
-    from .sampler   import (Sampler, SamplerErrors, SolverInitState, _propose_random_flip_jax, _propose_random_flip_np, make_hybrid_proposer, _propose_global_flip_jax)
+    from .sampler   import (Sampler, SamplerErrors, SolverInitState)
+    from .updates   import (propose_local_flip, propose_local_flip_np, make_hybrid_proposer, propose_multi_flip)
 except ImportError as e:
-    raise ImportError("Failed to import base Sampler class from MonteCarlo module.") from e
+    raise ImportError("Failed to import Sampler/Updates from MonteCarlo module.") from e
 
 # flax for the network
 try:
@@ -152,6 +153,7 @@ class VMCSampler(Sampler):
                 logprob_fact: float                         = 0.5,
                 statetype   : Union[np.dtype, jnp.dtype]    = np.float32,
                 makediffer  : bool                          = True,
+                logger                                      = None,
                 **kwargs):
         r"""
         Initialize the MCSampler.
@@ -215,17 +217,17 @@ class VMCSampler(Sampler):
                     - Only physical replica (index 0) samples are returned.
                 - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
                 - p_global          : Probability (0.0 to 1.0) of proposing a global update instead of a local single-spin flip.
-                                      (Only applies to JAX backend). (Default: 0.0, i.e., local updates only).
-                                      This enables a hybrid Metropolis-Hastings update scheme:
-                                      - With probability `p_global`, a global update (e.g., flipping a `global_fraction` of spins) is proposed.
-                                      - With probability `1-p_global`, a local update (single spin flip) is proposed.
-                                      This can help overcome local minima in frustrated systems.
+                                    (Only applies to JAX backend). (Default: 0.0, i.e., local updates only).
+                                    This enables a hybrid Metropolis-Hastings update scheme:
+                                    - With probability `p_global`, a global update (e.g., flipping a `global_fraction` of spins) is proposed.
+                                    - With probability `1-p_global`, a local update (single spin flip) is proposed.
+                                    This can help overcome local minima in frustrated systems.
                 - global_fraction   : Fraction of spins to flip during a global flip update (default: 0.5).
-                                      Only relevant when `p_global > 0.0`.
+                                    Only relevant when `p_global > 0.0`.
         """
         
         super().__init__(shape, upd_fun, rng, rng_k, seed, hilbert,
-                numsamples, numchains, initstate, backend, statetype, makediffer, **kwargs)
+                numsamples, numchains, initstate, backend, statetype, makediffer, logger, **kwargs)
         
         if net is None:
             raise ValueError("A network (or callable) must be provided for evaluation.")
@@ -247,40 +249,37 @@ class VMCSampler(Sampler):
         self._total_sample_updates_per_sample   = sweep_steps * self._size                  # Updates between collected samples
         self._updates_per_sample                = self._sweep_steps                         # Steps between samples
         self._total_sample_updates_per_chain    = numsamples * self._updates_per_sample * self._numchains
-        self._local_upd_fun                     = upd_fun
+        
+        # -----------------------------------------------------------------
+        # Resolve update function
+        # -----------------------------------------------------------------
+        
+        if isinstance(upd_fun, (str, Enum)):
+            from .sampler import get_update_function
+            self._local_upd_fun = get_update_function(upd_fun, backend='jax' if self._isjax else 'numpy', hilbert=hilbert, **kwargs)
+        else:
+            self._local_upd_fun = upd_fun
         
         # number of times a function is applied per update
         self._numupd                            = numupd
         
         if self._local_upd_fun is None:
             if self._isjax:
-                # Bind RNG arguments to the JAX updater, already JIT-compiled.
-                self._local_upd_fun = _propose_random_flip_jax
+                self._local_upd_fun = propose_local_flip
             else:
-                # For NumPy backend, bind the RNG to the updater.
-                self._local_upd_fun = _propose_random_flip_np
+                self._local_upd_fun = propose_local_flip_np
         
         # Check for global update configuration
         self._org_upd_fun   = self._local_upd_fun
-        p_global            = kwargs.get('p_global', 0.0)
-        global_fraction     = kwargs.get('global_fraction', 0.5)
-        
-        if p_global > 0.0 and self._isjax:
-            # Create a partial for the global flip with the desired fraction
-            global_flip_fn      = partial(_propose_global_flip_jax, fraction=global_fraction)
-            # Wrap the current upd_fun (local) with the hybrid proposer
-            self._org_upd_fun   = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
-            print(f"Hybrid Sampler Enabled: P(glob)={p_global}, fraction={global_fraction}")
 
         self.set_update_num(self._numupd)
-        
-        # if self._isjax:                         self._upd_fun = jax.jit(self._upd_fun)
         
         # -----------------------------------------------------------------
         #! Parallel Tempering (PT) Setup
         # -----------------------------------------------------------------
         
         self.set_replicas(pt_betas, pt_replicas)
+        self.set_hybrid_proposer(kwargs.get('p_global', 0.0), kwargs.get('global_fraction', 0.5))
         
         # -----------------------------------------------------------------
         # Static sampler function (standard or PT)
@@ -456,6 +455,19 @@ class VMCSampler(Sampler):
             self._upd_fun = _multi_update_proposer
         else:
             self._upd_fun = self._org_upd_fun
+    
+    def set_hybrid_proposer(self, p_global: float = 0.0, fraction: float = 0.5):
+        
+        # Check for global update configuration
+        self._org_upd_fun   = self._local_upd_fun
+        
+        if p_global > 0.0 and self._isjax:
+            # Create a partial for the global flip with the desired fraction (using multi-flip)
+            n_flip_global           = max(1, int(self._size * fraction))
+            global_flip_fn          = partial(propose_multi_flip, n_flip=n_flip_global)
+            # Wrap the current upd_fun (local) with the hybrid proposer
+            self._org_upd_fun       = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
+            if self._logger:        self._logger.info(f"Hybrid Sampler Enabled: P(glob)={p_global}, fraction={fraction}", lvl=1, color='blue')
     
     @property
     def numupd(self) -> int:
@@ -1692,12 +1704,13 @@ class VMCSampler(Sampler):
             return
 
         if p_global > 0.0:
-            global_flip_fn      = partial(_propose_global_flip_jax, fraction=global_fraction)
+            n_flip_global       = max(1, int(self._size * global_fraction))
+            global_flip_fn      = partial(propose_multi_flip, n_flip=n_flip_global)
             self._org_upd_fun   = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
-            print(f"Hybrid Sampler Updated: P(glob)={p_global}, fraction={global_fraction}")
-        else:
-            self._org_upd_fun   = self._local_upd_fun
-            print("Hybrid Sampler Disabled: Reverted to local updates.")
+            if self._logger:
+                self._logger.info(f"Hybrid Sampler Updated: P(glob)={p_global}, fraction={global_fraction}", lvl=1, color='blue')
+            else:
+                print(f"Hybrid Sampler Updated: P(glob)={p_global}, fraction={global_fraction}")
             
         # Re-apply numupd wrapping
         self.set_update_num(self._numupd)
@@ -2064,6 +2077,51 @@ class VMCSampler(Sampler):
         else:
             raise RuntimeError("Sampler backend must be either 'jax' or 'numpy'.")
 
-#############################################################################
+        # Calculate actual batch size generated
+        total_batch = config['s_numchains'] * config['s_numsamples']
+        logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.")
+        
+        return config
+
+    def set_update_function(self, upd_fun: Union[str, 'Enum', Callable], **kwargs):
+        """
+        Set the update function for the sampler.
+        
+        Parameters:
+            upd_fun (str, Enum, or Callable): The update rule/function.
+            **kwargs: Additional arguments for the update function factory (e.g., hilbert, patterns).
+        """
+        if isinstance(upd_fun, (str, Enum)):
+            from .sampler import get_update_function
+            
+            # If hilbert is not provided in kwargs, try to use the one from the sampler
+            if 'hilbert' not in kwargs and self._hilbert is not None:
+                kwargs['hilbert'] = self._hilbert
+                
+            self._local_upd_fun = get_update_function(upd_fun, backend='jax' if self._isjax else 'numpy', **kwargs)
+        else:
+            self._local_upd_fun = upd_fun
+            
+        # Re-apply numupd wrapping and hybrid sampler logic if necessary
+        # We need to preserve the p_global settings if they were set
+        # But this might be tricky if _org_upd_fun was the previous one.
+        # Let's assume set_update_function overrides the base local update.
+        
+        # We update _org_upd_fun (base for multi-update loop)
+        self._org_upd_fun = self._local_upd_fun
+        
+        # If hybrid mode was active, we might want to re-wrap it?
+        # For now, let's reset to the new function as the base. 
+        # If the user wants hybrid, they should probably re-configure it or we assume 
+        # set_global_update should be called again or preserved?
+        # Let's simple reset to just this function for now, but call set_update_num to re-wrap loop.
+        
+        self.set_update_num(self._numupd)
+        
+        # Invalidate cache
+        self._static_sample_fun = None
+        self._static_pt_sampler = None
+
+#########################################
 #! EOF
-#############################################################################
+#########################################

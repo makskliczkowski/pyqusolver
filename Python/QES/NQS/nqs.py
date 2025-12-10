@@ -257,7 +257,11 @@ class NQS(MonteCarloSolver):
                     - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
                     - s_sweep_steps     : Number of sweep steps between samples (default: 10).
                     - s_therm_steps     : Number of thermalization steps (burnin) (default: 100).
-                    - s_upd_fun         : Update function for sampler (default: None).
+                    - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
+                                        Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
+                                        See `NQS.help('sampling')` for details.
+                    - s_patterns        : List of patterns for "GLOBAL" update rule (required if upd_fun="GLOBAL").
+                    - s_n_flip          : Number of sites for "MULTI_FLIP" rule (default: 1).
                     - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
                     - s_logprob_fact    : Log probability factor (default: 0.5).
                     - s_makediffer      : Whether to make the sampler differentiable (default: True).
@@ -639,6 +643,9 @@ class NQS(MonteCarloSolver):
             
             sampler_kwargs['makediffer']    = kwargs.get('s_makediffer', True)
             sampler_kwargs.pop('s_makediffer', None)
+            
+            # Pass logger to sampler
+            sampler_kwargs['logger']        = self._logger
 
             # -----------------------------------------------------------------
             #! Parallel Tempering Setup
@@ -2224,6 +2231,9 @@ class NQS(MonteCarloSolver):
             # Some exact solutions
             exact_predictions   : Any                       = None,
             exact_method        : str                       = None,
+            # Sampler Updates
+            upd_fun             : Optional[Union[str, Any]] = None,
+            update_kwargs       : Optional[dict]            = None,
             **kwargs
         ) -> "NQSTrainStats":
         """
@@ -2329,6 +2339,13 @@ class NQS(MonteCarloSolver):
         global_fraction : float, optional
             Fraction of spins to flip during a global update (default: 0.5).
             See `VMCSampler` documentation for details.
+            
+        upd_fun : str or Enum, optional
+            Update rule for the sampler (e.g., "LOCAL", "EXCHANGE").
+            If provided, reconfigures the sampler's update function before training.
+            
+        update_kwargs : dict, optional
+            Additional arguments for the update rule (e.g., {'patterns': [...]}).
 
         **kwargs
             Additional arguments passed to NQSTrainer and schedulers.
@@ -2356,11 +2373,16 @@ class NQS(MonteCarloSolver):
 
         >>> # Advanced: MinSR, custom batch size, checkpointing
         >>> stats = psi.train(n_epochs=1000, use_minsr=True, n_batch=2048, checkpoint_every=100, save_path='./checkpoints')
+        
+        >>> # Change update rule for training
+        >>> stats = psi.train(n_epochs=100, upd_fun="EXCHANGE")
 
         See Also
         --------
-        NQSTrainer : Full trainer class with more configuration options.
-        NQS.help('train') : Interactive help and usage tips.
+        NQSTrainer : 
+            Full trainer class with more configuration options.
+        NQS.help('train') : 
+            Interactive help and usage tips.
         """
 
         # Import here to avoid circular imports
@@ -2385,6 +2407,12 @@ class NQS(MonteCarloSolver):
             if 'p_global' in kwargs or 'global_fraction' in kwargs:
                 if hasattr(self._sampler, 'set_global_update'):
                     self._sampler.set_global_update(p_global = kwargs.get('p_global', 0.0), global_fraction = kwargs.get('global_fraction', 0.5))
+            
+            # Configure Update Function
+            if upd_fun is not None and hasattr(self._sampler, 'set_update_function'):
+                u_kwargs = update_kwargs or {}
+                self._sampler.set_update_function(upd_fun, **u_kwargs)
+                self.log(f"Sampler update function set to: {upd_fun}", lvl=2, color='blue')
         
             if any(param is not None for param in [num_samples, num_chains, num_thermal, num_sweep, pt_betas]):
                 self.log(f"Sampler (re)configured: num_samples={self._sampler.numsamples}, num_chains={self._sampler.numchains}", lvl=2, color='blue')
@@ -2573,6 +2601,21 @@ class NQS(MonteCarloSolver):
                 - Zero autocorrelation (iid samples).
                 - Requires 'ar' or 'made' network architecture.
                 - Exact likelihoods P(s) available.
+                
+                Update Rules (VMC):
+                - "LOCAL" (default): 
+                    - Single spin flips.
+                - "EXCHANGE": 
+                    - Neighbor swaps (conserves N, Sz).
+                - "GLOBAL": 
+                    - Pattern/Plaquette flips (reduces autocorrelation).
+                - "MULTI_FLIP": 
+                    - Flips N random sites.
+                
+                Change rule: 
+                    psi = NQS(..., upd_fun="EXCHANGE", hilbert=h)
+                    # or during training
+                    psi.train(..., upd_fun="GLOBAL", update_kwargs={'patterns': [...]})
                 """
         
         elif topic == "usage":
