@@ -545,7 +545,9 @@ class NQS(MonteCarloSolver):
             
             if not stats.has_exact:
                 if self.model.eig_val is None:
-                    self.model.diagonalize(method='lanczos', k=50, store_basis=True, verbose=True, use_scipy=True, tol=1e-9, max_iter=500)
+                    self.model.diagonalize(method='lanczos', k=kwargs.get('k', 10), store_basis=False, 
+                                            verbose=kwargs.get('verbose', True), use_scipy=kwargs.get('use_scipy', True), 
+                                            tol=kwargs.get('tol', 1e-7), max_iter=kwargs.get('max_iter', 200))
                 pred                        =   self.model.eigenvalues
                 if stats is not None:
                     stats.exact_predictions =   pred
@@ -557,10 +559,10 @@ class NQS(MonteCarloSolver):
                                                     'exact_energy'      : float(pred) if np.ndim(pred) == 0 else pred[nstate]
                                             }
                 if nstate == 0:
-                    logger.info(f"Exact ground state energy: {self.model.eig_val[0]:.6f}", lvl=1, color='green')
+                    self._logger.info(f"Exact ground state energy: {self.model.eig_val[0]:.6f}", lvl=1, color='green')
                 else:
-                    logger.info(f"Exact state[{nstate}] energy: {self.model.eig_val[nstate]:.6f}", lvl=1, color='green')
-                logger.info(f"Lowest energies: {self.model.eig_val[:max(nstate, 5)]}", lvl=2, color='green')
+                    self._logger.info(f"Exact state[{nstate}] energy: {self.model.eig_val[nstate]:.6f}", lvl=1, color='green')
+                self._logger.info(f"Lowest energies: {self.model.eig_val[:max(nstate, 5)]}", lvl=2, color='green')
             return stats
         else:
             raise NotImplementedError("Exact is not implemented for other physics types yet...")                                    
