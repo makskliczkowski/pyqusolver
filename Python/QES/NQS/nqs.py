@@ -263,8 +263,6 @@ class NQS(MonteCarloSolver):
                 - The return signature of `sample()` and `train()` remains unchanged.
             shape [Union[list, tuple]]:
                 Shape of the input data, e.g., `(n_spins,)`.
-            hilbert:
-                Hilbert space object (optional).
             modes:
                 Number of local modes per site (e.g., 2 for spin-1/2).
             directory:
@@ -319,8 +317,8 @@ class NQS(MonteCarloSolver):
                         beta        =   beta,
                         mu          =   mu,
                         replica     =   replica,
-                        shape       =   shape or (hilbert.ns,),
-                        hilbert     =   hilbert,
+                        shape       =   shape or ((model.lattice.ns,) if hasattr(model, 'lattice') else None),
+                        hilbert     =   model.hilbert if hasattr(model, 'hilbert') else None,
                         modes       =   modes,
                         directory   =   directory,
                         backend     =   backend,
@@ -393,6 +391,7 @@ class NQS(MonteCarloSolver):
         #! Sampler
         # --------------------------------------------------
         
+        self._model                 = model
         self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)     
 
         # --------------------------------------------------
@@ -420,7 +419,6 @@ class NQS(MonteCarloSolver):
         #! Model and physics setup
         # --------------------------------------------------
 
-        self._model = model
         self._nqsproblem.setup(self._model, self._net)
         # For wavefunction problem we keep the same attribute name you used:
         if self._nqsproblem.typ == 'wavefunction':
@@ -606,8 +604,47 @@ class NQS(MonteCarloSolver):
                 self._logger.info(f"Lowest energies: {self.model.eig_val[:max(nstate, 5)]}", lvl=2, color='green')
             return stats
         else:
-            raise NotImplementedError("Exact is not implemented for other physics types yet...")                                    
-
+            raise NotImplementedError("Exact is not implemented for other physics types yet...")               
+        
+    def load_exact(self, filepath: str, *, key: str = 'energy_values'):
+        '''
+        Load exact information from a file.
+        This method loads the exact information (ground truth) from a specified file.
+        Parameters:
+            filepath: The path to the file containing the exact information.
+            extension: The file extension (default is '.h5').
+        '''
+        
+        if not os.path.isfile(filepath):
+            self._logger.warning(f"Exact file {filepath} does not exist.", lvl=1, color='red')
+            return
+        
+        # determine file extension
+        extension = os.path.splitext(str(filepath))[1].lower()
+        
+        if extension == '.h5' or extension == '.hdf5':
+            import h5py
+            
+            exact_values = []
+            with h5py.File(filepath, 'r') as f:
+                if key in f:
+                    exact_values = f[key][:]
+                else:
+                    raise KeyError(f"Key '{key}' not found in HDF5 file '{filepath}'.")
+                
+        elif extension == '.npy':
+            exact_values = np.load(filepath)
+            
+        elif extension == '.txt' or extension == '.dat' or extension == '.csv':
+            exact_values = np.loadtxt(filepath)
+        
+        self.exact          = {
+                                'exact_predictions' : np.array(exact_values),
+                                'exact_method'      : f"loaded_from_{os.path.basename(filepath)}",
+                                'exact_energy'      : float(exact_values) if np.ndim(exact_values) == 0 else exact_values[self._nthstate]
+                            }
+        self._logger.info(f"Loaded exact information from {filepath}.", lvl=1, color='green')
+        
     #####################################
     #! SETTERS FOR HELP
     #####################################
@@ -632,7 +669,7 @@ class NQS(MonteCarloSolver):
         if isinstance(sampler, Sampler):
             self._sampler = sampler
             return self._sampler
-          
+        
         if sampler is None or isinstance(sampler, str):
     
             # DEFAULT FALLBACK
@@ -681,8 +718,22 @@ class NQS(MonteCarloSolver):
             sampler_kwargs['makediffer']    = kwargs.get('s_makediffer', True)
             sampler_kwargs.pop('s_makediffer', None)
             
+            upd_fun                         = upd_fun or kwargs.get('s_upd_fun', upd_fun)
+            sampler_kwargs.pop('s_upd_fun', None)
+            
             # Pass logger to sampler
             sampler_kwargs['logger']        = self._logger
+            sampler_kwargs['hilbert']       = self._hilbert
+            sampler_kwargs['lattice']       = self._hilbert.lattice if self._model is not None else None
+            
+            sampler_kwargs['patterns']      = kwargs.get('s_patterns', None)
+            sampler_kwargs.pop('s_patterns', None)
+            sampler_kwargs['n_flip']        = kwargs.get('s_n_flip', 1)
+            sampler_kwargs.pop('s_n_flip', None)
+            sampler_kwargs['beta_penalty']  = self._beta_penalty
+            sampler_kwargs.pop('s_beta_penalty', None)
+            sampler_kwargs['n_particles']   = self._nparticles
+            sampler_kwargs.pop('s_n_particles', None)
 
             # -----------------------------------------------------------------
             #! Parallel Tempering Setup

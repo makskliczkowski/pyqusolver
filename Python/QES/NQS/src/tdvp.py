@@ -240,7 +240,9 @@ class TDVP:
             logger          : Optional[Any]                             = None,
             # Timing
             use_timing      : bool                                      = False,    # whether to time/synchronize operations (can cause overhead)
-            dtype           : Any                                       = jnp.complex64 if JAX_AVAILABLE else np.complex64
+            dtype           : Any                                       = jnp.complex64 if JAX_AVAILABLE else np.complex64,
+            # Gradient clipping
+            grad_clip       : Optional[float]                           = None
         ):
         ''' TDVP Initialization Function
         
@@ -295,7 +297,9 @@ class TDVP:
         sr_maxiter : int, optional
             Maximum number of iterations for the linear solver, by default 100. Only used for iterative solvers.
         backend : str, optional
-            Backend for numerical operations - 'jax' or 'numpy', by default 'default' (uses JAX if available, otherwise NumPy).        
+            Backend for numerical operations - 'jax' or 'numpy', by default 'default' (uses JAX if available, otherwise NumPy). 
+        grad_clip : float, optional
+            Gradient clipping threshold. If None, no clipping is applied.
         '''
         
         self.backend            = get_backend(backend)
@@ -319,7 +323,7 @@ class TDVP:
         self.sr_pinv_cutoff     = sr_pinv_cutoff       # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
         self.sr_diag_shift      = sr_diag_shift        # diagonal shift for the covariance matrix in case of ill-conditioning
         self.sr_maxiter         = sr_maxiter           # maximum number of iterations for the linear solver
-        self.grad_clip          = None                 # gradient clipping threshold (None = no clipping)
+        self.grad_clip          = grad_clip            # gradient clipping threshold (None = no clipping)
 
         #! handle the solver
         try:
@@ -634,16 +638,10 @@ class TDVP:
         if self.grad_clip is None or self.grad_clip <= 0:
             return gradient
         
-        grad_norm = self.backend.linalg.norm(gradient)
-        
-        # Only clip if norm exceeds threshold
-        if grad_norm > self.grad_clip:
-            scale = self.grad_clip / (grad_norm + 1e-8)  # Small epsilon for numerical stability
-            gradient = gradient * scale
-            if self.logger:
-                self.logger.debug(f"Gradient clipped: {grad_norm:.2e} -> {self.grad_clip:.2e}", lvl=2, color='yellow')
-        
-        return gradient
+        # Avoid division by zero
+        grad_norm   = self.backend.linalg.norm(gradient)
+        scale       = self.backend.where(grad_norm > self.grad_clip, self.grad_clip / (grad_norm + 1e-12), 1.0)
+        return gradient * scale
     
     ###################
     
