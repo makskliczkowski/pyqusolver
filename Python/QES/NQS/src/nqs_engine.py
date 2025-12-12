@@ -20,12 +20,9 @@ License         : MIT
 ------------------------------------------------
 """
 
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
-from dataclasses import dataclass, field
-from typing import Callable, Optional, Union, List, Dict, TypeAlias, Any
-from functools import partial
-from unittest import result
+from dataclasses    import dataclass, field
+from typing         import Callable, Optional, Union, List, Dict, TypeAlias, Any, TYPE_CHECKING
+from functools      import partial
 import numpy as np
 
 # -------------------
@@ -40,7 +37,7 @@ except ImportError:
 try:
     import jax
     import jax.numpy as jnp
-    JAX_AVAILABLE = True
+    JAX_AVAILABLE   = True
 except ImportError:
     jax             = None
     jnp             = None

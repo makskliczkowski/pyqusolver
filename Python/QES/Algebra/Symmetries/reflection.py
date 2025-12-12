@@ -140,12 +140,22 @@ class ReflectionSymmetry(SymmetryOperator):
         return np.array(new_state), phase
     
     def apply_jax(self, state, **kwargs):
-        """Apply reflection operator to JAX array state representation."""
+        """
+        Apply reflection operator to JAX array state representation.
+        """
         try:
             import jax.numpy as jnp
         except ImportError:
             raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
-        # For jax arrays, delegate to integer operations
+            
+        # Vector encoding
+        if state.ndim >= 1 and state.shape[-1] == self.ns:
+            # Spatial reflection: reverse the site axis
+            new_state   = jnp.flip(state, axis=-1)
+            phase       = jnp.ones(state.shape[:-1], dtype=complex)
+            return new_state, phase
+            
+        # Fallback
         new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
         return jnp.array(new_state), phase
     

@@ -28,9 +28,9 @@ import time
 import warnings
 
 # Some Globals for safety
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]     = "false" 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"]    = "0.7"
-warnings.filterwarnings("ignore",               message = ".*Skipped cross-host ArrayMetadata validation.*")
+# os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]     = "false" 
+# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"]    = "0.85"
+warnings.filterwarnings("ignore", message = ".*Skipped cross-host ArrayMetadata validation.*")
 
 # typing and other imports
 from typing         import Union, Tuple, Union, Callable, Optional, Any, List, Callable, TYPE_CHECKING
@@ -43,6 +43,7 @@ try:
     from .src.nqs_network_integration           import *
     from .src.nqs_ansatz_modifier               import AnsatzModifier
     from .src.nqs_checkpoint_manager            import NQSCheckpointManager
+    from .src.nqs_symmetry                      import NQSSymmetricAnsatz
     from .src.nqs_engine                        import NQSEvalEngine, NQSObservable, NQSLoss
 except ImportError as e:
     raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
@@ -78,6 +79,15 @@ except ImportError as e:
     warnings.warn("Some QES.general_python modules could not be imported. Ensure QES.general_python is installed correctly.", ImportWarning)
     raise e
 
+# Conditional JAX imports for SymmetryHandler
+try:
+    import  jax
+    import  jax.numpy as jnp
+    from    jax.scipy.special import logsumexp
+    _JAX_AVAILABLE_FOR_SYMMETRY = True
+except ImportError:
+    _JAX_AVAILABLE_FOR_SYMMETRY = False
+
 # ----------------------------------------------------------
 AnsatzFunctionType      = Callable[[Callable, Array, int, Any], Array]                  # func, states, batch_size, params -> Array [log ansatz values]
 ApplyFunctionType       = Callable[[Callable, Array, Array, Array, int, Any], Array]    # func, states, probs, params, batch_size -> Array [sampled/evaluated values]
@@ -86,8 +96,13 @@ CallableFunctionType    = Callable[[Array], Tuple[Array, Array]]                
 LossFunctionType        = CallableFunctionType                                          # states -> (new_states, coeffs)
 
 #########################################
-#! NQS main class
+#! Symmetry Handler
 #########################################
+
+
+
+#########################################
+
 
 @dataclass
 class NQSSingleStepResult:
@@ -209,6 +224,8 @@ class NQS(MonteCarloSolver):
                 backend     : str                                           = 'default',
                 dtype       : Optional[Union[type, str]]                    = None,
                 problem     : Optional[Union[str, PhysicsInterface]]        = 'wavefunction',
+                # symmetries
+                symmetrize  : bool                                          = True,
                 # logging
                 logger      : Optional[Logger]                              =   None,
                 **kwargs):
@@ -273,6 +290,13 @@ class NQS(MonteCarloSolver):
                 Data type for network parameters (e.g., 'float32', 'complex128').
             problem:
                 The physics problem to solve (e.g., 'wavefunction').
+            symmetrize [bool]:
+                Whether to automatically symmetrize the ansatz if symmetries are present in the Hilbert space.
+                If True (default), and `hilbert` has symmetries, the network output will be projected onto the 
+                specified symmetry sector: 
+                :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
+                where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
+                This allows training symmetry-protected states.
             **kwargs:
                 Additional keyword arguments passed to the network constructor.
                 Including:
@@ -389,6 +413,9 @@ class NQS(MonteCarloSolver):
         self._analytic              = self._net.has_analytic_grad
         self._dtype                 = self._net.dtype
         
+        # Initialize SymmetryHandler
+        self.symmetry_handler       = NQSSymmetricAnsatz(self)
+        
         # --------------------------------------------------
         #! Sampler
         # --------------------------------------------------
@@ -414,14 +441,95 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         #! Compile functions
         # --------------------------------------------------
+        # Initial compilation of base functions
         self._ansatz_func, self._eval_func, self._apply_func    = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         self._ansatz_base_func                                  = self._ansatz_func # Keep a reference to the pure ansatz function
         
+        # Rebuild the full ansatz pipeline (modifier + symmetrizer)
+        self._rebuild_ansatz_function()
+
+        # Call symmetry handler to set initial symmetrization state
+        self.symmetry_handler.set(symmetrize)
+
         # --------------------------------------------------
         #! Model and physics setup
         # --------------------------------------------------
 
         self._nqsproblem.setup(self._model, self._net)
+        # For wavefunction problem we keep the same attribute name you used:
+        if self._nqsproblem.typ == 'wavefunction':
+            self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
+            self._loss_func     = self._local_en_func
+        else:
+            raise ValueError(self._ERROR_INVALID_PHYSICS)
+
+        # --------------------------------------------------
+        #! Initialize unified evaluation engine
+        # --------------------------------------------------
+        self._eval_engine           = NQSEvalEngine(self, batch_size=batch_size, **kwargs)
+
+        #######################################
+        #! Directory to save the results
+        #######################################
+        
+        self._init_directory()
+        
+        # Initialize the Manager
+        self.ckpt_manager           = NQSCheckpointManager(directory=self._dir_detailed, use_orbax=kwargs.get('use_orbax', True), max_to_keep=kwargs.get('orbax_max_to_keep', 3), logger=self._logger)
+        
+        # --------------------------------------------------
+        #! Exact information (Ground Truth)
+        # --------------------------------------------------
+        self._exact_info            = None
+    
+    #####################################
+    #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
+    #####################################
+    
+    def _rebuild_ansatz_function(self) -> None:
+        """
+        Reconstructs the NQS ansatz function (`self._ansatz_func`) by applying
+        all active modifiers and symmetrization handlers in the correct order.
+
+        The pipeline is: `Base Network -> Modifier (if active) -> Symmetrizer (if active)`.
+        The final `self._ansatz_func` is always JIT-compiled for efficiency.
+        """
+        current_ansatz = self._ansatz_base_func
+
+        # Apply Modifier if active
+        if self._modifier_wrapper is not None:
+            # Recreate the modifier to ensure it wraps the correct `_ansatz_base_func`
+            self._modifier_wrapper = AnsatzModifier(
+                                        net_apply       =   self._ansatz_base_func,
+                                        operator        =   self._modifier_source,
+                                        input_shape     =   self._shape if self._shape else (self._nvisible,),
+                                        dtype           =   self._dtype
+                                    )
+            current_ansatz          = self._modifier_wrapper
+
+        # Apply Symmetrization if active
+        current_ansatz              = self.symmetry_handler.wrap(current_ansatz)
+            
+        # JIT compile the final ansatz function
+        if self._isjax:
+            self._ansatz_func       = jax.jit(current_ansatz)
+        else:
+            self._ansatz_func       = current_ansatz
+
+    def reset(self):
+        """
+        Resets the initialization state of the object and reinitializes the underlying network.
+        This method marks the object as not initialized and forces a reinitialization of the associated
+        neural network by calling its `force_init` method.
+        """
+        
+        self._initialized = False
+        self._net.force_init()
+        
+        # Rebuild ansatz pipeline after network reset
+        self._rebuild_ansatz_function()
+        self._nqsproblem.setup(self._model, self._net)
+        
         # For wavefunction problem we keep the same attribute name you used:
         if self._nqsproblem.typ == 'wavefunction':
             self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
@@ -554,6 +662,8 @@ class NQS(MonteCarloSolver):
             # number of parameters
             self._nparams           = self._net.nparams
             self._initialized       = True
+            # Rebuild ansatz pipeline after network initialization
+            self._rebuild_ansatz_function()
     
     #####################################
     
@@ -1882,8 +1992,8 @@ class NQS(MonteCarloSolver):
         self._modifier_wrapper              = None
         self._modifier_source               = None
         
-        # Restore the original pure network function (Zero overhead)
-        self._ansatz_func                   = self._ansatz_base_func
+        # Rebuild the full ansatz pipeline
+        self._rebuild_ansatz_function()
         
         self.log("State modifier unset. Reverted to ground state ansatz.", lvl=1, color='blue')    
     
@@ -1913,25 +2023,15 @@ class NQS(MonteCarloSolver):
         self.log("Initializing State Modifier...", lvl=1)
 
         try:
-            # We use the _ansatz_base_func to ensure we are wrapping the pure network
-            wrapper = AnsatzModifier(
-                net_apply           = self._ansatz_base_func,
-                operator            = modifier,
-                input_shape         = self._shape if self._shape else (self._nvisible,),
-                dtype               = self._dtype
-            )
-
-            # Store references
-            self._modifier_wrapper  = wrapper
+            # Store references to the modifier source
             self._modifier_source   = modifier
 
-            # JIT Compile the wrapper
-            # Since AnsatzModifier is a registered PyTree, we can JIT it directly.
-            # This creates a new high-performance executable.
-            self._ansatz_func = jax.jit(wrapper)
+            # The actual wrapper (AnsatzModifier) will be created inside _rebuild_ansatz_function
+            # to ensure it wraps the correct base function (which might be symmetrized).
+            self._rebuild_ansatz_function()
 
             # Log success
-            self.log(f"Modifier active. Branching factor M={wrapper.branching_factor}", lvl=1, color='green')
+            self.log(f"Modifier active. Branching factor M={self._modifier_wrapper.branching_factor}", lvl=1, color='green')
 
         except Exception as e:
             self.log(f"Failed to set modifier: {e}", lvl=0, color='red')
@@ -2736,6 +2836,8 @@ class NQS(MonteCarloSolver):
                     - Pattern/Plaquette flips (reduces autocorrelation).
                 - "MULTI_FLIP": 
                     - Flips N random sites.
+                - "SUBPLAQUETTE":
+                    - Flips sub-sequences of a pattern (e.g. edges of a plaquette).
                 
                 Change rule: 
                     psi = NQS(..., upd_fun="EXCHANGE", hilbert=h)
@@ -3037,7 +3139,7 @@ class NQS(MonteCarloSolver):
             raise ValueError("NQS instances must have the same number of visible units to compute overlap.")
         
         if operator is not None:
-            return _compute_transition_element(nqs_a, nqs_b, operator, num_samples, num_chains, operator_args)
+            return NQS._compute_transition_element(nqs_a, nqs_b, operator, num_samples, num_chains, operator_args)
 
         #! WORK WITH JAX ONLY    
         import jax.numpy as jnp
@@ -3076,6 +3178,56 @@ class NQS(MonteCarloSolver):
         
         fidelity = jnp.exp(log_mean_1 + log_mean_2)
         return float(jnp.real(fidelity))
+
+    @staticmethod
+    def compute_renyi2(nqs: "NQS", region: Optional['Array'] = None, *, num_samples: int = 4096, num_chains: int = 1, return_swap_mean: bool = False) -> Union[float, Tuple[float, float]]:
+        r"""
+        Compute second Renyi entropy S^2(A) via the swap operator.
+
+        If region is None, defaults to a canonical bipartition.
+        """
+        if nqs.backend_str != 'jax':
+            raise NotImplementedError("compute_renyi2 is only implemented for JAX backend.")
+        
+        def _swap_region(s1, s2, region):
+            """
+            Swap states in `region` between two configurations.
+            """
+            s1_new = s1.at[region].set(s2[region])
+            s2_new = s2.at[region].set(s1[region])
+            return s1_new, s2_new
+
+        import jax.numpy            as jnp
+        import jax.scipy.special    as jsp
+        Ns                          = nqs.nvisible
+
+        if region is None:
+            region = jnp.arange(Ns // 2)
+        else:
+            region = jnp.asarray(region, dtype=jnp.int32)
+
+        # Sample TWO independent replicas
+        (_, _), (s1, log1), _       = nqs.sample(num_samples=num_samples, num_chains=num_chains)
+        (_, _), (s2, log2), _       = nqs.sample(num_samples=num_samples, num_chains=num_chains)
+
+        # Swap region A
+        s1s, s2s                    = _swap_region(s1, s2, region)
+
+        # Evaluate log psi on swapped configs
+        log1s                       = nqs.ansatz(s1s)
+        log2s                       = nqs.ansatz(s2s)
+
+        # ---------------------------------------------------
+        # 5. Log estimator
+        # ---------------------------------------------------
+        log_ratio                   = (log1s + log2s) - (log1 + log2)
+
+        # Stable mean: ⟨e^{log_ratio}⟩
+        log_swap                    = jsp.logsumexp(log_ratio) - jnp.log(log_ratio.shape[0])
+        swap_mean                   = jnp.exp(log_swap)
+        if return_swap_mean:        return float(jnp.real(swap_mean))
+        S2                          = -jnp.log(swap_mean)
+        return float(jnp.real(S2))
 
     #####################################
     #! SAMPLES FOR MCMC, IF APPLICABLE

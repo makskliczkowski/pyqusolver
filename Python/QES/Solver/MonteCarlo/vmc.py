@@ -165,6 +165,7 @@ class VMCSampler(Sampler):
         - "PLAQUETTE"   : Flips spins in plaquette patterns.
         - "WILSON"      : Flips spins along Wilson loop patterns.
     - "MULTI_FLIP"  : Randomly flips `s_n_flip` sites at once.
+    - "SUBPLAQUETTE": Flips sub-sequences of a pattern (e.g. edges of a plaquette).
     """
     
     def __init__(self,

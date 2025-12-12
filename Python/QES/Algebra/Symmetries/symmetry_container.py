@@ -1339,6 +1339,74 @@ class SymmetryContainer:
         
         return self._compact_data
 
+    # -----------------------------------------------------
+    #! JIT-compatible Projector for NQS
+    # -----------------------------------------------------
+
+    def get_jittable_projector(self):
+        """
+        Returns a JAX-compatible callable that projects a state onto the symmetry sector.
+        
+        The returned function `projector(state)`:
+        - Input: `state` (batch, ns) or (ns,)
+        - Output: `(orbit_states, orbit_weights)`
+            - `orbit_states`: (batch, group_size, ns)
+            - `orbit_weights`: (batch, group_size)
+            
+        This unrolls the loop over group elements, making it JIT-compatible.
+        It uses `apply_group_element` which must be JAX-traceable.
+        """
+        if not JAX_AVAILABLE:
+            raise RuntimeError("JAX is required for get_jittable_projector.")
+            
+        # Capture group elements and self
+        group_elements = self.symmetry_group
+        
+        def projector(state):
+            # Ensure state is at least 2D (batch, ns)
+            # If 1D, expand dims?
+            is_1d = state.ndim == 1
+            if is_1d:
+                state = jnp.expand_dims(state, 0)
+                
+            orbit_states    = []
+            orbit_weights   = []
+            
+            for elem in group_elements:
+                # Apply group element (unrolled loop)
+                # We need to broadcast over batch if apply_group_element doesn't handle it
+                # But apply_group_element calls op.apply_jax.
+                # If op.apply_jax handles batch (which it should), we are fine.
+                
+                # Apply symmetry: s' = g(s), phase = phi_g(s)
+                new_state, phase    = self.apply_group_element(elem, state)
+                
+                # Character: chi(g)
+                # Character is usually scalar for 1D irreps
+                char                = self.get_character(elem)
+                
+                # Weight = char * conj(phase)
+                # Phase might be (batch,), char is scalar
+                weight              = char * jnp.conj(phase)
+                
+                # Broadcast weight to (batch,)
+                weight              = jnp.broadcast_to(weight, (state.shape[0],))
+                
+                orbit_states.append(new_state)
+                orbit_weights.append(weight)
+            
+            # Stack results: (batch, group_size, ns)
+            states_stack        = jnp.stack(orbit_states, axis=1)
+            weights_stack       = jnp.stack(orbit_weights, axis=1)
+            
+            if is_1d:
+                states_stack    = states_stack[0]
+                weights_stack   = weights_stack[0]
+                
+            return states_stack, weights_stack
+            
+        return projector
+
 ####################################################################################################
 #! Utility Functions
 ####################################################################################################

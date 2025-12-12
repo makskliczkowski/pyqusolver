@@ -180,12 +180,58 @@ class ParitySymmetry(SymmetryOperator):
         return np.array(new_state), phase
     
     def apply_jax(self, state, **kwargs):
-        """Apply parity operator to JAX array state representation."""
+        """
+        Apply parity operator to JAX array state representation.
+        
+        Parameters
+        ----------
+        state : jnp.ndarray
+            State vector (batch, ns) or (ns,)
+            
+        Returns
+        -------
+        new_state : jnp.ndarray
+            Transformed state
+        phase : jnp.ndarray
+            Phase factor
+        """
         try:
             import jax.numpy as jnp
         except ImportError:
             raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
-        # For jax arrays, delegate to integer operations
+            
+        # Vector encoding handling
+        if state.ndim >= 1 and state.shape[-1] == self.ns:
+            if self.axis == 'z':
+                # Flip spins in Z basis
+                new_state   = state
+                phase       = jnp.ones(state.shape[:-1], dtype=complex)
+                phase      *= jnp.prod(state, axis=-1)
+                return new_state, phase
+                
+            elif self.axis == 'x':
+                # Flip spins in X basis
+                new_state   = -state
+                phase       = jnp.ones(state.shape[:-1], dtype=complex)
+                return new_state, phase
+                
+            elif self.axis == 'y':
+                # Py = prod sigma_y
+                # new_state is flipped
+                new_state   = -state
+                
+                # Phase calculation per site
+                # phase_i = i if s_i=+1 else -i
+                # phase_i = i * s_i
+                # Total phase = prod (i * s_i) = i^N * prod s_i
+                
+                ns          = self.ns
+                i_factor    = 1j ** ns
+                prod_s      = jnp.prod(state, axis=-1)
+                phase       = i_factor * prod_s
+                return new_state, phase
+                
+        # Fallback to integer
         new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
         return jnp.array(new_state), phase
     

@@ -657,6 +657,7 @@ class UpdateRule(Enum):
     MULTI_FLIP  = auto()
     BOND_FLIP   = auto()
     PLAQUETTE   = auto()
+    SUBPLAQUETTE= auto()
     WILSON      = auto()
     
     @staticmethod
@@ -678,6 +679,8 @@ class UpdateRule(Enum):
                 return UpdateRule.BOND_FLIP 
             elif s in ['plaquette', 'plaquette_flip']:              # extra alias for plaquette flips
                 return UpdateRule.PLAQUETTE
+            elif s in ['subplaquette', 'sub_plaquette']:            # extra alias for subplaquette flips
+                return UpdateRule.SUBPLAQUETTE
             elif s in ['wilson', 'wilson_loop']:                    # extra alias for wilson loops
                 return UpdateRule.WILSON
             raise ValueError(f"Invalid UpdateRule: {s}") from None
@@ -788,6 +791,30 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
 
         patterns_jax = jnp.array(plaquettes)
         patterns_jax = _to_padded_pattern(plaquettes, pad_value=-1)
+        return partial(propose_global_flip, patterns=patterns_jax)
+    
+    elif rule == UpdateRule.SUBPLAQUETTE:
+        # is like global but patterns come from lattice
+        hilbert = kwargs.get('hilbert')
+        if hilbert is None or hilbert.lattice is None:
+            raise ValueError("Hilbert space with lattice is required for subplaquette updates.")
+        plaquettes = hilbert.lattice.calculate_plaquettes()
+        if plaquettes is None or len(plaquettes) == 0:
+            raise ValueError("No plaquettes found in the lattice for subplaquette updates.")
+        
+        # Get n (sub-sequence length)
+        n = kwargs.get('n_flip', 3) 
+        
+        subpatterns = []
+        for p in plaquettes:
+            L = len(p)
+            eff_n = min(n, L)
+            for i in range(L):
+                # Cyclic slice
+                sub = [p[(i + j) % L] for j in range(eff_n)]
+                subpatterns.append(sub)
+
+        patterns_jax = _to_padded_pattern(subpatterns, pad_value=-1)
         return partial(propose_global_flip, patterns=patterns_jax)
     
     elif rule == UpdateRule.WILSON:

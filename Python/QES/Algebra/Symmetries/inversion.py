@@ -358,7 +358,9 @@ class InversionSymmetry(SymmetryOperator):
         return permuted_state, 1.0
     
     def apply_jax(self, state, **kwargs):
-        """Apply inversion operator using JAX."""
+        """
+        Apply inversion operator using JAX.
+        """
         try:
             from QES.general_python.algebra.utils import JAX_AVAILABLE
             if JAX_AVAILABLE:
@@ -368,9 +370,19 @@ class InversionSymmetry(SymmetryOperator):
         except ImportError:
             raise ImportError("JAX not available for apply_jax()")
         
+        # Vector encoding
+        if state.ndim >= 1 and state.shape[-1] == self.ns:
+            # Use precomputed permutation
+            perm        = self._get_permutation()
+            perm_jax    = jnp.array(perm)
+            
+            new_state   = jnp.take(state, perm_jax, axis=-1)
+            phase       = jnp.ones(state.shape[:-1], dtype=complex)
+            return new_state, phase
+
         # Convert to numpy, apply, convert back
-        np_state = np.array(state)
-        result, phase = self.apply_numpy(np_state, **kwargs)
+        np_state        = np.array(state)
+        result, phase   = self.apply_numpy(np_state, **kwargs)
         return jnp.array(result), phase
     
     def get_character(self, count: int, sector: Union[int, float, complex], **kwargs) -> complex:

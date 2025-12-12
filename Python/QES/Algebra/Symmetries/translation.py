@@ -607,15 +607,53 @@ class TranslationSymmetry(SymmetryOperator):
         return np.array(new_state), phase
     
     def apply_jax(self, state, **kwargs):
-        """Apply translation operator to JAX array state representation."""
+        """
+        Apply translation operator to JAX array state representation.
+        
+        Parameters
+        ----------
+        state : jnp.ndarray
+            State vector (batch, ns) or (ns,)
+            
+        Returns
+        -------
+        new_state : jnp.ndarray
+            Translated state
+        phase : jnp.ndarray
+            Phase factor (currently 1.0 for spins)
+        """
+        
         try:
             import jax.numpy as jnp
         except ImportError:
             raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
-        # For jax arrays, delegate to integer operations
-        #TODO: Handle multi-dimensional jax arrays if needed
-        new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
-        return jnp.array(new_state), phase
+            
+        # Check if state is vector-encoded (last dim == ns)
+        if state.ndim >= 1 and state.shape[-1] == self.ns:
+            # Use precomputed permutation
+            # We assume self.perm is available (numpy array)
+            # JAX will capture this as a constant in JIT
+            perm_jax    = jnp.array(self.perm)
+            
+            # Apply permutation along last axis
+            new_state   = jnp.take(state, perm_jax, axis=-1)
+            
+            # Phase: For spins (bosonic representation), phase is 1.0
+            # TODO: Implement fermion sign / boundary phase for JAX
+            # For now, return 1.0 (valid for spins)
+            phase       = jnp.ones(state.shape[:-1], dtype=complex)
+            return new_state, phase
+            
+        else:
+            # Fallback for integer encoding (not efficient for JIT if not implemented with bitwise)
+            # This path handles scalar integers or batch of integers
+            # Only use fallback if not tracing or if concrete value
+            try:
+                new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
+                return jnp.array(new_state), phase
+            except Exception:
+                 # If tracing, this fails. Implement bitwise logic if needed.
+                 raise NotImplementedError("JAX bitwise translation not fully implemented for integer states. Use vector encoding.")
 
     # -----------------------------------------------------
     #! Additional translation utilities
