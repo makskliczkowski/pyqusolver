@@ -656,6 +656,8 @@ class UpdateRule(Enum):
     GLOBAL      = auto()
     MULTI_FLIP  = auto()
     BOND_FLIP   = auto()
+    PLAQUETTE   = auto()
+    WILSON      = auto()
     
     @staticmethod
     def from_str(s: str) -> 'UpdateRule':
@@ -664,16 +666,20 @@ class UpdateRule(Enum):
         except KeyError:
             # Try some common aliases
             s = s.lower()
-            if s in ['local', 'spin_flip', 'flip']:
+            if s in ['local', 'spin_flip', 'flip']:                 # extra aliases for local
                 return UpdateRule.LOCAL
-            elif s in ['exchange', 'swap', 'particle_hop']:
+            elif s in ['exchange', 'swap', 'particle_hop']:         # extra aliases for exchange
                 return UpdateRule.EXCHANGE
-            elif s in ['global', 'plaquette', 'pattern']:
+            elif s in ['global', 'plaquette', 'pattern']:           # extra aliases for global
                 return UpdateRule.GLOBAL
-            elif s in ['multi_flip', 'multi', 'n_flip']:
+            elif s in ['multi_flip', 'multi', 'n_flip']:            # extra aliases for multi flips
                 return UpdateRule.MULTI_FLIP
-            elif s in ['bond_flip', 'neighbor_flip', 'bond']:
-                return UpdateRule.BOND_FLIP
+            elif s in ['bond_flip', 'neighbor_flip', 'bond']:       # extra aliases for bond flips
+                return UpdateRule.BOND_FLIP 
+            elif s in ['plaquette', 'plaquette_flip']:              # extra alias for plaquette flips
+                return UpdateRule.PLAQUETTE
+            elif s in ['wilson', 'wilson_loop']:                    # extra alias for wilson loops
+                return UpdateRule.WILSON
             raise ValueError(f"Invalid UpdateRule: {s}") from None
 
 def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -> Callable:
@@ -696,6 +702,17 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
     Returns:
         Callable: The update function.
     """
+    
+    def _to_padded_pattern(patterns: List[List[int]], pad_value: int = -1) -> jnp.ndarray:
+        max_len     = max(len(p) for p in patterns)
+        n_patterns  = len(patterns)
+        
+        patterns_arr = np.full((n_patterns, max_len), pad_value, dtype=np.int32)
+        for i, p in enumerate(patterns):
+            patterns_arr[i, :len(p)] = p
+            
+        return jnp.array(patterns_arr)
+    
     if isinstance(rule, str):
         rule = UpdateRule.from_str(rule)
         
@@ -755,22 +772,58 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
         # Precompute neighbor table
         neighbor_table = get_neighbor_table(lattice, order=1)
         return partial(propose_bond_flip, neighbor_table=neighbor_table)
-        
+    
+    ###############################################################
+    #! GLOBAL UPDATES
+    ###############################################################
+
+    elif rule == UpdateRule.PLAQUETTE:
+        # is like global but patterns come from lattice
+        hilbert = kwargs.get('hilbert')
+        if hilbert is None or hilbert.lattice is None:
+            raise ValueError("Hilbert space with lattice is required for plaquette updates.")
+        plaquettes = hilbert.lattice.calculate_plaquettes()
+        if plaquettes is None or len(plaquettes) == 0:
+            raise ValueError("No plaquettes found in the lattice for plaquette updates.")
+
+        patterns_jax = jnp.array(plaquettes)
+        patterns_jax = _to_padded_pattern(plaquettes, pad_value=-1)
+        return partial(propose_global_flip, patterns=patterns_jax)
+    
+    elif rule == UpdateRule.WILSON:
+        # is like global but patterns come from lattice
+        hilbert: HilbertSpace = kwargs.get('hilbert')
+        if hilbert is None or hilbert.lattice is None:
+            raise ValueError("Hilbert space with lattice is required for Wilson loop updates.")
+        wilson_loops = hilbert.lattice.calculate_wilson_loops()
+        if wilson_loops is None or len(wilson_loops) == 0:
+            raise ValueError("No Wilson loops found in the lattice for Wilson loop updates.")
+
+        patterns_jax = jnp.array(wilson_loops)
+        patterns_jax = _to_padded_pattern(wilson_loops, pad_value=-1)    
+        return partial(propose_global_flip, patterns=patterns_jax)
+
     elif rule == UpdateRule.GLOBAL:
         patterns = kwargs.get('patterns')
+        
+        # Resolve string patterns (e.g. "plaquette", "wilson")
+        if isinstance(patterns, str):
+            hilbert = kwargs.get('hilbert')
+            if hilbert is None or hilbert.lattice is None:
+                raise ValueError(f"Hilbert space with lattice is required for '{patterns}' global updates.")
+            
+            if patterns.lower() == "plaquette":
+                patterns = hilbert.lattice.calculate_plaquettes()
+            elif patterns.lower() == "wilson":
+                patterns = hilbert.lattice.calculate_wilson_loops()
+            else:
+                raise ValueError(f"Unknown global pattern type: {patterns}")
+
         if patterns is None:
             raise ValueError("Patterns list is required for global updates.")
         
         # Convert patterns to padded array
-        # patterns: List[List[int]]
-        max_len     = max(len(p) for p in patterns)
-        n_patterns  = len(patterns)
-        
-        patterns_arr = np.full((n_patterns, max_len), -1, dtype=np.int32)
-        for i, p in enumerate(patterns):
-            patterns_arr[i, :len(p)] = p
-            
-        patterns_jax = jnp.array(patterns_arr)
+        patterns_jax = _to_padded_pattern(patterns, pad_value=-1)
         return partial(propose_global_flip, patterns=patterns_jax)
         
     raise ValueError(f"Unknown update rule: {rule}")

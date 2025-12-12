@@ -1053,7 +1053,7 @@ class NQSTrainer:
         
         # Update stats with seed before saving
         self.stats.seed                 = seed
-        self.stats.exact_predictions    = kwargs.get('exact_predictions',   None) if self.stats.exact_predictions is None else self.stats.exact_predictions
+        self.stats.exact_predictions    = kwargs.get('exact_predictions', None)
         
         # Build comprehensive metadata
         meta                = {

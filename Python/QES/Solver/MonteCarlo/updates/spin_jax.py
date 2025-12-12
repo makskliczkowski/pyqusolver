@@ -211,7 +211,7 @@ def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarra
     Propose a global update by flipping a predefined pattern of spins.
     
     Example:
-    >>> patterns    = lat.get_plaquettes()  # (NumPatterns, PatternSize)
+    >>> patterns    = lat.calculate_plaquettess()  # (NumPatterns, PatternSize)
     >>> new_state   = propose_global_flip(state, key, patterns)
     
     Args:

@@ -132,23 +132,20 @@ class VMCSampler(Sampler):
 
         >>> # Fermions (Spinless) with Exchange (Conserves N)
         >>> # Requires a Hilbert space with lattice for neighbor table
-        >>> hilbert = HilbertSpace(lattice=my_lattice, local_space="spinless-fermions")
-        >>> sampler = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="exchange", 
-        >>>                      initstate="RND_FIXED", n_particles=8)
+        >>> hilbert     = HilbertSpace(lattice=my_lattice, local_space="spinless-fermions")
+        >>> sampler     = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="exchange", initstate="RND_FIXED", n_particles=8)
 
         >>> # Kitaev Spin Liquid (Honeycomb) with Global Updates
         >>> # Flip plaquettes to tunnel between flux sectors
-        >>> patterns = lattice.get_plaquettes()
-        >>> sampler = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="global", 
-        >>>                      patterns=patterns, initstate="RND")
+        >>> patterns    = lattice.calculate_plaquettes()
+        >>> sampler     = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="global", patterns=patterns, initstate="RND")
         
         >>> # Bond Flip (Neighbor Flip)
         >>> # Flip two adjacent spins to move flux excitations
-        >>> sampler = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="bond_flip")
+        >>> sampler     = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="bond_flip")
         
         >>> # Long-range Exchange (Next-Nearest Neighbors)
-        >>> sampler = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="exchange", 
-        >>>                      exchange_order=2) # 2nd neighbor exchange
+        >>> sampler     = VMCSampler(net, shape=None, hilbert=hilbert, upd_fun="exchange", exchange_order=2) # 2nd neighbor exchange
 
     Initialization & Updates
     ------------------------
@@ -162,9 +159,11 @@ class VMCSampler(Sampler):
     **Update Rules (`upd_fun`):**
     - "LOCAL"       : Single spin flip (standard Metropolis).
     - "EXCHANGE"    : Swaps two sites. Preserves symmetries (U(1), Z_tot). 
-                      Supports `exchange_order=k` for k-th neighbor exchange.
+                    Supports `exchange_order=k` for k-th neighbor exchange.
     - "BOND_FLIP"   : Flips a site and one random neighbor. Useful for moving topological excitations.
     - "GLOBAL"      : Flips a predefined pattern (e.g., plaquette). Requires `patterns` argument.
+        - "PLAQUETTE"   : Flips spins in plaquette patterns.
+        - "WILSON"      : Flips spins along Wilson loop patterns.
     - "MULTI_FLIP"  : Randomly flips `s_n_flip` sites at once.
     """
     
@@ -317,6 +316,7 @@ class VMCSampler(Sampler):
         
         # Check for global update configuration
         self._org_upd_fun   = self._local_upd_fun
+        self._global_name   = "none"
 
         self.set_update_num(self._numupd)
         
@@ -325,7 +325,7 @@ class VMCSampler(Sampler):
         # -----------------------------------------------------------------
         
         self.set_replicas(pt_betas, pt_replicas)
-        self.set_hybrid_proposer(kwargs.get('p_global', 0.0), kwargs.get('global_fraction', 0.5), kwargs.get('patterns', None))
+        self.set_hybrid_proposer(kwargs.get('p_global', 0.0), kwargs.get('global_fraction', 0.5), kwargs.get('patterns', None), kwargs.get('global_update', None))
         
         # -----------------------------------------------------------------
         # Static sampler function (standard or PT)
@@ -387,16 +387,20 @@ class VMCSampler(Sampler):
             str: A formatted string containing the key attributes of the MCSampler instance,
         """
         init_str = str(self._initstate_t) if self._initstate_t is not None else "RND"
-        return (f"MCSampler(shape={self._shape}, mu={self._mu}, beta={self._beta}, "
-                f"therm_steps={self._therm_steps}, sweep_steps={self._sweep_steps}, "
-                f"numsamples={self._numsamples}, numchains={self._numchains}, "
-                f"backend={self._backendstr}, upd_fun={self._upd_rule_name}, "
+        glob_p   = getattr(self, '_global_p', 0.0)
+        glob_str = f",glob={self._global_name}" + (f"(p={glob_p:.2f})" if glob_p > 0 else "")
+        
+        return (f"VMC(s={self._shape},mu={self._mu},beta={self._beta},"
+                f"Nt={self._therm_steps},Ns={self._sweep_steps},"
+                f"Nsam={self._numsamples},Nch={self._numchains},"
+                f"u={self._upd_rule_name},g={self._numupd}{glob_str},"
                 f"initstate={init_str})")
 
     def __str__(self):
         total_therm_updates_display     = self._total_therm_updates * self.size                     # Total updates per site
         total_sample_updates_display    = self._numsamples * self._updates_per_sample * self.size   # Total sample updates per site
         init_str                        = str(self._initstate_t) if self._initstate_t is not None else "RND"
+        glob_p                          = getattr(self, '_global_p', 0.0)
         
         return (f"MCSampler:\n"
                 f"  - State shape: {self._shape} (Size: {self.size})\n"
@@ -404,6 +408,7 @@ class VMCSampler(Sampler):
                 f"  - Chains: {self._numchains}, Samples/Chain: {self._numsamples}\n"
                 f"  - Params: mu={self._mu:.3f}, beta={self._beta:.3f}, logprob_fact={self._logprob_fact:.3f}\n"
                 f"  - Update Rule: {self._upd_rule_name} (Steps/Update: {self._numupd})\n"
+                f"  - Global Updates: {self._global_name} (p={glob_p:.2f})\n"
                 f"  - Initial State: {init_str}\n"
                 f"  - Replicas (PT): {self._pt_betas if self._is_pt else 1}\n"
                 f"  - Thermalization: {self._therm_steps} sweeps x {self._sweep_steps} steps/sweep ({total_therm_updates_display} total site updates/chain)\n"
@@ -508,7 +513,7 @@ class VMCSampler(Sampler):
         else:
             self._upd_fun = self._org_upd_fun
     
-    def set_hybrid_proposer(self, p_global: float = 0.0, fraction: float = 0.5, patterns: Optional[List] = None):
+    def set_hybrid_proposer(self, p_global: float = 0.0, fraction: float = 0.5, patterns: Optional[Union[List, str]] = None, global_update: Optional[Union[Callable, str]] = None):
         """
         Configure the hybrid global-local update settings for the sampler.
 
@@ -517,8 +522,14 @@ class VMCSampler(Sampler):
         stochastically choose between its default local update and a global update.
         
         The global update can be either:
-        1. **Multi-Flip:** (Default) Randomly flips a `fraction` of sites.
-        2. **Pattern-Flip:** (If `patterns` is provided) Flips a predefined pattern (e.g. plaquette).
+        1. **Custom:** 
+            (If `global_update` is provided) Uses the provided callable.
+        2. **Named Pattern:**
+            (If `global_update` is a string like 'wilson' or 'plaquette') Resolves to lattice patterns.
+        3. **Pattern-Flip:** 
+            (If `patterns` is provided) Flips a predefined pattern (e.g. plaquette).
+        4. **Multi-Flip:** 
+            (Default) Randomly flips a `fraction` of sites.
 
         Args:
             p_global (float):
@@ -527,11 +538,12 @@ class VMCSampler(Sampler):
                 This parameter is only effective when using the JAX backend.
             fraction (float):
                 Fraction of spins to flip during a RANDOM global flip update (default: 0.5).
-                Only used if `patterns` is None.
-            patterns (list or array):
-                List of patterns (list of site indices) to flip. If provided, the global
-                update will consist of flipping one random pattern from this list.
-                Example: [[0, 1, 4, 5], [1, 2, 5, 6]] for honeycomb plaquettes.
+                Only used if `patterns` is None and `global_update` is None.
+            patterns (list or array or str):
+                List of patterns (list of site indices) to flip, or name of pattern type ('wilson', 'plaquette').
+            global_update (Callable or str):
+                Custom global update function or name of pattern type ('wilson', 'plaquette').
+                If provided, this takes precedence over `patterns` and `fraction`.
         """
         
         # Check for global update configuration
@@ -539,12 +551,48 @@ class VMCSampler(Sampler):
         
         if p_global > 0.0 and self._isjax:
             
-            # Determine global update function
-            if patterns is not None:
-                # Use Pattern Flip
-                from .updates import propose_global_flip
+            # Resolve String Inputs to Patterns
+            
+            # Helper to resolve string to patterns
+            def _resolve_patterns(name):
+                if self._hilbert is None or self._hilbert.lattice is None:
+                    raise ValueError(f"Hilbert space with lattice is required for '{name}' global updates.")
+                
+                if name.lower() == "wilson":
+                    return self._hilbert.lattice.calculate_wilson_loops()
+                elif name.lower() == "plaquette":
+                    return self._hilbert.lattice.calculate_plaquettes()
+                else:
+                    raise ValueError(f"Unknown global update pattern: {name}")
+
+            # If global_update is a string, treat it as a pattern request
+            if isinstance(global_update, str):
+                patterns            = _resolve_patterns(global_update)
+                self._global_name   = global_update
+                global_update       = None # Handled via patterns path
+            
+            # If patterns is a string, resolve it
+            if isinstance(patterns, str):
+                patterns        = _resolve_patterns(patterns)
+
+            # Determine Global Update Function
+
+            if global_update is not None:
+                global_flip_fn      = global_update
+                glob_type_str       = "Custom Global Update"
+                self._global_name   = "custom"
+
+            elif patterns is not None:
+                try:
+                    from .updates   import propose_global_flip
+                except ImportError as e:
+                    raise ImportError("Failed to import propose_global_flip from updates module.") from e
                 
                 # Preprocess patterns to padded array
+                # patterns: List[List[int]]
+                if len(patterns) == 0:
+                    raise ValueError("Patterns list is empty.")
+
                 max_len             = max(len(p) for p in patterns)
                 n_patterns          = len(patterns)
                 patterns_arr        = np.full((n_patterns, max_len), -1, dtype=np.int32)
@@ -556,19 +604,24 @@ class VMCSampler(Sampler):
                 glob_type_str       = f"Patterns (N={n_patterns})"
                 
             else:
-                # Use Random Multi-Flip
                 n_flip_global       = max(1, int(self._size * fraction))
                 global_flip_fn      = partial(propose_multi_flip, n_flip=n_flip_global)
                 glob_type_str       = f"Multi-Flip (frac={fraction:.2f})"
+                self._global_name   = "multi-flip"
 
             # Wrap the current upd_fun (local) with the hybrid proposer
             self._org_upd_fun       = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
+            self._global_name       = glob_type_str
+            self._global_p          = p_global
             
             if self._logger:
                 self._logger.info(f"Hybrid Sampler Enabled: P(glob)={p_global:.2f}, Type={glob_type_str}", lvl=1, color='blue')
             else:
                 # print(f"Hybrid Sampler Enabled: P(glob)={p_global:.2f}, Type={glob_type_str}")
                 pass
+        else:
+            self._global_name       = "none"
+            self._global_p          = 0.0
             
         # Re-apply numupd wrapping
         self.set_update_num(self._numupd)
@@ -803,11 +856,13 @@ class VMCSampler(Sampler):
         '''
 
         num_chains          = chain_init.shape[0]
-        logproba_fun        = jax.vmap(lambda x: jnp.real(net_callable_fun(params, x)), in_axes=(0,))
+        # Optimized: assume net_callable_fun handles batches directly (no vmap)
+        # This allows efficient matrix-matrix multiplications on GPU
+        logproba_fun        = lambda x: jnp.real(net_callable_fun(params, x))
         proposer_fn         = jax.vmap(update_proposer, in_axes=(0, 0))
         
         # Define the single-step function *inside* so it closes over the arguments
-        def _sweep_chain_jax_step_inner(carry, step_idx):
+        def _sweep_chain_jax_step_inner(step_idx, carry):
             chain_in, current_val_in, current_key, num_prop, num_acc = carry
             
             # One for this step and one for the next carry
@@ -819,8 +874,8 @@ class VMCSampler(Sampler):
             #! Single MCMC update step logic
             # Propose update
             new_chain               = proposer_fn(chain_in, chain_prop_keys)    # [num_chains, state_shape]
-            new_val                 = logproba_fun(new_chain)                   # [num_chains]
-            if new_val.ndim > 1:    new_val = new_val[:, 0]
+            new_val                 = logproba_fun(new_chain)                   # [num_chains] (or [num_chains, 1])
+            if new_val.ndim > 1:    new_val = new_val.squeeze()
             
             #! Calculate the log-probability of the new state - like MCSampler._logprob_jax
             delta                   = new_val - current_val_in                  # [num_chains]
@@ -839,15 +894,13 @@ class VMCSampler(Sampler):
             accepted_out            = num_acc + keep.astype(num_acc.dtype)
             
             new_carry               = (chain_out, val_out, next_key_carry, proposed_out, accepted_out)
-            # We return None as the second element because we are not collecting 
-            # intermediate states in this specific loop (this is thermalization/skipping)
-            return new_carry, None
+            return new_carry
         
         # Initial carry now includes the RNG key
         initial_carry   = (chain_init, current_val_init, rng_k_init, num_proposed_init, num_accepted_init)
         
-        # Use lax.scan (Efficient Loop)
-        final_carry, _  = jax.lax.scan(_sweep_chain_jax_step_inner, initial_carry, None, length=steps)
+        # Use lax.fori_loop (Efficient Loop, no history saving)
+        final_carry     = jax.lax.fori_loop(0, steps, _sweep_chain_jax_step_inner, initial_carry)
         
         # Unpack final results
         final_chain, final_val, final_key, final_prop, final_acc = final_carry
@@ -1193,7 +1246,8 @@ class VMCSampler(Sampler):
         configs_reshaped = configs_padded.reshape((n_chunks, chunk_size) + configs.shape[1:])
         
         def scan_fn(carry, x_chunk):
-            out_chunk = jax.vmap(lambda c: net_apply(params, c))(x_chunk)
+            # Optimized: call batched net_apply directly
+            out_chunk = net_apply(params, x_chunk)
             return carry, out_chunk
             
         # Flatten outputs: (n_chunks, chunk_size) -> (n_chunks * chunk_size,)
@@ -1231,12 +1285,9 @@ class VMCSampler(Sampler):
         Static, JIT-compiled core logic for MCMC sampling in JAX. 
         '''
         
-        def _logproba_fun_base(params, states):
-            ''' is the same as MCSampler._logprob_jax '''
-            return jnp.real(net_callable_fun(params, states))
-
-        logprobas_init = jax.vmap(_logproba_fun_base, in_axes=(None, 0))(params, states_init)
-        logprobas_init = jnp.squeeze(logprobas_init, axis=-1) if logprobas_init.ndim > 1 else logprobas_init
+        # Optimized: batched initial evaluation
+        logprobas_init = jnp.real(net_callable_fun(params, states_init))
+        if logprobas_init.ndim > 1: logprobas_init = logprobas_init.squeeze()
 
         #! Phase 1: Thermalization
         states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm = VMCSampler._run_mcmc_steps_jax(
@@ -1766,45 +1817,11 @@ class VMCSampler(Sampler):
         '''
         self._sweep_steps = sweep_steps
 
-    def set_global_update(self, p_global: float, global_fraction: float = 0.5):
+    def set_global_update(self, global_p: float, global_fraction: float = 0.5, global_update: Optional[Union[Callable, str]] = None):
         """
-        Configure the hybrid global-local update settings for the sampler.
-
-        This method allows dynamic adjustment of the probability and fraction of global
-        updates during Monte Carlo sampling. If `p_global > 0.0`, the sampler will
-        stochastically choose between its default local update and a global update (flipping
-        a fraction of spins). This is particularly useful for overcoming critical slowing down
-        and exploring complex energy landscapes in frustrated magnets and spin-liquid systems.
-
-        Args:
-            p_global (float):
-                Probability (0.0 to 1.0) of proposing a global update instead of a local
-                single-spin flip in a given step. If 0.0, only local updates are used.
-                This parameter is only effective when using the JAX backend.
-            global_fraction (float):
-                Fraction of spins to flip during a global flip update (default: 0.5).
-                Only relevant when `p_global > 0.0`.
+        Alias for set_hybrid_proposer for backward compatibility.
         """
-        if not self._isjax:
-            if p_global > 0:
-                print("Warning: Global updates are only supported for JAX backend.")
-            return
-
-        if p_global > 0.0:
-            n_flip_global       = max(1, int(self._size * global_fraction))
-            global_flip_fn      = partial(propose_multi_flip, n_flip=n_flip_global)
-            self._org_upd_fun   = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
-            if self._logger:
-                self._logger.info(f"Hybrid Sampler Updated: P(glob)={p_global}, fraction={global_fraction}", lvl=1, color='blue')
-            else:
-                print(f"Hybrid Sampler Updated: P(glob)={p_global}, fraction={global_fraction}")
-            
-        # Re-apply numupd wrapping
-        self.set_update_num(self._numupd)
-        
-        # Invalidate cache
-        self._static_sample_fun = None
-        self._static_pt_sampler = None
+        self.set_hybrid_proposer(p_global=global_p, fraction=global_fraction, global_update=global_update)
 
     def set_replicas(self, betas: Optional[Union[List[float], np.ndarray, jnp.ndarray]], n_replicas: Optional[int] = None, min_beta: Optional[float] = None):
         

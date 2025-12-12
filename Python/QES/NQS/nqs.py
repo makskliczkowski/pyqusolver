@@ -145,7 +145,7 @@ class NQS(MonteCarloSolver):
 
     >>> # Frustrated Systems (Global Updates)
     >>> # Use global updates to escape local minima
-    >>> patterns    = model.lattice.get_plaquettes()
+    >>> patterns    = model.lattice.calculate_plaquettes()
     >>> nqs         = NQS(logansatz=..., model=model, upd_fun="global", patterns=patterns, 
     >>>             p_global=0.5) # 50% global flips, 50% local flips
 
@@ -305,8 +305,10 @@ class NQS(MonteCarloSolver):
                     - pt_betas          : Custom array of inverse temperatures (optional).
                                         If not provided, a geometric ladder from 1.0 to 0.1 is generated.
                     - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
-                                        Sampler-specific parameters (e.g., `p_global`, `global_fraction`) are
+                                        Sampler-specific parameters (e.g., `global_p`, `global_fraction`) are
                                         also passed through to the `VMCSampler` constructor via `**kwargs`.
+                    - global_p          : Probability of proposing a global update (default: 0.0).
+                    - global_update     : Custom global update function (optional).
         '''
         
         if shape is None and hilbert is None:
@@ -568,9 +570,20 @@ class NQS(MonteCarloSolver):
         """
         Set the exact information (ground truth).
         """
-        self._exact_info = info
-        if info is not None:
-            self.log(f"Exact information set: {info.get('exact_predictions', [None] * (self._nthstate + 1))[self._nthstate]}", lvl=1)
+        if isinstance(info, dict):
+            self._exact_info = info
+            if info is not None:
+                self.log(f"Exact information set: {info.get('exact_predictions', [None] * (self._nthstate + 1))[self._nthstate]}", lvl=1)
+        elif isinstance(info, np.ndarray):
+            self._exact_info = {
+                'exact_predictions' : info,
+                'exact_method'      : 'provided_array',
+                'exact_energy'      : float(info) if np.ndim(info) == 0 else info[self._nthstate]
+            }
+            self.log(f"Exact information set from array: {self._exact_info['exact_energy']}", lvl=1)
+        else:
+            raise ValueError("Exact information must be provided as a dictionary or numpy array.")
+        
 
     def get_exact(self, **kwargs) -> Optional['NQSTrainStats']:
         '''
@@ -730,6 +743,15 @@ class NQS(MonteCarloSolver):
             sampler_kwargs.pop('s_patterns', None)
             sampler_kwargs['n_flip']        = kwargs.get('s_n_flip', 1)
             sampler_kwargs.pop('s_n_flip', None)
+            
+            # Global updates
+            if 's_p_global' in kwargs: 
+                sampler_kwargs['global_p'] = kwargs.pop('s_p_global')
+            else:
+                sampler_kwargs['global_p'] = kwargs.pop('s_global_p', 0.0)
+                
+            sampler_kwargs['global_update'] = kwargs.pop('s_global_update', None)
+            
             sampler_kwargs['beta_penalty']  = self._beta_penalty
             sampler_kwargs.pop('s_beta_penalty', None)
             sampler_kwargs['n_particles']   = self._nparticles
@@ -2492,9 +2514,13 @@ class NQS(MonteCarloSolver):
                 self._sampler.set_pt_betas(pt_betas)
             
             # Configure Global Updates if parameters are present in kwargs
-            if 'p_global' in kwargs or 'global_fraction' in kwargs:
+            if 'global_p' in kwargs or 'p_global' in kwargs or 'global_fraction' in kwargs or 'global_update' in kwargs:
                 if hasattr(self._sampler, 'set_global_update'):
-                    self._sampler.set_global_update(p_global = kwargs.get('p_global', 0.0), global_fraction = kwargs.get('global_fraction', 0.5))
+                    # Support both names for backward compatibility
+                    g_p = kwargs.get('global_p', kwargs.get('p_global', 0.0))
+                    self._sampler.set_global_update(global_p = g_p, global_fraction = kwargs.get('global_fraction', 0.5), global_update = kwargs.get('global_update', None))
+                    if g_p > 0:
+                        self.log(f"Global sampler update set to: {g_p:.2f} ({kwargs.get('global_update', 'default')})", lvl=2, color='blue')
             
             # Configure Update Function
             if upd_fun is not None and hasattr(self._sampler, 'set_update_function'):
@@ -2560,29 +2586,39 @@ class NQS(MonteCarloSolver):
             self._sampler.set_update_num(n_update)
             self.log(f"Sampler update number set to {n_update}", lvl=2, color='blue')
 
+        if exact_predictions is None and self._model.eig_vals is not None:
+            exact_predictions   = self._model.eig_vals
+            self.exact          = exact_predictions
+
+        if self.exact and exact_predictions is None:
+            exact_predictions = self.exact.get('exact_predictions', exact_predictions)
+            exact_method      = self.exact.get('exact_method',      exact_method)
+            
         # Run training
         if load_checkpoint:
             try:
                 # Load the state (weights + stats)
-                stats           = self._trainer.load_checkpoint(step=checkpoint_step)
-                reset_stats     = False
+                stats                   = self._trainer.load_checkpoint(step=checkpoint_step)
+                stats.exact_predictions = exact_predictions
+                reset_stats             = False
                 return stats
             
             except Exception as e:
                 self.log(f"Requested checkpoint load failed: {e}", lvl=0, color='red', log='warning')
                 raise e
 
+            
         stats = self._trainer.train(
             n_epochs            = n_epochs,
             checkpoint_every    = checkpoint_every,
             save_path           = save_path,
-            reset_stats         = reset_stats,
+            reset_stats         = reset_stats or reset_weights,
             use_pbar            = use_pbar,
             exact_predictions   = exact_predictions,
             exact_method        = exact_method,
             **kwargs
         )
-
+        
         return stats
     
     #####################################

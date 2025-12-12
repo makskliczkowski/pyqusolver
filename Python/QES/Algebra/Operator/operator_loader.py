@@ -689,7 +689,7 @@ class OperatorModule:
             except ImportError:
                 pass
 
-            mu_val      = 1.0 / nh
+            mu_val      = ns / np.sqrt(nh) # Scaling factor for fidelity susceptibility
             fids        = {'x': [], 'y': [], 'z': [], 'tot': []}
 
             for k in range(min(n_states, n_susceptibility_states)):
