@@ -126,6 +126,7 @@ class HilbertSpace(BaseHilbertSpace):
                 sym_gen         : Union[dict, None]                                         = None,     # symmetry generators (e.g., translation, parity)
                 global_syms     : Union[List[GlobalSymmetry], None]                         = None,     # global symmetries (e.g., U(1) particle number)
                 gen_mapping     : bool                                                      = False,
+                generate_basis  : bool                                                      = True,     # <--- New arg
                 local_space     : Optional[Union[LocalSpace, str]]                          = None,
                 # general parameters
                 state_type      : StateTypes                                                = StateTypes.INTEGER,
@@ -217,6 +218,10 @@ class HilbertSpace(BaseHilbertSpace):
                 Whether to generate state mapping based on symmetries immediately.
                 If False, mapping is generated on-demand. Default is False.
                 Set to True for immediate symmetry reduction and representative state mapping.
+            
+            generate_basis (bool, optional):
+                If False, skips generating the full reduced basis and mapping. 
+                Useful for large systems where only symmetry generators are needed. Default is True.
                 
             local_space (Optional[Union[LocalSpace, str]], optional):
                 LocalSpace object or string defining local Hilbert space properties. 
@@ -294,7 +299,7 @@ class HilbertSpace(BaseHilbertSpace):
             if gen_mapping:     self._log("Explicitly requested immediate mapping generation.", log='debug', lvl=2)
             normalized_sym_gen  = normalize_symmetry_generators(sym_gen)
             
-            self._init_representatives(normalized_sym_gen, gen_mapping=gen_mapping) # gen_mapping True here enables reprmap
+            self._init_representatives(normalized_sym_gen, gen_mapping=gen_mapping, generate_basis=generate_basis) # gen_mapping True here enables reprmap
             # Set symmetry group from container
             if self._sym_container is not None:
                 self._sym_group = list(self._sym_container.symmetry_group)
@@ -1368,7 +1373,7 @@ ACCESS STATES
     
     # --------------------------------------------------------------------------------------------------
     
-    def _init_representatives(self, gen : list, gen_mapping : bool = False):
+    def _init_representatives(self, gen : list, gen_mapping : bool = False, generate_basis : bool = True):
         """
         Initialize the representatives list and norms based on the provided symmetry generators.
 
@@ -1410,6 +1415,13 @@ ACCESS STATES
         t0 = time.time()
         self._init_sym_container(gen)
         
+        if not generate_basis:
+            self._log("Skipping basis generation (NQS mode).", lvl=1, color='green', log='debug')
+            self._nh                    = self._nhfull
+            self.representative_list    = None
+            self.representative_norms   = None
+            return
+
         if gen is not None and len(gen) > 0:
             self._log("Generating the mapping of the states...", lvl = 1, color = 'green')
 
@@ -1420,8 +1432,8 @@ ACCESS STATES
             self._generate_repr_base(gen_mapping)
 
         if gen is not None and len(gen) > 0 or (self.representative_list is not None and len(self.representative_list) > 0):
-            self.representative_list    = self._backend.array(self.representative_list, dtype = self._backend.int64)
-            self.representative_norms   = self._backend.array(self.representative_norms, dtype = self._dtype)
+            self.representative_list    = self._backend.array(self.representative_list, dtype   = self._backend.int64)
+            self.representative_norms   = self._backend.array(self.representative_norms, dtype  = self._dtype)
             self._log(f"Generated the mapping of the states in {time.time() - t0:.2f} seconds.", lvl = 2, color = 'green')
         else:
             self._log("No mapping generated.", lvl = 1, color = 'green', log = 'debug')
@@ -1450,8 +1462,8 @@ ACCESS STATES
             # The compact_data contains all needed information for O(1) lookups
             del self.full_to_representative_idx
             del self.full_to_representative_phase
-            self.full_to_representative_idx = None
-            self.full_to_representative_phase = None
+            self.full_to_representative_idx     = None
+            self.full_to_representative_phase   = None
 
 
     # --------------------------------------------------------------------------------------------------

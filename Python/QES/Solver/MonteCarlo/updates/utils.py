@@ -110,10 +110,15 @@ def make_hybrid_proposer(local_prop: Callable, global_prop: Callable, p_global: 
     """
     Creates a hybrid proposer that chooses between local and global updates.
     
-    Args:
-        local_prop: Function(state, key) -> new_state
-        global_prop: Function(state, key) -> new_state
-        p_global: Probability of choosing global_prop
+    Parameters:
+    -----------
+    local_prop: 
+        Function(state, key) -> new_state
+    global_prop: 
+        Function(state, key) -> new_state
+    p_global: 
+        Probability of choosing global_prop. The local_prop is chosen with probability (1 - p_global).
+        Values should be in [0, 1].
         
     Returns:
         Function(state, key) -> new_state
@@ -122,8 +127,8 @@ def make_hybrid_proposer(local_prop: Callable, global_prop: Callable, p_global: 
         raise ImportError("JAX is required for hybrid proposer.")
         
     def hybrid_proposer(state, key):
-        key_p, key_upd = jr.split(key)
-        do_global = jr.bernoulli(key_p, p_global)
+        key_p, key_upd  = jr.split(key)
+        do_global       = jr.bernoulli(key_p, p_global)
         
         # Use lax.cond to execute only one branch
         return jax.lax.cond(

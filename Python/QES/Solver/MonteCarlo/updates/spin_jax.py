@@ -40,15 +40,13 @@ def propose_local_flip(state: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
     """
     # Select random site
     idx = jr.randint(key, shape=(), minval=0, maxval=state.size)
+    return jaxpy.flip_array_jax_spin(state, idx)
     
-    # Note: jaxpy.flip_array_jax_spin is for +/- 1 spins
-    if BACKEND_DEF_SPIN:
-        return jaxpy.flip_array_jax_spin(state, idx)
-    else:
+    # else:
         # Fallback for 0/1 or if nspin function has different name
         # 0 -> 1, 1 -> 0 implies 1 - x
-        val = state[idx]
-        return state.at[idx].set(1 - val)
+        # val = state[idx]
+        # return state.at[idx].set(1 - val)
 
 # ----------------------------------------------------------------------
 # Exchange Updates
@@ -57,7 +55,7 @@ def propose_local_flip(state: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
 @partial(jax.jit, static_argnames=("check_conserved",))
 def propose_exchange(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, check_conserved: bool = True) -> jnp.ndarray:
     """
-    Propose an exchange of spins between a random site and a random neighbor.
+    Propose an exchange between a random site and a random neighbor.
     
     Parameters:
         state: 
@@ -98,9 +96,6 @@ def propose_exchange(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.nda
         
     # Perform swap
     # New state has sj at pos i, si at pos j_safe
-    
-    # We can use jnp.where on the whole state, or conditioned updates.
-    # Conditional updates are usually efficient in JAX if sparse.
     new_state = state.at[i].set(jnp.where(should_swap, sj, si))
     new_state = new_state.at[j_safe].set(jnp.where(should_swap, si, sj))
     
@@ -117,10 +112,14 @@ def propose_bond_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.nd
     Useful for topological models where single flips create excitations 
     but bond flips might just move them or preserve sectors.
     
-    Args:
-        state: Current state (Ns,).
-        key: JAX PRNGKey.
-        neighbor_table: Neighbor table.
+    Parameters:
+    -----------
+    state: 
+        Current state (Ns,).
+    key: 
+        JAX PRNGKey.
+    neighbor_table: 
+        Neighbor table.
     
     Returns:
         New state with two spins flipped.
@@ -128,10 +127,10 @@ def propose_bond_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.nd
     key_site, key_neigh     = jr.split(key)
     ns                      = state.shape[0]
     
-    # 1. Pick random site i
+    # Pick random site i
     i                       = jr.randint(key_site, shape=(), minval=0, maxval=ns)
     
-    # 2. Pick random neighbor j
+    # Pick random neighbor j
     max_degree              = neighbor_table.shape[1]
     k                       = jr.randint(key_neigh, shape=(), minval=0, maxval=max_degree)
     j                       = neighbor_table[i, k]
@@ -171,7 +170,8 @@ def propose_multi_flip(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> j
     """
     Propose flipping 'n_flip' distinct random sites.
     
-    Args:
+    Parameters:
+    -----------
         state: 
             Current state (Ns,).
         key: 
@@ -189,12 +189,7 @@ def propose_multi_flip(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> j
     # jr.choice with replace=False is suitable
     indices = jr.choice(key, state.size, shape=(n_flip,), replace=False)
     
-    if BACKEND_DEF_SPIN:
-        # Vectorized flip
-        # new_vals = -state[indices]
-        # return state.at[indices].set(new_vals)
-        
-        # Or multiply
+    if BACKEND_DEF_SPIN:        
         return state.at[indices].multiply(-1)
     else:
         # 0 -> 1, 1 -> 0 => 1 - x
@@ -214,14 +209,15 @@ def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarra
     >>> patterns    = lat.calculate_plaquettess()  # (NumPatterns, PatternSize)
     >>> new_state   = propose_global_flip(state, key, patterns)
     
-    Args:
-        state: 
-            Current state (Ns,).
-        key: 
-            JAX PRNGKey.
-        patterns: 
-            (NumPatterns, PatternSize) array of site indices to flip.
-            Padded with -1.
+    Parameters:
+    -----------
+    state: 
+        Current state (Ns,).
+    key: 
+        JAX PRNGKey.
+    patterns: 
+        (NumPatterns, PatternSize) array of site indices to flip.
+        Padded with -1. We select one pattern at random and flip all valid sites.
     
     Returns:
         New state with pattern flipped.

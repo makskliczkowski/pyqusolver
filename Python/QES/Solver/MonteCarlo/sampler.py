@@ -773,7 +773,9 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
             raise ValueError("Hilbert space with lattice is required for bond updates.")
             
         # Precompute neighbor table
-        neighbor_table = get_neighbor_table(lattice, order=1)
+        # User can specify bond range/order (default 1 = nearest neighbors)
+        bond_order      = kwargs.get('bond_order', kwargs.get('order', 1))
+        neighbor_table  = get_neighbor_table(lattice, order=bond_order)
         return partial(propose_bond_flip, neighbor_table=neighbor_table)
     
     ###############################################################

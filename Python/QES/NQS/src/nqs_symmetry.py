@@ -157,6 +157,7 @@ class NQSSymmetricAnsatz:
             # Project states to orbit: (batch, group_size, ns)
             # inputs shape: (batch_dim, ns)
             orbit_states, orbit_weights = projector(inputs)
+            
             batch_dim                   = orbit_states.shape[0]
             group_size                  = orbit_states.shape[1]
             
@@ -170,7 +171,8 @@ class NQSSymmetricAnsatz:
             log_psi                     = log_psi_flat.reshape(batch_dim, group_size)
             
             # Compute symmetrized log psi: log( sum( w * exp(log_psi) ) )
-            # Use LogSumExp for numerical stability with weights
+            # We use logsumexp with 'b' argument for weights: log(sum(b * exp(a)))
+            # JAX's logsumexp supports complex inputs/weights.
             log_psi_sym                 = logsumexp(log_psi, axis=1, b=orbit_weights)
             
             return jnp.where(jnp.isinf(log_psi_sym), -jnp.inf, log_psi_sym) # Handle -inf for zero sum

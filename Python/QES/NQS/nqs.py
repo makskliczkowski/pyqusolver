@@ -180,6 +180,7 @@ class NQS(MonteCarloSolver):
     - "BOND_FLIP"   : Flips a site and one random neighbor. Useful for moving topological excitations.
     - "GLOBAL"      : Flips a predefined pattern (e.g., plaquette). Requires `patterns` argument.
     - "MULTI_FLIP"  : Randomly flips `s_n_flip` sites at once.
+    - "SUBPLAQUETTE": Flips sub-sequences of a pattern (e.g. edges of a plaquette).
     '''
         
     _ERROR_ALL_DTYPE_SAME       = "All weights must have the same dtype!"    
@@ -2444,6 +2445,8 @@ class NQS(MonteCarloSolver):
             # Sampler Updates
             upd_fun             : Optional[Union[str, Any]] = None,
             update_kwargs       : Optional[dict]            = None,
+            # Symmetries
+            symmetrize          : Optional[bool]            = None,
             **kwargs
         ) -> "NQSTrainStats":
         """
@@ -2556,6 +2559,10 @@ class NQS(MonteCarloSolver):
             
         update_kwargs : dict, optional
             Additional arguments for the update rule (e.g., {'patterns': [...]}).
+            
+        symmetrize : Optional[bool], default=None
+            Enable or disable symmetry projection for the ansatz.
+            If None, the current setting is preserved.
 
         **kwargs
             Additional arguments passed to NQSTrainer and schedulers.
@@ -2600,6 +2607,10 @@ class NQS(MonteCarloSolver):
         if reset_weights:
             self.reset()
             self.log("Network parameters reset before training.", lvl=1, color='blue')
+            
+        # Configure symmetries
+        if symmetrize is not None:
+            self.symmetry_handler.set(symmetrize)
 
         if self._sampler.name == 'VMC':
             if num_samples is not None:
