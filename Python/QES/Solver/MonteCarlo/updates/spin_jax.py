@@ -231,29 +231,46 @@ def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarra
     p_idx           = jr.randint(key, shape=(), minval=0, maxval=n_patterns)
     target_indices  = patterns[p_idx] # (PatternSize,)
     
-    # Flip spins at target_indices
-    # Use scan to iterate over indices in the pattern
+    # 2. Mask valid indices (ignore -1 padding)
+    mask            = (target_indices != -1)
     
-    def flip_step(curr_state, idx):
-        # Handle padding (-1)
-        # If idx == -1, do nothing.
-        safe_idx    = jnp.where(idx != -1, idx, 0)
-        val         = curr_state[safe_idx]
+    # 3. Safe indices: map -1 to 0 to avoid out-of-bounds access
+    # Note: Updates to site 0 from padding will be identity operations
+    safe_indices    = jnp.where(mask, target_indices, 0)
+    
+    # 4. Apply Updates
+    if BACKEND_DEF_SPIN:
+        # Spin +/- 1: Flip corresponds to multiplication by -1
+        # Construct a flip mask of 1s (no flip)
+        flip_mult   = jnp.ones_like(state)
         
-        # Determine new value based on spin type
-        if BACKEND_DEF_SPIN: # +/- 1
-            new_val = -val
-        else: # 0/1
-            new_val = 1 - val
-            
-        # Update if valid
-        # Select between updated and original based on validity
-        updated     = curr_state.at[safe_idx].set(new_val)
-        res         = jnp.where(idx != -1, updated, curr_state)
-        return res, None
-
-    new_state, _ = jax.lax.scan(flip_step, state, target_indices)
-    return new_state
+        # Prepare multipliers: -1 for valid targets, 1 for padding
+        multipliers = jnp.where(mask, -1, 1)
+        
+        # Apply multipliers to the mask
+        # If site 0 is both a target and padding, it gets (-1) * (1) = -1. Correct.
+        flip_mult   = flip_mult.at[safe_indices].multiply(multipliers)
+        
+        return state * flip_mult
+        
+    else:
+        # Binary 0/1: Flip corresponds to adding 1 (mod 2)
+        # Construct a flip count mask of 0s
+        flip_counts = jnp.zeros_like(state, dtype=jnp.int32)
+        
+        # Prepare adders: 1 for valid targets, 0 for padding
+        adders      = jnp.where(mask, 1, 0)
+        
+        # Accumulate flips
+        # If site 0 is both target and padding, it gets 1 + 0 = 1. Correct.
+        flip_counts = flip_counts.at[safe_indices].add(adders)
+        
+        # Determine sites to flip (odd number of flips)
+        should_flip = (flip_counts % 2) == 1
+        
+        # Apply flip: 1 - x
+        # If state is float, 1 - x works for 0.0/1.0
+        return jnp.where(should_flip, 1 - state, state)
 
 # ----------------------------------------
 #! EOF
