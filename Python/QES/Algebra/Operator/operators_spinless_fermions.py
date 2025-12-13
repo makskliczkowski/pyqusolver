@@ -652,7 +652,7 @@ def n_np(state: np.ndarray, sites: np.ndarray, prefactor: float = 1.0):
 #! Public dispatch helpers  (match your \sigma -operator API)
 ###############################################################################
 
-def c_dag(state: Union[int, np.ndarray], ns: int, sites: int, prefactor: float = 1.0):
+def _c_dag(state: Union[int, np.ndarray], ns: int, sites: int, prefactor: float = 1.0):
     """Creation operator dispatcher."""
     if isinstance(state, (int, np.integer)):
         return c_dag_int_np(int(state), ns, sites, prefactor)
@@ -660,7 +660,7 @@ def c_dag(state: Union[int, np.ndarray], ns: int, sites: int, prefactor: float =
         return c_dag_np(state, sites, prefactor)
     return c_dag_jnp(state, ns, sites, prefactor)
 
-def c(state: Union[int, np.ndarray], ns: int, sites: int, prefactor: float = 1.0):
+def _c(state: Union[int, np.ndarray], ns: int, sites: int, prefactor: float = 1.0):
     """Annihilation operator dispatcher."""
     if isinstance(state, (int, np.integer)):
         return c_int_np(int(state), ns, sites, prefactor)
@@ -668,7 +668,7 @@ def c(state: Union[int, np.ndarray], ns: int, sites: int, prefactor: float = 1.0
         return c_np(state, sites, prefactor)
     return c_jnp(state, ns, sites, prefactor)
 
-def c_k(state        : Union[int, np.ndarray],
+def _c_k(state        : Union[int, np.ndarray],
         ns           : int,
         sites        : Optional[List[int]],
         k            : float,
@@ -682,7 +682,7 @@ def c_k(state        : Union[int, np.ndarray],
         return c_k_np(state, sites, k, prefactor)
     return c_k_jnp(state, ns, sites, k, prefactor)
 
-def c_k_dag(state     : Union[int, np.ndarray],
+def _c_k_dag(state     : Union[int, np.ndarray],
             ns        : int,
             sites     : Optional[List[int]],
             k         : float,
@@ -696,7 +696,7 @@ def c_k_dag(state     : Union[int, np.ndarray],
         return c_k_dag_np(state, sites, k, prefactor)
     return c_k_dag_jnp(state, ns, sites, k, prefactor)
 
-def n(state: Union[int, np.ndarray], ns: int, sites: Optional[List[int]], prefactor: float = 1.0):
+def _n(state: Union[int, np.ndarray], ns: int, sites: Optional[List[int]], prefactor: float = 1.0):
     r"""Number operator dispatcher."""
     
     if sites is None:
@@ -722,7 +722,10 @@ def c(  lattice     : Optional[Lattice]     = None,
     
     if OperatorTypeActing.is_type_global(type_act) or sites is not None:
         code        = FermionLookupCodes.c_ann_global
-    
+    elif OperatorTypeActing.is_type_local(type_act):
+        code        = FermionLookupCodes.c_ann_local
+    else:
+        code        = FermionLookupCodes.c_c_corr
     
     return create_operator(
         type_act    = type_act,
@@ -734,7 +737,8 @@ def c(  lattice     : Optional[Lattice]     = None,
         sites       = sites,
         extra_args  = (prefactor,),
         name        = "c",
-        modifies    = True
+        modifies    = True,
+        code        = code
     )
 
 def cdag( lattice   : Optional[Lattice]     = None,
@@ -745,6 +749,13 @@ def cdag( lattice   : Optional[Lattice]     = None,
     r"""
     Factory for the fermionic creation operator c_i\dag.
     """
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
+        code        = FermionLookupCodes.c_dag_global
+    elif OperatorTypeActing.is_type_local(type_act):
+        code        = FermionLookupCodes.c_dag_local
+    else:
+        code        = FermionLookupCodes.c_dag_c_dag_corr
+    
     return create_operator(
         type_act    = type_act,
         op_func_int = c_dag_int_np,
@@ -755,7 +766,8 @@ def cdag( lattice   : Optional[Lattice]     = None,
         sites       = sites,
         extra_args  = (prefactor,),
         name        = "cdag",
-        modifies    = True
+        modifies    = True,
+        code        = code
     )
 
 def ck( k           : float,
@@ -768,6 +780,8 @@ def ck( k           : float,
     Factory for the momentum-space annihilation operator
         c_k = \frac{1}{\sqrt{|S|}} \sum_{i\in S} e^{-ik i}\,c_i .
     """
+    #TOOD: check sites for global
+    
     return create_operator(
         type_act    = type_act,
         op_func_int = c_k_int_np,
@@ -791,6 +805,8 @@ def ckdag(  k         : float,
     Factory for the momentum-space creation operator
         c_k^{\dagger} = \frac{1}{\sqrt{|S|}} \sum_{i\in S} e^{+ik i}\,c_i^{\dagger}.
     """
+    #TOOD: check sites for global
+    
     return create_operator(
         type_act    = type_act,
         op_func_int = c_k_dag_int_np,
@@ -804,10 +820,6 @@ def ckdag(  k         : float,
         modifies    = True
     )
 
-# ------------------------------------------------------------------------------
-#! Number operator factory
-# ------------------------------------------------------------------------------
-
 def n( lattice      : Optional[Lattice]     = None,
         ns          : Optional[int]         = None,
         type_act    : OperatorTypeActing    = OperatorTypeActing.Local,
@@ -816,6 +828,13 @@ def n( lattice      : Optional[Lattice]     = None,
     """
     Factory for the fermionic number operator n_i.
     """
+    if OperatorTypeActing.is_type_global(type_act) or sites is not None:
+        code        = FermionLookupCodes.n_global
+    elif OperatorTypeActing.is_type_local(type_act):
+        code        = FermionLookupCodes.n_local
+    else:
+        code        = FermionLookupCodes.n_n_corr
+    
     return create_operator(
         type_act    = type_act,
         op_func_int = n_int_np,
@@ -1395,7 +1414,6 @@ def fermion_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int,
     
     return fermion_composition_with_custom_int
 
-
 ################################################################################
 # Registration with the operator catalog
 ################################################################################
@@ -1489,7 +1507,7 @@ def _register_catalog_entries():
 
     register_local_operator(
         LocalSpaceTypes.SPINLESS_FERMIONS,
-        key             =   "c_dag",
+        key             =   "cdag",
         factory         =   _creation_factory,
         description     =   r"Fermionic creation operator c\dag_i acting on the computational basis.",
         algebra         =   r"{c_i, c_j\dag} = \delta _{ij}",

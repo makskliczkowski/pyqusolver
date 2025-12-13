@@ -468,7 +468,7 @@ class SpecialOperator(Operator, ABC):
 
         >>> # For fermion Hamiltonians
         >>> hamil           = FermionHamiltonian(ns=4, ...)
-        >>> c_dag           = hamil.operators.c_dag(ns=4, sites=[0])
+        >>> cdag            = hamil.operators.cdag(ns=4, sites=[0])
         >>> n_op            = hamil.operators.n(ns=4, sites=[0])
         
         >>> # Get help

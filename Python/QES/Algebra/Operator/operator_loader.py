@@ -151,8 +151,9 @@ class OperatorModule:
                     return getattr(module, s1_name)
         
         elif self._local_space_type == LocalSpaceTypes.SPINLESS_FERMIONS:
-            # Fermion operators: c_dag, c_ann, n_op, etc.
-            if name in ('c_dag', 'c', 'c_ann', 'n', 'n_op', 'fermion_number'):
+            # Fermion operators: cdag, c, n_op, etc.
+            if name == 'c_dag': name = 'cdag'
+            if name in ('cdag', 'c', 'c_ann', 'n', 'n_op', 'fermion_number'):
                 module = self._load_fermion_operators()
                 if hasattr(module, name):
                     return getattr(module, name)
@@ -624,43 +625,43 @@ class OperatorModule:
                     # Inner product: sum(v_i.conj * v_j)
                     
                     if 'xx' in ops_set and vec_xi_c is not None and vec_xj is not None:
-                        val                                 = np.sum(vec_xi_c * vec_xj, axis=0) * 4
+                        val                                 = np.sum(vec_xi_c * vec_xj, axis=0)
                         values['xx'][i, j, b_start:b_end]   = val
                         values['xx'][j, i, b_start:b_end]   = val.conj()
 
                     if 'xy' in ops_set and vec_xi_c is not None and vec_yj is not None:
-                        val                                 = np.sum(vec_xi_c * vec_yj, axis=0) * 4
+                        val                                 = np.sum(vec_xi_c * vec_yj, axis=0)
                         values['xy'][i, j, b_start:b_end]   = val
                         values['xy'][j, i, b_start:b_end]   = val.conj()
 
                     if 'xz' in ops_set and vec_xi_c is not None and vec_zj is not None:
-                        val                                 = np.sum(vec_xi_c * vec_zj, axis=0) * 4
+                        val                                 = np.sum(vec_xi_c * vec_zj, axis=0)
                         values['xz'][i, j, b_start:b_end]   = val
                         values['xz'][j, i, b_start:b_end]   = val.conj()
                     
                     if 'yx' in ops_set and vec_yi_c is not None and vec_xj is not None:
-                        val                                 = np.sum(vec_yi_c * vec_xj, axis=0) * 4
+                        val                                 = np.sum(vec_yi_c * vec_xj, axis=0)
                         values['yx'][i, j, b_start:b_end]   = val
                         values['yx'][j, i, b_start:b_end]   = val.conj()
                     if 'yy' in ops_set and vec_yi_c is not None and vec_yj is not None:
-                        val                                 = np.sum(vec_yi_c * vec_yj, axis=0) * 4
+                        val                                 = np.sum(vec_yi_c * vec_yj, axis=0)
                         values['yy'][i, j, b_start:b_end]   = val
                         values['yy'][j, i, b_start:b_end]   = val.conj()
                     if 'yz' in ops_set and vec_yi_c is not None and vec_zj is not None:
-                        val                                 = np.sum(vec_yi_c * vec_zj, axis=0) * 4
+                        val                                 = np.sum(vec_yi_c * vec_zj, axis=0)
                         values['yz'][i, j, b_start:b_end]   = val
                         values['yz'][j, i, b_start:b_end]   = val.conj()
                         
                     if 'zx' in ops_set and vec_zi_c is not None and vec_xj is not None:
-                        val                                 = np.sum(vec_zi_c * vec_xj, axis=0) * 4
+                        val                                 = np.sum(vec_zi_c * vec_xj, axis=0)
                         values['zx'][i, j, b_start:b_end]   = val
                         values['zx'][j, i, b_start:b_end]   = val.conj()
                     if 'zy' in ops_set and vec_zi_c is not None and vec_yj is not None:
-                        val                                 = np.sum(vec_zi_c * vec_yj, axis=0) * 4
+                        val                                 = np.sum(vec_zi_c * vec_yj, axis=0)
                         values['zy'][i, j, b_start:b_end]   = val
                         values['zy'][j, i, b_start:b_end]   = val.conj()
                     if 'zz' in ops_set and vec_zi_c is not None and vec_zj is not None:
-                        val                                 = np.sum(vec_zi_c * vec_zj, axis=0) * 4
+                        val                                 = np.sum(vec_zi_c * vec_zj, axis=0)
                         values['zz'][i, j, b_start:b_end]   = val
                         values['zz'][j, i, b_start:b_end]   = val.conj()
             

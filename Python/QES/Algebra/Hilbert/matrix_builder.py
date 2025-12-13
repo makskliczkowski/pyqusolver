@@ -77,10 +77,12 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
     # Check repr_phase arrays
     repr_phase_is_complex   = False
     for hs in h_spaces:
-        repr_phase = getattr(hs, 'repr_phase', None)
-        if repr_phase is not None and np.iscomplexobj(repr_phase):
-            repr_phase_is_complex = True
-            break
+        # Corrected: access from HilbertSpace's compact_data
+        compact_data = getattr(hs, 'compact_data', None)
+        if compact_data is not None:
+            if np.iscomplexobj(compact_data.phase_table):
+                repr_phase_is_complex = True
+                break
     
     # Check Hilbert space dtypes
     hilbert_dtype_is_complex = False
@@ -103,14 +105,16 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
     operator_returns_complex = False
     if operator_func is not None and ns is not None:
         try:
-            for hs in h_spaces:
-                if hs.dim > 0:
-                    test_state = int(hs[0])
-                    _, test_values = operator_func(test_state)
-                    if len(test_values) > 0 and np.iscomplexobj(test_values[0]):
-                        operator_returns_complex = True
-                        break
-        except:
+            # Need a dummy state to call the operator_func
+            # Using 0 is fine for most spin-1/2 operators.
+            test_state = 0
+            # operator_func expects (state, ns)
+            _, test_values = operator_func(test_state, ns) # Corrected call, pass ns
+            if len(test_values) > 0 and np.iscomplexobj(test_values[0]):
+                operator_returns_complex = True
+        except Exception as e:
+            # Handle cases where operator_func might require other args or fail for test_state=0
+            # print(f"Warning: Could not determine operator_func's output type for complex check: {e}")
             pass
     
     # Force complex if needed
@@ -131,6 +135,7 @@ def _build_sparse_same_sector_compact_jit(
                 phase_idx           : np.ndarray,   # uint8[nh_full] - state -> phase table index
                 phase_table         : np.ndarray,   # complex128[n_phases] - distinct phases
                 operator_func       : Callable,
+                ns                  : int,          # Add ns argument
                 rows                : np.ndarray,
                 cols                : np.ndarray,
                 data                : np.ndarray,
@@ -150,41 +155,13 @@ def _build_sparse_same_sector_compact_jit(
     for k in range(nh):
         state               = representative_list[k]
         norm_k              = normalization[k]
-        new_states, values  = operator_func(state)
-
-        for i in range(len(new_states)):
-            new_state = new_states[i]
-            value     = values[i]
-            
-            if np.abs(value) < 1e-14:
-                continue
-
-            # O(1) lookup using compact structure
-            idx = repr_map[new_state]
-            
-            # Check if state is in this sector
-            if idx == invalid_idx:
-                continue
-            
-            # Get phase from phase table
-            pidx        = phase_idx[new_state]
-            phase       = phase_table[pidx]
-            norm_idx    = normalization[idx]
-            sym_factor  = np.conj(phase) * norm_idx / norm_k
-
-            matrix_elem = value * sym_factor
-            if np.abs(matrix_elem) > 1e-14:
-                rows[data_idx]  = idx
-                cols[data_idx]  = k
-                data[data_idx]  = matrix_elem
-                data_idx       += 1
-
-    return data_idx
+        new_states, values  = operator_func(state, ns) # Pass ns here
 
 @numba.njit(cache=True, nogil=True)
 def _build_sparse_same_sector_no_symmetry_jit(
                 basis               : Optional[np.ndarray],
                 operator_func       : Callable,
+                ns                  : int,          # Add ns argument
                 rows                : np.ndarray,
                 cols                : np.ndarray,
                 data                : np.ndarray,
@@ -200,7 +177,7 @@ def _build_sparse_same_sector_no_symmetry_jit(
         else:
             state = k
             
-        new_states, values = operator_func(state)
+        new_states, values = operator_func(state, ns) # Pass ns here
 
         for i in range(len(new_states)):
             new_state = new_states[i]
@@ -380,7 +357,7 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
                 compact_data.repr_map,
                 compact_data.phase_idx,
                 compact_data.phase_table,
-                operator_func, rows, cols, data, 0
+                operator_func, ns, rows, cols, data, 0
             )
         else:
              raise ValueError("Compact symmetry data missing for symmetric Hilbert space in sparse build.")

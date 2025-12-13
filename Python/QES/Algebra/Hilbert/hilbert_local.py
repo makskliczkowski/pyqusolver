@@ -38,12 +38,11 @@ class LocalOpKernels:
     fun_np              : Optional[Callable] = None
     fun_jax             : Optional[Callable] = None
     # how many site indices the op needs at call-time (0=global/all-or-preset, 1=local, 2=correlation)
-    site_parity         : int = 1
+    site_parity         : int   = 1
     # whether applying the op can change the state (helps sparse assembly sizing)
-    modifies_state      : bool = True
+    modifies_state      : bool  = True
     # default extra args bound at operator creation (can be overridden)
     default_extra_args  : Tuple = ()
-
 
 @dataclass(frozen=True)
 class LocalOperator:

@@ -164,6 +164,32 @@ def _compact_get_phase(state: _STATE_TYPE_NB, phase_idx: np.ndarray, phase_table
         return numba.complex128(0.0)
     return phase_table[pidx]
 
+@numba.njit(cache=True, fastmath=True, inline='always')
+def _compact_convert_states_to_idx(full_array: np.ndarray, repr_list: np.ndarray) -> np.ndarray:
+    """Convert array of states to their representative indices using binary search without copy!"""
+    n_states    = full_array.shape[0]
+        
+    for i in numba.prange(n_states):
+        state           = full_array[i]
+        if state == _INVALID_REPR_IDX or state > repr_list[-1]: # assume repr_list is sorted
+            continue
+        idx             = _binary_search_representative_list(repr_list, state)
+        full_array[i]   = idx
+    return full_array
+
+@numba.njit(cache=True, fastmath=True, inline='always')
+def _compact_convert_idx_to_states(idx_array: np.ndarray, repr_list: np.ndarray) -> np.ndarray:
+    """Convert array of representative indices to their actual states using direct indexing without copy!"""
+    n_states    = idx_array.shape[0]
+        
+    for i in numba.prange(n_states):
+        idx             = idx_array[i]
+        if idx == _INVALID_REPR_IDX:
+            continue
+        state           = repr_list[idx]
+        idx_array[i]    = state
+    return idx_array
+
 # --------------------------------------------------------------------------
 
 try:
@@ -701,8 +727,8 @@ class SymmetryContainer:
     def set_repr_info(self, repr_list: np.ndarray, repr_norms: np.ndarray) -> None:
         """Set the representatives and their normalization factors."""
         # Ensure repr_list is a numpy array to avoid numba warnings
-        self._repr_list     = np.asarray(repr_list,  dtype=_STATE_TYPE_NB) if not isinstance(repr_list,  np.ndarray  ) else repr_list
-        self._repr_norms    = np.asarray(repr_norms, dtype=np.float64    ) if not isinstance(repr_norms, np.ndarray  ) else repr_norms
+        self._repr_list     = np.asarray(repr_list,  dtype=_STATE_TYPE) if not isinstance(repr_list,  np.ndarray  ) else repr_list
+        self._repr_norms    = np.asarray(repr_norms) if not isinstance(repr_norms, np.ndarray  ) else repr_norms
         self._repr_get_norm = lambda x: self._repr_norms[x]
         self._repr_active   = True
         
@@ -959,7 +985,7 @@ class SymmetryContainer:
         current_state       = state
         accumulated_phase   = 1.0
         
-        if isinstance(current_state, int):
+        if isinstance(current_state, (int, np.integer)):
             for op in element:
                 current_state, phase = op.apply_int(current_state, self.ns, nhl=self.nhl)
                 accumulated_phase   *= phase
@@ -972,7 +998,7 @@ class SymmetryContainer:
                 current_state, phase = op.apply_jax(current_state, ns=self.ns, nhl=self.nhl)
                 accumulated_phase   *= phase
         else:
-            raise TypeError("Unsupported state type for symmetry application.")
+            raise TypeError(f"Unsupported state type for symmetry application: {type(current_state)}")
 
         return current_state, accumulated_phase
 
@@ -999,21 +1025,22 @@ class SymmetryContainer:
         """
         min_state   = _INT_HUGE
         min_element = ()
+        idx          = -1
         
         # Try all group elements
-        for element in self.symmetry_group:
+        for i, element in enumerate(self.symmetry_group):
             # Apply group element to get transformed state
             # (we only need the state, not the boundary phase)
             new_state, _ = self.apply_group_element(element, state)
             
             if new_state < min_state:
-                min_state   = new_state
-                min_element = element
+                min_state   = new_state # Update minimal state
+                min_element = element   # Group element that gives minimal state
+                idx         = i         # Index of the group element that gives minimal state
         
         # Get the character (representation eigenvalue) for the transformation
         character = self.get_character(min_element)
-        
-        return min_state, character
+        return min_state, character, idx
 
     def find_representative(self, 
                             state           : StateInt, 
@@ -1096,14 +1123,13 @@ class SymmetryContainer:
             return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) / normalization_b # State is already a representative
 
         # Otherwise, find representative by applying group elements
-        min_state, min_phase    = self._find_representative(state)
+        min_state, min_phase, _ = self._find_representative(state)
         state_in_mapping        = binary_search_numpy(self._repr_list, 0, len(self._repr_list) - 1, min_state)    
         if state_in_mapping != _BAD_BINARY_SEARCH_STATE and state_in_mapping < len(self._repr_list):
             return int(self._repr_list[state_in_mapping]), self._repr_get_norm(state_in_mapping) * np.conjugate(min_phase) / normalization_b
 
         return 0, 0.0 # State not in this sector (maybe -1?)
 
-    
     # -----------------------------------------------------
     #! Character and Normalization Computation
     # -----------------------------------------------------
@@ -1151,7 +1177,7 @@ class SymmetryContainer:
         
         return character
     
-    def compute_normalization(self, state: StateInt) -> complex:
+    def compute_normalization(self, state: StateInt) -> float:
         """
         Compute normalization factor for a representative state in the current sector.
         
@@ -1170,8 +1196,8 @@ class SymmetryContainer:
         
         Returns
         -------
-        norm : complex
-            Normalization factor (0 if state not in this sector)
+        norm : float
+            Normalization factor (0.0 if state not in this sector)
         
         Algorithm
         ---------
@@ -1209,14 +1235,15 @@ class SymmetryContainer:
         #   N_k^2(|r>) = sum_{m=0}^{s-1} e^{ikp*m}  where s = period, p = L/period
         # 
         # We've already computed this sum above as projection_sum.
-        # Normalization is sqrt of the projection sum
+        # Normalization is sqrt of the projection sum.
+        # It must be real and non-negative.
         norm = np.sqrt(abs(projection_sum))
         
         # Check if normalization is non-zero (state allowed in this sector)
         if abs(norm) < _SYM_NORM_THRESHOLD:
             return 0.0
         
-        return norm
+        return float(norm)
     
     def check_global_symmetries(self, state: StateInt) -> bool:
         """
@@ -1241,103 +1268,174 @@ class SymmetryContainer:
     #! Full Mapping Management - IMPORTANT FOR OUR IMPLEMENTATION
     # -----------------------------------------------------
 
-    def build_compact_map(self, nh_full: int, repr_idx: np.ndarray, repr_phase: np.ndarray) -> CompactSymmetryData:
+    def generate_symmetric_basis(self, 
+                                nh_full         : int, 
+                                global_syms     : Optional[List[GlobalSymmetry]]    = None, 
+                                state_filter    : Optional[Callable[[int], bool]]   = None, 
+                                return_map      : bool                              = True,
+                                chunk_size      : int                               = 65536) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Build the compact symmetry data structure for O(1) JIT-friendly lookups.
+        Generate the symmetric basis by finding all unique representatives
+        and their normalization factors. It first identifies unique representatives
+        by applying symmetry operations to all states in the full Hilbert space,
+        then computes normalization factors for each representative.
         
-        This method creates a memory-efficient representation using:
-        - repr_map      : uint32 array      (state -> representative INDEX)
-        - phase_idx     : uint8 array       (state -> index in phase_table)
-        - phase_table   : complex128 array  (distinct phases, typically small)
-        - normalization : float64 array     (per representative)
-        
-        Memory usage: ~5 bytes per state...
+        If return_map is True, it also builds a compact mapping structure
+        for O(1) lookups of representatives and phases. First pass only finds the 
+        mapping state -> representative. Then, this is transformed to indices...
         
         Parameters
         ----------
         nh_full : int
             Full Hilbert space dimension
-        repr_idx : np.ndarray
-            Array mapping state -> representative index (-1 if not in sector)
-        repr_phase : np.ndarray
-            Array mapping state -> symmetry phase (complex)
-        
+        global_syms : List[GlobalSymmetry]
+            Global symmetries to filter states
+        state_filter : Callable[[int], bool]
+            Additional filter for states
+        return_map : bool
+            Whether to build and return the compact symmetry map (Pass 2).
+            If False, only representatives and norms are computed (Pass 1).
+            
         Returns
         -------
-        compact_data : CompactSymmetryData
-            The compact representation
-        
-        Notes
-        -----
-        The phase_table is built by collecting unique phases from repr_phase.
-        Phases are compared with tolerance to handle floating point precision.
-        The maximum number of distinct phases is 255 (uint8 limit), which is
-        typically sufficient (group order is usually much smaller).
+        representative_list : np.ndarray
+            Sorted list of representative states (reduced basis)
+        representative_norms : np.ndarray
+            Normalization factors for representatives
         """
-        t0                  = time.time()
         
-        # Build phase table from unique phases
-        # Use a tolerance-based approach for floating point comparison
-        phase_tolerance     = _SYM_NORM_THRESHOLD
-        unique_phases       = []
+        self.logger.info(f"Generating symmetric basis for {nh_full} states...", lvl=1, color='cyan')
+        t0                      = time.time()
+        g_to_pidx, phase_table  = self.build_phases_map()
+
+        if return_map:
+            # Allocate FINAL arrays only (uint32 + uint8)
+            # This is the peak memory usage point (along with representative_list)        
+            compact_repr_map    = np.full(nh_full, _INVALID_REPR_IDX,   dtype=_REPR_MAP_DTYPE)
+            compact_phase_idx   = np.full(nh_full, _INVALID_PHASE_IDX,  dtype=_PHASE_IDX_DTYPE)
+            gen_map             = True
+            self.logger.info(f"Allocated compact mapping arrays. Took: {time.time() - t0:.2e}s", lvl=2, color='green')
+        else:
+            compact_repr_map    = None
+            compact_phase_idx   = None
+            gen_map             = False
         
-        # Allocate compact arrays
-        compact_repr_map    = np.full(nh_full, _INVALID_REPR_IDX,  dtype=_REPR_MAP_DTYPE)
-        compact_phase_idx   = np.full(nh_full, _INVALID_PHASE_IDX, dtype=_PHASE_IDX_DTYPE)
+        # ---------------------------------------------------------
+        # Find Unique Representatives
+        # ---------------------------------------------------------
         
-        # Build mapping
-        for state in range(nh_full):
-            idx = repr_idx[state]
-            if idx < 0:
-                # State not in this sector
-                continue
-                
-            phase                   = repr_phase[state]
-            compact_repr_map[state] = _REPR_MAP_DTYPE(idx)
-            
-            # Find or add phase to table
-            found_idx = None
-            for pidx, existing_phase in enumerate(unique_phases):
-                if abs(phase - existing_phase) < phase_tolerance:
-                    found_idx = pidx
+        self.logger.info("Identifying unique representatives...", lvl = 2, color = 'cyan')
+        chunk_size              = min(chunk_size, nh_full) # 2^16 - affordable chunk size
+        representative_list     = []
+        representative_norms    = []
+        
+        state_filter            = state_filter if state_filter is not None else (lambda x: True)
+        def check_global_syms(state: int) -> bool:
+            bad = False
+            for g in global_syms:
+                if not g(state):
+                    bad = True
                     break
+            return bad
+        
+        for start_idx in range(0, nh_full, chunk_size):
+            end_idx     = min(start_idx + chunk_size, nh_full)
+            repr_in     = []
+            norm_in     = []
             
-            if found_idx is None:
-                if len(unique_phases) >= 255:
-                    raise ValueError(
-                        f"Too many distinct phases ({len(unique_phases)+1}) for uint8 indexing. "
-                        f"This should not happen for typical symmetry groups."
-                    )
-                found_idx   = _PHASE_IDX_DTYPE(len(unique_phases))
-                unique_phases.append(phase)
+            # Use Python loop for finding representatives
+            for state in range(start_idx, end_idx):
+                
+                if check_global_syms(int(state)): # if global symmetries not satisfied
+                    continue
+                if not state_filter(int(state)):
+                    continue
+                
+                rep_state, phase, idx = self._find_representative(int(state))
+                
+                # Only add the state if it is its own representative
+                # (this ensures each symmetry sector is represented once)
+                if rep_state == state:
+                    # Calculate normalization using character-based projection
+                    n = self.compute_normalization(rep_state)
+                    if abs(n) > _SYM_NORM_THRESHOLD:
+                        repr_in.append(rep_state)
+                        norm_in.append(n)
+                
+                if gen_map:
+                    compact_repr_map[state]     = rep_state         # Temporary - will be converted to index later
+                    compact_phase_idx[state]    = g_to_pidx[idx]    # Phase index for this group element -> phase table
             
-            compact_phase_idx[state] = (_PHASE_IDX_DTYPE(found_idx))
+            # End of chunk processing
+            representative_list.extend(repr_in)
+            representative_norms.extend(norm_in)
+            
+        self.logger.info(f"Identified unique representatives. Took: {time.time() - t0:.2e}s", lvl=3, color='green')
+
+        # Create sorted representative list
+        pairs                   = sorted(zip(representative_list, representative_norms))
+        representative_list     = np.array([p[0] for p in pairs], dtype=np.int64)
+        representative_norms    = np.array([p[1] for p in pairs], dtype=np.float64)       
         
-        # Convert phase list to array
-        phase_table         = np.array(unique_phases, dtype=np.complex128)
+        # Last step: convert compact_repr_map from state -> index in representative_list
+        if gen_map:
+            self.logger.info("Building compact representative index map...", lvl=2, color='cyan')
+            compact_repr_map    = _compact_convert_states_to_idx(full_array=compact_repr_map, repr_list=representative_list)
+            self.logger.info(f"With built compact representative index map. Took: {time.time() - t0:.2e}s", lvl=4, color='green')
         
-        # Get normalization from repr_norms
-        normalization       = np.asarray(self._repr_norms, dtype=np.float64) if self._repr_norms is not None else np.ones(len(self._repr_list), dtype=np.float64)
-        representative_list = np.asarray(self._repr_list,  dtype=_STATE_TYPE)
-        
-        # Create compact data structure
+        # Create CompactSymmetryData
         self._compact_data = CompactSymmetryData(
             repr_map            = compact_repr_map,
             phase_idx           = compact_phase_idx,
             phase_table         = phase_table,
-            normalization       = normalization,
+            normalization       = representative_norms,
             representative_list = representative_list
-        )
+        )        
         
         self.logger.info(
             f"Built compact symmetry map: {nh_full} states, "
             f"{len(representative_list)} representatives, "
             f"{len(phase_table)} distinct phases, "
             f"~{(nh_full * 5 + len(phase_table) * 16 + len(representative_list) * 16) / 1024:.1f} KB, "
-            f"in {time.time() - t0:.3f}s"
+            f"in {time.time() - t0:.3e}s"
         )
+                
+        return representative_list, representative_norms
+
+    def build_phases_map(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Build the phases mapping for the symmetry group.
+        """
+                
+        # Prepare phase table logic
+        # We pre-compute the phase index for each group element to avoid looking it up per state
+        # Phase = character(g) * intrinsic_phase (assumed 1.0)
+        group_chars         = np.array([self.get_character(g) for g in self.symmetry_group], dtype=np.complex128)
+        phase_tolerance     = _SYM_NORM_THRESHOLD
+        unique_phases       = []
+        g_to_pidx           = np.zeros(len(self.symmetry_group), dtype=_PHASE_IDX_DTYPE)
+        pidx_max            = np.iinfo(_PHASE_IDX_DTYPE).max
         
-        return self._compact_data
+        for g_idx, char in enumerate(group_chars):
+            # Find in unique phases
+            phase           = char
+            # phase           = np.conj(char)
+            found_idx       = None
+            for pidx, existing_phase in enumerate(unique_phases):
+                if abs(phase - existing_phase) < phase_tolerance:
+                    found_idx = pidx
+                    break
+            if found_idx is None:
+                if len(unique_phases) >= pidx_max:
+                    raise MemoryError(f"Exceeded maximum number of unique phases ({pidx_max}) for phase indexing.")
+                else:
+                    found_idx   = len(unique_phases)
+                    unique_phases.append(phase)
+            g_to_pidx[g_idx] = found_idx
+            
+        # Convert phase list to array
+        phase_table = np.array(unique_phases, dtype=np.complex128)
+        return g_to_pidx, phase_table
 
     # -----------------------------------------------------
     #! JIT-compatible Projector for NQS

@@ -75,13 +75,13 @@ Examples
 
 **Direct import for fermionic operators**::
 
-    >>> from QES.Algebra.Operator.operators_spinless_fermions import c_dag, c, n_op
+    >>> from QES.Algebra.Operator.operators_spinless_fermions import cdag, c, n_op
     >>> 
     >>> # Number operator
     >>> n = n_op(ns=10, sites=[0, 1, 2])
     >>> 
     >>> # Hopping: c†_i c_j
-    >>> hopping = c_dag(ns=10, sites=[0]) @ c(ns=10, sites=[1])
+    >>> hopping = cdag(ns=10, sites=[0]) @ c(ns=10, sites=[1])
 
 **Operator types**::
 
@@ -165,7 +165,7 @@ _OPERATOR_TYPES = {
         's1_quadrupole',                # Quadrupole operators (Q_zz, etc.)
     ],
     'operators_spinless_fermions': [
-        'c', 'c_dag',                   # Annihilation/creation
+        'c', 'cdag',                    # Annihilation/creation
         'n_op',                         # Number operator
         'hopping',                      # Hopping term
     ],

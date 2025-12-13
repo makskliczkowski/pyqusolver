@@ -2318,11 +2318,11 @@ class Operator(GeneralMatrix):
 ║    Correlation: fun(state, i, j)  ->  (states_array, values_array)           ║
 ║                                                                              ║
 ║  Factory Functions (from operator modules):                                  ║
-║    sig_x(ns=N, type_act='local')   - Pauli X operator                        ║
-║    sig_y(ns=N, type_act='local')   - Pauli Y operator                        ║
-║    sig_z(ns=N, type_act='local')   - Pauli Z operator                        ║
-║    c_dag(ns=N, type_act='local')   - Fermion creation operator               ║
-║    c_ann(ns=N, type_act='local')   - Fermion annihilation operator           ║
+║    sig_x(ns=N, type_act='local')  - Pauli X operator                        ║
+║    sig_y(ns=N, type_act='local')  - Pauli Y operator                        ║
+║    sig_z(ns=N, type_act='local')  - Pauli Z operator                        ║
+║    cdag(ns=N, type_act='local')   - Fermion creation operator               ║
+║    c(ns=N, type_act='local')      - Fermion annihilation operator           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """,
             'application': r"""

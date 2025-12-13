@@ -145,6 +145,11 @@ class MomentumSector(Enum):
     PI                  = 1
     GENERIC             = 2
 
+@dataclass(frozen=True)
+class SymmetryApplicationCodes:
+    """ Codes for symmetry application methods. """
+
+
 ####################################################################################################
 # Abstract base class for symmetry operations
 ####################################################################################################
@@ -419,6 +424,25 @@ class SymmetryOperator:
         """
         # Default: discrete symmetry with character = sector^count
         return sector ** count
+        
+    def get_site_permutation(self, ns: int) -> Optional[np.ndarray]:
+        """
+        Get the site permutation array for this symmetry operation.
+        
+        Returns an array `perm` such that site `i` maps to site `perm[i]`.
+        If the symmetry is not a spatial permutation (e.g., spin flip), returns None.
+        
+        Parameters
+        ----------
+        ns : int
+            Number of sites.
+            
+        Returns
+        -------
+        perm : np.ndarray or None
+            Permutation array of shape (ns,) or None.
+        """
+        return None
     
     # ------------------------------------------------
     # Compatibility checking

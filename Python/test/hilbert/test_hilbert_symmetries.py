@@ -12,41 +12,42 @@ Date    : October 2025
 #! IMPORTS
 ########################################################################
 
-import sys
-import os
-from pathlib import Path
+import  sys
+import  os
+from    pathlib import Path
 
 # Add QES to path
 qes_path = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(qes_path))
 
-import numba
-import numpy as np
-import pytest
-from typing import List, Tuple
-from math import comb
-from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import eigsh
+import  numba
+import  numpy as np
+import  pytest
+from    typing import List, Tuple
+from    math import comb
+from    scipy.sparse import csr_matrix
+from    scipy.sparse.linalg import eigsh
 
 # Import QES modules
 try:
-    from QES.Algebra.hilbert import HilbertSpace
-    from QES.Algebra.Operator.operator import SymmetryGenerators, LocalSpace, LocalSpaceTypes, OperatorTypeActing
-    from QES.Algebra.globals import GlobalSymmetry, get_u1_sym
-    from QES.general_python.lattices.square import SquareLattice
-    from QES.general_python.lattices.lattice import LatticeBC
-    from QES.general_python.common.binary import int2binstr, popcount
-    from QES.Algebra.Operator.operators_spin import (
-        sig_x, sig_y, sig_z, sig_p, sig_m, sig_pm, sig_mp, sig_k, sig_z_total,
-        sigma_x_int, sigma_z_int
-    )
-    from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix, get_symmetry_rotation_matrix
+    from QES.Algebra.hilbert                    import HilbertSpace
+    from QES.Algebra.Operator.operator          import SymmetryGenerators, OperatorTypeActing
+    from QES.Algebra.Hilbert.hilbert_local      import LocalSpace, LocalSpaceTypes
+    from QES.Algebra.globals                    import GlobalSymmetry, get_u1_sym
+    from QES.general_python.lattices.square     import SquareLattice
+    from QES.general_python.lattices.lattice    import LatticeBC
+    from QES.general_python.common.binary       import int2binstr, popcount
+    from QES.Algebra.Operator.operators_spin    import (
+                                                    sig_x, sig_y, sig_z, sig_p, sig_m, sig_pm, sig_mp, sig_k, sig_z_total,
+                                                    sigma_x_int, sigma_z_int, sig_xy, sig_xz
+                                                )
+    from QES.Algebra.Hilbert.matrix_builder     import build_operator_matrix, get_symmetry_rotation_matrix
 
     # Import Hamiltonians
-    from QES.Algebra.Model.Interacting.Spin.transverse_ising import TransverseFieldIsing
-    from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
-    from QES.general_python.lattices.lattice import Lattice
-    from QES.general_python.lattices.honeycomb import HoneycombLattice
+    from QES.Algebra.Model.Interacting.Spin.transverse_ising    import TransverseFieldIsing
+    from QES.Algebra.hamil_quadratic                            import QuadraticHamiltonian
+    from QES.general_python.lattices.lattice                    import Lattice
+    from QES.general_python.lattices.honeycomb                  import HoneycombLattice
 
 except ImportError as e:
     raise ImportError("Failed to import QES modules. Ensure QES package is correctly installed.") from e
@@ -56,8 +57,8 @@ except ImportError as e:
 ########################################################################
 
 # Test parameters
-DEFAULT_SYSTEM_SIZE     = 4
-LARGE_SYSTEM_SIZE       = 6
+DEFAULT_SYSTEM_SIZE     = 6
+LARGE_SYSTEM_SIZE       = 10
 DEFAULT_PARTICLE_NUMBER = 3
 VALIDATION_SAMPLE_SIZE  = 5
 
@@ -97,9 +98,9 @@ def print_test_section(title: str) -> None:
 @pytest.fixture(autouse=True)
 def print_test_info(request):
     """Print test information before and after each test."""
-    test_name = request.node.name
-    class_name = request.node.cls.__name__ if request.node.cls else "Global"
     
+    test_name   = request.node.name
+    class_name  = request.node.cls.__name__ if request.node.cls else "Global"
     print_test_header(f"{class_name}::{test_name}")
     
     def fin():
@@ -117,23 +118,21 @@ def print_section_header(title: str, char: str = "=", width: int = 60) -> None:
     print(f"{title}")
     print(f"{char * width}")
 
-
 def print_subsection(title: str) -> None:
     """Print a formatted subsection title."""
     print(f"\n{title}:")
-
 
 def create_1d_lattice(ns: int, bc: LatticeBC = LatticeBC.PBC) -> SquareLattice:
     """Create a 1D square lattice with the specified number of sites."""
     return SquareLattice(dim=1, lx=ns, ly=1, lz=1, bc=bc)
 
-
-def create_2d_lattice(lx: int, ly: int, bc: LatticeBC = LatticeBC.PBC) -> SquareLattice:
+def create_2d_lattice(lx: int, ly: int, bc: LatticeBC = LatticeBC.PBC, typek: str = 'square') -> SquareLattice:
     """Create a 2D square lattice with the specified dimensions."""
+    if typek == 'honeycomb':
+        return HoneycombLattice(lx=lx, ly=ly, bc=bc)
     return SquareLattice(dim=2, lx=lx, ly=ly, lz=1, bc=bc)
 
-
-def print_state(state: int, ns: int, label: str = "State") -> None:
+def print_state(state: int, ns: int, label: str = "State")              -> None:
     """
     Pretty print a quantum state with binary representation.
     
@@ -145,7 +144,6 @@ def print_state(state: int, ns: int, label: str = "State") -> None:
     binary          = int2binstr(state, ns)
     particle_num    = popcount(state)
     print(f"{INDENT}{label}: {state:4d} = |{binary}>, N = {particle_num}")
-
 
 def print_hilbert_info(hilbert: HilbertSpace, title: str = "") -> None:
     """
@@ -167,13 +165,11 @@ def print_hilbert_info(hilbert: HilbertSpace, title: str = "") -> None:
     reduction_factor = hilbert.Nhfull / hilbert.Nh if hilbert.Nh > 0 else 0
     print(f"{INDENT}Reduction factor: {reduction_factor:.2f}x")
 
-
 ########################################################################
 #! HELPER FUNCTIONS - VALIDATION
 ########################################################################
 
-def validate_representative(hilbert: HilbertSpace, state: int, 
-                           verbose: bool = False) -> bool:
+def validate_representative(hilbert: HilbertSpace, state: int, verbose: bool = False) -> bool:
     """
     Validate that a state is correctly identified as a representative.
     
@@ -187,23 +183,24 @@ def validate_representative(hilbert: HilbertSpace, state: int,
     Returns:
         True if validation passes, False otherwise
     """
-    rep, _ = hilbert.find_repr(state)
+    
+    # Find representative using Hilbert method
+    rep, _      = hilbert.find_repr(state)
     
     # Find minimum state in orbit by applying all symmetry operations
-    min_state = state
+    min_state   = state
     for g in hilbert.sym_group:
         new_state, _ = g(state)
         if new_state < min_state:
             min_state = new_state
     
-    is_valid = (state == min_state) == (state == rep)
+    is_valid    = (state == min_state) == (state == rep)
     
     if not is_valid and verbose:
         print(f"{INDENT}(bad) Representative validation failed for state {state}")
         print(f"{INDENT}   Found rep: {rep}, Actual min: {min_state}")
     
     return is_valid
-
 
 def validate_global_symmetries(hilbert: HilbertSpace, state: int) -> Tuple[bool, str]:
     """
@@ -225,7 +222,6 @@ def validate_global_symmetries(hilbert: HilbertSpace, state: int) -> Tuple[bool,
     
     return True, ""
 
-
 def validate_mapping(hilbert: HilbertSpace, verbose: bool = False) -> bool:
     """
     Validate the entire mapping by checking:
@@ -245,31 +241,28 @@ def validate_mapping(hilbert: HilbertSpace, verbose: bool = False) -> bool:
         print(f"{INDENT}(warning)️  No mapping to validate (identity mapping)")
         return True
     
-    print_section_header(f"Validating mapping: {len(hilbert.mapping)} states", 
-                        char="=", width=60)
-    
-    errors = []
+    print_section_header(f"Validating mapping: {len(hilbert.mapping)} states", char="=", width=60)
     
     # Validate each state in mapping
+    errors = []
     for idx, state in enumerate(hilbert.mapping):
-        state_int = int(state)
+        state_int       = int(state)
+        rep, _          = hilbert.find_repr(state_int)
         
-        # Check 1: State is its own representative
-        rep, _ = hilbert.find_repr(state_int)
+        # State is its own representative
         if rep != state:
             errors.append(f"State {state} in mapping but rep={rep}")
             if verbose:
-                print(f"{INDENT}(bad) [{idx}] {int2binstr(state, hilbert.Ns)} "
-                      f"is not its own representative")
+                print(f"{INDENT}(bad) [{idx}] {int2binstr(state, hilbert.Ns)} is not its own representative")
         
-        # Check 2: State satisfies global symmetries
+        # State satisfies global symmetries
         is_valid, err_msg = validate_global_symmetries(hilbert, state_int)
         if not is_valid:
             errors.append(f"State {state} {err_msg}")
             if verbose:
                 print(f"{INDENT}(bad) [{idx}] {int2binstr(state, hilbert.Ns)} {err_msg}")
         
-        # Check 3: Normalization is positive
+        # Normalization is positive
         norm = hilbert.norm(idx)
         if norm <= 0:
             errors.append(f"State {state} has non-positive norm {norm}")
@@ -290,7 +283,6 @@ def validate_mapping(hilbert: HilbertSpace, verbose: bool = False) -> bool:
               f"All {len(hilbert.mapping)} states are valid representatives")
         return True
 
-
 ########################################################################
 #! TEST CLASSES
 ########################################################################
@@ -304,25 +296,29 @@ class TestOperatorCatalog:
     retrieved from the catalog and work correctly.
     """
 
+    # ----------------------------------------------------------------------
+    #! LOCAL HILBERT SPACE OPERATOR TESTS
+    # ----------------------------------------------------------------------
+
     def test_spin_catalog_keys(self):
         """Test that spin operators are properly registered in the catalog."""
-        space = LocalSpace.default_spin_half()
-        keys = space.list_operator_keys()
-        required = {"sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus"}
+        space       = LocalSpace.default_spin_half()
+        keys        = space.list_operator_keys()
+        required    = {"sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus"}
         for key in required:
             assert key in keys, f"Missing operator: {key}"
 
         # Test that sigma_plus has the correct tags
-        sigma_plus = space.get_op("sigma_plus")
+        sigma_plus  = space.get_op("sigma_plus")
         assert "raising" in sigma_plus.tags
 
     def test_fermion_creation_sign(self):
         """Test fermion creation operator sign convention."""
-        space = LocalSpace.default_fermion_spinless()
-        creation = space.get_op("c_dag").kernels
+        space               = LocalSpace.default_fermion_spinless()
+        creation            = space.get_op("cdag").kernels
 
         # Initial state 0b100, create on site 1 (middle)
-        out_state, coeff = creation.fun_int(0b100, 3, [1])
+        out_state, coeff    = creation.fun_int(0b100, 3, [1])
         assert out_state[0] == 0b110
         assert coeff[0] == -1.0
 
@@ -330,15 +326,20 @@ class TestOperatorCatalog:
         out_state, coeff = creation.fun_int(0b100, 3, [0])
         assert coeff[0] == 0.0
 
+    # ----------------------------------------------------------------------
+    #! SPIN OPERATOR FACTORY TESTS
+    # ----------------------------------------------------------------------
+
     def test_hilbert_build_local_operator(self):
         """Test building local operators through Hilbert space."""
-        space = LocalSpace.default_fermion_spinless()
-        hilbert = HilbertSpace(ns=3, local_space=space, backend="default")
-        op = hilbert.build_local_operator("c_dag")
-        assert op.type_acting == OperatorTypeActing.Local
+        ns      = DEFAULT_SYSTEM_SIZE
+        space   = LocalSpace.default_fermion_spinless()
+        hilbert = HilbertSpace(ns=ns, local_space=space, backend="default")
+        op      = hilbert.operators.cdag(ns=ns, sites=[1])
+        assert  op.type_acting == OperatorTypeActing.Global # Global operator as we provided site...
 
-        new_state, amplitude = op(0b100, 1)
-        assert new_state[0] == 0b110
+        new_state, amplitude = op.int(0b100000) # op is now callable with state only, sites fixed
+        assert new_state[0] == 0b110000
         assert amplitude[0] == -1.0
 
     def test_spin_operator_factories(self):
@@ -367,14 +368,12 @@ class TestOperatorCatalog:
 
     def test_spin_operator_matrix_properties(self):
         """Test that spin operators have correct matrix properties."""
-        ns = 4
-        nh = 2**ns
+        ns      = 4
+        nh      = 2**ns
 
         # Test sigma_z (diagonal operator)
-        sz_op = sig_z(ns=ns, sites=[0])
-        def sz_func(state, ns):
-            return sz_op._fun(state)
-        sz_mat = build_operator_matrix(sz_func, nh=nh, ns=ns, sparse=False)
+        sz_op   = sig_z(ns=ns, sites=[0])
+        sz_mat  = build_operator_matrix(sz_op.int, nh=nh, ns=ns, sparse=False)
 
         # Should be Hermitian
         assert np.allclose(sz_mat, sz_mat.T.conj())
@@ -383,23 +382,14 @@ class TestOperatorCatalog:
         assert np.allclose(sz_mat, np.diag(np.diag(sz_mat)))
 
         # Test sigma_x (off-diagonal operator)
-        sx_op = sig_x(ns=ns, sites=[0])
-        def sx_func(state, ns):
-            return sx_op._fun(state)
-        sx_mat = build_operator_matrix(sx_func, nh=nh, ns=ns, sparse=False)
+        sx_op   = sig_x(ns=ns, sites=[0])
+        sx_mat  = build_operator_matrix(sx_op.int, nh=nh, ns=ns, sparse=False)
 
         # Should be Hermitian
         assert np.allclose(sx_mat, sx_mat.T.conj())
 
         # Should flip bits (non-diagonal)
         assert not np.allclose(sx_mat, np.diag(np.diag(sx_mat)))
-
-    def test_spin_operator_commutators(self):
-        """Test basic commutator relations for spin operators."""
-        # TODO: Fix sigma_y operator for single sites - currently uses real version
-        # which gives zero matrices. For proper Pauli algebra, need complex coefficients.
-        pytest.skip("Sigma_y operator implementation issue for single sites")
-
 
 class TestHilbertSpaceBasic:
     """
@@ -423,7 +413,7 @@ class TestHilbertSpaceBasic:
         - No mapping is generated (identity mapping)
         - The space is not marked as modified by symmetries
         """
-        ns = DEFAULT_SYSTEM_SIZE
+        ns      = DEFAULT_SYSTEM_SIZE
         hilbert = HilbertSpace(ns=ns, sym_gen=None, global_syms=None)
         
         assert hilbert.Ns == ns
@@ -442,9 +432,9 @@ class TestHilbertSpaceBasic:
         the Hilbert space correctly recognizes the local dimension and computes
         the total space size accordingly.
         """
-        ns = DEFAULT_SYSTEM_SIZE
+        ns          = DEFAULT_SYSTEM_SIZE
         local_space = LocalSpace.default()  # spin-1/2
-        hilbert = HilbertSpace(ns=ns, local_space=local_space)
+        hilbert     = HilbertSpace(ns=ns, local_space=local_space)
         
         assert hilbert.local == 2
         assert hilbert.Nhfull == 2**ns
@@ -453,7 +443,6 @@ class TestHilbertSpaceBasic:
         print(f"{INDENT}Local dimension: {hilbert.local}")
         print(f"{INDENT}Full Hilbert space: {hilbert.Nhfull}")
         print(f"{INDENT}(ok) Test passed")
-
 
 class TestTranslationSymmetry:
     """
@@ -562,10 +551,9 @@ class TestParitySymmetry:
         when studying antiferromagnetic order. States are divided into even
         and odd parity sectors.
         """
-        ns = DEFAULT_SYSTEM_SIZE
+        ns      = DEFAULT_SYSTEM_SIZE
         lattice = create_1d_lattice(ns)
-        sym_gen = [(SymmetryGenerators.ParityZ, 1)]  # Even parity sector
-        
+        sym_gen = [(SymmetryGenerators.ParityZ, 1)] # Even parity sector
         hilbert = HilbertSpace(lattice=lattice, sym_gen=sym_gen, gen_mapping=True)
         
         print_hilbert_info(hilbert, "Parity Z symmetry (even sector)")
@@ -591,12 +579,6 @@ class TestGlobalSymmetry:
     def test_u1_symmetry(self):
         """
         Test U(1) particle number conservation symmetry.
-        
-        U(1) symmetry enforces conservation of total particle number N.
-        This is one of the most important symmetries in many-body physics,
-        particularly for fermionic and bosonic systems. The Hilbert space
-        is restricted to states with exactly N particles, reducing the
-        dimension from 2^Ns to C(Ns, N) where C is the binomial coefficient.
         """
         ns              = LARGE_SYSTEM_SIZE
         n_particles     = DEFAULT_PARTICLE_NUMBER
@@ -617,10 +599,10 @@ class TestGlobalSymmetry:
         print(f"{INDENT}Expected (binomial): {expected_dim}")
         
         # Generate and validate full map
-        full_map        = hilbert.get_full_map()
+        full_map        = hilbert.mapping
         
         # Verify all valid states have correct particle number
-        valid_states    = [i for i, idx in enumerate(full_map) if idx != -1]
+        valid_states    = [idx for i, idx in enumerate(full_map) if idx != -1]
         for state in valid_states:
             assert popcount(state) == n_particles
         
@@ -635,27 +617,26 @@ class TestGlobalSymmetry:
         particle number sector, then translation symmetry further reduces by
         identifying momentum sectors within that particle number subspace.
         """
-        ns = LARGE_SYSTEM_SIZE
+        ns          = LARGE_SYSTEM_SIZE
         n_particles = DEFAULT_PARTICLE_NUMBER
-        k = 0
-        lattice = create_1d_lattice(ns)
+        k           = 0
+        lattice     = create_1d_lattice(ns)
         
-        u1_sym = get_u1_sym(lattice, n_particles)
+        u1_sym      = get_u1_sym(lattice, n_particles)
         global_syms = [u1_sym]
-        sym_gen = [(SymmetryGenerators.Translation_x, k)]
+        sym_gen     = [(SymmetryGenerators.Translation_x, k)]
         
-        hilbert = HilbertSpace(
-            lattice=lattice,
-            global_syms=global_syms,
-            sym_gen=sym_gen,
-            gen_mapping=True
-        )
+        hilbert     = HilbertSpace(
+                        lattice     =   lattice,
+                        global_syms =   global_syms,
+                        sym_gen     =   sym_gen,
+                        gen_mapping =   True
+                    )
         
         print_hilbert_info(hilbert, f"U(1) + Translation (N={n_particles}, k={k})")
         
         assert validate_mapping(hilbert)
         print(f"{INDENT}(ok) Test passed")
-
 
 ########################################################################
 #! TEST CLASSES - COMBINED SYMMETRIES
@@ -683,7 +664,7 @@ class TestCombinedSymmetries:
         reduction than either symmetry alone, demonstrating the multiplicative
         effect of compatible symmetries.
         """
-        ns = DEFAULT_SYSTEM_SIZE
+        ns      = DEFAULT_SYSTEM_SIZE
         lattice = create_1d_lattice(ns)
         sym_gen = [
             (SymmetryGenerators.Translation_x, 0),
@@ -835,22 +816,22 @@ class TestMatrixConstruction:
         Uses the existing TransverseFieldIsing class to construct the Hamiltonian
         and verifies its basic properties.
         """
-        ns = 4
-        J, h = 1.0, 0.5
+        ns          = 4
+        J, h        = 1.0, 0.5
 
         # Create lattice
-        lattice = create_1d_lattice(ns)
+        lattice     = create_1d_lattice(ns)
 
         # Create Hilbert space
-        hilbert = HilbertSpace(lattice=lattice)
+        hilbert     = HilbertSpace(lattice=lattice)
 
         # Create Hamiltonian using existing class
         hamiltonian = TransverseFieldIsing(
-            lattice=lattice,
-            j=J,
-            hx=h,
-            hz=0.0  # No perpendicular field
-        )
+                        hilbert_space   =   hilbert,
+                        j               =   J,      # Coupling strength
+                        hx              =   h,      # Transverse field
+                        hz              =   0.0     # No perpendicular field
+                    )
 
         print_subsection(f"TransverseFieldIsing Hamiltonian (ns={ns})")
 

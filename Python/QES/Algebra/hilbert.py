@@ -125,8 +125,8 @@ class HilbertSpace(BaseHilbertSpace):
                 # local space properties - for many body
                 sym_gen         : Union[dict, None]                                         = None,     # symmetry generators (e.g., translation, parity)
                 global_syms     : Union[List[GlobalSymmetry], None]                         = None,     # global symmetries (e.g., U(1) particle number)
-                gen_mapping     : bool                                                      = False,
-                generate_basis  : bool                                                      = True,     # <--- New arg
+                gen_mapping     : bool                                                      = True,     # whether to generate the mapping immediately (or on-demand)
+                gen_basis       : bool                                                      = True,     # whether to generate the full basis of representatives (or just generators)
                 local_space     : Optional[Union[LocalSpace, str]]                          = None,
                 # general parameters
                 state_type      : StateTypes                                                = StateTypes.INTEGER,
@@ -185,27 +185,27 @@ class HilbertSpace(BaseHilbertSpace):
                 **Examples**:
                 
                 1. **Translation Symmetry** (String-based):
-                    ```python
-                    # Define momentum sector k=(0,0) for a 2D lattice
-                    sym_gen = {'translation': {'kx': 0, 'ky': 0}}
-                    
-                    # Or simply for 1D
-                    sym_gen = {'translation': 0} 
-                    ```
+                ```python
+                # Define momentum sector k=(0,0) for a 2D lattice
+                sym_gen = {'translation': {'kx': 0, 'ky': 0}}
+                
+                # Or simply for 1D
+                sym_gen = {'translation': 0} 
+                ```
                 
                 2. **Parity & Reflection** (String-based):
-                    ```python
-                    sym_gen = {
-                        'parity': 1,        # Z-Parity = +1
-                        'reflection': -1    # Spatial Reflection = -1
-                    }
-                    ```
+                ```python
+                sym_gen = {
+                    'parity': 1,        # Z-Parity = +1
+                    'reflection': -1    # Spatial Reflection = -1
+                }
+                ```
                 
                 3. **Explicit Object Instantiation**:
-                    ```python
-                    from QES.Algebra.Symmetries.translation import TranslationSymmetry
-                    sym_gen = [TranslationSymmetry(kx=0)]
-                    ```
+                ```python
+                from QES.Algebra.Symmetries.translation import TranslationSymmetry
+                sym_gen = [TranslationSymmetry(kx=0)]
+                ```
                 
                 Supported string keys: 'translation', 'parity', 'reflection', 'inversion', 
                 'time_reversal', 'fermion_parity', 'particle_hole'.
@@ -219,7 +219,7 @@ class HilbertSpace(BaseHilbertSpace):
                 If False, mapping is generated on-demand. Default is False.
                 Set to True for immediate symmetry reduction and representative state mapping.
             
-            generate_basis (bool, optional):
+            gen_basis (bool, optional):
                 If False, skips generating the full reduced basis and mapping. 
                 Useful for large systems where only symmetry generators are needed. Default is True.
                 
@@ -275,7 +275,7 @@ class HilbertSpace(BaseHilbertSpace):
         #! infer the system sizes (sets self._ns, self._lattice, self._nhfull)
         self._check_ns_infer(lattice=lattice, ns=ns, nh=nh)
 
-        #! BASIS REPRESENTATION TRACKING
+        #! Basis representation inference
         self._infer_and_set_default_basis(explicit_basis=basis)
         
         #! Nh: Effective dimension of the *current* representation
@@ -296,26 +296,18 @@ class HilbertSpace(BaseHilbertSpace):
 
         if self._is_many_body:
             # Normalize symmetry generators (supports dict/list/string formats)
-            if gen_mapping:     self._log("Explicitly requested immediate mapping generation.", log='debug', lvl=2)
+            if gen_mapping:     self._log("Explicitly requested immediate mapping generation.", log='info', lvl=3, color='blue')
             normalized_sym_gen  = normalize_symmetry_generators(sym_gen)
+            self._init_representatives(normalized_sym_gen, gen_mapping=gen_mapping, gen_basis=gen_basis) # gen_mapping True here enables reprmap
             
-            self._init_representatives(normalized_sym_gen, gen_mapping=gen_mapping, generate_basis=generate_basis) # gen_mapping True here enables reprmap
             # Set symmetry group from container
             if self._sym_container is not None:
                 self._sym_group = list(self._sym_container.symmetry_group)
+                
         elif self._is_quadratic:
             self._log("Quadratic mode: Skipping symmetry mapping generation.", log='debug', lvl=2)
             self.representative_list    = None
             self.representative_norms   = None
-            
-            # Setup sym container if generators provided
-            if sym_gen:
-                # Normalize symmetry generators (supports dict/list/string formats)
-                normalized_sym_gen = normalize_symmetry_generators(sym_gen)
-                
-                self._init_sym_container(normalized_sym_gen)
-                if self._sym_container is not None:
-                    self._sym_group = list(self._sym_container.symmetry_group)
 
         # Ensure symmetry group always has at least the identity
         if not self._sym_group or len(self._sym_group) == 0:
@@ -1314,6 +1306,7 @@ ACCESS STATES
                 from QES.Algebra.Symmetries.symmetry_container import SymmetryContainer
             except ImportError as e:
                 raise RuntimeError("Failed to import SymmetryContainer. Ensure QES.Algebra.Symmetries.symmetry_container is available.") from e
+            
             self._sym_basic_info    = HilbertSpace.SymBasicInfo()   # basic symmetry info container
             self._sym_container     = SymmetryContainer(
                                         ns          = self._ns,
@@ -1324,11 +1317,11 @@ ACCESS STATES
             return
         
         # Prepare generator specs
-        generator_specs = gen.copy() if gen is not None else []
+        generator_specs     = gen.copy() if gen is not None else []
         
         # Create and initialize the container
         # The factory will handle all compatibility checking and filtering
-        # Note: Compact symmetry data is built later in _init_representatives after representatives are generated
+        #! Note: Compact symmetry data is built later in _init_representatives after representatives are generated
         self._sym_container = create_symmetry_container_from_specs(
                                 ns              = self._ns,
                                 generator_specs = generator_specs,
@@ -1339,32 +1332,35 @@ ACCESS STATES
                                 build_group     = True
                             )
                             
-        
         # Log symmetry info
-        self._sym_basic_info.num_operators    = len(self._sym_container.symmetry_group)
-        self._sym_basic_info.num_gens   = len(self._sym_container.generators)
+        self._sym_basic_info.num_operators  = len(self._sym_container.symmetry_group)
+        self._sym_basic_info.num_gens       = len(self._sym_container.generators)
         self._log(f"SymmetryContainer initialized: {self._sym_basic_info.num_gens} generators -> {self._sym_basic_info.num_operators} group elements", lvl=1, color='green')
 
         # Compute and cache whether any symmetry eigenvalues/phases are complex.
-        # Conservative: on unexpected errors assume True to avoid dropping
-        # complex information.
         try:
             # Prefer the canonical group stored on the SymmetryContainer when present
             has_cpx     = False
             group       = getattr(self._sym_container, 'symmetry_group', None) or self._sym_group
+            container   = self._sym_container
+            
             if group:
-                for op in group:
-                    eig = getattr(op, 'eigval', None)
-                    if eig is None:
-                        continue
-                    try:
-                        if not np.isreal(eig):
+                # Small loop over group elements to check for complex characters
+                for elem in group:
+                    # elem is a GroupElement (tuple of operators)
+                    # We can use the container to get the character for this element
+                    if container is not None:
+                        char = container.get_character(elem)
+                        if isinstance(char, complex) and abs(char.imag) > 1e-14:
                             has_cpx = True
                             break
-                    except Exception:
-                        if isinstance(eig, complex) and getattr(eig, 'imag', 0) != 0:
+                        if not np.isreal(char):
                             has_cpx = True
                             break
+                    else:
+                        # Fallback for legacy behavior if container is somehow missing but group exists
+                        # (unlikely given logic above)
+                        pass
 
             self._has_complex_symmetries = bool(has_cpx)
         except Exception:
@@ -1373,7 +1369,7 @@ ACCESS STATES
     
     # --------------------------------------------------------------------------------------------------
     
-    def _init_representatives(self, gen : list, gen_mapping : bool = False, generate_basis : bool = True):
+    def _init_representatives(self, gen : list, gen_mapping : bool = False, gen_basis : bool = True):
         """
         Initialize the representatives list and norms based on the provided symmetry generators.
 
@@ -1412,262 +1408,43 @@ ACCESS STATES
             return
         
         # Use SymmetryContainer for symmetry group construction
-        t0 = time.time()
         self._init_sym_container(gen)
         
-        if not generate_basis:
+        # If basis generation is disabled (e.g., NQS mode), skip representative generation
+        if not gen_basis:
             self._log("Skipping basis generation (NQS mode).", lvl=1, color='green', log='debug')
             self._nh                    = self._nhfull
             self.representative_list    = None
             self.representative_norms   = None
             return
 
-        if gen is not None and len(gen) > 0:
-            self._log("Generating the mapping of the states...", lvl = 1, color = 'green')
 
-        # generate the mapping of the states
-        if self._state_type == int:
-            self._generate_repr_int(gen_mapping)
-        else:
-            self._generate_repr_base(gen_mapping)
-
-        if gen is not None and len(gen) > 0 or (self.representative_list is not None and len(self.representative_list) > 0):
-            self.representative_list    = self._backend.array(self.representative_list, dtype   = self._backend.int64)
-            self.representative_norms   = self._backend.array(self.representative_norms, dtype  = self._dtype)
-            self._log(f"Generated the mapping of the states in {time.time() - t0:.2f} seconds.", lvl = 2, color = 'green')
-        else:
-            self._log("No mapping generated.", lvl = 1, color = 'green', log = 'debug')
-
-        self._sym_container.set_repr_info(self.representative_list, self.representative_norms)
-        
-        # Always generate the full mapping and compact structure when symmetries are present
-        # This enables O(1) JIT-friendly lookups for matrix element computation
-        has_symmetries = (self.representative_list is not None and len(self.representative_list) > 0)
-        
-        if has_symmetries:
-            # Build full mapping arrays (repr_idx, repr_phase) if not already done
-            if not hasattr(self, 'full_to_representative_idx') or self.full_to_representative_idx is None:
-                self._repr_kernel_int_repr()
-            
-            # Build the compact symmetry data structure for O(1) JIT lookups
-            # This is the PRIMARY and ONLY storage for symmetry mapping data
-            # Memory efficient: ~5 bytes per state (uint32 + uint8) vs ~24+ bytes
-            self._sym_container.build_compact_map(
-                self._nhfull,
-                self.full_to_representative_idx,
-                self.full_to_representative_phase
-            )
-            
-            # Clear the temporary full arrays to save memory - data is now in compact_data
-            # The compact_data contains all needed information for O(1) lookups
-            del self.full_to_representative_idx
-            del self.full_to_representative_phase
-            self.full_to_representative_idx     = None
-            self.full_to_representative_phase   = None
-
-
-    # --------------------------------------------------------------------------------------------------
-    
-    def _repr_kernel_int(self, start: int, stop: int, t: int):
-        """
-        For a given range of states in the full Hilbert space, find those states
-        that are representatives (i.e. the smallest state under symmetry operations)
-        and record their normalization.
-        
-        This is the core algorithm for building the symmetry-reduced Hilbert space:
-        1. Check if state satisfies all global symmetries (e.g., particle number conservation)
-        2. Find the representative state by applying all symmetry operations
-        3. If state is its own representative, calculate normalization and add to mapping
-        
-        The normalization factor accounts for the size of the symmetry orbit and ensures
-        proper overlap calculations in the reduced basis.
-        
-        Parameters:
-        -----------
-            start (int): 
-                The starting index of the range (inclusive).
-            stop (int): 
-                The stopping index of the range (exclusive).
-            t (int): 
-                The thread number (for parallel execution).
-
-        Returns:
-            tuple: (map_threaded, norm_threaded)
-                - map_threaded: 
-                    List of representative states in this range
-                - norm_threaded: 
-                    Corresponding normalization factors
-        """
-        map_threaded    = []
-        norm_threaded   = []
-        
-        for j in range(start, stop):
-            if self._state_filter is not None and not self._state_filter(j):
-                continue
-            
-            # Check all global symmetries (e.g., U(1) particle number)
-            global_checker = True
-            if self._global_syms:
-                for g in self._global_syms:
-                    global_checker = global_checker and g(j)
-                    
-            # if the global symmetries are not satisfied, skip the state
-            if not global_checker:
-                continue
-            
-            # Find the representative of state j under local symmetries
-            rep, _ = self._sym_container._find_representative(j)
-            
-            # Only add the state if it is its own representative
-            # (this ensures each symmetry sector is represented once)
-            if rep == j:
-                if self._state_filter is not None and not self._state_filter(rep):
-                    continue
-                
-                # Calculate normalization using character-based projection
-                # This ensures proper momentum sector filtering
-                n = self._sym_container.compute_normalization(j)
-                if abs(n) > 1e-7:  # Only add if normalization is non-zero
-                    map_threaded.append(j)
-                    norm_threaded.append(n)
-                    
-        return map_threaded, norm_threaded
-    
-    def _repr_kernel_int_repr(self):
-        """
-        For all states in the full Hilbert space, determine the representative.
-        For each state j, if global symmetries are not conserved, record a bad mapping.
-        Otherwise, if j is already in the mapping, record trivial normalization.
-        Otherwise, find the representative and record its normalization.
-        
-        This function is created whenever one wants to create a full map for the Hilbert space 
-        and store it in the mapping.
-        """
+        # Generate basis using the new memory-efficient method
         try:
-            from QES.general_python.common.binary import bin_search
-        except ImportError as e:
-            raise RuntimeError("Failed to import binary search utilities. Ensure QES.general_python.common.binary is available.") from e
-        
-        # Build jittable repr_idx and repr_phase arrays without creating
-        # the legacy object-based `reprmap`. This is memory-efficient and
-        # sufficient for numba builders.
-        repr_idx_arr    = np.full(self._nhfull, -1, dtype=np.int64)
-        repr_phase_arr  = np.zeros(self._nhfull, dtype=np.complex128)
-        mapping_size    = len(self.representative_list) if self.representative_list is not None else 0
+            # Check for integer overflow on huge systems
+            if self._nhfull > np.iinfo(np.int64).max:
+                self._log("System too large for full basis enumeration.", lvl=0, color='red')
+                raise OverflowError("Hilbert space dimension exceeds int64 limits.")
 
-        # for j in numba.prange(self._nhfull):
-        # Use regular range instead of numba.prange to allow Python function calls
-        #!TODO: Consider jitting this function if performance is critical
-        for j in range(self._nhfull):
-            if self._state_filter is not None and not self._state_filter(j):
-                continue
-
-            # Check global symmetries
-            if self._global_syms:
-                ok = True
-                for g in self._global_syms:
-                    ok = ok and g(j)
-                if not ok:
-                    continue
-
-            # If mapping explicitly lists this state, record trivial phase
-            if mapping_size > 0:
-                idx = bin_search.binary_search_numpy(self.representative_list, 0, mapping_size - 1, j)
-                if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
-                    repr_idx_arr[j]     = int(idx)
-                    repr_phase_arr[j]   = 1+0j
-                    continue
-
-            # Otherwise, find representative and see if its representative is present
-            rep, sym_eig = self.find_sym_repr(j)
-            if mapping_size > 0:
-                idx = bin_search.binary_search_numpy(self.representative_list, 0, mapping_size - 1, rep)
-                if idx != bin_search._BAD_BINARY_SEARCH_STATE and idx < mapping_size:
-                    if self._state_filter is not None and not self._state_filter(rep):
-                        continue
-                    repr_phase_arr[j]   = complex(sym_eig)
-                    repr_idx_arr[j]     = int(idx)
-
-        # Expose jittable arrays for builders (created only on demand).
-        # Use distinct internal names to avoid confusion with the compact
-        # `self.representative_list` which contains only representatives.
-        self.full_to_representative_idx     = repr_idx_arr
-        self.full_to_representative_phase   = repr_phase_arr
-    
-    # --------------------------------------------------------------------------------------------------
-    
-    def _generate_repr_int(self, gen_mapping : bool = False):
-        """
-        Generate the mapping of the states for the Hilbert space.
-        
-        Parameters:
-        -----------
-            gen_mapping (bool): A flag to generate the mapping of the representatives to the original states.
-        """
-        
-        # no symmetries - no mapping
-        if len(self._sym_container.generators) == 0 and (self._global_syms is None or len(self._global_syms) == 0):
-            self._nh = self._nhfull
-            return
-        
-        # Use self.threadNum if set; otherwise default to 1.
-        fuller = self._nhfull
-        if getattr(self, '_threadnum', 1) > 1:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            # This single call handles:
+            # 1. Finding representatives (Two-pass to save memory)
+            # 2. Filtering (global symmetries)
+            # 3. Sorting and normalization
+            # 4. Building compact symmetry map (uint32/uint8)
+            self.representative_list, self.representative_norms = self._sym_container.generate_symmetric_basis(
+                                                                    nh_full      = int(self._nhfull),
+                                                                    global_syms  = self._global_syms,
+                                                                    state_filter = self._state_filter,
+                                                                    return_map   = gen_mapping
+                                                                )
             
-            results: List[Tuple[List[int], List[float]]] = []
-            with ThreadPoolExecutor(max_workers=self._threadnum) as executor:
-                futures = []
-                for t in range(self._threadnum):
-                    start   = int(fuller * t / self._threadnum)
-                    stop    = fuller if (t + 1) == self._threadnum else int(fuller * (t + 1) / self._threadnum)
-                    futures.append(executor.submit(self._repr_kernel_int, start, stop, t))
-                
-                # Collect results as they complete
-                for future in as_completed(futures):
-                    results.append(future.result())
-                
-            combined = []
-            for mapping_chunk, norm_chunk in results:
-                combined.extend(zip(mapping_chunk, norm_chunk))
-                
-            # Sort combined results by state index to ensure consistent ordering
-            combined.sort(key=lambda item: item[0])
-            self.representative_list  = [state for state, _ in combined]
-            self.representative_norms = [norm for _, norm in combined]
-            
-            # Clear temporary results to free memory
-            results.clear()
-            combined.clear()
-        else:
-            self.representative_list, self.representative_norms = self._repr_kernel_int(0, fuller, 0)
+            #! Set the new Hilbert space size
+            self._nh = len(self.representative_list)
+            self._sym_container.set_repr_info(self.representative_list, self.representative_norms)
         
-        #! Set the new Hilbert space size
-        self._nh = len(self.representative_list)
-        
-        # Set repr_info BEFORE generating full mapping so find_representative works correctly
-        # Convert to backend arrays first if needed
-        if isinstance(self.representative_list, list):
-            repr_list_array     = self._backend.array(self.representative_list, dtype=self._backend.int64)
-            repr_norms_array    = self._backend.array(self.representative_norms, dtype=self._dtype)
-        else:
-            repr_list_array     = self.representative_list
-            repr_norms_array    = self.representative_norms
-        
-        self._sym_container.set_repr_info(repr_list_array, repr_norms_array)
-        
-        #! Generate full mapping if requested!
-        if gen_mapping:
-            self._repr_kernel_int_repr()
-
-    def _generate_repr_base(self, gen_mapping : bool = False):
-        """
-        Generate the mapping of the states for the Hilbert space.
-        
-        Args:
-            gen_mapping (bool): A flag to generate the mapping of the representatives to the original states.
-        """
-        pass
+        except Exception as e:
+            self._log(f"Failed to generate symmetric basis: {e}", lvl=0, color='red')
+            raise e
     
     ####################################################################################################
     #! BASIS REPRESENTATION MANAGEMENT
@@ -1693,7 +1470,10 @@ ACCESS STATES
         
         This is called during initialization to establish the natural basis.
         """
-        from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        try:
+            from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
+        except ImportError as e:
+            raise RuntimeError("Failed to import HilbertBasisType.") from e
         
         if explicit_basis is not None:
             # Use provided basis
@@ -1726,10 +1506,6 @@ ACCESS STATES
         self._basis_type = default_basis
         self._log(f"HilbertSpace default basis inferred: {default_basis} ({basis_reason})", lvl=2, color="cyan", log='debug')
     
-    ####################################################################################################
-    #! Getters and checkers for the Hilbert space
-    ####################################################################################################
-        
     # --------------------------------------------------------------------------------------------------
     #! FLUX
     # --------------------------------------------------------------------------------------------------
@@ -1931,13 +1707,13 @@ ACCESS STATES
         --------
         >>> # For spin systems
         >>> hilbert         = HilbertSpace(ns=4, local_space='spin-1/2')
-        >>> sig_x           = hilbert.operators.sig_x(sites=[0, 1])
+        >>> sig_x           = hilbert.operators.sig_x(sites=[0, 1], ns=ns)
         >>> sig_x_matrix    = sig_x.matrix
 
         >>> # For fermion systems
         >>> hilbert         = HilbertSpace(ns=4, local_space='fermion')
-        >>> c_dag           = hilbert.operators.c_dag(sites=[0])
-        >>> c_dag_matrix    = c_dag.matrix
+        >>> cdag            = hilbert.operators.cdag(ns=ns, sites=[0])
+        >>> cdag_matrix     = cdag.matrix
         
         >>> # Get help on available operators
         >>> hilbert.operators.help()
@@ -1983,18 +1759,10 @@ ACCESS STATES
     #! Full Hilbert space generation
     ####################################################################################
     
-    def get_full_map(self):
-        if self.full_to_representative_idx is None or len(self.full_to_representative_idx) == 0:
-            self.generate_full_map()
-        return self.full_to_representative_idx
-    
     def get_full_glob_map(self):
         if self.full_to_global_map is None or len(self.full_to_global_map) == 0:
             self.generate_full_glob_map()
         return self.full_to_global_map
-
-    def generate_full_map(self):
-        self._repr_kernel_int_repr()
         
     def generate_full_glob_map(self):
         if self.full_to_global_map is not None and len(self.full_to_global_map) > 0:

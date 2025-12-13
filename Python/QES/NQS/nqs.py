@@ -664,7 +664,7 @@ class NQS(MonteCarloSolver):
             self._nparams           = self._net.nparams
             self._initialized       = True
             # Rebuild ansatz pipeline after network initialization
-            self._rebuild_ansatz_function()
+            # self._rebuild_ansatz_function()
     
     #####################################
     
@@ -673,6 +673,19 @@ class NQS(MonteCarloSolver):
         """
         Return the exact information (ground truth) if available.
         This is a dictionary containing exact energy, method, etc.
+        
+        Keywords:
+        - exact_predictions : np.ndarray
+            Array of exact energy predictions for different states.
+        - exact_method      : str
+            Method used to obtain the exact values (e.g., 'scipy_lanczos').
+        - Other, depending on the physics problem.
+            - exact_energy  : float
+                Exact energy for the targeted state (nthstate).
+            - etc.
+        Returns:
+            dict or None
+                Exact information if available, otherwise None.
         """
         return self._exact_info
     
@@ -680,6 +693,22 @@ class NQS(MonteCarloSolver):
     def exact(self, info: dict):
         """
         Set the exact information (ground truth).
+        
+        Keywords:
+        - exact_predictions : np.ndarray
+            Array of exact energy predictions for different states.
+        - exact_method      : str
+            Method used to obtain the exact values (e.g., 'scipy_lanczos').
+        - Other, depending on the physics problem.
+            - exact_energy  : float
+                Exact energy for the targeted state (nthstate).
+            - etc.
+        Parameters:
+            info: dict or np.ndarray
+                Exact information to set. Can be a dictionary with keys as described above,
+                or a numpy array of exact energy values.
+        Raises:
+            ValueError: If the provided info is neither a dictionary nor a numpy array.
         """
         if isinstance(info, dict):
             self._exact_info = info

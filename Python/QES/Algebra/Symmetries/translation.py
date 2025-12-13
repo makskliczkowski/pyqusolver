@@ -53,7 +53,7 @@ def _apply_translation_jit(state: int, ns: int, perm, crossing_mask):
     perm : array
         Permutation array
     crossing_mask : array
-        Crossing mask
+        Crossing mask. Which sites cross the boundary.
         
     Returns
     -------
@@ -499,6 +499,24 @@ class TranslationSymmetry(SymmetryOperator):
         
         # Character for T^count in momentum sector k
         return np.exp(2j * np.pi * sector * count / period)
+        
+    def get_site_permutation(self, ns: int) -> Optional[np.ndarray]:
+        """
+        Get the site permutation array for this translation operation.
+        
+        Returns an array `perm` such that site `i` maps to site `perm[i]`.
+        
+        Parameters
+        ----------
+        ns : int
+            Number of sites.
+            
+        Returns
+        -------
+        perm : np.ndarray
+            Permutation array of shape (ns,).
+        """
+        return self.perm
     
     # -----------------------------------------------------
     #! Override checks
@@ -590,10 +608,10 @@ class TranslationSymmetry(SymmetryOperator):
             The phase factor acquired due to fermionic sign or boundary conditions.
         """
         # Use JIT-compiled core function
-        new_state, occ_cross = _apply_translation_jit(state, ns, self.perm, self.crossing_mask)
+        new_state, occ_cross    = _apply_translation_jit(state, ns, self.perm, self.crossing_mask)
         
         # Compute boundary phase
-        phase = self.lattice.boundary_phase(self.direction, occ_cross)
+        phase                   = self.lattice.boundary_phase(self.direction, occ_cross)
         return new_state, phase
     
     def apply_numpy(self, state, **kwargs):

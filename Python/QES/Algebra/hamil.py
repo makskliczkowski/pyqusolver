@@ -558,7 +558,7 @@ class Hamiltonian(BasisAwareOperator):
         if state['symmetry_info']:
             self._log(f"  Symmetry: {state['symmetry_info']}", lvl=1)
     
-    def record_symmetry_application(self, symmetry_name: str, sector: Optional[str] = None):
+    def record_symmetry_application(self, symmetry_name: Optional[str] = None, sector: Optional[str] = None):
         """
         Record information about applied symmetries to track basis reductions.
         
@@ -569,11 +569,12 @@ class Hamiltonian(BasisAwareOperator):
         sector : str, optional
             Which sector of the symmetry (e.g., "even", "odd", "up", "down")
         """
-        sector_str                                  = f" [{sector}]" if sector else ""
-        self._symmetry_info                         = f"{symmetry_name}{sector_str}"
-        self._basis_metadata['symmetry_applied']    = True
-        self._basis_metadata['symmetries']          = self._basis_metadata.get('symmetries', []) + [symmetry_name]
-        self._log(f"Recorded symmetry application: {self._symmetry_info}", lvl=2, color="yellow")
+        # Call the parent class's method to handle fetching from HilbertSpace if symmetry_name is None
+        super().record_symmetry_application(symmetry_name, sector)
+
+        # Use the (potentially updated by super()) symmetry_name and sector for Hamiltonian-specific recording
+        if self._symmetry_info: # Check if super() successfully set _symmetry_info
+            self._log(f"Hamiltonian recorded symmetry application: {self._symmetry_info}", lvl=2, color="yellow")
     
     def validate_basis_transformation(self, target_basis: str) -> Tuple[bool, str]:
         """
@@ -1452,7 +1453,7 @@ class Hamiltonian(BasisAwareOperator):
             if hasattr(result, 'converged'):
                 if result.converged:
                     if result.iterations is not None:
-                        self._log(f"  Converged in {result.iterations} iterations", lvl=2)
+                        self._log(f"  Converged in {result.iterations} iterations", lvl=2, log='debug')
                 else:
                     self._log(f"  Warning: Did not converge after {result.iterations} iterations", lvl=2, color="yellow")
             self._log(f"  Ground state energy: {self._eig_val[0]:.10f}", lvl=2, log='debug')
