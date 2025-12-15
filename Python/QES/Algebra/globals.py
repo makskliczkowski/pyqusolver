@@ -1,24 +1,25 @@
 '''
 file: Algebra/global.py
-This file contains the global imports and definitions for the Algebra module.
+Contains the GlobalSymmetry class for defining and checking global symmetries on states.
 '''
 
 # Import the necessary modules
-import numpy as np
-from typing import Callable, Union, Optional
-from abc import ABC, abstractmethod
+import  numba
+import  numpy   as np
+from    typing  import Callable, Union, Optional
+from    abc     import ABC, abstractmethod
 
 # operator module for operator overloading (absolute import for reliability)
 try:
-    from QES.Algebra.Operator.operator import Operator, GlobalSymmetries
+    from QES.Algebra.Operator.operator          import GlobalSymmetries
+    from QES.Algebra.Symmetries.base            import _popcount64
 except ImportError as e:
     raise ImportError("Failed to import Operator module. Ensure QES package is correctly installed.") from e
 
 # from general Python modules
 try:
-    from QES.general_python.lattices.lattice import Lattice, LatticeBC, LatticeDirection
-    from QES.general_python.common.binary import rotate_left, rotate_right, flip_all, rev, rotate_left_ax, popcount
-    from QES.general_python.algebra.utils import get_backend
+    from QES.general_python.lattices.lattice    import Lattice
+    from QES.general_python.algebra.utils       import get_backend
 except ImportError as e:
     raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
@@ -28,9 +29,9 @@ class GlobalSymmetry(ABC):
     """
     GlobalSymmetry represents a global symmetry check on a state.
     It stores:
-        - a lattice (lat) (if needed),
-        - a symmetry value (val),
-        - a symmetry name (an element of GlobalSymmetries),
+        - a lattice (lat)   (if needed),
+        - a symmetry value  (val),
+        - a symmetry name   (an element of GlobalSymmetries),
         - and a checking function (check) that takes (state, val) and returns a bool (True if the state satisfies the symmetry).
     
     The symmetry check supports integer states as well as NumPy or JAX arrays through the backend.
@@ -144,7 +145,7 @@ def u1_sym(state: Union[int, np.ndarray], val: float) -> bool:
     For a given state, returns True if the popcount (number of 1-bits or up spins)
     equals the given value 'val'. This works for both integer states and array-like states.
     """
-    return popcount(state) == val
+    return _popcount64(state) == val
 
 def get_u1_sym(lat: Lattice, val: float) -> GlobalSymmetry:
     """
@@ -160,6 +161,61 @@ def get_u1_sym(lat: Lattice, val: float) -> GlobalSymmetry:
     sym = GlobalSymmetry(lat=lat, val=val, name=GlobalSymmetries.U1)
     sym.set_fun(u1_sym)
     return sym
+
+# --------------------------
+
+def to_codes(syms: list[GlobalSymmetry]) -> np.ndarray:
+    """
+    Convert a list of GlobalSymmetry objects into a 2D numpy array of codes.
+    
+    Each row in the output array corresponds to a symmetry, with the first element
+    being the symmetry type (as an integer) and the second element being the symmetry value.
+    
+    Parameters:
+        syms: 
+            List of GlobalSymmetry objects.
+    
+    Returns:
+        A tuple of two 1D numpy arrays:
+        - codes: Array of symmetry types (as integers) of shape (n_syms,)
+        - values: Array of symmetry values of shape (n_syms,)
+    """
+    n_syms      = len(syms)
+    codes       = np.zeros((n_syms,), dtype=np.int8)
+    values      = np.zeros((n_syms,), dtype=np.float64)
+    
+    for i, sym in enumerate(syms):
+        codes[i]    = sym.get_name().value
+        values[i]   = sym.get_val()
+    
+    return codes, values
+
+@numba.njit(cache=True, fastmath=True)
+def violates_global_syms(state: int, codes: np.ndarray, values: np.ndarray, arg0: int) -> bool:
+    """
+    Check if the given integer state violates any of the global symmetries defined by the codes.
+    
+    Parameters:
+        state: 
+            The integer representation of the state to check.
+        codes: 
+            A 2D numpy array where each row represents a symmetry code.
+            The first element of each row is the symmetry type (as an integer),
+            and the second element is the symmetry value (Any type).
+        arg0: An additional argument, if needed for future extensions.
+    """
+    
+    n_syms = codes.shape[0]
+    for i in range(n_syms):
+        sym_type    = codes[i]
+        sym_val     = values[i]
+        
+        if sym_type == GlobalSymmetries.U1.value:
+            if _popcount64(state) != int(sym_val):
+                return True  # Violates U(1) symmetry
+        # Additional symmetry types can be added here with elif blocks.
+    
+    return False # Does not violate any symmetries
 
 # ---------------------------
 #! End of globals.py

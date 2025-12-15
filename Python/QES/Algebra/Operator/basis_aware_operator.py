@@ -96,6 +96,7 @@ class BasisAwareOperator(SpecialOperator, ABC):
             dtype                           : Optional[np.dtype]        = None,
             logger                          : Optional['Logger']        = None,
             seed                            : Optional[int]             = None,
+            verbose                         : bool                      = False,
             **kwargs
         ):
         """
@@ -133,6 +134,7 @@ class BasisAwareOperator(SpecialOperator, ABC):
         self._is_transformed            : bool                          = False
         self._basis_metadata            : Dict[str, Any]                = {}
         self._symmetry_info             : Optional[str]                 = None
+        self._symname                   : Optional[str]                 = None
         
         # Storage for transformed representations
         self._operator_transformed      : Optional[Any]                 = None  # Transformed operator matrix
@@ -150,6 +152,7 @@ class BasisAwareOperator(SpecialOperator, ABC):
             dtype           =   dtype,
             logger          =   logger,
             seed            =   seed,
+            verbose         =   verbose,
             **kwargs
         )
         
@@ -510,7 +513,6 @@ class BasisAwareOperator(SpecialOperator, ABC):
         self._symmetry_info                         = f"{symmetry_name}{sector_str}"
         self._basis_metadata['symmetry_applied']    = True
         self._basis_metadata['symmetries']          = self._basis_metadata.get('symmetries', []) + [symmetry_name]
-        self._log(f"Recorded symmetry: {self._symmetry_info}", lvl=2, color="yellow")
     
     def _get_symmetry_from_hilbert(self) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -527,7 +529,7 @@ class BasisAwareOperator(SpecialOperator, ABC):
         # Try symmetry_directory_name method (returns formatted string like "k0_p1")
         if hasattr(self._hilbert_space, 'symmetry_directory_name'):
             try:
-                sym_dir = self._hilbert_space.symmetry_directory_name()
+                sym_dir = self._hilbert_space.symmetry_directory_name
                 if sym_dir:
                     return sym_dir, None
             except Exception:
@@ -573,6 +575,10 @@ class BasisAwareOperator(SpecialOperator, ABC):
         
         if has_symmetries:
             self.record_symmetry_application()  # Will fetch from HilbertSpace
+    
+    @property
+    def sym(self):
+        return self._symmetry_info
     
     # -------------------------------------------------------------------------
     #! HilbertSpace Synchronization

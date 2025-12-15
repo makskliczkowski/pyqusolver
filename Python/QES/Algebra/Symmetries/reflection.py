@@ -10,19 +10,31 @@ Date        : 2025-10-26
 --------------------------------------------------
 """
 
-from typing import Tuple
+import  numba
+import  numpy as np
+from    typing import Tuple
 
 try:
-    from QES.general_python.common.binary import rev
-    from QES.general_python.lattices.lattice import Lattice
+    from QES.general_python.common.binary       import rev
+    from QES.general_python.lattices.lattice    import Lattice
+    from QES.Algebra.Symmetries.base            import SymmetryOperator, SymmetryClass, MomentumSector, SymmetryApplicationCodes
 except ImportError:
-    rev = None  # type: ignore
-    
-from QES.Algebra.Symmetries.base import SymmetryOperator, SymmetryClass, MomentumSector
+    raise ImportError("Could not import required modules for ReflectionSymmetry.")
 
 ####################################################################################################
 # Reflection symmetry operator class
 ####################################################################################################
+
+@numba.njit(cache=True, fastmath=True)
+def _apply_perm_prim(state: np.int64, ns: np.int64, perm: np.ndarray) -> np.int64:
+    ''' Apply permutation to integer state '''
+    
+    new_state = np.int64(0)
+    for src in range(ns):
+        if (state >> (ns - 1 - src)) & 1:
+            dest        = perm[src]
+            new_state  |= np.int64(1) << (ns - 1 - dest)
+    return new_state
 
 class ReflectionSymmetry(SymmetryOperator):
     """
@@ -63,6 +75,7 @@ class ReflectionSymmetry(SymmetryOperator):
     - At generic k: Must choose either k or -k sector (not both)
     """
     
+    code                    = SymmetryApplicationCodes.OP_REFLECTION
     symmetry_class          = SymmetryClass.REFLECTION
     compatible_with         = {
                                 SymmetryClass.U1_PARTICLE,

@@ -9,29 +9,48 @@ Date        : 2025-10-26
 --------------------------------------------
 """
 
-from typing import Tuple, TYPE_CHECKING
+import  numba
+import  numpy as np
+from    typing import Tuple, TYPE_CHECKING
 
 # ------------------------------------------
 
 try:
-    from QES.general_python.common.binary import flip_all, popcount
+    from QES.general_python.common.binary   import flip_all, popcount
+    from QES.Algebra.Symmetries.base        import SymmetryOperator, SymmetryClass, MomentumSector, LocalSpaceTypes, SymmetryApplicationCodes, _popcount64
 except ImportError:
     raise ImportError("QES.general_python.common.binary module is required for parity operations.")
 
 # ------------------------------------------
-
-from QES.Algebra.Symmetries.base import (
-    SymmetryOperator,
-    SymmetryClass,
-    MomentumSector,
-    LocalSpaceTypes,
-)
 
 if TYPE_CHECKING:
     from QES.general_python.lattices.lattice import Lattice
 
 ####################################################################################################
 # Parity (flip) symmetry operator class
+####################################################################################################
+
+@numba.njit(cache=True, fastmath=True)
+def _apply_parity_prim(state: np.int64, ns: np.int64, axis_code: np.uint8) -> tuple[np.int64, np.complex128]:
+    mask        = (np.int64(1) << ns) - 1
+    new_state   = (~state) & mask
+
+    # phases: keep exactly what you intend physically; below matches your current intent loosely.
+    # axis_code: 0=x, 1=y, 2=z
+    if axis_code == 2:       # z
+        return new_state, np.complex128(1.0 + 0.0j)
+    elif axis_code == 0:     # x
+        return new_state, np.complex128(1.0 + 0.0j)
+    else:                    # y
+        # your old code: spin_ups = ns - popcount(state)
+        spin_ups = ns - _popcount64(state)
+        # keep your convention; tweak if needed
+        if (spin_ups & 1) == 0:
+            ph = 1j
+        else:
+            ph = -1j
+        return new_state, np.complex128(ph)
+
 ####################################################################################################
 
 class ParitySymmetry(SymmetryOperator):
@@ -41,14 +60,20 @@ class ParitySymmetry(SymmetryOperator):
     Physical Context
     ----------------
     Applies to discrete spin-flip symmetries in quantum spin systems:
-    - Parity X (sigma^x): Flips all spins in x-basis -> (1+i)^n phase, n=spin-ups
-    - Parity Y (sigma^y): Flips all spins in y-basis -> (+/- i)^n phase
-    - Parity Z (sigma^z): Flips all spins in z-basis -> (-1)^n phase
+    - Parity X (sigma^x): 
+        Flips all spins in x-basis -> (1)^n phase, n=spin-ups
+    - Parity Y (sigma^y): 
+        Flips all spins in y-basis -> (+/- i)^n phase
+    - Parity Z (sigma^z): 
+        Flips all spins in z-basis -> (-1)^n phase
     
     Examples:
-    - XXZ model: Pz symmetry (conserves Sz but not Sx, Sy)
-    - Transverse-field Ising: Px symmetry
-    - XY model: May have Pz symmetry
+    - XXZ model: 
+        Pz symmetry (conserves Sz but not Sx, Sy)
+    - Transverse-field Ising: 
+        Px symmetry
+    - XY model: 
+        May have Pz symmetry
     
     Commutation Rules
     -----------------
@@ -65,6 +90,7 @@ class ParitySymmetry(SymmetryOperator):
         -> Reason: Particle-hole transformation maps N <-> Ns - N
     """
     
+    code                        = SymmetryApplicationCodes.OP_PARITY
     symmetry_class              = SymmetryClass.PARITY
     compatible_with             = {
                                     SymmetryClass.TRANSLATION,
@@ -143,6 +169,7 @@ class ParitySymmetry(SymmetryOperator):
         self.ns                 = ns
         self.nhl                = nhl
         self.lattice            = lattice
+        self.perm               = None
 
     def __call__(self, state: int, ns: int = None, **kwargs) -> Tuple[int, complex]:
         return self.apply_int(state, ns or self.ns, **kwargs)
@@ -155,17 +182,17 @@ class ParitySymmetry(SymmetryOperator):
             raise ImportError("flip_all/popcount not available. Ensure QES.general_python.common.binary is installed.")
         if self.axis == 'z':
             # Parity Z: flip all spins, phase +1
-            new_state = int(flip_all(state, ns, backend='default')) & ((1 << ns) - 1)
-            phase = 1.0
+            new_state   = int(flip_all(state, ns, backend='default')) & ((1 << ns) - 1)
+            phase       = 1.0
         elif self.axis == 'y':
             # Parity Y: flip all spins, phase depends on spin-ups
-            spin_ups = ns - popcount(state, backend='default')
-            phase = (1 - 2 * (spin_ups & 1)) * (1j if ns % 2 == 0 else -1j)
-            new_state = int(flip_all(state, ns, backend='default')) & ((1 << ns) - 1)
+            spin_ups    = ns - popcount(state, backend='default')
+            phase       = (1 - 2 * (spin_ups & 1)) * (1j if ns % 2 == 0 else -1j)
+            new_state   = int(flip_all(state, ns, backend='default')) & ((1 << ns) - 1)
         elif self.axis == 'x':
             # Parity X: flip all spins, phase +1
-            new_state = int(flip_all(state, ns, backend='default')) & ((1 << ns) - 1)
-            phase = 1.0
+            new_state   = int(flip_all(state, ns, backend='default')) & ((1 << ns) - 1)
+            phase       = 1.0
         else:
             raise ValueError(f"Unknown parity axis: {self.axis}")
         return new_state, phase
@@ -266,6 +293,8 @@ class ParitySymmetry(SymmetryOperator):
             return False, "Parity Z acts trivially with U(1) (redundant)"
         
         return True, "Compatible"
+    
+    # -------------------------
     
     @property
     def directory_name(self) -> str:

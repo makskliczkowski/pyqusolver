@@ -137,22 +137,23 @@ class HilbertSpace(BaseHilbertSpace):
                 boundary_flux   : Optional[Union[float, Dict['LatticeDirection', float]]]   = None,
                 state_filter    : Optional[Callable[[int], bool]]                           = None,
                 logger          : Optional['Logger']                                        = None,
+                verbose         : bool                                                      = False,
                 **kwargs):
         r"""
         Initializes a HilbertSpace object with specified system and local space properties, symmetries, and backend configuration.
         
         Initialization Process (Step-by-Step):
         --------------------------------------
-        1.  **Backend & Logging**: 
+        1. **Backend & Logging**: 
             Sets up the computational backend (NumPy/JAX) and logging infrastructure.
-        2.  **System Size Inference**: 
+        2. **System Size Inference**: 
             Infers the number of sites ($N_s$) and full Hilbert space dimension ($N_h^{full}$) 
             from the provided `ns`, `lattice`, or `nh` arguments.
-        3.  **Local Space Configuration**: 
+        3. **Local Space Configuration**: 
             Defines the local Hilbert space (e.g., Spin-1/2, Fermion) using `LocalSpace`.
-        4.  **Basis Inference**: 
+        4. **Basis Inference**: 
             Determines the natural basis representation (e.g., Real Space, Fock Space).
-        5.  **Symmetry Initialization** (via `SymmetryContainer`):
+        5. **Symmetry Initialization** (via `SymmetryContainer`):
             * **Normalization**: 
                 Parses `sym_gen` to support both object instances and string identifiers (e.g., 'translation', 'parity') with simplified sector definitions.
             * **Container Setup**: 
@@ -162,89 +163,88 @@ class HilbertSpace(BaseHilbertSpace):
                 * Constructs the full symmetry group from generators.
                 * Generates representative states (orbits) and normalization factors.
                 * Builds the `CompactSymmetryData` structure for efficient O(1) JIT-compatible lookups.
-        6.  **Finalization**: 
-            Sets the effective reduced Hilbert space dimension ($N_h$).
+        6. **Finalization**: Sets the effective reduced Hilbert space dimension ($N_h$).
 
         Parameters:
         -----------
-            ns (Union[int, None], optional):
-                Number of sites in the system. If not provided, inferred from `lattice` or `nh`.
-            lattice (Union[Lattice, None], optional):
-                Lattice object defining the system structure. If provided, `ns` is set from `lattice.ns`.
-            nh (Union[int, None], optional):
-                Full Hilbert space dimension. Used if neither `ns` nor `lattice` is provided.
-            is_manybody (bool, optional):
-                Flag indicating if the system is many-body. Default is True.
-            part_conserv (Optional[bool], optional):
-                Flag indicating if particle number is conserved. Default is True.
+        ns (Union[int, None], optional):
+            Number of sites in the system. If not provided, inferred from `lattice` or `nh`.
+        lattice (Union[Lattice, None], optional):
+            Lattice object defining the system structure. If provided, `ns` is set from `lattice.ns`.
+        nh (Union[int, None], optional):
+            Full Hilbert space dimension. Used if neither `ns` nor `lattice` is provided.
+        is_manybody (bool, optional):
+            Flag indicating if the system is many-body. Default is True.
+        part_conserv (Optional[bool], optional):
+            Flag indicating if particle number is conserved. Default is True.
+        
+        sym_gen (Union[dict, list, None], optional):
+            Specification of symmetry generators. Supports dictionaries or lists.
+            **String-based definition is fully supported** to avoid imports.
             
-            sym_gen (Union[dict, list, None], optional):
-                Specification of symmetry generators. Supports dictionaries or lists.
-                **String-based definition is fully supported** to avoid imports.
-                
-                **Examples**:
-                
-                1. **Translation Symmetry** (String-based):
-                ```python
-                # Define momentum sector k=(0,0) for a 2D lattice
-                sym_gen = {'translation': {'kx': 0, 'ky': 0}}
-                
-                # Or simply for 1D
-                sym_gen = {'translation': 0} 
-                ```
-                
-                2. **Parity & Reflection** (String-based):
-                ```python
-                sym_gen = {
-                    'parity': 1,        # Z-Parity = +1
-                    'reflection': -1    # Spatial Reflection = -1
-                }
-                ```
-                
-                3. **Explicit Object Instantiation**:
-                ```python
-                from QES.Algebra.Symmetries.translation import TranslationSymmetry
-                sym_gen = [TranslationSymmetry(kx=0)]
-                ```
-                
-                Supported string keys: 'translation', 'parity', 'reflection', 'inversion', 
-                'time_reversal', 'fermion_parity', 'particle_hole'.
-                    
-            global_syms (Union[List[GlobalSymmetry], None], optional): 
-                List of global symmetry objects for additional quantum number constraints (e.g. U(1)).
-                These are applied before local symmetry generators. Default is None.
-                
-            gen_mapping (bool, optional):
-                Whether to generate state mapping based on symmetries immediately.
-                If False, mapping is generated on-demand. Default is False.
-                Set to True for immediate symmetry reduction and representative state mapping.
+            **Examples**:
             
-            gen_basis (bool, optional):
-                If False, skips generating the full reduced basis and mapping. 
-                Useful for large systems where only symmetry generators are needed. Default is True.
-                
-            local_space (Optional[Union[LocalSpace, str]], optional):
-                LocalSpace object or string defining local Hilbert space properties. 
-                Default is None (uses spin-1/2).
-                Supported strings: 'spin-1/2', 'spin-1', 'fermion', 'hardcore-boson', etc.
+            1. **Translation Symmetry** (String-based):
+            ```python
+            # Define momentum sector k=(0,0) for a 2D lattice
+            sym_gen = {'translation': {'kx': 0, 'ky': 0}}
             
-            state_type (str, optional):
-                Type of state representation (e.g., "integer"). Default is "integer".
-            backend (str, optional):
-                Backend to use for vectors and matrices. Default is 'default'.
-            dtype (optional):
-                Data type for Hilbert space arrays. Default is np.float64.
-            basis (Optional[str], optional):
-                Initial basis representation ("real", "k-space", "fock", "sublattice", "symmetry").
-                If not provided, basis is inferred from system properties. Default is None.
-            boundary_flux (Optional[float or dict]):
-                Optional Peierls phase specification applied to lattice boundary crossings.
-            state_filter (Optional[Callable[[int], bool]]):
-                Optional predicate applied to integer-encoded basis labels during symmetry reduction.
-            logger (Optional[Logger], optional):
-                Logger instance for logging. Default is None.
-            **kwargs:
-                Additional keyword arguments, such as 'threadnum' (number of threads to use).
+            # Or simply for 1D
+            sym_gen = {'translation': 0} 
+            ```
+            
+            2. **Parity & Reflection** (String-based):
+            ```python
+            sym_gen = {
+                'parity': 1,        # Z-Parity = +1
+                'reflection': -1    # Spatial Reflection = -1
+            }
+            ```
+            
+            3. **Explicit Object Instantiation**:
+            ```python
+            from QES.Algebra.Symmetries.translation import TranslationSymmetry
+            sym_gen = [TranslationSymmetry(kx=0)]
+            ```
+            
+            Supported string keys: 'translation', 'parity', 'reflection', 'inversion', 
+            'time_reversal', 'fermion_parity', 'particle_hole'.
+                
+        global_syms (Union[List[GlobalSymmetry], None], optional): 
+            List of global symmetry objects for additional quantum number constraints (e.g. U(1)).
+            These are applied before local symmetry generators. Default is None.
+            
+        gen_mapping (bool, optional):
+            Whether to generate state mapping based on symmetries immediately.
+            If False, mapping is generated on-demand. Default is False.
+            Set to True for immediate symmetry reduction and representative state mapping.
+        
+        gen_basis (bool, optional):
+            If False, skips generating the full reduced basis and mapping. 
+            Useful for large systems where only symmetry generators are needed. Default is True.
+            
+        local_space (Optional[Union[LocalSpace, str]], optional):
+            LocalSpace object or string defining local Hilbert space properties. 
+            Default is None (uses spin-1/2).
+            Supported strings: 'spin-1/2', 'spin-1', 'fermion', 'hardcore-boson', etc.
+        
+        state_type (str, optional):
+            Type of state representation (e.g., "integer"). Default is "integer".
+        backend (str, optional):
+            Backend to use for vectors and matrices. Default is 'default'.
+        dtype (optional):
+            Data type for Hilbert space arrays. Default is np.float64.
+        basis (Optional[str], optional):
+            Initial basis representation ("real", "k-space", "fock", "sublattice", "symmetry").
+            If not provided, basis is inferred from system properties. Default is None.
+        boundary_flux (Optional[float or dict]):
+            Optional Peierls phase specification applied to lattice boundary crossings.
+        state_filter (Optional[Callable[[int], bool]]):
+            Optional predicate applied to integer-encoded basis labels during symmetry reduction.
+        logger (Optional[Logger], optional):
+            Logger instance for logging. Default is None.
+        **kwargs:
+            Additional keyword arguments, such as 'threadnum' (number of threads to use).
         
         Raises:
             ValueError: If provided arguments do not match expected types or required parameters are missing.
@@ -268,6 +268,7 @@ class HilbertSpace(BaseHilbertSpace):
         self._is_many_body                                  = is_manybody
         self._is_quadratic                                  = not is_manybody
         self._particle_conserving                           = part_conserv
+        self._verbose                                       = verbose
         
         #! quick check
         self._check_init_sym_errors(sym_gen, global_syms, gen_mapping)
@@ -281,10 +282,10 @@ class HilbertSpace(BaseHilbertSpace):
         #! Nh: Effective dimension of the *current* representation
         if self._is_quadratic:
             self._nh = self._ns
-            self._log(f"Initialized HilbertSpace in quadratic mode: Ns={self._ns}, effective Nh={self._nh}.", log='debug', lvl=1, color='green')
+            if self._verbose: self._log(f"Initialized HilbertSpace in quadratic mode: Ns={self._ns}, effective Nh={self._nh}.", log='debug', lvl=1, color='green')
         else:
             self._nh = self._nhfull
-            self._log(f"Initialized HilbertSpace in many-body mode: Ns={self._ns}, initial Nh={self._nh} (potentially reducible).", color='green', log='debug', lvl=1)
+            if self._verbose: self._log(f"Initialized HilbertSpace in many-body mode: Ns={self._ns}, initial Nh={self._nh} (potentially reducible).", color='green', log='debug', lvl=1)
 
         #! Initialize the symmetries    
         self.representative_list                            = None
@@ -296,7 +297,6 @@ class HilbertSpace(BaseHilbertSpace):
 
         if self._is_many_body:
             # Normalize symmetry generators (supports dict/list/string formats)
-            if gen_mapping:     self._log("Explicitly requested immediate mapping generation.", log='info', lvl=3, color='blue')
             normalized_sym_gen  = normalize_symmetry_generators(sym_gen)
             self._init_representatives(normalized_sym_gen, gen_mapping=gen_mapping, gen_basis=gen_basis) # gen_mapping True here enables reprmap
             
@@ -1312,7 +1312,8 @@ ACCESS STATES
                                         ns          = self._ns,
                                         lattice     = self._lattice,
                                         nhl         = self._local_space.local_dim,
-                                        backend     = self._backend_str
+                                        backend     = self._backend_str,
+                                        verbose     = self._verbose
                                     )
             return
         
@@ -1329,13 +1330,14 @@ ACCESS STATES
                                 lattice         = self._lattice,
                                 nhl             = self._local_space.local_dim,
                                 backend         = self._backend_str,
-                                build_group     = True
+                                build_group     = True,
+                                verbose         = self._verbose
                             )
                             
         # Log symmetry info
         self._sym_basic_info.num_operators  = len(self._sym_container.symmetry_group)
         self._sym_basic_info.num_gens       = len(self._sym_container.generators)
-        self._log(f"SymmetryContainer initialized: {self._sym_basic_info.num_gens} generators -> {self._sym_basic_info.num_operators} group elements", lvl=1, color='green')
+        if self._verbose: self._log(f"SymmetryContainer initialized: {self._sym_basic_info.num_gens} generators -> {self._sym_basic_info.num_operators} group elements", lvl=2, color='green')
 
         # Compute and cache whether any symmetry eigenvalues/phases are complex.
         try:
@@ -1389,14 +1391,17 @@ ACCESS STATES
         """
         
         if not self._is_many_body:
-            self._log("Skipping mapping initialization in quadratic mode.", log='debug', lvl=2)
+            if self._verbose: self._log("Skipping mapping initialization in quadratic mode.", log='debug', lvl=1)
             return
+        else:
+            if self._verbose: self._log("Building representatives.", log='info', lvl=1, color='green')
+
         
         # Trivial case: no symmetries
         if not gen and not self._global_syms and self._state_filter is None:
             # No symmetries -> trivial mapping: every full-state is its own
             # representative. Set representative_list and representative_norms to None.
-            self._log("No symmetries provided, generating trivial mapping (identity).", log='debug', lvl=2)
+            if self._verbose: self._log("No symmetries provided, generating trivial mapping (identity).", log='debug', lvl=2)
             try:
                 nh_full = int(self._nhfull)
             except Exception:
@@ -1407,12 +1412,14 @@ ACCESS STATES
             self._modifies              = False
             return
         
+        if gen_mapping and self._verbose: self._log("Explicitly requested immediate mapping generation.", log='info', lvl=3, color='blue')
+        
         # Use SymmetryContainer for symmetry group construction
         self._init_sym_container(gen)
         
         # If basis generation is disabled (e.g., NQS mode), skip representative generation
         if not gen_basis:
-            self._log("Skipping basis generation (NQS mode).", lvl=1, color='green', log='debug')
+            if self._verbose: self._log("Skipping basis generation...", lvl=1, color='green', log='debug')
             self._nh                    = self._nhfull
             self.representative_list    = None
             self.representative_norms   = None
@@ -1429,12 +1436,11 @@ ACCESS STATES
             # This single call handles:
             # 1. Finding representatives (Two-pass to save memory)
             # 2. Filtering (global symmetries)
-            # 3. Sorting and normalization
+            # 3. Sorting and normalizationv
             # 4. Building compact symmetry map (uint32/uint8)
             self.representative_list, self.representative_norms = self._sym_container.generate_symmetric_basis(
                                                                     nh_full      = int(self._nhfull),
-                                                                    global_syms  = self._global_syms,
-                                                                    state_filter = self._state_filter,
+                                                                    state_filter = self._state_filter, #!TODO: use filter if necesssary
                                                                     return_map   = gen_mapping
                                                                 )
             
@@ -1662,6 +1668,10 @@ ACCESS STATES
     def dimension(self):                        return self._nh
     @property
     def dim(self):                              return self._nh
+    @property
+    def fulldim(self):                          return self._nhfull
+    @property
+    def has_sym(self):                          return self._nh != self._nhfull
     @property
     def Nh(self):                               return self._nh
     @property

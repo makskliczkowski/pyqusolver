@@ -12,10 +12,11 @@ Date        : 2025-10-26
 ---------------------------------------------------
 """
 
-import numpy as np
-from collections import defaultdict
-from itertools import product
-from typing import Tuple, Optional, Mapping, Dict, List, Union
+import  numpy as np
+from    collections import defaultdict
+from    itertools   import product
+from    typing      import Tuple, Optional, Mapping, Dict, List, Union
+from    numba       import njit
 
 # -------------------------------------------------
 
@@ -28,52 +29,51 @@ except ImportError:
 # -------------------------------------------------
 
 try:
-    from QES.Algebra.Symmetries.base import SymmetryOperator, SymmetryClass, MomentumSector
+    from QES.Algebra.Symmetries.base import SymmetryOperator, SymmetryClass, MomentumSector, SymmetryApplicationCodes
 except ImportError:
     raise ImportError("Could not import base symmetry classes from QES.Algebra.Symmetries.base")
-
-from numba import njit
-
 
 ####################################################################################################
 # JIT-compiled translation application
 ####################################################################################################
 
-@njit
-def _apply_translation_jit(state: int, ns: int, perm, crossing_mask):
-    """
-    JIT-compiled core of translation application.
+@njit(cache=True, fastmath=True)
+def _apply_translation_prim(state: np.int64, ns: np.int64, perm: np.ndarray, crossing_mask: np.ndarray) -> tuple[np.int64, np.int64]:
+    ''' 
+    Apply translation to integer state, return (new_state, occ_cross) 
     
     Parameters
     ----------
-    state : int
-        Integer state
-    ns : int
-        Number of sites
-    perm : array
-        Permutation array
-    crossing_mask : array
-        Crossing mask. Which sites cross the boundary.
-        
+    state : np.int64
+        The integer representation of the basis state to be translated.
+    ns : np.int64
+        Number of sites in the system.
+    perm : np.ndarray
+        Precomputed permutation array for translation.
+    crossing_mask : np.ndarray
+        Boolean array indicating which sites cross the boundary during translation.
     Returns
     -------
-    new_state : int
-        Translated state
-    occ_cross : int
-        Number of occupied crossing sites
-    """
-    new_state = 0
+    new_state : np.int64
+        The integer representation of the translated basis state.
+    occ_cross : np.int64
+        Number of occupied sites crossing the boundary during translation.
+    '''
     
+    # Initialize new state
+    new_state = np.int64(0)
+
     for src in range(ns):
+        # Check if site `src` is occupied in `state`
         if (state >> (ns - 1 - src)) & 1:
-            dest = perm[src]
-            new_state |= 1 << (ns - 1 - dest)
-    
-    occ_cross = 0
+            dest        = perm[src]
+            new_state  |= np.int64(1) << (ns - 1 - dest)
+
+    occ_cross = np.int64(0)
     for src in range(ns):
-        if crossing_mask[src] and ((state >> (ns - 1 - src)) & 1):
+        if crossing_mask[src] != 0 and ((state >> (ns - 1 - src)) & 1):
             occ_cross += 1
-    
+
     return new_state, occ_cross
 
 ####################################################################################################
@@ -118,6 +118,7 @@ class TranslationSymmetry(SymmetryOperator):
         - REFLECTION at generic k (broken inversion symmetry in k-space)
     """
     
+    code                    = SymmetryApplicationCodes.OP_TRANSLATION
     symmetry_class          = SymmetryClass.TRANSLATION
     compatible_with         = {
         SymmetryClass.TRANSLATION,
@@ -248,7 +249,7 @@ class TranslationSymmetry(SymmetryOperator):
         self.ns                         = ns
         self.local_hspace_size          = local_hspace_size
         self.perm, self.crossing_mask   = self._compute_translation_data()
-    
+        
     # -----------------------------------------------------
     #! Obtain momentum sector
     # -----------------------------------------------------
@@ -608,7 +609,7 @@ class TranslationSymmetry(SymmetryOperator):
             The phase factor acquired due to fermionic sign or boundary conditions.
         """
         # Use JIT-compiled core function
-        new_state, occ_cross    = _apply_translation_jit(state, ns, self.perm, self.crossing_mask)
+        new_state, occ_cross    = _apply_translation_prim(state, ns, self.perm, self.crossing_mask)
         
         # Compute boundary phase
         phase                   = self.lattice.boundary_phase(self.direction, occ_cross)

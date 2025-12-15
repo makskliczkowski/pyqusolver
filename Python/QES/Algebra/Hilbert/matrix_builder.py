@@ -17,10 +17,10 @@ version     : 2.2.0
 --------------------------------------------------------------------------------------------
 """
 
-from    __future__ import annotations
-import  numpy as np
-import  scipy.sparse as sp
-from    typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
+from    __future__      import annotations
+import  numpy           as np
+import  scipy.sparse    as sp
+from    typing          import Callable, Optional, Union, Tuple, TYPE_CHECKING
 
 try:
     import numba
@@ -127,19 +127,19 @@ def _determine_matrix_dtype(dtype: np.dtype, hilbert_spaces, operator_func=None,
 #! JITTED FUNCTIONS
 # -----------------------------------------------------------------------------------------------
 
-@numba.njit(cache=True, nogil=True)
+@numba.njit(nogil=True)
 def _build_sparse_same_sector_compact_jit(
-                representative_list : np.ndarray,   # int64[n_repr] - representative state values
-                normalization       : np.ndarray,   # float64[n_repr] - normalization per repr
-                repr_map            : np.ndarray,   # uint32[nh_full] - state -> repr index
-                phase_idx           : np.ndarray,   # uint8[nh_full] - state -> phase table index
-                phase_table         : np.ndarray,   # complex128[n_phases] - distinct phases
+                representative_list : np.ndarray,   # int64[n_repr]         - representative state values
+                normalization       : np.ndarray,   # float64[n_repr]       - normalization per repr
+                repr_map            : np.ndarray,   # uint32[nh_full]       - state -> repr index
+                phase_idx           : np.ndarray,   # uint8[nh_full]        - state -> phase table index
+                phase_table         : np.ndarray,   # complex128[n_phases]  - distinct phases
                 operator_func       : Callable,
                 ns                  : int,          # Add ns argument
-                rows                : np.ndarray,
-                cols                : np.ndarray,
-                data                : np.ndarray,
-                data_idx            : int
+                rows                : np.ndarray,   # int64[max_nnz]        - preallocated row indices
+                cols                : np.ndarray,   # int64[max_nnz]        - preallocated column indices
+                data                : np.ndarray,   # complex128[max_nnz]   - preallocated data array
+                data_idx            : int           # current data index
             ):
     """
     JIT-compiled sparse matrix builder using compact O(1) symmetry lookups.
@@ -149,36 +149,14 @@ def _build_sparse_same_sector_compact_jit(
     
     Memory efficient: uses uint32 + uint8 per state (~5 bytes vs ~24+ bytes).
     """
-    nh = len(representative_list)
+    
+    nh          = len(representative_list)
     invalid_idx = _INVALID_REPR_IDX_NB
     
     for k in range(nh):
         state               = representative_list[k]
         norm_k              = normalization[k]
-        new_states, values  = operator_func(state, ns) # Pass ns here
-
-@numba.njit(cache=True, nogil=True)
-def _build_sparse_same_sector_no_symmetry_jit(
-                basis               : Optional[np.ndarray],
-                operator_func       : Callable,
-                ns                  : int,          # Add ns argument
-                rows                : np.ndarray,
-                cols                : np.ndarray,
-                data                : np.ndarray,
-                data_idx            : int,
-                nh                  : int
-            ):
-    """
-    Jitted builder for no-symmetry case.
-    """
-    for k in range(nh):
-        if basis is not None:
-            state = basis[k]
-        else:
-            state = k
-            
-        new_states, values = operator_func(state, ns) # Pass ns here
-
+        new_states, values  = operator_func(state)
         for i in range(len(new_states)):
             new_state = new_states[i]
             value     = values[i]
@@ -186,27 +164,27 @@ def _build_sparse_same_sector_no_symmetry_jit(
             if np.abs(value) < 1e-14:
                 continue
 
-            # For no-symmetry, the index is the state itself if basis is None
-            # If basis is present, we need to find the index of new_state in basis.
-            # Assuming basis is sorted, we can use binary search.
-            # If basis is None, idx = new_state.
-            
-            if basis is not None:
-                # Binary search
-                idx = _binary_search_representative_list(basis, new_state)
-            else:
-                idx = new_state
-            
-            if idx < 0 or idx >= nh:
+            idx = repr_map[new_state]
+            if idx == invalid_idx:
                 continue
             
-            rows[data_idx] = k
-            cols[data_idx] = idx
-            data[data_idx] = value
-            data_idx      += 1            
+            pidx        = phase_idx[new_state]
+            phase       = phase_table[pidx]
+            norm_idx    = normalization[idx]
+            sym_factor  = np.conj(phase) * norm_idx / norm_k
+
+            matrix_elem = value * sym_factor
+            if np.abs(matrix_elem) < 1e-14:
+                continue
+
+            rows[data_idx]       = idx
+            cols[data_idx]       = k
+            data[data_idx]       = matrix_elem
+            data_idx            += 1
+    
     return data_idx
 
-@numba.njit(cache=True, nogil=True)
+@numba.njit(nogil=True)
 def _build_dense_same_sector_compact_jit(
                 representative_list : np.ndarray,
                 normalization       : np.ndarray,
@@ -245,41 +223,6 @@ def _build_dense_same_sector_compact_jit(
 
             matrix[idx, k] += value * sym_factor
 
-@numba.njit(cache=True, nogil=True)
-def _build_dense_same_sector_no_symmetry_jit(
-                basis               : Optional[np.ndarray],
-                operator_func       : Callable,
-                matrix              : np.ndarray,
-                nh                  : int
-            ):
-    """
-    Jitted dense matrix builder for no-symmetry case.
-    """
-    for k in range(nh):
-        if basis is not None:
-            state = basis[k]
-        else:
-            state = k
-            
-        new_states, values = operator_func(state)
-
-        for i in range(len(new_states)):
-            new_state = new_states[i]
-            value     = values[i]
-            
-            if np.abs(value) < 1e-14:
-                continue
-
-            if basis is not None:
-                idx = _binary_search_representative_list(basis, new_state)
-            else:
-                idx = new_state
-            
-            if idx < 0 or idx >= nh:
-                continue
-            
-            matrix[k, idx] += value
-
 # ------------------------------------------------------------------------------------------
 
 def _build_same_sector(hilbert_space    : HilbertSpace,
@@ -290,30 +233,19 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
                 ) -> Union[sp.csr_matrix, np.ndarray]:
     """Build matrix for operator within same sector."""
     
+    # Determine appropriate dtype
     nh                      = hilbert_space.dim
     ns                      = hilbert_space.ns
-    representative_list     = getattr(hilbert_space, 'representative_list', None)
-    normalization           = getattr(hilbert_space, 'normalization', None)
-    
-    # Determine appropriate dtype
+    has_sym                 = hilbert_space.has_sym
     alloc_dtype             = _determine_matrix_dtype(dtype, hilbert_space, operator_func, ns)
     
-    # If there are no symmetries present (no representative_list/repr arrays and no
-    # symmetry group), use a simple optimized builder that iterates the
-    # HilbertSpace directly (no representative_list allocation). Otherwise use the
-    # Python assembly that uses HilbertSpace.find_representative
-    has_symmetry            = representative_list is not None
-
     if not sparse:
         # Dense matrix
         matrix              = np.zeros((nh, nh), dtype=alloc_dtype)
-        if not has_symmetry:
-            basis = getattr(hilbert_space, 'basis', None)
-            if basis is not None and not isinstance(basis, np.ndarray):
-                 basis = np.array(basis)
-            _build_dense_same_sector_no_symmetry_jit(basis, operator_func, matrix, nh)
+        if not has_sym:
+            return _build_no_hilbert(operator_func, nh, ns, sparse=False, max_local_changes=max_local_changes, dtype=alloc_dtype)
         else:
-            compact_data = getattr(hilbert_space, 'compact_symmetry_data', None)
+            compact_data    = hilbert_space.compact_symmetry_data
             if compact_data is not None:
                 _build_dense_same_sector_compact_jit(
                     compact_data.representative_list,
@@ -321,33 +253,23 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
                     compact_data.repr_map,
                     compact_data.phase_idx,
                     compact_data.phase_table,
-                    operator_func, matrix
+                    operator_func, matrix   # matrix passed by reference, we fill it in place
                 )
             else:
-                # If no compact data but symmetries present, we should ideally fail or implement legacy fallback.
-                # Given the mandate to remove legacy, we assume compact data is always built for symmetries.
                 raise ValueError("Compact symmetry data missing for symmetric Hilbert space in dense build.")
         return matrix
     
     # Sparse matrix
-    max_nnz                 = nh * max_local_changes * (ns) # estimate
-    rows                    = np.zeros(max_nnz, dtype=np.int64)
-    cols                    = np.zeros(max_nnz, dtype=np.int64)
+    max_nnz                 = nh * max_local_changes * (ns)         # estimate
+    rows                    = np.zeros(max_nnz, dtype=np.int64)     # preallocate
+    cols                    = np.zeros(max_nnz, dtype=np.int64)     # preallocate
     data                    = np.zeros(max_nnz, dtype=alloc_dtype)
 
-    if not has_symmetry:
-        # Optimized no-symmetry builder
-        # Note: 'basis' here refers to the constrained basis (e.g. particle conservation)
-        # which is distinct from 'representative_list' used for symmetry reduction.
-        basis = getattr(hilbert_space, 'basis', None)
-        # If basis is not an array (e.g. None or list), convert or handle
-        if basis is not None and not isinstance(basis, np.ndarray):
-             basis = np.array(basis)
-             
-        data_idx = _build_sparse_same_sector_no_symmetry_jit(basis, operator_func, rows, cols, data, 0, nh)
+    if not has_sym:
+        return _build_no_hilbert()
     else:
         # Use compact O(1) lookup
-        compact_data = getattr(hilbert_space, 'compact_symmetry_data', None)
+        compact_data        = hilbert_space.compact_symmetry_data
         
         if compact_data is not None:
             # Fast path: O(1) lookups using compact structure (~5 bytes/state)
@@ -357,7 +279,7 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
                 compact_data.repr_map,
                 compact_data.phase_idx,
                 compact_data.phase_table,
-                operator_func, ns, rows, cols, data, 0
+                operator_func, ns, rows, cols, data, 0 # initial data_idx
             )
         else:
              raise ValueError("Compact symmetry data missing for symmetric Hilbert space in sparse build.")

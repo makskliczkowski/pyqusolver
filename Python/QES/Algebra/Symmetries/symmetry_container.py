@@ -37,9 +37,18 @@ import  numba
 import  numpy as np
 
 # other
-from    typing      import List, Tuple, Dict, Optional, Callable, Union, TYPE_CHECKING, TypeAlias
+from    typing      import List, Tuple, Dict, Optional, Callable, Union, TYPE_CHECKING
 from    dataclasses import dataclass, field
 from    itertools   import combinations
+
+try:
+    from QES.Algebra.Symmetries.symmetry_container_jit  import (
+        apply_group_element_compiled, compute_normalization, scan_chunk_find_representatives, fill_representatives, 
+        _SYM_NORM_THRESHOLD, _STATE_TYPE_NB, _REPR_MAP_DTYPE, _PHASE_IDX_DTYPE, _INT_HUGE,
+        _INVALID_REPR_IDX_NB, _INVALID_PHASE_IDX_NB, _INVALID_REPR_IDX, _INVALID_PHASE_IDX
+    )
+except ImportError as e:
+    raise ImportError("Failed to import symmetry_container_jit module. Ensure QES package is correctly installed.") from e
 
 # --------------------------------------------------------------------------
 #! Private helper functions
@@ -76,20 +85,6 @@ def _binary_search_representative_list(mapping: np.ndarray, state: int) -> int:
         else:
             right   = mid - 1
     return numba.int64(-1)
-
-# --------------------------------------------------------------------------
-#! JIT-compiled compact symmetry lookup functions
-# --------------------------------------------------------------------------
-
-_STATE_TYPE             : TypeAlias = np.int64
-_STATE_TYPE_NB          : TypeAlias = numba.int64
-_REPR_MAP_DTYPE         : TypeAlias = np.uint32
-_REPR_MAP_DTYPE_NB      : TypeAlias = numba.uint32
-_PHASE_IDX_DTYPE        : TypeAlias = np.uint8
-_PHASE_IDX_DTYPE_NB     : TypeAlias = numba.uint8
-
-_INVALID_REPR_IDX_NB    : TypeAlias = numba.uint32(0xFFFFFFFF)  # Max uint32 for numba  (sufficient for up to ~4 billion representatives)
-_INVALID_PHASE_IDX_NB   : TypeAlias = numba.uint8(0xFF)         # Max uint8 for numba   (sufficient for up to 255 distinct phases)
 
 @numba.njit(cache=True, fastmath=True)
 def _compact_get_sym_factor(
@@ -191,13 +186,16 @@ def _compact_convert_idx_to_states(idx_array: np.ndarray, repr_list: np.ndarray)
     return idx_array
 
 # --------------------------------------------------------------------------
+#! Imports
+# --------------------------------------------------------------------------
 
 try:
-    from QES.Algebra.Symmetries.base            import SymmetryOperator
-    from QES.Algebra.Operator.operator          import SymmetryGenerators
-    from QES.Algebra.globals                    import GlobalSymmetry
-    from QES.general_python.lattices.lattice    import Lattice
-    
+    from QES.Algebra.Symmetries.base                    import SymmetryOperator
+    from QES.Algebra.Operator.operator                  import SymmetryGenerators
+    from QES.Algebra.globals                            import GlobalSymmetry
+    from QES.general_python.lattices.lattice            import Lattice
+    from QES.Algebra.Symmetries.base                    import CompiledGroup, SymmetryApplicationCodes, SymOpTables
+
     if TYPE_CHECKING:
         from QES.general_python.common.flog     import Logger
     
@@ -210,15 +208,6 @@ try:
         
 except ImportError as e:
     raise ImportError(f"Failed to import required modules: {e}")
-
-#############################################################################
-#! Constants
-#############################################################################
-
-_SYM_NORM_THRESHOLD = 1e-12
-_INT_HUGE           = np.iinfo(np.int64).max            # THE HUGEST!!!
-_INVALID_REPR_IDX   = np.iinfo(_REPR_MAP_DTYPE).max     # ~4 billion, marks state not in sector
-_INVALID_PHASE_IDX  = np.iinfo(_PHASE_IDX_DTYPE).max    # 255, marks invalid phase index
 
 #############################################################################
 #! Compact Symmetry Data Structure
@@ -699,6 +688,7 @@ class SymmetryContainer:
     lattice             : Optional[Lattice]                             = None
     nhl                 : int                                           = 2
     backend             : str                                           = 'default'
+    verbose             : bool                                          = True
 
     # Storage
     generators          : List[Tuple[SymmetryOperator, SymmetrySpec]]   = field(default_factory=list)
@@ -712,6 +702,12 @@ class SymmetryContainer:
     _compact_data       : Optional[CompactSymmetryData]                 = None
     _compatibility      : Optional[SymmetryCompatibility]               = None      # Compatibility checker instance
     logger              : Optional[Callable[[str], None]]               = None      # Logger function
+    
+    # Compiled group data for fast application
+    _n_base             : int                                           = 0
+    _n_trans            : int                                           = 0
+    _compiled_group     : CompiledGroup | None                          = None
+    _tables             : SymOpTables   | None                          = None
     
     # -----------------------------------------------------
     #! Initialization
@@ -765,8 +761,7 @@ class SymmetryContainer:
             self, 
             gen_type    : SymmetryGenerators, 
             sector      : Union[int, float, complex],
-            operator    : SymmetryOperator
-        ) -> bool:
+            operator    : SymmetryOperator) -> bool:
         """
         Add a symmetry generator to the container.
         
@@ -794,7 +789,7 @@ class SymmetryContainer:
         
         # Check compatibility with existing generators
         for existing_op, existing_spec in self.generators:
-            compat, reason  = self._compatibility.check_pair_compatibility(operator, existing_op, spec, existing_spec)
+            compat, reason = self._compatibility.check_pair_compatibility(operator, existing_op, spec, existing_spec)
             if not compat:
                 self.logger.warning(f"Cannot add {gen_type.name}: {reason}")
                 return False
@@ -802,7 +797,7 @@ class SymmetryContainer:
         self.generators.append((operator, spec))
         
         # Log addition
-        self.logger.info(f"Added symmetry generator: {gen_type.name} = {sector}")
+        if self.verbose: self.logger.info(f"Added symmetry generator: {gen_type.name} = {sector}", lvl = 3)
         self._repr_active = False
         return True
     
@@ -841,33 +836,38 @@ class SymmetryContainer:
             - Full: 
                 - each non-translation combo x each translation combo
         """
+        
         if not self.generators:
             self.logger.info("No symmetry generators - empty group")
             self.symmetry_group = [()]  # Identity element
             return
         
         # Separate translations from other generators
-        translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]] = {} # direction -> (op, spec)
-        other_generators = []
+        translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]]  = {} # direction -> (op, spec)
+        other_generators                                                = []
         
         for op, spec in self.generators:
             gen_type = spec[0]
             # Check if this is any translation symmetry
             if gen_type == SymmetryGenerators.Translation_x:
-                translations['x'] = (op, spec)
+                spec_mod            = (0,) + spec[1:]
+                translations['x']   = (op, spec_mod)
             elif gen_type == SymmetryGenerators.Translation_y:
-                translations['y'] = (op, spec)
+                spec_mod            = (1,) + spec[1:]
+                translations['y']   = (op, spec_mod)
+                
             elif gen_type == SymmetryGenerators.Translation_z:
-                translations['z'] = (op, spec)
+                spec_mod            = (1,) + spec[1:]
+                translations['z']   = (op, spec_mod)
             else:
                 other_generators.append((op, spec))
         
         # Build combinations of non-translation generators
         # Start with identity (empty tuple)
-        base_elements: List[GroupElement] = [()]
-        
         # Add all combinations using bitmask approach
-        n_other = len(other_generators)
+        base_elements: List[GroupElement]   = [()]
+        n_other                             = len(other_generators)
+        
         for r in range(1, n_other + 1):
             for combo_indices in combinations(range(n_other), r):
                 # Build operator tuple for this combination
@@ -877,23 +877,181 @@ class SymmetryContainer:
         # If no translations, we're done
         if not translations:
             self.symmetry_group = base_elements
-            self.logger.info(f"Built symmetry group with {len(self.symmetry_group)} elements")
-            return
+            if self.verbose: self.logger.info(f"Built symmetry group with {len(self.symmetry_group)} elements", lvl=2)
+        else:
         
-        # Build translation group (product of cyclic groups)
-        translation_elements = self._build_translation_group(translations)
-        
-        # Combine: each base element with each translation element
-        full_group: List[GroupElement] = []
-        for t_elem in translation_elements:
-            for base_elem in base_elements:
-                # Concatenate tuples: (translation ops) + (other ops)
-                combined = t_elem + base_elem
-                full_group.append(combined)
-        
-        self.symmetry_group = full_group
-        self.logger.info(f"Built symmetry group with {len(self.symmetry_group)} elements ({len(translation_elements)} translation x {len(base_elements)} base)")
+            # Build translation group (product of cyclic groups)
+            translation_elements = self._build_translation_group(translations)
+            
+            # Combine: each base element with each translation element
+            full_group: List[GroupElement] = []
+            for t_elem in translation_elements:
+                for base_elem in base_elements:
+                    # Concatenate tuples: (other ops) + (translation ops)
+                    # Assume correct order already, base_elem contains only non-translation generators
+                    # apply T^n first, then P/R
+                    combined = base_elem + t_elem
+                    full_group.append(combined)
+            
+            self._n_trans       = len(translation_elements)
+            self._n_base        = len(base_elements)
+            self.symmetry_group = full_group
+            if self.verbose: self.logger.info(f"Built symmetry group with {len(self.symmetry_group)} elements ({len(translation_elements)} translation x {len(base_elements)} base)", lvl=2)
+            
+        try:
+            self._compiled_group, self._tables = self.build_compiled_group()
+        except Exception as e:
+            raise RuntimeError(f"Couldn't create the precompiled symmetry groups. Error: {e}")
     
+    def build_compiled_group(self) -> tuple[CompiledGroup, SymOpTables]:
+        """
+        Build both:
+        - SymOpTables:
+            plain arrays of operator data. This is an 
+        - CompiledGroup: 
+            encoded group elements + characters
+        from existing container.generators and container.symmetry_group.
+        """
+
+        ns          = int(self.ns)
+
+        # ------------------------------------------------------------
+        # 1) Build tables and assign "table indices" to operator objects
+        # ------------------------------------------------------------
+        trans_ops   : List[SymmetryOperator] = []
+        refl_ops    : List[SymmetryOperator] = []
+        parity_ops  : List[SymmetryOperator] = []
+        inv_ops     : List[SymmetryOperator] = []
+        op_to_table = {} # python dict: op_object -> (opcode, table_index)
+
+        for op, spec in self.generators:
+            gen_type    = spec[0]
+
+            if      gen_type == SymmetryGenerators.Translation_x or \
+                    gen_type == SymmetryGenerators.Translation_y or \
+                    gen_type == SymmetryGenerators.Translation_z:
+
+                trans_ops.append(op)
+                op_to_table[op] = (SymmetryApplicationCodes.OP_TRANSLATION, len(trans_ops) - 1)
+
+            elif    gen_type == SymmetryGenerators.Reflection:
+                refl_ops.append(op)
+                op_to_table[op] = (SymmetryApplicationCodes.OP_REFLECTION, len(refl_ops) - 1)
+
+            elif    gen_type == SymmetryGenerators.ParityX     or \
+                    gen_type == SymmetryGenerators.ParityY     or \
+                    gen_type == SymmetryGenerators.ParityZ:
+                     
+                parity_ops.append(op)
+                op_to_table[op] = (SymmetryApplicationCodes.OP_PARITY, len(parity_ops) - 1)
+                
+            elif    gen_type == SymmetryGenerators.Inversion:
+                inv_ops.append(op)
+                op_to_table[op] = (SymmetryApplicationCodes.OP_INVERSION, len(inv_ops) - 1)
+
+        # translation perms
+        if len(trans_ops) == 0:
+            trans_perm       = np.zeros((1, ns), dtype=np.int64)        # permutations
+            trans_cross_mask = np.zeros((1, ns), dtype=np.uint8)        # crossing masks
+            trans_shift      = np.zeros((1,), dtype=np.int32)           # shifts
+        else:
+            trans_perm       = np.stack([np.asarray(op.perm,            dtype=np.int64) for op in trans_ops], axis=0)
+            trans_cross_mask = np.stack([np.asarray(op.crossing_mask,   dtype=np.uint8) for op in trans_ops], axis=0)
+            trans_shift      = np.asarray([getattr(op, "shift", 1)                      for op in trans_ops], dtype=np.int32)
+
+        # reflection perms (you may need to add `op.perm` to ReflectionSymmetry class like Translation does)
+        if len(refl_ops) == 0:
+            refl_perm   = np.zeros((1, ns), dtype=np.int64)
+        else:
+            refl_perm   = np.stack([np.asarray(op.perm, dtype=np.int64) for op in refl_ops], axis=0)
+            
+        # inversion perms
+        if len(inv_ops) == 0:
+            inv_perm    = np.zeros((1, ns), dtype=np.int64)
+        else:
+            inv_perm    = np.stack([np.asarray(op.perm, dtype=np.int64) for op in inv_ops], axis=0)
+
+        # parity axis codes
+        # map x,y,z -> 0,1,2
+        axis_map = {"x":0, "y":1, "z":2}
+        if len(parity_ops) == 0:
+            parity_axis = np.zeros((1,), dtype=np.uint8)
+        else:
+            # z is default if not specified
+            parity_axis = np.asarray([axis_map[getattr(op, "axis", "z")] for op in parity_ops], dtype=np.uint8)
+
+        # boundary phase
+        if self.lattice is not None:
+            boundary_phase  = self.lattice.boundary_phases()
+        else:
+            boundary_phase  = None 
+
+        tables              = SymOpTables(
+                                trans_perm          = trans_perm,
+                                trans_cross_mask    = trans_cross_mask,
+                                trans_shift         = trans_shift,
+                                refl_perm           = refl_perm,
+                                inv_perm            = inv_perm,
+                                parity_axis         = parity_axis,
+                                boundary_phase      = boundary_phase
+                            )
+
+        # ------------------------------------------------------------
+        # 2) Encode group elements
+        # ------------------------------------------------------------
+        group_elements      = self.symmetry_group
+        n_group             = len(group_elements)
+        max_ops             = max((len(e) for e in group_elements), default=0)
+
+        n_ops               = np.zeros((n_group,),          dtype=np.int32)
+        op_code             = np.zeros((n_group, max_ops),  dtype=np.uint8)
+        arg0                = np.zeros((n_group, max_ops),  dtype=np.int64)
+        arg1                = np.zeros((n_group, max_ops),  dtype=np.int64)
+
+        # character array in the *same order*
+        chi                 = np.zeros((n_group,), dtype=np.complex128)
+
+        for g, elem in enumerate(group_elements):
+            n_ops[g]        = len(elem)
+            chi[g]          = np.complex128(self.get_character(elem))
+
+            for j, entry in enumerate(elem):
+                if isinstance(entry, tuple):
+                    op, power   = entry
+                        
+                else:
+                    op, power   = entry, 0
+
+                code, tidx      = op_to_table[op]
+                op_code[g,j]    = code
+                arg0[g,j]       = tidx
+                arg1[g,j]       = power
+
+        # globals
+        try:
+            from QES.Algebra.globals import to_codes
+            global_op_codes, global_op_values = to_codes(self.global_symmetries)
+        except ImportError:
+            global_op_codes, global_op_values = np.zeros((0,), dtype=np.int8), np.zeros((0,), dtype=np.float64)
+            raise ImportError("Could not import QES.Algebra.globals. Ensure QES is properly installed.")
+        
+
+
+        # create a compiled group!
+        cg = CompiledGroup(
+                n_group             = n_group,
+                n_trans             = self._n_trans,
+                n_base              = self._n_base,
+                n_ops               = n_ops,
+                op_code             = op_code,
+                arg0                = arg0,
+                arg1                = arg1,
+                chi                 = chi,
+                global_op_codes     = global_op_codes,
+                global_op_vals      = global_op_values
+            )
+        return cg, tables
+
     def _build_translation_group(self, translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]]) -> List[GroupElement]:
         r"""
         Build the translation subgroup as a product of cyclic groups.
@@ -917,44 +1075,36 @@ class SymmetryContainer:
         """
         # Determine the period for each direction
         # For periodic BC, translation^N = identity, so we have N elements in cyclic group
-        periods = {'x': self.ns, 'y': self.ns, 'z': self.ns}
-        
-        # If lattice has different sizes in different directions, use those
-        if self.lattice is not None:
-            if hasattr(self.lattice, 'lx') and 'x' in translations:
-                periods['x'] = self.lattice.lx
-            if hasattr(self.lattice, 'ly') and 'y' in translations:
-                periods['y'] = self.lattice.ly
-            if hasattr(self.lattice, 'lz') and 'z' in translations:
-                periods['z'] = self.lattice.lz
-        
-        # Build all combinations
-        translation_group: List[GroupElement] = []
-        
-        # Get sorted directions for consistent ordering
+        # Determine periods
+        periods = {}
+        for d, (op, _) in translations.items():
+            if self.lattice is not None:
+                if d == 'x':
+                    periods[d] = getattr(self.lattice, 'lx', self.ns)
+                elif d == 'y':
+                    periods[d] = getattr(self.lattice, 'ly', self.ns)
+                elif d == 'z':
+                    periods[d] = getattr(self.lattice, 'lz', self.ns)
+                else:
+                    periods[d] = self.ns
+            else:
+                periods[d] = self.ns
+
         directions = sorted(translations.keys())
-        
-        if len(directions) == 0:
+
+        if not directions:
             return [()]
-        
-        # Build product of cyclic groups
-        # For each combination of powers (i, j, k, ...) create Tx^i Ty^j Tz^k ...
-        ranges = [range(periods[d]) for d in directions]
-        
-        # Generate all combinations using itertools.product
-        from itertools import product as cartesian_product
-        
-        # Build each group element
-        for powers in cartesian_product(*ranges):
-            # Build tuple of operators: Tx repeated i times, Ty repeated j times, etc.
-            ops_tuple = ()
-            for direction, power in zip(directions, powers):
-                t_op, t_spec    = translations[direction]
-                ops_tuple      += tuple([t_op] * power)
-            
-            # Add this translation operator 'power' times
-            translation_group.append(ops_tuple)
-        
+
+        from itertools import product
+        translation_group: List[GroupElement] = []
+
+        for powers in product(*(range(periods[d]) for d in directions)):
+            elem = []
+            for d, p in zip(directions, powers):
+                if p != 0:
+                    elem.append((translations[d][0], p))
+            translation_group.append(tuple(elem))
+
         return translation_group
     
     # -----------------------------------------------------
@@ -1023,6 +1173,10 @@ class SymmetryContainer:
             Minimal state in the orbit of the given state
             and the associated symmetry eigenvalue (character)
         """
+        
+        if self._compiled_group is not None:
+            return self._find_representative_compiled(state)
+        
         min_state   = _INT_HUGE
         min_element = ()
         idx          = -1
@@ -1041,6 +1195,37 @@ class SymmetryContainer:
         # Get the character (representation eigenvalue) for the transformation
         character = self.get_character(min_element)
         return min_state, character, idx
+    
+    def _find_representative_compiled(self, state: StateInt) -> Tuple[StateInt, complex, int]:
+        ''' Internal method to find representative using compiled group data. '''
+        
+        cg          = self._compiled_group
+        tb          = self._tables
+        if cg is None or tb is None:
+            raise RuntimeError("Compiled group not built.")
+
+        min_state   = _INT_HUGE
+        min_g       = -1
+        
+        for g in range(cg.n_group):
+            new_state, _    = apply_group_element_compiled(
+                                np.int64(state), np.int64(self.ns), np.int64(g),
+                                n_ops               = cg.n_ops, 
+                                op_code             = cg.op_code, 
+                                arg0                = cg.arg0, 
+                                arg1                = cg.arg1,
+                                trans_perm          = tb.trans_perm, 
+                                trans_cross_mask    = tb.trans_cross_mask,
+                                refl_perm           = tb.refl_perm,
+                                inv_perm            = tb.inv_perm,
+                                parity_axis         = tb.parity_axis
+                            )
+            
+            if new_state < min_state:
+                min_state = int(new_state)
+                min_g     = g
+
+        return min_state, cg.chi[min_g], min_g
 
     def find_representative(self, 
                             state           : StateInt, 
@@ -1162,9 +1347,10 @@ class SymmetryContainer:
         
         for op, count in op_counts.items():
             # Find the sector for this operator
-            sector_value = None
+            sector_value    = None
+            op_in           = op[0] if isinstance(op, tuple) else op
             for gen_op, (gen_type, sector) in self.generators:
-                if gen_op is op:
+                if op_in is gen_op:
                     sector_value = sector
                     break
             
@@ -1173,7 +1359,7 @@ class SymmetryContainer:
             
             # Use polymorphic get_character method from the operator
             # This delegates the character computation to the symmetry class itself
-            character *= op.get_character(count, sector_value, lattice=self.lattice, ns=self.ns)
+            character *= op_in.get_character(count, sector_value, lattice=self.lattice, ns=self.ns)
         
         return character
     
@@ -1270,11 +1456,10 @@ class SymmetryContainer:
 
     def generate_symmetric_basis(self, 
                                 nh_full         : int, 
-                                global_syms     : Optional[List[GlobalSymmetry]]    = None, 
-                                state_filter    : Optional[Callable[[int], bool]]   = None, 
+                                state_filter    : Optional[Callable]                = None,
                                 return_map      : bool                              = True,
                                 chunk_size      : int                               = 65536) -> Tuple[np.ndarray, np.ndarray]:
-        """
+        r"""
         Generate the symmetric basis by finding all unique representatives
         and their normalization factors. It first identifies unique representatives
         by applying symmetry operations to all states in the full Hilbert space,
@@ -1304,17 +1489,20 @@ class SymmetryContainer:
             Normalization factors for representatives
         """
         
-        self.logger.info(f"Generating symmetric basis for {nh_full} states...", lvl=1, color='cyan')
+        if self.verbose: self.logger.info(f"Generating symmetric basis for {nh_full} states...", lvl=2, color='cyan')
         t0                      = time.time()
         g_to_pidx, phase_table  = self.build_phases_map()
-
+        if self.verbose: self.logger.info(f"Generated phases map. Took: {time.time() - t0:.2e}s", lvl=3, color='cyan')
+        
+        # ---------------------------------------------------------
+        
         if return_map:
-            # Allocate FINAL arrays only (uint32 + uint8)
+            # Allocate FINAL arrays only (uint32 + _PHASE_IDX_DTYPE)
             # This is the peak memory usage point (along with representative_list)        
             compact_repr_map    = np.full(nh_full, _INVALID_REPR_IDX,   dtype=_REPR_MAP_DTYPE)
             compact_phase_idx   = np.full(nh_full, _INVALID_PHASE_IDX,  dtype=_PHASE_IDX_DTYPE)
             gen_map             = True
-            self.logger.info(f"Allocated compact mapping arrays. Took: {time.time() - t0:.2e}s", lvl=2, color='green')
+            if self.verbose: self.logger.info(f"Allocated compact mapping arrays. Took: {time.time() - t0:.2e}s", lvl=3, color='green')
         else:
             compact_repr_map    = None
             compact_phase_idx   = None
@@ -1324,80 +1512,96 @@ class SymmetryContainer:
         # Find Unique Representatives
         # ---------------------------------------------------------
         
-        self.logger.info("Identifying unique representatives...", lvl = 2, color = 'cyan')
-        chunk_size              = min(chunk_size, nh_full) # 2^16 - affordable chunk size
-        representative_list     = []
-        representative_norms    = []
-        
-        state_filter            = state_filter if state_filter is not None else (lambda x: True)
-        def check_global_syms(state: int) -> bool:
-            bad = False
-            for g in global_syms:
-                if not g(state):
-                    bad = True
-                    break
-            return bad
-        
-        for start_idx in range(0, nh_full, chunk_size):
-            end_idx     = min(start_idx + chunk_size, nh_full)
-            repr_in     = []
-            norm_in     = []
-            
-            # Use Python loop for finding representatives
-            for state in range(start_idx, end_idx):
-                
-                if check_global_syms(int(state)): # if global symmetries not satisfied
-                    continue
-                if not state_filter(int(state)):
-                    continue
-                
-                rep_state, phase, idx = self._find_representative(int(state))
-                
-                # Only add the state if it is its own representative
-                # (this ensures each symmetry sector is represented once)
-                if rep_state == state:
-                    # Calculate normalization using character-based projection
-                    n = self.compute_normalization(rep_state)
-                    if abs(n) > _SYM_NORM_THRESHOLD:
-                        repr_in.append(rep_state)
-                        norm_in.append(n)
-                
-                if gen_map:
-                    compact_repr_map[state]     = rep_state         # Temporary - will be converted to index later
-                    compact_phase_idx[state]    = g_to_pidx[idx]    # Phase index for this group element -> phase table
-            
-            # End of chunk processing
-            representative_list.extend(repr_in)
-            representative_norms.extend(norm_in)
-            
-        self.logger.info(f"Identified unique representatives. Took: {time.time() - t0:.2e}s", lvl=3, color='green')
+        if self.verbose: self.logger.info("Identifying unique representatives...", lvl = 3, color = 'cyan')
+        chunk_size              = min(chunk_size, nh_full) # affordable chunk size
+        repr_chunker            = np.zeros((chunk_size,), dtype=np.bool_)
+        repr_counter            = 0
+        for start in range(0, nh_full, chunk_size):
+            end                 = min(start + chunk_size, nh_full)
 
-        # Create sorted representative list
-        pairs                   = sorted(zip(representative_list, representative_norms))
-        representative_list     = np.array([p[0] for p in pairs], dtype=np.int64)
-        representative_norms    = np.array([p[1] for p in pairs], dtype=np.float64)       
+            scan_chunk_find_representatives(
+                start, end, self.ns,
+                # compiled group data
+                self._compiled_group.n_group,
+                self._compiled_group.n_ops,
+                self._compiled_group.op_code,
+                self._compiled_group.arg0,
+                self._compiled_group.arg1,
+                self._compiled_group.chi,
+                # symmetry tables
+                self._tables.trans_perm,
+                self._tables.trans_cross_mask,
+                self._tables.refl_perm,
+                self._tables.inv_perm,
+                self._tables.parity_axis,
+                self._tables.boundary_phase,
+                # globals
+                global_op_vals      = self._compiled_group.global_op_vals,
+                global_op_codes     = self._compiled_group.global_op_codes,
+                # other parameters
+                g_to_pidx           = g_to_pidx,
+
+                repr_map            = compact_repr_map,
+                repr_chunker        = repr_chunker,
+                phase_idx           = compact_phase_idx,
+            )
+            
+            cnt                     = np.sum(repr_chunker)
+            repr_counter           += cnt
+            if self.verbose: self.logger.debug(f"Scanned states {start} to {end-1}. Found {cnt} new representatives. Total so far: {repr_counter}. Took: {time.time() - t0:.2e}s", lvl=4, color='green')
+            
+        if self.verbose: self.logger.info(f"Completed scanning all states. Took: {time.time() - t0:.2e}s", lvl=4, color='green')
+            
+        representative_list     = np.zeros((repr_counter,), dtype=np.int64)
+        representative_norms    = np.zeros((repr_counter,), dtype=np.float64)
+        fill_representatives(compact_repr_map, representative_list)
+        if self.verbose: self.logger.info(f"Filled representative list: D={len(representative_list)}. Took: {time.time() - t0:.2e}s", lvl=4, color='green')
+
+        # ---------------------------------------------------------
+        # Compute Normalizations
+        # ---------------------------------------------------------
         
+        if True:
+            compute_normalization(
+                reps                = representative_list,
+                out_norm            = representative_norms,
+                ns                  = np.int64(self.ns),
+                n_group             = self._compiled_group.n_group,
+                n_ops               = self._compiled_group.n_ops,
+                op_code             = self._compiled_group.op_code,
+                arg0                = self._compiled_group.arg0,
+                arg1                = self._compiled_group.arg1,
+                chi                 = self._compiled_group.chi,
+                # tables
+                trans_perm          = self._tables.trans_perm,
+                trans_cross_mask    = self._tables.trans_cross_mask,
+                refl_perm           = self._tables.refl_perm,
+                inv_perm            = self._tables.inv_perm,
+                parity_axis         = self._tables.parity_axis,
+                boundary_phase      = self._tables.boundary_phase,
+            )
+            if self.verbose: self.logger.info(f"Computed normalization factors for representatives. Took: {time.time() - t0:.2e}s", lvl=4, color='green')    
+            
         # Last step: convert compact_repr_map from state -> index in representative_list
         if gen_map:
-            self.logger.info("Building compact representative index map...", lvl=2, color='cyan')
             compact_repr_map    = _compact_convert_states_to_idx(full_array=compact_repr_map, repr_list=representative_list)
-            self.logger.info(f"With built compact representative index map. Took: {time.time() - t0:.2e}s", lvl=4, color='green')
+            if self.verbose: self.logger.info(f"With built compact representative index map. Took: {time.time() - t0:.2e}s", lvl=4, color='green')
         
         # Create CompactSymmetryData
         self._compact_data = CompactSymmetryData(
             repr_map            = compact_repr_map,
             phase_idx           = compact_phase_idx,
             phase_table         = phase_table,
-            normalization       = representative_norms,
-            representative_list = representative_list
+            normalization       = np.array(representative_norms),
+            representative_list = np.array(representative_list)
         )        
         
-        self.logger.info(
+        if self.verbose: self.logger.info(
             f"Built compact symmetry map: {nh_full} states, "
             f"{len(representative_list)} representatives, "
             f"{len(phase_table)} distinct phases, "
             f"~{(nh_full * 5 + len(phase_table) * 16 + len(representative_list) * 16) / 1024:.1f} KB, "
-            f"in {time.time() - t0:.3e}s"
+            f"in {time.time() - t0:.3e}s", lvl = 2, color='green'
         )
                 
         return representative_list, representative_norms
@@ -1409,7 +1613,7 @@ class SymmetryContainer:
                 
         # Prepare phase table logic
         # We pre-compute the phase index for each group element to avoid looking it up per state
-        # Phase = character(g) * intrinsic_phase (assumed 1.0)
+        # Phase = character(g) * intrinsic_phase
         group_chars         = np.array([self.get_character(g) for g in self.symmetry_group], dtype=np.complex128)
         phase_tolerance     = _SYM_NORM_THRESHOLD
         unique_phases       = []
@@ -1516,7 +1720,8 @@ def create_symmetry_container_from_specs(
     lattice             : Optional[Lattice] = None,
     nhl                 : int               = 2,
     backend             : str               = 'default',
-    build_group         : bool              = True
+    build_group         : bool              = True,
+    verbose             : bool              = True
 ) -> SymmetryContainer:
     """
     Factory function to create and initialize a SymmetryContainer.
@@ -1537,6 +1742,8 @@ def create_symmetry_container_from_specs(
         Computation backend
     build_group : bool
         Whether to build symmetry group immediately
+    verbose: bool
+        Wanna talk?
     
     Returns
     -------
@@ -1548,7 +1755,7 @@ def create_symmetry_container_from_specs(
     Compact symmetry data (for O(1) JIT lookups) is built separately by 
     HilbertSpace after representative generation via build_compact_map().
     """
-    container = SymmetryContainer(ns=ns, lattice=lattice, nhl=nhl, backend=backend)
+    container = SymmetryContainer(ns=ns, lattice=lattice, nhl=nhl, backend=backend, verbose=verbose)
     
     # Add global symmetries
     for gsym in global_syms:
@@ -1572,7 +1779,7 @@ def create_symmetry_container_from_specs(
     # Build group if requested
     if build_group:
         container.build_group()
-    
+        
     return container
 
 ####################################################################################################
@@ -1687,17 +1894,18 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
     # Parity symmetry
     elif sym_name_lower in ['parity', 'parityx', 'parityy', 'parityz', 'spin']:
         if isinstance(sym_value, dict):
-            axis    = sym_value.get('axis', 'z').lower()
-            sector  = sym_value.get('sector', 1)
+            if 'x' in sym_value or 'px' in sym_value:
+                px = sym_value.get('x', sym_value.get('px'))
+                specs.append((SymmetryGenerators.ParityX, px))
+            if 'y' in sym_value or 'px' in sym_value:
+                py = sym_value.get('x', sym_value.get('px'))
+                specs.append((SymmetryGenerators.ParityX, py))
+            if '`' in sym_value or 'px' in sym_value:
+                pz = sym_value.get('x', sym_value.get('px'))
+                specs.append((SymmetryGenerators.ParityX, pz))
+
         else:
-            axis    = 'z'  # Default to z-parity
-            sector  = sym_value
-        
-        if axis == 'x':
-            specs.append((SymmetryGenerators.ParityX, sector))
-        elif axis == 'y':
-            specs.append((SymmetryGenerators.ParityY, sector))
-        else: # 'z' or default
+            sector = int(sym_value)
             specs.append((SymmetryGenerators.ParityZ, sector))
     
     # Reflection symmetry

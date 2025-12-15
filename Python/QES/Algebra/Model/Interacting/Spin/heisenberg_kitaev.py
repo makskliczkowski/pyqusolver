@@ -184,8 +184,8 @@ class HeisenbergKitaev(Hamiltonian):
         self._impurities                = []
         self._setup_impurities(impurities)
         
-        self._log(f"Initializing Heisenberg-Kitaev Hamiltonian on lattice: {lattice}", lvl = 1, log = 'info', color = 'green')
-        self._log(f"Impurities provided: {self._impurities}", lvl = 2, log = 'info', color = 'blue')
+        self._log(f"Initializing Heisenberg-Kitaev Hamiltonian on lattice: {lattice}", lvl = 1, log = 'info', color = 'green', verbose=self._verbose)
+        self._log(f"Impurities provided: {self._impurities}", lvl = 2, log = 'info', color = 'blue', verbose=self._verbose)
             
         self._neibz                     = [[]]
         self._neiby                     = [[]]
@@ -516,8 +516,8 @@ class HeisenbergKitaev(Hamiltonian):
                 #! Finalize the operator addition for this neighbor
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
         
-        self._log(f"Total NN elements added: {elems}", color='red', lvl=3)
-        self._log("Successfully set local energy operators...", lvl=1, log='info')
+        self._log(f"Total NN elements added: {elems}", color='red', lvl=3, verbose=self._verbose)
+        self._log("Successfully set local energy operators...", lvl=1, log='info', verbose=self._verbose)
         
     # ----------------------------------------------------------------------------------------------
 

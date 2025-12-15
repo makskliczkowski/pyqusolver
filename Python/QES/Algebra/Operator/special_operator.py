@@ -160,7 +160,7 @@ class SpecialOperator(Operator, ABC):
                 raise ValueError(SpecialOperator._ERR_MODE_MISMATCH + " Hamiltonian is quadratic but HilbertSpace is many-body.")
             
             if self._logger:
-                self._log(f"Using provided HilbertSpace: ns={self._ns}, lattice={'yes' if self._lattice else 'no'}", lvl=3, color='green', log='debug')
+                if self._verbose: self._log(f"Using provided HilbertSpace: ns={self._ns}, lattice={'yes' if self._lattice else 'no'}", lvl=3, color='green')
             return
         
         # Priority 2: Lattice - infer ns from lattice
@@ -168,14 +168,14 @@ class SpecialOperator(Operator, ABC):
             self._lattice   = lattice
             self._ns        = lattice.ns
             if self._logger:
-                self._log(f"Inferred ns={self._ns} from provided lattice.", lvl=3, color='green', log='debug')
+                if self._verbose: self._log(f"Inferred ns={self._ns} from provided lattice.", lvl=3, color='green')
         
         # Priority 3: ns directly provided
         elif ns is not None:
             self._ns        = ns
             self._lattice   = None
             if self._logger:
-                self._log(f"Using provided ns={self._ns} (no lattice).", lvl=3, color='green', log='debug')
+                if self._verbose: self._log(f"Using provided ns={self._ns} (no lattice).", lvl=3, color='green')
         else:
             # Nothing provided - error
             raise ValueError(self._ERRORS["ns_not_provided"])
@@ -250,6 +250,11 @@ class SpecialOperator(Operator, ABC):
                     self._dtype = np.float64
             else:
                 self._dtype = np.float64
+                
+        if self._iscpx:
+            if self._verbose: self._log("I am complex!", lvl = 2, color='red')
+        else:
+            if self._verbose: self._log("I am real!", lvl = 2, color='green')
     
     # -------------------------------------------------------------------------
     
@@ -266,6 +271,7 @@ class SpecialOperator(Operator, ABC):
             dtype           : Optional[np.dtype]        = None,
             logger          : Optional['Logger']        = None,
             seed            : Optional[int]             = None,
+            verbose         : bool                      = False,
             **kwargs
         ):
         """
@@ -301,6 +307,7 @@ class SpecialOperator(Operator, ABC):
         self._dtype                 = dtype
         self._hilbert_space         = None  # Will be set by _handle_system
         self._logger                = hilbert_space.logger if (logger is None and hilbert_space is not None) else logger
+        self._verbose               = verbose
         
         #! general Hamiltonian info
         self._name                  = "Hamiltonian" if name is None else name
@@ -372,7 +379,7 @@ class SpecialOperator(Operator, ABC):
     
     # -------------------------------------------------------------------------
     
-    def _log(self, msg : str, log : str = 'info', lvl : int = 0, color : str = "white") -> None:
+    def _log(self, msg : str, log : str = 'info', lvl : int = 0, color : str = "white", verbose: bool = True) -> None:
         """
         Log the message.
         
@@ -381,6 +388,9 @@ class SpecialOperator(Operator, ABC):
             log (str) : The logging level. Default is 'info'.
             lvl (int) : The level of the message.
         """
+        if not verbose:
+            return
+        
         msg = f"[{self.name}] {msg}"
         self._hilbert_space._log(msg, log = log, lvl = lvl, color = color, append_msg=False)
     
@@ -1273,7 +1283,7 @@ class SpecialOperator(Operator, ABC):
             
             compile_end                         = time.perf_counter()
             self._composition_int_fun           = wrapper
-            self._log(f"Composition function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="green")
+            self._log(f"Composition function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="green", verbose=self._verbose)
             
         except Exception as e:
             self._log(f"Failed to build composition function: {e}", lvl=3, color="red", log='error')

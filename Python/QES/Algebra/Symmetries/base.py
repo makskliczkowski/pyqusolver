@@ -17,8 +17,10 @@ Date        : 2025-10-26
 """
 
 import  numpy       as np
+import  numba
 from    typing      import Tuple, Any, Dict, Type, Optional, Set, FrozenSet, Union
 from    enum        import Enum, auto
+from    dataclasses import dataclass
 
 ###################################################################################################
 
@@ -145,10 +147,92 @@ class MomentumSector(Enum):
     PI                  = 1
     GENERIC             = 2
 
+####################################################################################################
+#! For JITTING symmetry application methods
+####################################################################################################
+
+OP_IDENTITY             = np.uint8(0)
+OP_TRANSLATION          = np.uint8(1)
+OP_REFLECTION           = np.uint8(2)
+OP_PARITY               = np.uint8(3)
+OP_INVERSION            = np.uint8(4)
+
 @dataclass(frozen=True)
 class SymmetryApplicationCodes:
     """ Codes for symmetry application methods. """
+    OP_IDENTITY     = OP_IDENTITY
+    OP_TRANSLATION  = OP_TRANSLATION
+    OP_REFLECTION   = OP_REFLECTION
+    OP_PARITY       = OP_PARITY
+    OP_INVERSION    = OP_INVERSION
+    
+@dataclass(frozen=True)
+class CompiledGroup:
+    n_group             : int
+    n_base              : int
+    n_trans             : int
+    
+    # element g consists of n_ops[g] primitive ops              -> we call them in sequence
+    n_ops               : np.ndarray          # (n_group,) int32
 
+    # op_code[g, j] tells which primitive op to call            -> see SymmetryApplicationCodes
+    op_code             : np.ndarray          # (n_group, max_ops) uint8
+
+    # arguments are packed into two int64s per op call          -> depends on symmetry
+    arg0                : np.ndarray          # (n_group, max_ops) int64
+    arg1                : np.ndarray          # (n_group, max_ops) int64
+
+    # character of each group element in *your* chosen irrep/sector
+    chi                 : np.ndarray          # (n_group,) complex128
+
+    # global ops
+    global_op_codes     : np.ndarray          # (n_global,)     -> instructs how to apply the global ops
+    global_op_vals      : np.ndarray          # (n_global,)     -> values for global symmetries
+    
+@dataclass(frozen=True)
+class SymOpTables:
+    ''' 
+    Precomputed tables for symmetry operations. 
+    
+    Each symmetry operation has its own set of tables depending on its nature.
+    These tables are used to efficiently apply the symmetry to states.
+    
+    Examples
+    --------
+    - Translation tables:
+        trans_perm          : Permutation of sites under translation - maps site i to site trans_perm[i]
+        trans_cross_mask    : Mask for fermionic sign changes due to crossing
+        trans_shift         : Shift amounts for translation powers
+    - Reflection tables:
+        refl_perm           : Permutation of sites under reflection - maps site i to site refl_perm[i]
+    '''
+    
+    # Translation tables (support multiple translation generators: x/y/z etc.)
+    # We store a stack of permutations; op arg0 will select which one.
+    trans_perm          : np.ndarray        # (n_trans, ns) int64
+    trans_cross_mask    : np.ndarray        # (n_trans, ns) uint8 or bool
+    trans_shift         : np.ndarray        # (n_trans,) int32  (optional; if you encode power as repeated calls you might not need)
+
+    # Reflection tables
+    refl_perm           : np.ndarray        # (n_refl, ns) int64
+    
+    # Inversion tables
+    inv_perm            : np.ndarray        # (n_inv, ns) int64
+
+    # Parity tables
+    parity_axis         : np.ndarray        # (n_parity,) uint8   (0=x,1=y,2=z)
+
+    # Save boundary phases
+    boundary_phase      : np.ndarray        # (3, ns+1) complex128, for translation/reflection BC phases
+
+@numba.njit(cache=True, fastmath=True)
+def _popcount64(x: np.int64) -> np.int64:
+    # portable popcount (Numba supports bit ops; this is fine)
+    c = np.int64(0)
+    while x:
+        x &= (x - 1)
+        c += 1
+    return c
 
 ####################################################################################################
 # Abstract base class for symmetry operations
@@ -218,6 +302,7 @@ class SymmetryOperator:
     ...         return new_state, phase
     """
     
+    code                        : SymmetryApplicationCodes                  = SymmetryApplicationCodes.OP_IDENTITY
     symmetry_class              : SymmetryClass                             = SymmetryClass.GENERIC     # Default to GENERIC, override in subclasses
     compatible_with             : Set[SymmetryClass]                        = set()                     # Unconditionally compatible symmetries, e.g., PARITY with U1_*
     momentum_dependent          : Dict[MomentumSector, Set[SymmetryClass]]  = {}                        # Compatibility at specific momentum sectors, e.g., TRANSLATION-REFLECTION

@@ -136,6 +136,7 @@ class Hamiltonian(BasisAwareOperator):
                 use_forward     : bool                                          = False,
                 logger          : Optional['Logger']                            = None,
                 seed            : Optional[int]                                 = None,
+                verbose         : bool                                          = False,
                 **kwargs):
         """
         Initialize the Hamiltonian class.
@@ -184,6 +185,7 @@ class Hamiltonian(BasisAwareOperator):
                         dtype           =   dtype,
                         logger          =   logger,
                         seed            =   seed,
+                        verbose         =   verbose,
                         **kwargs)
         
         # =====================================================================
@@ -483,7 +485,7 @@ class Hamiltonian(BasisAwareOperator):
             
             default_basis                                   = self._hilbert_space._basis_type
             self._basis_metadata['inherited_from_hilbert']  = True
-            self._log(f"Hamiltonian basis inherited from HilbertSpace: {default_basis}", lvl=1, color="cyan")
+            if self._verbose: self._log(f"Hamiltonian basis inherited from HilbertSpace: {default_basis}", lvl=1, color="cyan")
         else:
             # Priority 2: Infer from Hamiltonian properties
             if self._is_quadratic:
@@ -502,14 +504,12 @@ class Hamiltonian(BasisAwareOperator):
                 else:
                     default_basis = HilbertBasisType.FOCK
                     self._basis_metadata['system_type'] = 'manybody-fock'
-
-            self._log(f"Hamiltonian default basis inferred: {default_basis} ({self._basis_metadata.get('system_type', 'unknown')})", lvl=2, color="cyan")
         
         # Set original and current basis
         self._original_basis    = default_basis
         self._current_basis     = default_basis
         self._is_transformed    = False
-        self._log(f"Default basis inferred: {default_basis} ({self._basis_metadata.get('system_type', 'unknown')})", lvl=2, color="cyan")
+        if self._verbose: self._log(f"Default basis inferred: {default_basis} ({self._basis_metadata.get('system_type', 'unknown')})", lvl=2, color="cyan")
     
     def get_transformation_state(self) -> Dict[str, Any]:
         """
@@ -574,7 +574,7 @@ class Hamiltonian(BasisAwareOperator):
 
         # Use the (potentially updated by super()) symmetry_name and sector for Hamiltonian-specific recording
         if self._symmetry_info: # Check if super() successfully set _symmetry_info
-            self._log(f"Hamiltonian recorded symmetry application: {self._symmetry_info}", lvl=2, color="yellow")
+            if self._verbose: self._log(f"Hamiltonian recorded symmetry application: {self._symmetry_info}", lvl=3, color="yellow")
     
     def validate_basis_transformation(self, target_basis: str) -> Tuple[bool, str]:
         """
@@ -716,10 +716,8 @@ class Hamiltonian(BasisAwareOperator):
         if self._is_manybody:
             self._hamil     = matrix
             self._matrix    = matrix
-            self._is_built  = matrix is not None
         else:
             self._hamil_sp  = matrix
-            self._is_built  = matrix is not None
     
     # ----------------------------------------------------------------------------------------------
     
@@ -1002,7 +1000,8 @@ class Hamiltonian(BasisAwareOperator):
                 self._log(f"Hamiltonian matrix built in {ham_duration:.6f} seconds.", lvl = 1)
         else:
             raise ValueError(f"{Hamiltonian._ERR_HAMILTONIAN_BUILD} : The Hamiltonian matrix is empty or invalid.")
-
+        self._is_built = True
+        
     # ----------------------------------------------------------------------------------------------
     #! Local energy methods - Abstract methods
     # ----------------------------------------------------------------------------------------------
@@ -1217,7 +1216,7 @@ class Hamiltonian(BasisAwareOperator):
                 self._hamil = sigma @ backend.block([[ self._hamil_sp,  self._delta_sp          ],
                                         [self._delta_sp.conj().T, self._hamil_sp.conj().T       ]])
     
-    def diagonalize(self, verbose: bool = False, **kwargs):
+    def diagonalize(self, build: bool = False, verbose: bool = False, **kwargs):
         """
         Diagonalizes the Hamiltonian matrix using a modular, flexible approach.
         
@@ -1337,8 +1336,14 @@ class Hamiltonian(BasisAwareOperator):
             has_krylov_basis : Check if Krylov basis is available
         """
         
+        if self.nh == 0:
+            self._log("The Hilbert space is empty, skipping!", log='warning', lvl=3, color='yellow')
+            return
+        
         # Start timing
         diag_start      = time.perf_counter()
+        if build:
+            self.build(verbose=verbose, use_numpy=kwargs.get("use_numpy", True), force=kwargs.get('force', False))
         
         # Extract parameters
         if True:

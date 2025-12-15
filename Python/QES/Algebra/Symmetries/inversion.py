@@ -13,9 +13,9 @@ Date        : 2025-12-06
 --------------------------------------------------
 """
 
-import numpy as np
-from typing import Tuple, Optional, List, Union
-from functools import lru_cache
+import  numpy as np
+from    typing import Tuple, Optional, List, Union
+from    functools import lru_cache
 
 try:
     from numba import njit
@@ -28,11 +28,11 @@ except ImportError:
         return decorator if args and callable(args[0]) else decorator
 
 try:
-    from QES.general_python.lattices.lattice import Lattice
+    from QES.general_python.lattices.lattice    import Lattice
+    from QES.Algebra.Symmetries.base            import SymmetryOperator, SymmetryClass, MomentumSector, SymmetryApplicationCodes
 except ImportError:
     Lattice = None  # type: ignore
     
-from QES.Algebra.Symmetries.base import SymmetryOperator, SymmetryClass, MomentumSector
 
 ####################################################################################################
 # Numba-accelerated permutation application
@@ -63,26 +63,49 @@ def _apply_inversion_permutation(state: int, ns: int, base: int, perm: np.ndarra
         New state after applying the permutation
     """
     if base == 2:
-        # Fast path for spin-1/2: bit manipulation
-        new_state = 0
+        # Fast path for spin-1/2 or hardcore bosons
+        new_state   = 0
         for i in range(ns):
             # Extract bit at position i
-            bit = (state >> i) & 1
             # Place it at the inverted position
-            new_state |= (bit << perm[i])
+            bit         = (state >> i) & 1
+            new_state  |= (bit << perm[i])
         return new_state
+    
+    elif base == 3:
+        # Fast path for qutrits
+        new_state   = 0
+        power       = 1
+        for i in range(ns):
+            # Extract trit at position i
+            trit        = (state // power) % 3
+            new_state  += trit * (3 ** perm[i])
+            power      *= 3
+        return new_state
+    
+    elif base == 4:
+        # Fast path for ququarts
+        new_state   = 0
+        power       = 1
+        for i in range(ns):
+            # Extract ququart at position i
+            quat        = (state // power) % 4
+            new_state  += quat * (4 ** perm[i])
+            power      *= 4
+        return new_state
+    
     else:
         # General case: mixed-radix representation
         # Extract local states
         local_states = np.zeros(ns, dtype=np.int64)
         temp = state
         for i in range(ns):
-            local_states[i] = temp % base
-            temp //= base
+            local_states[i]     = temp % base
+            temp              //= base
         
         # Reconstruct with permuted positions
-        new_state = 0
-        power = 1
+        new_state   = 0
+        power       = 1
         for i in range(ns):
             # Site i in new state gets value from site that maps to i
             # We need inverse permutation: find j such that perm[j] = i
@@ -92,7 +115,6 @@ def _apply_inversion_permutation(state: int, ns: int, base: int, perm: np.ndarra
                     break
             power *= base
         return new_state
-
 
 def _build_inversion_permutation(lattice: 'Lattice') -> np.ndarray:
     """
@@ -114,44 +136,40 @@ def _build_inversion_permutation(lattice: 'Lattice') -> np.ndarray:
     np.ndarray
         Permutation array of shape (ns,) where perm[i] = inverted site index
     """
-    ns = lattice.Ns
-    dim = lattice.dim
-    lx = lattice.Lx
-    ly = lattice.Ly if dim >= 2 else 1
-    lz = lattice.Lz if dim >= 3 else 1
+    ns      = lattice.Ns
+    dim     = lattice.dim
+    lx      = lattice.Lx
+    ly      = lattice.Ly if dim >= 2 else 1
+    lz      = lattice.Lz if dim >= 3 else 1
     
     # Check if lattice has multi-site unit cell (e.g., honeycomb)
     n_basis = len(lattice._basis) if hasattr(lattice, '_basis') and lattice._basis is not None and len(lattice._basis) > 0 else 1
-    
-    perm = np.zeros(ns, dtype=np.int64)
+    perm    = np.zeros(ns, dtype=np.int64)
     
     for i in range(ns):
         # Get the unit cell index and sublattice index
-        cell = i // n_basis
-        sub = i % n_basis
+        cell        = i // n_basis
+        sub         = i % n_basis
         
         # Extract cell coordinates
-        nx = cell % lx
-        ny = (cell // lx) % ly if dim >= 2 else 0
-        nz = (cell // (lx * ly)) % lz if dim >= 3 else 0
+        nx          = cell % lx
+        ny          = (cell // lx) % ly if dim >= 2 else 0
+        nz          = (cell // (lx * ly)) % lz if dim >= 3 else 0
         
         # Apply inversion: (nx, ny, nz) -> (Lx-1-nx, Ly-1-ny, Lz-1-nz)
-        nx_inv = (lx - 1 - nx) % lx
-        ny_inv = (ly - 1 - ny) % ly if dim >= 2 else 0
-        nz_inv = (lz - 1 - nz) % lz if dim >= 3 else 0
+        nx_inv      = (lx - 1 - nx) % lx
+        ny_inv      = (ly - 1 - ny) % ly if dim >= 2 else 0
+        nz_inv      = (lz - 1 - nz) % lz if dim >= 3 else 0
         
         # Convert back to linear index
-        cell_inv = nx_inv + ny_inv * lx + nz_inv * lx * ly
+        cell_inv    = nx_inv + ny_inv * lx + nz_inv * lx * ly
         
         # For multi-site unit cells, sublattice index is preserved under inversion
         # (this is the standard convention for honeycomb, kagome, etc.)
         # Some lattices may need sublattice permutation too - can be extended
-        i_inv = cell_inv * n_basis + sub
-        
-        perm[i] = i_inv
-    
+        i_inv       = cell_inv * n_basis + sub
+        perm[i]     = i_inv
     return perm
-
 
 ####################################################################################################
 # InversionSymmetry class
@@ -166,17 +184,21 @@ class InversionSymmetry(SymmetryOperator):
     Spatial inversion (parity) symmetry P maps each site to its mirror position
     through the center of the lattice:
     
-    - 1D: site i → site (L-1-i)
-    - 2D: site at (x,y) → site at (Lx-1-x, Ly-1-y)
-    - 3D: site at (x,y,z) → site at (Lx-1-x, Ly-1-y, Lz-1-z)
+    - 1D: site i            -> site (L-1-i)
+    - 2D: site at (x,y)     -> site at (Lx-1-x, Ly-1-y)
+    - 3D: site at (x,y,z)   -> site at (Lx-1-x, Ly-1-y, Lz-1-z)
     
-    Quantum numbers: Inversion parity p = +/- 1
-    - p = +1: Even parity (symmetric states)
-    - p = -1: Odd parity (antisymmetric states)
+    Quantum numbers: Inversion parity: p = +/- 1
+    - p = +1: 
+        Even parity (symmetric states)
+    - p = -1: 
+        Odd parity (antisymmetric states)
     
     Difference from ReflectionSymmetry
     -----------------------------------
+    
     ReflectionSymmetry uses bit-reversal which is only correct for 1D chains.
+    
     InversionSymmetry uses explicit lattice coordinates, making it correct
     for any lattice type and dimension.
     
@@ -189,47 +211,55 @@ class InversionSymmetry(SymmetryOperator):
     Commutation Rules
     -----------------
     Always commutes with:
-    - U1_PARTICLE, U1_SPIN: Conserved quantities are spatial-independent
-    - PARITY: Spatial inversion commutes with spin flips
-    - REFLECTION: Both are spatial operations
-    - POINT_GROUP: Part of point group symmetries
+    - U1_PARTICLE, U1_SPIN: 
+        Conserved quantities are spatial-independent
+    - PARITY: 
+        Spatial inversion commutes with spin flips
+    - REFLECTION: 
+        Both are spatial operations
+    - POINT_GROUP: 
+        Part of point group symmetries
     
     Conditionally commutes with (momentum-dependent):
-    - TRANSLATION: Only at k=0, k=π momentum sectors
+    - TRANSLATION: Only at k=0, k=pi momentum sectors
       -> Reason: P * T * P^(-1) = T^(-1), so need e^(ik) = e^(-ik)
-      -> This holds only for k=0 (trivial) or k=π
+      -> This holds only for k=0 (trivial) or k=pi
     
     Examples
     --------
-    >>> from QES.Algebra.Symmetries import InversionSymmetry
+    >>> from QES.Algebra.Symmetries             import InversionSymmetry
     >>> from QES.general_python.lattices.square import SquareLattice
     >>> 
     >>> # 2D square lattice with inversion symmetry
-    >>> lattice = SquareLattice(dim=2, lx=4, ly=4)
-    >>> inv_sym = InversionSymmetry(lattice, sector=1, ns=16, base=2)
+    >>> lattice             = SquareLattice(dim=2, lx=4, ly=4)
+    >>> inv_sym             = InversionSymmetry(lattice, sector=1, ns=16, base=2)
     >>> 
     >>> # Apply to a state
-    >>> new_state, phase = inv_sym.apply_int(0b1010, ns=16)
+    >>> new_state, phase    = inv_sym.apply_int(0b1010, ns=16)
+    >>>
+    >>> # Hilbert
+    >>> hilbert             = HilbertSpace(lattice=lattice, sym_gen={'inversion':1})
     """
     
-    symmetry_class          = SymmetryClass.INVERSION
-    compatible_with         = {
-                                SymmetryClass.U1_PARTICLE,
-                                SymmetryClass.U1_SPIN,
-                                SymmetryClass.PARITY,
-                                SymmetryClass.REFLECTION,
-                                SymmetryClass.POINT_GROUP,
-                            }
-    momentum_dependent      = {
-                                MomentumSector.ZERO : {SymmetryClass.TRANSLATION},
-                                MomentumSector.PI   : {SymmetryClass.TRANSLATION},
-                            }
+    code                        = SymmetryApplicationCodes.OP_INVERSION
+    symmetry_class              = SymmetryClass.INVERSION
+    compatible_with             = {
+                                    SymmetryClass.U1_PARTICLE,
+                                    SymmetryClass.U1_SPIN,
+                                    SymmetryClass.PARITY,
+                                    SymmetryClass.REFLECTION,
+                                    SymmetryClass.POINT_GROUP,
+                                }
+    momentum_dependent          = {
+                                    MomentumSector.ZERO : {SymmetryClass.TRANSLATION},
+                                    MomentumSector.PI   : {SymmetryClass.TRANSLATION},
+                                }
     
     # Inversion is universal - works for all local space types
-    supported_local_spaces  = set()  # Empty = universal
+    supported_local_spaces      = set()  # Empty = universal
     
     # Class-level cache for permutation arrays (keyed by lattice identity)
-    _permutation_cache: dict = {}
+    _permutation_cache: dict    = {}
     
     @staticmethod
     def get_sectors() -> List[int]:
@@ -249,6 +279,8 @@ class InversionSymmetry(SymmetryOperator):
         [1, -1]
         """
         return [1, -1]
+    
+    # ---------------------------
     
     def __init__(self, 
                  lattice: 'Lattice', 
@@ -280,10 +312,12 @@ class InversionSymmetry(SymmetryOperator):
         self.sector     = sector
         self.ns         = ns
         self.base       = base
-        self._perm      = None
+        self.perm       = None
         
         if precompute and lattice is not None:
-            self._perm = self._get_permutation()
+            self.perm   = self._get_permutation()
+    
+    # ---------------------------    
     
     def _get_permutation(self) -> np.ndarray:
         """
@@ -291,8 +325,8 @@ class InversionSymmetry(SymmetryOperator):
         
         Uses caching to avoid recomputation for the same lattice.
         """
-        if self._perm is not None:
-            return self._perm
+        if self.perm is not None:
+            return self.perm
         
         # Use lattice id for caching
         cache_key = id(self.lattice)
@@ -300,8 +334,8 @@ class InversionSymmetry(SymmetryOperator):
         if cache_key not in InversionSymmetry._permutation_cache:
             InversionSymmetry._permutation_cache[cache_key] = _build_inversion_permutation(self.lattice)
         
-        self._perm = InversionSymmetry._permutation_cache[cache_key]
-        return self._perm
+        self.perm = InversionSymmetry._permutation_cache[cache_key]
+        return self.perm
     
     def __call__(self, state: int, ns: int = None, **kwargs) -> Tuple[int, complex]:
         return self.apply_int(state, ns or self.ns, **kwargs)
@@ -385,6 +419,8 @@ class InversionSymmetry(SymmetryOperator):
         result, phase   = self.apply_numpy(np_state, **kwargs)
         return jnp.array(result), phase
     
+    # ---------------------------
+    
     def get_character(self, count: int, sector: Union[int, float, complex], **kwargs) -> complex:
         """
         Compute the character for inversion raised to a power.
@@ -408,6 +444,8 @@ class InversionSymmetry(SymmetryOperator):
         effective_count = count % 2
         return sector ** effective_count
     
+    # ---------------------------
+    
     @staticmethod
     def clear_cache():
         """Clear the permutation cache (useful for memory management)."""
@@ -419,6 +457,8 @@ class InversionSymmetry(SymmetryOperator):
     def __str__(self) -> str:
         parity_str = "even" if self.sector == 1 else "odd"
         return f"Inversion({parity_str})"
+
+    # ---------------------------
     
     @property
     def directory_name(self) -> str:
@@ -434,7 +474,6 @@ class InversionSymmetry(SymmetryOperator):
         """
         sector_str = self._sector_to_str(self.sector)
         return f"inv_{sector_str}"
-
 
 ####################################################################################################
 # Utility functions
@@ -458,14 +497,13 @@ def build_inversion_operator_matrix(lattice: 'Lattice', base: int = 2) -> np.nda
     np.ndarray
         Inversion operator matrix of shape (nh, nh) where nh = base^ns
     """
-    ns = lattice.Ns
-    nh = base ** ns
-    perm = _build_inversion_permutation(lattice)
-    
-    P = np.zeros((nh, nh), dtype=complex)
+    ns      = lattice.Ns
+    nh      = base ** ns
+    perm    = _build_inversion_permutation(lattice)
+    P       = np.zeros((nh, nh), dtype=complex)
     
     for idx in range(nh):
-        new_idx = _apply_inversion_permutation(idx, ns, base, perm)
-        P[new_idx, idx] = 1.0
+        new_idx             = _apply_inversion_permutation(idx, ns, base, perm)
+        P[new_idx, idx]     = 1.0
     
     return P

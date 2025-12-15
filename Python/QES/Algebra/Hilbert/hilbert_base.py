@@ -325,7 +325,7 @@ class BaseHilbertSpace(ABC):
                 sector_str = SymmetryOperator._sector_to_str(op.sector)
                 names.append(f"{op.__class__.__name__.lower()}_{sector_str}")
         
-        return "_".join(names) if names else "nosym"
+        return (",".join(names)).replace('_', "=") if names else "nosym"
 
     @property
     def lattice_directory_name(self) -> str:

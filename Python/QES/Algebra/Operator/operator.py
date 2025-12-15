@@ -1913,7 +1913,7 @@ class Operator(GeneralMatrix):
             list of values, states if single particle picture is used.
         """
         
-        if hilbert is None or kwargs.get('mb', False) is False:
+        if hilbert is None:
             
             # Simple mapping for integer states
             if isinstance(vecs, list) or (isinstance(vecs, np.ndarray) and vecs.ndim == 1 and 'int' in str(vecs.dtype)):
@@ -1950,7 +1950,7 @@ class Operator(GeneralMatrix):
         # Check for CompactSymmetryData (O(1) lookup)
         compact_data    = getattr(hilbert, 'compact_symmetry_data', None)
         
-        if compact_data is not None and (hilbert.nhfull == hilbert.nh):
+        if compact_data is not None and (hilbert.nhfull != hilbert.nh):
             # Fast path with compact data
             _apply_op_batch_compact_jit(
                 vecs_in,
