@@ -42,7 +42,7 @@ from    dataclasses import dataclass, field
 from    itertools   import combinations
 
 try:
-    from QES.Algebra.Symmetries.symmetry_container_jit  import (
+    from QES.Algebra.Symmetries.jit.symmetry_container_jit  import (
         apply_group_element_compiled, compute_normalization, scan_chunk_find_representatives, fill_representatives, 
         _SYM_NORM_THRESHOLD, _STATE_TYPE_NB, _REPR_MAP_DTYPE, _PHASE_IDX_DTYPE, _INT_HUGE,
         _INVALID_REPR_IDX_NB, _INVALID_PHASE_IDX_NB, _INVALID_REPR_IDX, _INVALID_PHASE_IDX

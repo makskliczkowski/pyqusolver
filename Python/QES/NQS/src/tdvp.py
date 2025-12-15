@@ -242,7 +242,8 @@ class TDVP:
             use_timing      : bool                                      = False,    # whether to time/synchronize operations (can cause overhead)
             dtype           : Any                                       = jnp.complex64 if JAX_AVAILABLE else np.complex64,
             # Gradient clipping
-            grad_clip       : Optional[float]                           = None
+            grad_clip       : Optional[float]                           = None,
+            verbose         : bool                                      = False
         ):
         ''' TDVP Initialization Function
         
@@ -300,6 +301,8 @@ class TDVP:
             Backend for numerical operations - 'jax' or 'numpy', by default 'default' (uses JAX if available, otherwise NumPy). 
         grad_clip : float, optional
             Gradient clipping threshold. If None, no clipping is applied.
+        verbose : bool, optional
+            Whether to print verbose output. Default is False.
         '''
         
         self.backend            = get_backend(backend)
@@ -307,6 +310,7 @@ class TDVP:
         self.is_np              = not self.is_jax
         self.backend_str        = 'jax' if self.is_jax else 'numpy'
         self.dtype              = dtype
+        self.verbose            = verbose
         
         # Logger
         self.logger             = logger    
@@ -460,7 +464,7 @@ class TDVP:
             # Default to PseudoInverseSolver if no solver is provided
             self.sr_solve_lin_t     = solvers.SolverForm.MATRIX
             self.sr_solve_lin       = solvers.PseudoInverseSolver(backend=self.backend, sigma=self.sr_diag_shift)
-            if self.logger: self.logger.info("No solver provided. Defaulting to PseudoInverseSolver with full matrix formation.", lvl=2, color='red')
+            if self.logger and self.verbose: self.logger.info("No solver provided. Defaulting to PseudoInverseSolver with full matrix formation.", lvl=2, color='red')
 
         if isinstance(self.sr_solve_lin, str) or isinstance(self.sr_solve_lin, solvers.SolverType) or isinstance(self.sr_solve_lin, int):
             identifier              = self.sr_solve_lin
@@ -474,7 +478,7 @@ class TDVP:
                                         form_matrix     =   self.sr_solve_forced,
                                         dtype           =   self.dtype
                                     )
-            if self.logger: self.logger.info(f"Solver set to {self.sr_solve_lin} based on identifier '{identifier}'.")
+            if self.logger and self.verbose: self.logger.info(f"Solver set to {self.sr_solve_lin} based on identifier '{identifier}'.")
 
         if self.sr_solve_lin is not None:
             if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
@@ -484,7 +488,7 @@ class TDVP:
             else:
                 self.form_matrix    = True
                 
-            if self.logger: self.logger.info(f"Solver form set to {'full matrix' if self.form_matrix else 'matrix-vector products'}.", lvl=2, color='red')
+            if self.logger and self.verbose: self.logger.info(f"Solver form set to {'full matrix' if self.form_matrix else 'matrix-vector products'}.", lvl=2, color='red')
             
             #! set the solver function
             self.sr_solve_lin_fn = self.sr_solve_lin.get_solver_func(

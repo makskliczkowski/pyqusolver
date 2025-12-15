@@ -12,12 +12,11 @@ Version     : 1.0
 
 """
 
-import os 
-import numpy as np
-import numba
-from dataclasses import dataclass
-from typing import Dict, List, Union, Optional, Callable, Tuple
-from enum import IntEnum
+import  os 
+import  numba
+import  numpy   as np
+from    typing  import Dict, List, Union, Optional, Callable
+from    enum    import IntEnum
 
 ################################################################################
 
@@ -25,7 +24,7 @@ try:
     # main imports
     from QES.Algebra.Operator.operator          import Operator, OperatorTypeActing, create_operator, ensure_operator_output_shape_numba
     from QES.Algebra.Operator.catalog           import register_local_operator
-    from QES.Algebra.Operator.special_operator  import CUSTOM_OP_BASE, CUSTOM_OP_MAX, is_custom_code
+    from QES.Algebra.Operator.special_operator  import CUSTOM_OP_BASE
     from QES.Algebra.Hilbert.hilbert_local      import LocalOpKernels, LocalSpaceTypes
 except ImportError as e:
     raise ImportError("Failed to import required modules. Ensure that the QES package is correctly installed.") from e
@@ -33,11 +32,10 @@ except ImportError as e:
 ################################################################################
 
 try:
-    import QES.general_python.common.binary as _binary
-    from QES.general_python.lattices.lattice import Lattice
-    from QES.general_python.algebra.utils import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
-    from QES.general_python.common.binary import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN
-    from QES.general_python.common.binary import flip, check
+    import QES.general_python.common.binary     as _binary
+    from QES.general_python.lattices.lattice    import Lattice
+    from QES.general_python.algebra.utils       import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
+    from QES.general_python.common.binary       import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN
 except ImportError as e:
     raise ImportError("Failed to import required QES general Python modules.") from e
 
@@ -2091,6 +2089,62 @@ def sigma_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int, C
         return out_states[:ptr], out_vals[:ptr]
     
     return sigma_operator_composition_with_custom_int
+
+# -----------------------------------------------------------------------------
+#! Plaquette Operators
+# -----------------------------------------------------------------------------
+
+def apply_plaquette(vecs        : np.ndarray,
+                    plaquette   : np.ndarray,
+                    out         : np.ndarray,
+                    hilbert,
+                    bond_to_op  = {
+                        0   : sig_z,
+                        1   : sig_y,
+                        2   : sig_x,
+                    }):
+    """
+    Apply the plaquette (flux) operator W_p to vecs depending on the provided plaquette.
+
+    The spin component at each site is the bond type
+    NOT used by the plaquette at that site.
+
+    Parameters
+    ----------
+    vecs : ndarray, shape (Nh, ns)
+        Input state vectors (batched).
+    plaquette : list[int]
+        site indices in CCW order.
+    out : ndarray, shape (Nh, ns)
+        Workspace, overwritten.
+
+    Returns
+    -------
+    out : ndarray
+        W_p |vecs>
+    """
+    out[:]      = vecs
+    all_bonds   = bond_to_op.keys()
+    P           = len(plaquette)        # e.g., should be 6 for Honeycomb
+    lattice     = hilbert.lattice
+    
+    for k in range(P):
+        site    = plaquette[k]
+        prev    = plaquette[k - 1]
+        nxt     = plaquette[(k + 1) % P]
+
+        b1      = lattice.bond_type(site, prev)
+        b2      = lattice.bond_type(site, nxt)
+
+        if b1 < 0 or b2 < 0:
+            raise RuntimeError(f"Invalid plaquette bonds at site {site}: {b1}, {b2}")
+
+        # Missing bond determines spin component
+        missing = (all_bonds - {b1, b2}).pop()
+        op      = bond_to_op[missing]
+        out[:]  = op.matvec(out, site, hilbert=hilbert)
+
+    return out
 
 # -----------------------------------------------------------------------------
 #! Finalize

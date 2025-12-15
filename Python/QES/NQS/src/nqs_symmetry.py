@@ -154,13 +154,16 @@ class NQSSymmetricAnsatz:
         projector = self._projector
 
         def symmetrized_ansatz(params, inputs):
-            # Project states to orbit: (batch, group_size, ns)
-            # inputs shape: (batch_dim, ns)
-            
+            # Project states to orbit: (batch, group_size, ns) or (group_size, ns) if 1D
             orbit_states, orbit_weights = projector(inputs)
             
-            batch_dim                   = orbit_states.shape[0]
-            group_size                  = orbit_states.shape[1]
+            # Handle dimensions
+            if orbit_states.ndim == 2: # 1D input case: (group_size, ns)
+                group_size  = orbit_states.shape[0]
+                batch_dim   = 1
+            else: # 2D input case: (batch, group_size, ns)
+                batch_dim   = orbit_states.shape[0]
+                group_size  = orbit_states.shape[1]
             
             # Flatten for network evaluation: (batch_dim * group_size, ns)
             flat_states                 = orbit_states.reshape(-1, orbit_states.shape[-1])
@@ -174,7 +177,18 @@ class NQSSymmetricAnsatz:
             # Compute symmetrized log psi: log( sum( w * exp(log_psi) ) )
             # We use logsumexp with 'b' argument for weights: log(sum(b * exp(a)))
             # JAX's logsumexp supports complex inputs/weights.
+            
+            # Ensure weights are broadcastable if they are 1D (from 1D input)
+            if orbit_weights.ndim == 1 and batch_dim == 1:
+                 # orbit_weights is (group_size,), log_psi is (1, group_size)
+                 # Expand weights to (1, group_size)
+                 orbit_weights = jnp.expand_dims(orbit_weights, 0)
+            
             log_psi_sym                 = logsumexp(log_psi, axis=1, b=orbit_weights)
+            
+            # If input was 1D, return scalar (squeeze batch dim)
+            if inputs.ndim == 1:
+                log_psi_sym = jnp.squeeze(log_psi_sym, axis=0)
             
             return jnp.where(jnp.isinf(log_psi_sym), -jnp.inf, log_psi_sym) # Handle -inf for zero sum
 

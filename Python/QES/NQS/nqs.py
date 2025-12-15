@@ -229,6 +229,7 @@ class NQS(MonteCarloSolver):
                 symmetrize  : bool                                          = True,
                 # logging
                 logger      : Optional[Logger]                              =   None,
+                verbose     : bool                                          =   True,
                 **kwargs):
         '''
         Initialize the NQS solver.
@@ -298,6 +299,8 @@ class NQS(MonteCarloSolver):
                 :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
                 where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
                 This allows training symmetry-protected states.
+            verbose [bool]:
+                Whether to print verbose output. Default is True.
             **kwargs:
                 Additional keyword arguments passed to the network constructor.
                 Including:
@@ -358,6 +361,7 @@ class NQS(MonteCarloSolver):
         self._initialized           = False
         self._seed                  = seed
         self._nthstate              = nthstate
+        self._verbose               = verbose
         
         self._modifier_wrapper      = None   # type: Optional[AnsatzModifier]
         self._modifier_source       = None   # type: Optional[Union[Operator, Callable]]
@@ -392,7 +396,7 @@ class NQS(MonteCarloSolver):
             if logansatz is None:
                 raise ValueError(self._ERROR_INVALID_NETWORK)
             
-            self._logger.info(f"Initializing NQS network with ansatz: {logansatz}", lvl=1, color='blue')
+            if self._verbose: self._logger.info(f"Initializing NQS network with ansatz: {logansatz}", lvl=1, color='blue')
             self._net = nqs_choose_network(logansatz, 
                         input_shape =   self._shape, 
                         backend     =   self._backend_str, 
