@@ -101,7 +101,7 @@ class NQSSymmetricAnsatz:
             self._projector = sym_container.get_jittable_projector()
             self._is_active = True
             self._nqs._rebuild_ansatz_function()
-            self._nqs.log(f"Symmetry projection enabled for {len(sym_container.generators)} generators.", lvl=1, color='green')
+            self._nqs.log(f"Symmetry projection enabled for {len(sym_container.generators)} generators: {self._nqs._model.sym}", lvl=1, color='green')
         except Exception as e:
             self._nqs.log(f"Failed to enable symmetry projection: {e}", lvl=0, color='red')
             self._nqs.log("Continuing without symmetry projection.", lvl=0, color='yellow')
@@ -156,6 +156,7 @@ class NQSSymmetricAnsatz:
         def symmetrized_ansatz(params, inputs):
             # Project states to orbit: (batch, group_size, ns)
             # inputs shape: (batch_dim, ns)
+            
             orbit_states, orbit_weights = projector(inputs)
             
             batch_dim                   = orbit_states.shape[0]

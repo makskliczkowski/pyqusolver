@@ -582,7 +582,7 @@ class SymmetryCompatibility:
 
 @dataclass
 class SymmetryContainer:
-    """
+    r"""
     TODO: Consider non-abelian symmetries in future.
     
     Container for all symmetry operations in a Hilbert space.
@@ -1135,20 +1135,20 @@ class SymmetryContainer:
         current_state       = state
         accumulated_phase   = 1.0
         
-        if isinstance(current_state, (int, np.integer)):
-            for op in element:
-                current_state, phase = op.apply_int(current_state, self.ns, nhl=self.nhl)
+        for op in element:
+            op_in = op[0] if isinstance(op, tuple) else op
+            
+            if isinstance(current_state, (int, np.integer)):
+                current_state, phase = op_in.apply_int(current_state, self.ns, nhl=self.nhl)
                 accumulated_phase   *= phase
-        elif isinstance(current_state, np.ndarray):
-            for op in element:
-                current_state, phase = op.apply_numpy(current_state, ns=self.ns, nhl=self.nhl)
+            elif isinstance(current_state, np.ndarray):
+                current_state, phase = op_in.apply_numpy(current_state, ns=self.ns, nhl=self.nhl)
                 accumulated_phase   *= phase
-        elif JAX_AVAILABLE and isinstance(current_state, jnp.ndarray):
-            for op in element:
-                current_state, phase = op.apply_jax(current_state, ns=self.ns, nhl=self.nhl)
+            elif JAX_AVAILABLE and isinstance(current_state, jnp.ndarray):
+                current_state, phase = op_in.apply_jax(current_state, ns=self.ns, nhl=self.nhl)
                 accumulated_phase   *= phase
-        else:
-            raise TypeError(f"Unsupported state type for symmetry application: {type(current_state)}")
+            else:
+                raise TypeError(f"Unsupported state type for symmetry application: {type(current_state)}")
 
         return current_state, accumulated_phase
 
