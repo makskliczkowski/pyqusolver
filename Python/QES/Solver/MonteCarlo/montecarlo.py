@@ -94,7 +94,7 @@ class McsTrain:
             f"  - Acceptance    : {self.acc_rate:.4f}\n"
         )
         print(prefix + config_str)
-    
+
 ###################################
 
 @dataclass
@@ -528,7 +528,6 @@ class MonteCarloSolver(Solver):
         Load the weights of the model.
         '''
         pass
-
 
 ########################################
 #! END OF FILE

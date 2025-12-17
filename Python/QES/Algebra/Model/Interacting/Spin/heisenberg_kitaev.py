@@ -96,7 +96,7 @@ class HeisenbergKitaev(Hamiltonian):
                 backend             : str                                   = "default",
                 use_forward         : bool                                  = True,
                 **kwargs):
-        '''
+        r'''
         Constructor for the QSM Hamiltonian.
         
         ---
@@ -171,14 +171,14 @@ class HeisenbergKitaev(Hamiltonian):
                         backend=backend, use_forward=use_forward, **kwargs)
         
         # setup the fields
-        self._hx                        = hx    if isinstance(hx, (list, np.ndarray, tuple)) else [hx] * self.ns if hx is not None else None
-        self._hy                        = hy    if isinstance(hy, (list, np.ndarray, tuple)) else [hy] * self.ns if hy is not None else None
-        self._hz                        = hz    if isinstance(hz, (list, np.ndarray, tuple)) else [hz] * self.ns if hz is not None else None
+        self._hx                        = hx    if isinstance(hx,       (list, np.ndarray, tuple)) else [hx] * self.ns if hx is not None else None
+        self._hy                        = hy    if isinstance(hy,       (list, np.ndarray, tuple)) else [hy] * self.ns if hy is not None else None
+        self._hz                        = hz    if isinstance(hz,       (list, np.ndarray, tuple)) else [hz] * self.ns if hz is not None else None
         # setup the couplings
-        self._j                         = J     if isinstance(J, (list, np.ndarray, tuple)) else [J] * self.ns if J is not None else None
-        self._gx, self._gy, self._gz    = Gamma if isinstance(Gamma, (list, np.ndarray, tuple)) else (Gamma, Gamma, Gamma) if Gamma is not None else (None, None, None)
-        self._dlt                       = dlt   if isinstance(dlt, (list, np.ndarray, tuple)) else [dlt] * self.ns if dlt is not None else None
-        self._kx, self._ky, self._kz    = K     if isinstance(K, (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K)
+        self._j                         = J     if isinstance(J,        (list, np.ndarray, tuple)) else [J] * self.ns if J is not None else None
+        self._gx, self._gy, self._gz    = Gamma if isinstance(Gamma,    (list, np.ndarray, tuple)) else (Gamma, Gamma, Gamma) if Gamma is not None else (None, None, None)
+        self._dlt                       = dlt   if isinstance(dlt,      (list, np.ndarray, tuple)) else [dlt] * self.ns if dlt is not None else None
+        self._kx, self._ky, self._kz    = K     if isinstance(K,        (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K)
         
         # setup the impurities - validate format: either 2-tuple (site, ampl) or (3,4)-tuple (site, phi, theta, ampl)
         self._impurities                = []

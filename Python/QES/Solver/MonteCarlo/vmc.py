@@ -32,7 +32,7 @@ import  numba
 import  numpy       as np
 from    typing      import Tuple, Callable, Union, Optional, Any, List, TYPE_CHECKING
 from    functools   import partial
-from    enum        import Enum, auto, unique
+from    enum        import Enum
 
 try:
     from .sampler   import (Sampler, SamplerErrors, SolverInitState)

@@ -945,10 +945,10 @@ class NQSTrainer:
             self._log(f"Auto-detected total epochs from phases: {n_epochs}", lvl=1, color='green', verbose=self.verbose)
         
         # Set exact info if provided
-        num_samples         = kwargs.pop('num_samples', None)
-        num_chains          = kwargs.pop('num_chains', None)
-        exact_predictions   = kwargs.pop('exact_predictions', None)
-        exact_method        = kwargs.pop('exact_method', None)
+        num_samples         = kwargs.get('num_samples', None)
+        num_chains          = kwargs.get('num_chains', None)
+        exact_predictions   = kwargs.get('exact_predictions', None)
+        exact_method        = kwargs.get('exact_method', None)
         self._train_set_exact_info(exact_predictions, exact_method)
 
         # Reset stats if needed, if not we continue accumulating

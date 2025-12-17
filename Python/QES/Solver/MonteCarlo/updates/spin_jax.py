@@ -255,7 +255,7 @@ def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarra
         flip_counts = jnp.zeros_like(state, dtype=jnp.int32)
         
         # Prepare adders: 1 for valid targets, 0 for padding
-        adders      = jnp.where(mask, 1, 0)
+        adders      = jnp.where(mask, jnp.int32(1), jnp.int32(0))
         
         # Accumulate flips
         # If site 0 is both target and padding, it gets 1 + 0 = 1. Correct.
@@ -345,7 +345,7 @@ def propose_worm_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.nd
     # Count occurrences of each index.
     # Flipping a site N times is equivalent to flipping it (N % 2) times.
     flip_counts = jnp.zeros_like(state, dtype=jnp.int32)
-    flip_counts = flip_counts.at[final_indices].add(1)
+    flip_counts = flip_counts.at[final_indices].add(jnp.int32(1))
     
     should_flip = (flip_counts % 2) == 1
     

@@ -2124,7 +2124,7 @@ def apply_plaquette(vecs        : np.ndarray,
         W_p |vecs>
     """
     out[:]      = vecs
-    all_bonds   = bond_to_op.keys()
+    all_bonds   = set(bond_to_op.keys())
     P           = len(plaquette)        # e.g., should be 6 for Honeycomb
     lattice     = hilbert.lattice
     

@@ -49,9 +49,7 @@ except ImportError as exc:
 ###################################################################################################
 
 try:
-    import                  jax
     from                    jax import jit
-    import                  jax.lax as lax
     import                  jax.numpy as jnp
     from                    jax.experimental.sparse import BCOO, CSR
     from                    QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
@@ -1382,10 +1380,10 @@ class Hamiltonian(BasisAwareOperator):
         
         # Log start
         if verbose:
-            self._log(f"Diagonalization started using method='{method}'...", lvl=1)
+            self._log(f"Diagonalization started using method='{method}'...", lvl=1, verbose=verbose, color="blue")
             if k is not None and kwargs.get('method', 'exact') != 'exact':
-                self._log(f"Computing {k} eigenvalues", lvl=2)
-            self._log(f"Backend: {backend_str}", lvl=2)
+                self._log(f"Computing {k} eigenvalues", lvl=2, verbose=verbose)
+            self._log(f"Backend: {backend_str}", lvl=2, verbose=verbose)
         
         # Initialize or reuse diagonalization engine
         if self._diag_engine is None or self._diag_engine.method != method:
