@@ -659,6 +659,7 @@ class UpdateRule(Enum):
     PLAQUETTE   = auto()
     SUBPLAQUETTE= auto()
     WILSON      = auto()
+    WORM        = auto()
     
     @staticmethod
     def from_str(s: str) -> 'UpdateRule':
@@ -683,6 +684,8 @@ class UpdateRule(Enum):
                 return UpdateRule.SUBPLAQUETTE
             elif s in ['wilson', 'wilson_loop']:                    # extra alias for wilson loops
                 return UpdateRule.WILSON
+            elif s in ['worm', 'snake', 'string']:                  # extra alias for worm/string updates
+                return UpdateRule.WORM
             raise ValueError(f"Invalid UpdateRule: {s}") from None
 
 def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -> Callable:
@@ -701,6 +704,8 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
                 List of patterns for global update (required for global if not in hilbert)
             - n_flip: 
                 Number of flips for multi_flip (default 1)
+            - length:
+                Length of the worm/string for WORM update (default 4).
             
     Returns:
         Callable: The update function.
@@ -731,6 +736,29 @@ def get_update_function(rule: Union[str, UpdateRule], backend='jax', **kwargs) -
     elif rule == UpdateRule.MULTI_FLIP:
         n_flip = kwargs.get('n_flip', 1)
         return partial(propose_multi_flip, n_flip=n_flip)
+        
+    elif rule == UpdateRule.WORM:
+        try:
+            from .updates import propose_worm_flip
+        except ImportError:
+            raise ImportError("propose_worm_flip not found in updates module.")
+
+        hilbert = kwargs.get('hilbert')
+        if hilbert is None:
+            raise ValueError("Hilbert space is required for worm updates.")
+        
+        lattice = kwargs.get('lattice')
+        if hilbert.lattice is None:
+            raise ValueError("Hilbert space with lattice is required for worm updates.")
+            
+        # Precompute neighbor table
+        bond_order      = kwargs.get('bond_order', kwargs.get('order', 1))
+        neighbor_table  = get_neighbor_table(hilbert.lattice, order=bond_order)
+        
+        # Worm length
+        length          = kwargs.get('length', kwargs.get('worm_length', 4))
+        
+        return partial(propose_worm_flip, neighbor_table=neighbor_table, length=length)
         
     elif rule == UpdateRule.EXCHANGE:
         hilbert = kwargs.get('hilbert')

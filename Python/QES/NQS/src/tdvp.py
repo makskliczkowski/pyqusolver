@@ -756,13 +756,13 @@ class TDVP:
         
         #! centered loss and derivative
         if excited_penalty is None or len(excited_penalty) == 0:
-            (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_j(loss, log_deriv)
+            (loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_j(loss, log_deriv)
         else:
             betas           = self.backend.array([x.beta_j for x in excited_penalty],   dtype=self.dtype)
             r_el            = self.backend.array([x.r_el for x in excited_penalty],     dtype=self.dtype)
             r_le            = self.backend.array([x.r_le for x in excited_penalty],     dtype=self.dtype)
-            (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)        
-        return loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m
+            (loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)        
+        return loss_c, var_deriv_c, None, var_deriv_m
     
     def get_tdvp_standard(self, loss, log_deriv, **kwargs):
         '''
@@ -786,17 +786,23 @@ class TDVP:
         self._e_local_mean  = self.backend.mean(loss, axis=0)
         self._e_local_std   = self.backend.std(loss, axis=0)
 
-        with self._time('prepare', self._get_tdvp_standard_inner, loss.astype(self.dtype), log_deriv.astype(self.dtype), **kwargs) as prepare:
+        with self._time('prepare', self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
             loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m = prepare
             
-        # for minsr, it is unnecessary to calculate the force vector, however, do it anyway for now
-        with self._time('gradient', self._gradient_fn_j, var_deriv_c_h, loss_c, self._n_samples) as gradient:
-            self._f0 = gradient
+        # for minsr, it is unnecessary to calculate the force vector, unless specifically requested or if we want to debug
+        # Force vector F is O^dag * E_loc. MinSR solves T * lambda = E_loc, then x = O^dag * lambda.
+        # So F is not used in the solve process of MinSR.
+        if not self.use_minsr:
+            # Optimized gradient calculation: pass O (vd_c) directly, transpose handled internally
+            with self._time('gradient', self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
+                self._f0 = gradient
+        else:
+            self._f0 = None
         self._s0 = None
         
         # MinSR uses T (N_s x N_s)
         if self.form_matrix:             
-            with self._time('covariance', self._covariance_fn_j, var_deriv_c, var_deriv_c_h, self._n_samples) as covariance:
+            with self._time('covariance', self._covariance_fn_j, var_deriv_c, self._n_samples) as covariance:
                 self._s0 = covariance
         
         return self._f0, self._s0, (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m)
@@ -805,102 +811,91 @@ class TDVP:
     #! SOLVERS
     ##################
     
-    def _solve_prepare_matvec(self, mat_s: Array, mat_sp: Array) -> Callable:
+    def _solve_prepare_matvec(self, mat_O: Array, mode: str = None) -> Callable:
         """
         Prepares the covariance matrix and loss vector for the linear system to be solved.
         This method is used to prepare the input data for the linear solver, including
         centering the covariance matrix and loss vector.
         Parameters
         ----------
-        mat_s : Array
-            The covariance matrix (centered). [N_samples, N_variational]
-        mat_sp : Array
-            The covariance matrix (centered - complex conjugate). [N_variational, N_samples]
+        mat_O : Array
+            The centered derivatives matrix O (vd_c). [N_samples, N_variational]
+        mode : str
+            Operation mode ('standard' or 'minsr'). If None, inferred from self.use_minsr.
         Returns
         -------
         Tuple[Array, Array]
             The prepared covariance matrix and loss vector.
         """
-        def _matvec(v, sigma):
-            inter = self.backend.matmul(mat_s, v)
-            return  self.backend.matmul(mat_sp, inter) / self._n_samples + sigma * v
+        
+        # Determine mode if not provided
+        if mode is None:
+            mode = 'minsr' if self.use_minsr else 'standard'
+            
+        if mode == 'minsr':
+             # T = O @ O^dag.  v -> O^dag v -> O (O^dag v)
+             # op1 = mat_O.T.conj()
+             # op2 = mat_O
+             def _matvec(v, sigma):
+                 inter = self.backend.matmul(mat_O.T.conj(), v)
+                 res   = self.backend.matmul(mat_O, inter)
+                 return res / self._n_samples + sigma * v
+        else:
+             # S = O^dag @ O. v -> O v -> O^dag (O v)
+             # op1 = mat_O
+             # op2 = mat_O.T.conj()
+             def _matvec(v, sigma):
+                 inter = self.backend.matmul(mat_O, v)
+                 res   = self.backend.matmul(mat_O.T.conj(), inter)
+                 return res / self._n_samples + sigma * v
+                 
         return jax.jit(_matvec) if self.is_jax else _matvec
     
-    def _solve_prepare_s_and_loss(self, vd_c: Array, vd_c_h: Array, loss_c: Array, forces: Array):
+    def _solve_prepare_s_and_loss(self, vd_c: Array, loss_c: Array, forces: Array):
         """
-        Prepares the covariance matrix and loss vector for the linear system to be solved.
-        This method is used to prepare the input data for the linear solver, including
-        centering the covariance matrix and loss vector.
+        Prepares the derivatives matrix and RHS vector for the linear system.
+        
         Parameters
         ----------
         vd_c : Array
-            The covariance matrix (centered). [N_samples, N_variational]
-        vd_c_h : Array
-            The covariance matrix (centered - complex conjugate). [N_variational, N_samples]
+            The centered derivatives matrix (O).
         loss_c : Array
-            The loss vector (centered). [N_samples,]
+            The centered loss vector (E_loc).
         forces : Array
-            The forces vector (centered). [N_variational,]
+            The gradient/force vector (F = O^dag E / N).
+            
         Returns
         -------
-        Tuple[Array, Array]
-            The prepared covariance matrix and loss vector.
+        mat_O : Array
+            The operator matrix O.
+        vec_b : Array
+            The RHS vector for the linear system.
         """
         if self.use_minsr:
-            # T = O @ O^dag
-            # Solver expects (s, s_p) -> s @ s_p
-            # Scaling: Equation is T * x = E/N. The RHS passed here should be centered loss E_c.
-            # The scaling by 1/N is usually handled inside the solver or covariance func. 
-            # In sr.solve_jax, we handle scaling. Here we just prepare raw inputs.
-            # return (vd_c, vd_c_h), loss_c
-            return (vd_c_h, vd_c), loss_c / self._n_samples
+            # MinSR: Solve T x = E/N (where T = O O^dag / N)
+            # RHS is centered energy scaled by 1/N
+            return vd_c, loss_c / self._n_samples
         
-        # otherwise, standard TDVP equation is solved
-        # return (vd_c_h, vd_c), forces
-        return (vd_c, vd_c_h), forces
+        # Standard: Solve S x = F (where S = O^dag O / N)
+        # RHS is the force vector F
+        return vd_c, forces
 
     def _solve_choice(  self, 
                         vec_b           : Array,
                         solve_func      : Callable,
-                        mat_s           : Optional[Array] = None,
-                        mat_s_p         : Optional[Array] = None,
+                        mat_O           : Optional[Array] = None,
                         mat_a           : Optional[Array] = None,
                     ) -> solvers.SolverResult:
         """
-        Solves a linear system using a specified solver form and configuration.
-        Depending on the value of `self.sr_solve_lin_t`, this method dispatches to the appropriate
-        solver function with the required arguments. Supports different solver forms such as GRAM and MATRIX,
-        and handles special cases like the minimum stochastic reconfiguration (minsr) method.
-        Parameters
-        ----------
-        mat_s : Optional[Array]
-            The first matrix to be used in the linear system. Required for GRAM and MATVEC solver forms.
-        mat_s_p : Optional[Array]
-            The second matrix to be used in the linear system. Required for GRAM and MATVEC solver forms.
-        mat_a : Optional[Array]
-            The matrix to be used in the linear system. Required for MATRIX solver form.
-        vec_b : Array
-            The right-hand side vector of the linear system.
-        solve_func : Callable
-            The function to be used for solving the linear system.
-        Returns
-        -------
-        solution : Array or None
-            The solution to the linear system, or None if the solver form is not recognized.
-        Raises
-        ------
-        ValueError
-            If the matrix solver is selected with the minimum stochastic reconfiguration (minsr) method,
-            which is not implemented.
+        Solves a linear system dispatching to appropriate solver mode.
         """
         
-        # If matrix is already formed and available, use it directly instead of GRAM form
-        # This avoids redundant matrix formation inside the solver
-        solution                = None
+        # Use pre-formed matrix if available (e.g. from covariance_jax)
         use_preformed_matrix    = self.form_matrix and mat_a is not None
         
         if use_preformed_matrix:
             # Use the pre-formed matrix directly (works for both GRAM and MATRIX solver types)
+            # For MinSR, mat_a is T. For Standard, mat_a is S.
             solution = solve_func(a             =   mat_a,
                                 b               =   vec_b,
                                 x0              =   self._x0,
@@ -908,26 +903,41 @@ class TDVP:
                                 maxiter         =   self.sr_maxiter,
                                 tol             =   self.sr_pinv_tol,
                                 sigma           =   self.sr_diag_shift)
+                                
         elif self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
-            # Use GRAM form O^\dagger O
-            solution = solve_func(s             =   mat_s,
-                                s_p             =   mat_s_p,
+            # GRAM mode: Helper constructs linear operator from s and s_p.
+            # Solver typically expects: A = s_p @ s (or similar, depending on solver impl)
+            # Standard: S = O^dag @ O.  s = O (mat_O), s_p = O^dag (mat_O.T.conj())
+            # MinSR:    T = O @ O^dag.  s = O^dag (mat_O.T.conj()), s_p = O (mat_O)
+            
+            if self.use_minsr:
+                s   = mat_O.T.conj()
+                s_p = mat_O
+            else:
+                s   = mat_O
+                s_p = mat_O.T.conj()
+                
+            solution = solve_func(s             =   s,
+                                s_p             =   s_p,
                                 b               =   vec_b,
                                 x0              =   self._x0,
                                 precond_apply   =   self.sr_precond_fn,
                                 maxiter         =   self.sr_maxiter,
                                 tol             =   self.sr_pinv_tol,
                                 sigma           =   self.sr_diag_shift)
+                                
         elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
-            # For MATVEC mode, create a matvec with current sigma bound
-            matvec_fn                           = self._solve_prepare_matvec(mat_s, mat_s_p)
-            matvec_with_sigma                   = lambda v, mv=matvec_fn, sig=self.sr_diag_shift: mv(v, sig)
-            solution                            = solve_func(matvec         =   matvec_with_sigma,
-                                                            b               =   vec_b,
-                                                            x0              =   self._x0,
-                                                            precond_apply   =   self.sr_precond_fn,
-                                                            maxiter         =   self.sr_maxiter,
-                                                            tol             =   self.sr_pinv_tol)
+            # MATVEC mode: We provide the full matrix-vector product function
+            mode                = 'minsr' if self.use_minsr else 'standard'
+            matvec_fn           = self._solve_prepare_matvec(mat_O, mode=mode)
+            matvec_with_sigma   = lambda v, mv=matvec_fn, sig=self.sr_diag_shift: mv(v, sig)
+            
+            solution            = solve_func(matvec         =   matvec_with_sigma,
+                                            b               =   vec_b,
+                                            x0              =   self._x0,
+                                            precond_apply   =   self.sr_precond_fn,
+                                            maxiter         =   self.sr_maxiter,
+                                            tol             =   self.sr_pinv_tol)
         return solution
     
     def _solve_handle_x0(self, vec_b: Array, use_old_result: bool):
@@ -996,6 +1006,35 @@ class TDVP:
     ###################
 
     def solve(self, e_loc: Array, log_deriv: Array, **kwargs):
+        ''' 
+        Solve the TDVP equation for the given local energy and log derivatives.
+        
+        Parameters
+        ----------
+        e_loc : Array
+            The local energy to be used for the TDVP equation.
+        log_deriv : Array
+            The logarithm of the derivative to be used for the TDVP equation.
+        lower_states : Optional[List[TDVPLowerPenalty]]
+            List of lower state penalty information for excited state calculations.
+        **kwargs:
+            Additional keyword arguments for the TDVP equation.
+            - use_old_result : bool
+                Whether to use the previous solution as the initial guess.
+            - other arguments passed to get_tdvp_standard.
+        Returns
+        -------
+        solvers.SolverResult
+            The solution to the TDVP equation
+            - x : Array
+                The parameter update direction.
+            - iterations : int
+                The number of iterations taken by the solver.
+            - residual_norm : float
+                The norm of the residual.
+            - converged : bool
+                Whether the solver converged.
+        '''
         #? Get the lower states information penalty
         
         # obtain the loss and covariance without the preprocessor
@@ -1011,8 +1050,9 @@ class TDVP:
         loss_c, vd_c, vd_c_h, vd_m  = tdvp
 
         #! handle the preprocessor
-        (mat_s, mat_s_p), vec_b     = self._solve_prepare_s_and_loss(vd_c, vd_c_h, loss_c, f)
-        # print(mat_s.shape, mat_s_p.shape, vec_b.shape)
+        # Returns: (centered derivatives matrix O), (RHS vector)
+        mat_O, vec_b                = self._solve_prepare_s_and_loss(vd_c, loss_c, f)
+        # print(mat_O.shape, vec_b.shape)
         
         #! handle the initial guess - use the previous solution
         with self._time('x0', self._solve_handle_x0, vec_b, kwargs.get('use_old_result', False)) as x0:
@@ -1032,7 +1072,7 @@ class TDVP:
             )
     
         #! solve the linear system
-        with self._time('solve', self._solve_choice, vec_b=vec_b, mat_s=mat_s, mat_s_p=mat_s_p, mat_a=s, solve_func=solve_func) as solve:
+        with self._time('solve', self._solve_choice, vec_b=vec_b, mat_O=mat_O, mat_a=s, solve_func=solve_func) as solve:
             solution = solve
         
         if self.use_minsr and solution is not None:
