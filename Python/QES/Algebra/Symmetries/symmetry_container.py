@@ -135,7 +135,7 @@ def _compact_get_sym_factor(
     norm_idx    = normalization[idx]    # normalization for the representative (new state)
     norm_k      = normalization[k]      # normalization for the input representative (old state)
     
-    sym_factor  = np.conj(phase) * norm_idx / norm_k
+    sym_factor  = np.conj(phase) * norm_k / norm_idx
     return numba.int64(idx), sym_factor
 
 @numba.njit(cache=True, fastmath=True, inline='always')

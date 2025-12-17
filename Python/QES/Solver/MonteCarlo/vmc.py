@@ -1338,9 +1338,14 @@ class VMCSampler(Sampler):
         # Evaluate the network in a fully batched (vectorized) manner to obtain log_\psi .
         batched_log_ansatz  = VMCSampler._batched_network_apply(params, configs_flat, net_callable_fun)
 
-        # Compute the importance weights.
+        # Compute the importance weights (Stable implementation).
         log_prob_exponent   = (1.0 / logprob_fact - mu)
-        probs               = jnp.exp(log_prob_exponent * jnp.real(batched_log_ansatz))
+        log_unnorm          = log_prob_exponent * jnp.real(batched_log_ansatz)
+        
+        # Shift by max to prevent overflow in exp
+        log_max             = jnp.max(log_unnorm)
+        probs               = jnp.exp(log_unnorm - log_max)
+        
         total_samples       = num_samples * num_chains
         norm_factor         = jnp.maximum(jnp.sum(probs), 1e-10)
         probs_normalized    = probs / norm_factor * total_samples
