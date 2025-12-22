@@ -189,6 +189,17 @@ class CompiledGroup:
     global_op_codes     : np.ndarray          # (n_global,)     -> instructs how to apply the global ops
     global_op_vals      : np.ndarray          # (n_global,)     -> values for global symmetries
     
+    @property
+    def args(self) -> Tuple:
+        return (
+            self.n_group,
+            self.n_ops,
+            self.op_code,
+            self.arg0,
+            self.arg1,
+            self.chi,
+        )
+    
 @dataclass(frozen=True)
 class SymOpTables:
     ''' 
@@ -211,7 +222,7 @@ class SymOpTables:
     # We store a stack of permutations; op arg0 will select which one.
     trans_perm          : np.ndarray        # (n_trans, ns) int64
     trans_cross_mask    : np.ndarray        # (n_trans, ns) uint8 or bool
-    trans_shift         : np.ndarray        # (n_trans,) int32  (optional; if you encode power as repeated calls you might not need)
+    trans_shift         : np.ndarray        # (n_trans,) int32
 
     # Reflection tables
     refl_perm           : np.ndarray        # (n_refl, ns) int64
@@ -224,6 +235,16 @@ class SymOpTables:
 
     # Save boundary phases
     boundary_phase      : np.ndarray        # (3, ns+1) complex128, for translation/reflection BC phases
+    
+    @property
+    def args(self) -> Tuple:
+        return (
+            self.trans_perm, self.trans_cross_mask,
+            self.refl_perm, 
+            self.inv_perm,
+            self.parity_axis,
+            self.boundary_phase
+        )
 
 @numba.njit(cache=True, fastmath=True)
 def _popcount64(x: np.int64) -> np.int64:

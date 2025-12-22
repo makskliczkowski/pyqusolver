@@ -546,8 +546,7 @@ class GeneralMatrix(spla.LinearOperator):
     def eigenvecs(self):            return self._eig_vec
 
     @property
-    def krylov(self):
-        return self._krylov
+    def krylov(self):               return self._krylov
 
     # -------------------------------------------------------
     # Eigenvalue/Eigenvector Getters

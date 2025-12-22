@@ -33,7 +33,7 @@ try:
     from QES.Algebra.Hilbert.hilbert_base           import BaseHilbertSpace
     from QES.Algebra.globals                        import GlobalSymmetry
     from QES.Algebra.hilbert_config                 import HilbertConfig
-    from QES.Algebra.Symmetries.symmetry_container  import normalize_symmetry_generators, create_symmetry_container_from_specs
+    from QES.Algebra.Symmetries.symmetry_container  import normalize_symmetry_generators, create_symmetry_container_from_specs, normalize_global_symmetries
 except ImportError as e:
     raise ImportError(f"Failed to import required modules in hilbert.py: {e}") from e
 
@@ -142,7 +142,7 @@ class HilbertSpace(BaseHilbertSpace):
         r"""
         Initializes a HilbertSpace object with specified system and local space properties, symmetries, and backend configuration.
         
-        Initialization Process (Step-by-Step):
+        Initialization Process (Step-by-Step)
         --------------------------------------
         1. **Backend & Logging**: 
             Sets up the computational backend (NumPy/JAX) and logging infrastructure.
@@ -165,7 +165,7 @@ class HilbertSpace(BaseHilbertSpace):
                 * Builds the `CompactSymmetryData` structure for efficient O(1) JIT-compatible lookups.
         6. **Finalization**: Sets the effective reduced Hilbert space dimension ($N_h$).
 
-        Parameters:
+        Parameters
         -----------
         ns (Union[int, None], optional):
             Number of sites in the system. If not provided, inferred from `lattice` or `nh`.
@@ -210,20 +210,20 @@ class HilbertSpace(BaseHilbertSpace):
             Supported string keys: 'translation', 'parity', 'reflection', 'inversion', 
             'time_reversal', 'fermion_parity', 'particle_hole'.
                 
-        global_syms (Union[List[GlobalSymmetry], None], optional): 
+        global_syms (Union[List[GlobalSymmetry], None], optional)
             List of global symmetry objects for additional quantum number constraints (e.g. U(1)).
             These are applied before local symmetry generators. Default is None.
             
-        gen_mapping (bool, optional):
+        gen_mapping (bool, optional)
             Whether to generate state mapping based on symmetries immediately.
             If False, mapping is generated on-demand. Default is False.
             Set to True for immediate symmetry reduction and representative state mapping.
         
-        gen_basis (bool, optional):
+        gen_basis (bool, optional)
             If False, skips generating the full reduced basis and mapping. 
             Useful for large systems where only symmetry generators are needed. Default is True.
             
-        local_space (Optional[Union[LocalSpace, str]], optional):
+        local_space (Optional[Union[LocalSpace, str]], optional)
             LocalSpace object or string defining local Hilbert space properties. 
             Default is None (uses spin-1/2).
             Supported strings: 'spin-1/2', 'spin-1', 'fermion', 'hardcore-boson', etc.
@@ -264,14 +264,14 @@ class HilbertSpace(BaseHilbertSpace):
                         state_filter=state_filter, boundary_flux=boundary_flux, **kwargs)
         
         # Symmetry group and info - Initialize EARLY
-        self._global_syms                                   = global_syms if global_syms is not None else []       
+        self._global_syms                                   = normalize_global_symmetries(self.lattice, global_syms if global_syms is not None else [])  
         self._is_many_body                                  = is_manybody
         self._is_quadratic                                  = not is_manybody
         self._particle_conserving                           = part_conserv
         self._verbose                                       = verbose
         
         #! quick check
-        self._check_init_sym_errors(sym_gen, global_syms, gen_mapping)
+        self._check_init_sym_errors(sym_gen, self._global_syms, gen_mapping)
 
         #! infer the system sizes (sets self._ns, self._lattice, self._nhfull)
         self._check_ns_infer(lattice=lattice, ns=ns, nh=nh)
@@ -293,7 +293,6 @@ class HilbertSpace(BaseHilbertSpace):
         self.full_to_representative_idx                     = None
         self.full_to_representative_phase                   = None
         self.full_to_global_map                             = None
-        self._global_syms                                   = global_syms if global_syms is not None else []
 
         if self._is_many_body:
             # Normalize symmetry generators (supports dict/list/string formats)
@@ -337,366 +336,6 @@ class HilbertSpace(BaseHilbertSpace):
         return cls(**cfg.to_kwargs())    
 
     # --------------------------------------------------------------------------------------------------
-    #! Help and Documentation
-    # --------------------------------------------------------------------------------------------------
-    
-    @staticmethod
-    def help(topic: Optional[str] = None, verbose: bool = True) -> Optional[str]:
-        """
-        Display comprehensive help about HilbertSpace usage and capabilities.
-        
-        Parameters
-        ----------
-        topic : str, optional
-            Specific topic to get help on. Options:
-            - None or 'overview' : General overview and quick start
-            - 'symmetries'       : Symmetry handling and momentum sectors
-            - 'operators'        : Operator construction and matrix building
-            - 'compact'          : Compact symmetry data structure (O(1) lookups)
-            - 'properties'       : Available properties and their meanings
-            - 'examples'         : Code examples for common use cases
-        verbose : bool
-            If True, print the help. If False, return as string.
-        
-        Returns
-        -------
-        str or None
-            Help text if verbose=False, else prints and returns None.
-        
-        Examples
-        --------
-        >>> HilbertSpace.help()                    # Full overview
-        >>> HilbertSpace.help('symmetries')        # Symmetry-specific help
-        >>> HilbertSpace.help('examples')          # Code examples
-        """
-        help_texts = {
-            'overview': '''
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                          HILBERTSPACE - OVERVIEW                             ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-HilbertSpace class represents a quantum many-body or single-particle Hilbert space
-with support for symmetry reduction, efficient matrix construction, and
-multiple computational backends (NumPy, JAX).
-
-QUICK START
------------
-    from QES.Algebra.hilbert import HilbertSpace
-    from QES.general_python.lattices.square import SquareLattice
-    from QES.general_python.lattices.lattice import LatticeBC
-    
-    # Create a lattice
-    lattice = SquareLattice(dim=1, lx=6, bc=LatticeBC.PBC)
-    
-    # Simple Hilbert space (no symmetries)
-    hilbert = HilbertSpace(lattice=lattice)
-    print(f"Dimension: {hilbert.dim}")  # 2^6 = 64
-    
-    # With symmetries (translation symmetry, k=0 sector)
-    from QES.Algebra.Operator.operator import SymmetryGenerators
-    hilbert_sym = HilbertSpace(
-        lattice=lattice,
-        sym_gen=[(SymmetryGenerators.Translation_x, 0)],  # k=0
-        gen_mapping=True
-    )
-    print(f"Reduced dimension: {hilbert_sym.dim}")  # ~14 states
-
-KEY FEATURES
-------------
-• Many-body & quadratic (single-particle) modes
-• Symmetry reduction: translation, reflection, parity, particle number
-• Memory-efficient compact symmetry data (~5 bytes/state)
-• O(1) JIT-compiled lookups for matrix element computation
-• Multiple backends: NumPy, JAX (GPU-accelerated)
-
-MAIN PROPERTIES
----------------
-    .dim / .Nh              : Reduced Hilbert space dimension
-    .nhfull                 : Full Hilbert space dimension (before symmetry reduction)
-    .ns                     : Number of sites
-    .representative_list    : Array of representative state integers
-    .normalization          : Normalization factors for representatives
-    .compact_symmetry_data  : CompactSymmetryData for O(1) lookups
-
-Use HilbertSpace.help('symmetries') for symmetry details.
-Use HilbertSpace.help('examples')   for more code examples.
-''',
-
-            'symmetries': '''
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                     HILBERTSPACE - SYMMETRY HANDLING                         ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-SUPPORTED SYMMETRIES
---------------------
-1. Translation (momentum sectors):
-   - SymmetryGenerators.Translation_x/y/z
-   - Sector value = momentum quantum number k (0, 1, ..., Lx*Ly*Lz-1)
-
-2. Reflection (spatial parity):
-   - SymmetryGenerators.Reflection
-   - Sector value = +-1
-
-3. Parity (spin/particle flips):
-   - SymmetryGenerators.ParityX/Y/Z
-   - Sector value = +-1 or +-i
-
-4. Inversion (sites inversion):
-    - SymmetryGenerators.Inversion
-    - Sector value = +-1
-    
-5. Global symmetries (U(1) conservation):
-   - Particle number conservation (fixed N)
-   - Magnetization conservation (fixed Sz)
-   
-Others...
-
-USAGE
------
-    from QES.Algebra.Operator.operator import SymmetryGenerators
-    
-    # Translation symmetry in k=0 sector
-    sym_gen = [(SymmetryGenerators.Translation_x, 0)]
-    
-    # Multiple symmetries
-    sym_gen = [
-        (SymmetryGenerators.Translation_x, 0),
-        (SymmetryGenerators.Reflection, 1),
-    ]
-    
-    hilbert = HilbertSpace(
-        lattice=lattice,
-        sym_gen=sym_gen,
-        gen_mapping=True  # Enable compact map
-    )
-
-----------------------------------------
-COMPACT SYMMETRY DATA (Memory Efficient)
-----------------------------------------
-When symmetries are present, a CompactSymmetryData structure is built:
-    
-    cd = hilbert.compact_symmetry_data
-    
-    • cd.repr_map       : uint32[nh_full]           - state -> repr index (O(1) lookup!)
-    • cd.phase_idx      : uint8[nh_full]            - state -> phase table index
-    • cd.phase_table    : complex128[~group_order]  - distinct phases
-    • cd.normalization  : float64[n_repr]           - normalization factors
-    
-Memory: ~5 bytes/state
-
---------------------
-JIT-COMPILED HELPERS
---------------------
-    from QES.Algebra.Symmetries import _compact_get_sym_factor
-    
-    # O(1) symmetry factor lookup for matrix elements
-    idx, sym_factor = _compact_get_sym_factor(
-        new_state, k, 
-        cd.repr_map, cd.phase_idx, cd.phase_table, cd.normalization
-    )
-''',
-
-            'compact': '''
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                    COMPACT SYMMETRY DATA STRUCTURE                           ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-The CompactSymmetryData is a memory-efficient structure for O(1) symmetry lookups.
-
----------
-STRUCTURE
----------
-    @dataclass
-    class CompactSymmetryData:
-        repr_map: np.ndarray            # uint32[nh_full]           - state -> repr index
-        phase_idx: np.ndarray           # uint8[nh_full]            - state -> phase index
-        phase_table: np.ndarray         # complex128[n]             - distinct phases
-        normalization: np.ndarray       # float64[n_repr]           - per-representative
-        representative_list: np.ndarray # int64[n_repr]             - repr state values
-
-------------
-MEMORY USAGE
-------------
-    Per state: 4 bytes (uint32) + 1 byte (uint8) = 5 bytes
-    
-    For 2^20 states (~1M):
-    - Compact: ~5 MB
-
------
-USAGE
------
-    cd = hilbert.compact_symmetry_data
-    
-    # Check if state is in this sector
-    if cd.repr_map[state] != 0xFFFFFFFF:
-        idx = cd.repr_map[state]
-        phase = cd.phase_table[cd.phase_idx[state]]
-        norm = cd.normalization[idx]
-        repr_state = cd.representative_list[idx]
-
--------------------------------------
-JIT FUNCTIONS (numba.njit compatible)
--------------------------------------
-    from QES.Algebra.Symmetries import (
-        _compact_get_sym_factor,   # (state, k, ...) → (idx, sym_factor)
-        _compact_is_in_sector,     # (state, repr_map) → bool
-        _compact_get_repr_idx,     # (state, repr_map) → int
-        _compact_get_phase,        # (state, phase_idx, phase_table) → complex
-    )
-''',
-
-            'properties': '''
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                      HILBERTSPACE - PROPERTIES                               ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-----------
-DIMENSIONS
-----------
-    .dim / .Nh / .dimension     : Reduced Hilbert space dimension
-    .nhfull / .Nhfull / .full   : Full dimension (before symmetry reduction)
-    .ns                         : Number of sites
-
--------------
-SYMMETRY DATA
--------------
-    .representative_list        : int64[n_repr]         - representative states
-    .representative_norms       : float64[n_repr]       - normalization factors
-    .normalization              : Alias for representative_norms
-    .compact_symmetry_data      : CompactSymmetryData structure (primary)
-    .has_compact_symmetry_data  : bool                  - whether compact data exists
-    .repr_idx                   : uint32[nh_full]       - state → repr index
-    .repr_phase                 : complex128[nh_full]   - symmetry phases
-
------------
-LOCAL SPACE
------------
-    .local / .local_space       : Local Hilbert space (spin-1/2, fermion, etc.)
-    .list_local_operators()     : Available local operator names
-
-SYSTEM TYPE
------------
-    .is_many_body / .many_body  : bool - many-body system
-    .is_quadratic / .quadratic  : bool - single-particle (quadratic)
-    .particle_conserving        : bool - conserves particle number
-
-ACCESS STATES
--------------
-    hilbert[k]                  : Get k-th basis state (representative)
-    hilbert.state(k)            : Same as above
-    iter(hilbert)               : Iterate over all representatives
-''',
-
-            'examples': '''
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                      HILBERTSPACE - EXAMPLES                                 ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
---------------
-1. BASIC SETUP
---------------
-    from QES.Algebra.hilbert import HilbertSpace
-    from QES.general_python.lattices.square import SquareLattice
-    from QES.general_python.lattices.lattice import LatticeBC
-    
-    lattice = SquareLattice(dim=1, lx=8, bc=LatticeBC.PBC)
-    hilbert = HilbertSpace(lattice=lattice)
-
------------------------------------------
-2. WITH TRANSLATION SYMMETRY (k=0 SECTOR)
------------------------------------------
-    from QES.Algebra.Operator.operator import SymmetryGenerators
-    
-    hilbert = HilbertSpace(
-        lattice=lattice,
-        sym_gen=[(SymmetryGenerators.Translation_x, 0)], # can be also a string
-        gen_mapping=True
-    )
-    print(f"Full: {hilbert.nhfull}, Reduced: {hilbert.dim}")
-
-------------------------
-3. BUILD OPERATOR MATRIX
-------------------------
-    from QES.Algebra.Hilbert.matrix_builder import build_operator_matrix
-    from numba import njit
-    
-    @njit
-    def sz_total(state):
-        ns = 8
-        sz = 0.0
-        for i in range(ns):
-            sz += 0.5 if (state >> (ns-1-i)) & 1 else -0.5
-        return np.array([state]), np.array([sz])
-    
-    H = build_operator_matrix(sz_total, hilbert_space=hilbert, sparse=True)
-
--------------------------------------
-4. ACCESS COMPACT DATA FOR CUSTOM JIT
--------------------------------------
-    cd = hilbert.compact_symmetry_data
-    if cd is not None:
-        @njit
-        def my_kernel(state, repr_map, phase_idx, phase_table, normalization):
-            idx = repr_map[state]
-            if idx == 0xFFFFFFFF:
-                return -1, 0.0
-            phase = phase_table[phase_idx[state]]
-            norm = normalization[idx]
-            return idx, np.conj(phase) * norm
-        
-        # Use in your matrix building loop
-        idx, factor = my_kernel(
-            new_state, cd.repr_map, cd.phase_idx, 
-            cd.phase_table, cd.normalization
-        )
-
-----------------------------
-5. ITERATE OVER BASIS STATES
-----------------------------
-    for i, state in enumerate(hilbert):
-        if i < 5:
-            print(f"State {i}: {state:08b}")
-
-------------------------------------------------
-6. ITERATE OVER ALL SYMMETRY SECTORS (Generator)
-------------------------------------------------
-    from QES.Algebra.Operator.operator import SymmetryGenerators
-    
-    # All momentum sectors k=0..L-1
-    for sector, hilbert in HilbertSpace.iter_symmetry_sectors(
-        [(SymmetryGenerators.Translation_x, range(L))],
-        lattice=lattice
-    ):
-        k   = sector[SymmetryGenerators.Translation_x]
-        H   = build_hamiltonian(hilbert)
-        E0  = np.linalg.eigvalsh(H.toarray())[0]
-        print(f"k={k}: E0={E0:.6f}")
-    
-    # Convenience method for momentum sectors
-    for k, hilbert in HilbertSpace.iter_momentum_sectors(lattice):
-        print(f"k={k}: dim={hilbert.dim}")
-    
-    # With parity
-    for k, hilbert in HilbertSpace.iter_momentum_sectors(lattice, include_parity=True):
-        print(f"k={k[:-1]}, P={k[-1]}: dim={hilbert.dim}")
-''',
-        }
-        
-        # Default to overview
-        if topic is None or topic == 'overview':
-            text = help_texts['overview']
-        elif topic in help_texts:
-            text = help_texts[topic]
-        else:
-            available = ', '.join(f"'{k}'" for k in help_texts.keys())
-            text = f"Unknown topic '{topic}'. Available topics: {available}"
-        
-        if verbose:
-            print(text)
-            return None
-        return text    
-
-    # --------------------------------------------------------------------------------------------------
     #! Symmetry Sector Iteration (Generator)
     # --------------------------------------------------------------------------------------------------
     
@@ -728,10 +367,10 @@ ACCESS STATES
             Examples:
             - [(SymmetryGenerators.Translation_x, range(L))]
             - [(SymmetryGenerators.Translation_x, range(Lx)), 
-               (SymmetryGenerators.Translation_y, range(Ly))]
+                (SymmetryGenerators.Translation_y, range(Ly))]
             - [(SymmetryGenerators.Translation_x, range(L)),
-               (SymmetryGenerators.Reflection, [1, -1])]
-               
+                (SymmetryGenerators.Reflection, [1, -1])]
+        
         lattice : Lattice, optional
             Lattice structure. Either lattice or ns must be provided.
         ns : int, optional  
@@ -749,7 +388,7 @@ ACCESS STATES
         Tuple[dict, HilbertSpace]
             A tuple of (sector_dict, hilbert_space) where:
             - sector_dict: Dictionary mapping SymmetryGenerators to sector values
-              e.g., {SymmetryGenerators.Translation_x: 0}
+                e.g., {SymmetryGenerators.Translation_x: 0}
             - hilbert_space: HilbertSpace instance for that sector
             
         Examples
@@ -793,7 +432,7 @@ ACCESS STATES
         Notes
         -----
         - Uses Python generators for memory efficiency - only one HilbertSpace
-          is in memory at a time (plus any you explicitly keep references to).
+            is in memory at a time (plus any you explicitly keep references to).
         - For very large systems, consider using verbose=True to track progress.
         - The order of iteration follows itertools.product over the sector lists.
         """
@@ -845,8 +484,7 @@ ACCESS STATES
         include_parity  : bool  = False,
         gen_mapping     : bool  = True,
         verbose         : bool  = False,
-        **hilbert_kwargs
-    ):
+        **hilbert_kwargs):
         """
         Generator that yields HilbertSpaces for all momentum sectors of a lattice.
         
@@ -954,8 +592,7 @@ ACCESS STATES
         momentum_sector : Optional[int]     = None,
         gen_mapping     : bool              = True,
         verbose         : bool              = False,
-        **hilbert_kwargs
-    ):
+        **hilbert_kwargs):
         """
         Generator that yields HilbertSpaces for all reflection parity sectors.
         
@@ -1740,21 +1377,21 @@ ACCESS STATES
     
     def __str__(self):
         """Short string summary of the Hilbert space."""
-        mode = "Many-Body" if self._is_many_body else "Quadratic"
-        info = f"{mode} Hilbert space: Ns={self._ns}, Nh={self._nh}"
+        mode        = "Many-Body" if self._is_many_body else "Quadratic"
+        info        = f"{mode} Hilbert space: Ns={self._ns}, Nh={self._nh}"
         if self._is_many_body:
-            info += f", Local={self._local_space}"
+            info   += f", Local={self._local_space}"
         if self._global_syms:
-            gs = ", ".join(f"{g.get_name_str()}={g.get_val()}" for g in self._global_syms)
-            info += f", GlobalSyms=[{gs}]"
+            gs      = ", ".join(f"{g.get_name_str()}={g.get_val()}" for g in self._global_syms)
+            info   += f", GlobalSyms=[{gs}]"
         if self._sym_container and getattr(self._sym_container, 'generators', None):
-            ls = ", ".join(f"{gen_type}={sector}" for (_, (gen_type, sector)) in self._sym_container.generators)
-            info += f", LocalSyms=[{ls}]"
+            ls      = ", ".join(f"{gen_type}={sector}" for (_, (gen_type, sector)) in self._sym_container.generators)
+            info   += f", LocalSyms=[{ls}]"
         return info
 
     def __repr__(self):
-        sym_info = self.get_sym_info()
-        base = "Single particle" if self._is_quadratic else "Many body"
+        sym_info    = self.get_sym_info()
+        base        = "SP" if self._is_quadratic else "MB"
         return f"{base} Hilbert space with {self._nh} states and {self._ns} sites; {self._local_space}. Symmetries: {sym_info}" if sym_info else ""
 
     ####################################################################################################
@@ -1835,8 +1472,11 @@ ACCESS STATES
     #! Operators for the Hilbert space
     ####################################################################################################
     
-    def __len__(self):                  return self._nh
-    def __call__(self, i):              return self.find_sym_repr(i)
+    def __len__(self):                  
+        return self._nh
+    
+    def __call__(self, i):
+        return self.find_sym_repr(i)
     
     def __getitem__(self, i):
         """

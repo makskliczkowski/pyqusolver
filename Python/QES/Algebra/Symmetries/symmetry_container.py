@@ -172,19 +172,6 @@ def _compact_convert_states_to_idx(full_array: np.ndarray, repr_list: np.ndarray
         full_array[i]   = idx
     return full_array
 
-@numba.njit(cache=True, fastmath=True, inline='always')
-def _compact_convert_idx_to_states(idx_array: np.ndarray, repr_list: np.ndarray) -> np.ndarray:
-    """Convert array of representative indices to their actual states using direct indexing without copy!"""
-    n_states    = idx_array.shape[0]
-        
-    for i in numba.prange(n_states):
-        idx             = idx_array[i]
-        if idx == _INVALID_REPR_IDX:
-            continue
-        state           = repr_list[idx]
-        idx_array[i]    = state
-    return idx_array
-
 # --------------------------------------------------------------------------
 #! Imports
 # --------------------------------------------------------------------------
@@ -205,7 +192,7 @@ try:
     except ImportError:
         jnp                 = np
         JAX_AVAILABLE       = False
-        
+
 except ImportError as e:
     raise ImportError(f"Failed to import required modules: {e}")
 
@@ -731,27 +718,28 @@ class SymmetryContainer:
     # -----------------------------------------------------
 
     @property
-    def repr_list(self) -> Optional[np.ndarray]:        return self._repr_list
+    def repr_list(self) -> Optional[np.ndarray]:                return self._repr_list
     @repr_list.setter
-    def repr_list(self, value: np.ndarray) -> None:     self._repr_list = value; self._repr_active = True
+    def repr_list(self, value: np.ndarray) -> None:             self._repr_list = value; self._repr_active = True
     
     @property
-    def repr_norms(self) -> Optional[np.ndarray]:       return self._repr_norms
+    def repr_norms(self) -> Optional[np.ndarray]:               return self._repr_norms
     @repr_norms.setter
-    def repr_norms(self, value: np.ndarray) -> None:    self._repr_norms = value; self._repr_get_norm = lambda x: self._repr_norms[x]
+    def repr_norms(self, value: np.ndarray) -> None:            self._repr_norms = value; self._repr_get_norm = lambda x: self._repr_norms[x]
 
     @property
-    def repr_active(self) -> bool:                      return self._repr_active
+    def repr_active(self) -> bool:                              return self._repr_active
     
     @property
-    def compact_data(self) -> Optional[CompactSymmetryData]:
-        """Get the compact symmetry data structure for O(1) JIT lookups."""
-        return self._compact_data
+    def compact_data(self) -> Optional[CompactSymmetryData]:    return self._compact_data
+    @property
+    def has_compact_data(self) -> bool:                         return self._compact_data is not None
     
     @property
-    def has_compact_data(self) -> bool:
-        """Check if compact symmetry data is available."""
-        return self._compact_data is not None
+    def tables(self) -> SymOpTables | None:                     return self._tables
+    
+    @property
+    def compiled_group(self) -> CompiledGroup | None:           return self._compiled_group
 
     # -----------------------------------------------------
     #! Generator Management
@@ -1721,8 +1709,7 @@ def create_symmetry_container_from_specs(
     nhl                 : int               = 2,
     backend             : str               = 'default',
     build_group         : bool              = True,
-    verbose             : bool              = True
-) -> SymmetryContainer:
+    verbose             : bool              = True) -> SymmetryContainer:
     """
     Factory function to create and initialize a SymmetryContainer.
     
@@ -1800,8 +1787,8 @@ def _create_symmetry_operator(
     try:
         # Translation symmetries (different directions)
         if gen_type in (SymmetryGenerators.Translation_x, 
-                       SymmetryGenerators.Translation_y, 
-                       SymmetryGenerators.Translation_z):
+                        SymmetryGenerators.Translation_y, 
+                        SymmetryGenerators.Translation_z):
             from QES.Algebra.Symmetries.translation import TranslationSymmetry
             # Extract direction from enum name
             direction_map = {
@@ -1897,12 +1884,12 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
             if 'x' in sym_value or 'px' in sym_value:
                 px = sym_value.get('x', sym_value.get('px'))
                 specs.append((SymmetryGenerators.ParityX, px))
-            if 'y' in sym_value or 'px' in sym_value:
-                py = sym_value.get('x', sym_value.get('px'))
-                specs.append((SymmetryGenerators.ParityX, py))
-            if '`' in sym_value or 'px' in sym_value:
-                pz = sym_value.get('x', sym_value.get('px'))
-                specs.append((SymmetryGenerators.ParityX, pz))
+            if 'y' in sym_value or 'py' in sym_value:
+                py = sym_value.get('y', sym_value.get('py'))
+                specs.append((SymmetryGenerators.ParityY, py))
+            if 'z' in sym_value or 'pz' in sym_value:
+                pz = sym_value.get('z', sym_value.get('pz'))
+                specs.append((SymmetryGenerators.ParityZ, pz))
 
         else:
             sector = int(sym_value)
@@ -2029,6 +2016,48 @@ def normalize_symmetry_generators(sym_gen: Union[dict, list, None]) -> List[Tupl
         return specs
     
     raise ValueError(f"sym_gen must be dict, list, or None, got {type(sym_gen)}")
+
+def normalize_global_symmetries(lattice: 'Lattice', global_syms: Union[None, List[GlobalSymmetry], GlobalSymmetry]) -> List[GlobalSymmetry]:
+    """
+    Normalize global symmetries input to a list of GlobalSymmetry callables.
+    
+    Parameters
+    ----------
+    global_syms : Union[None, List[GlobalSymmetry], GlobalSymmetry]
+        Input global symmetries
+    
+    Returns
+    -------
+    List[GlobalSymmetry]
+        Normalized list of global symmetries
+    """
+    
+    if global_syms is None or lattice is None:
+        return []
+    
+    if isinstance(global_syms, tuple):
+        # check if this is a single GlobalSymmetry instance and sector
+        if isinstance(global_syms[0], GlobalSymmetry):
+            return [global_syms[0]]
+        elif isinstance(global_syms[0], str):
+            global_syms = { global_syms[0]: global_syms[1] }
+            
+    elif isinstance(global_syms, GlobalSymmetry):
+        return [global_syms]
+    
+    elif isinstance(global_syms, list):
+        # Check if all elements are GlobalSymmetry instances
+        if all(isinstance(g, GlobalSymmetry) for g in global_syms):
+            return global_syms
+        else:
+            raise ValueError("All elements in global_syms list must be GlobalSymmetry instances.")
+
+    try:
+        from QES.Algebra.globals import parse_global_syms
+    except ImportError:
+        raise ImportError("GlobalSymmetry not found - ensure QES.Algebra.globals is available.")
+    
+    return parse_global_syms(lattice, global_syms)
 
 ####################################################################################################
 #! End of file

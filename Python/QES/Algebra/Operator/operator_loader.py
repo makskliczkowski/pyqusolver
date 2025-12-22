@@ -31,12 +31,11 @@ Description     : Lazy loader for operator modules based on LocalSpace type.
 ------------------------------------------------------------------------
 """
 
-import time
 import numpy as np
 from typing                                     import Callable, List, Optional, TYPE_CHECKING, Dict
 
 try:
-    from QES.Algebra.Hilbert.hilbert_local      import LocalSpaceTypes
+    from QES.Algebra.Hilbert.hilbert_local      import LocalSpaceTypes, choose_chunk_size
     from QES.general_python.common.memory       import get_available_memory_gb, log_memory_status
 except ImportError as e:
     raise ImportError("Could not import LocalSpaceTypes. Ensure that QES package is properly installed.") from e
@@ -49,6 +48,9 @@ if TYPE_CHECKING:
     from QES.Algebra.Operator                   import operators_spin
     from QES.Algebra.Operator                   import operators_spinless_fermions
     from QES.Algebra.Operator                   import operators_hardcore
+    from QES.Algebra.Operator                   import operators_spin_1
+
+# --------------------------------------------------------------
 
 class OperatorModule:
     """
@@ -68,45 +70,48 @@ class OperatorModule:
             The type of local space to determine which operators to load.
             If None, defaults to SPIN_HALF.
         """
-        self._local_space_type  = local_space_type or LocalSpaceTypes.SPIN_1_2
-        self._spin_module       = None
-        self._spin1_module      = None
-        self._fermion_module    = None
-        self._hardcore_module   = None
-        self._anyon_module      = None
+        self._local_space_type      = local_space_type or LocalSpaceTypes.SPIN_1_2
+        self._spin_module           = None
+        self._spin1_module          = None
+        self._fermion_module        = None
+        self._hardcore_module       = None
+        self._anyon_module          = None
+        
+        # Cache for correlation operators to avoid JIT recompilation
+        self._correlation_ops_cache = {}
 
     def _load_spin_operators(self):
         """Lazy load spin-1/2 operator module."""
         if self._spin_module is None:
-            from QES.Algebra.Operator import operators_spin
+            from QES.Algebra.Operator.impl import operators_spin
             self._spin_module = operators_spin
         return self._spin_module
     
     def _load_spin1_operators(self):
         """Lazy load spin-1 operator module."""
         if self._spin1_module is None:
-            from QES.Algebra.Operator import operators_spin_1
+            from QES.Algebra.Operator.impl import operators_spin_1
             self._spin1_module = operators_spin_1
         return self._spin1_module
     
     def _load_fermion_operators(self):
         """Lazy load spinless fermion operator module."""
         if self._fermion_module is None:
-            from QES.Algebra.Operator import operators_spinless_fermions
+            from QES.Algebra.Operator.impl import operators_spinless_fermions
             self._fermion_module = operators_spinless_fermions
         return self._fermion_module
     
     def _load_hardcore_operators(self):
         """Lazy load hardcore boson operator module."""
         if self._hardcore_module is None:
-            from QES.Algebra.Operator import operators_hardcore
+            from QES.Algebra.Operator.impl import operators_hardcore
             self._hardcore_module = operators_hardcore
         return self._hardcore_module
     
     def _load_anyon_operators(self):
         """Lazy load anyon operator module."""
         if self._anyon_module is None:
-            from QES.Algebra.Operator import operators_anyon
+            from QES.Algebra.Operator.impl import operators_anyon
             self._anyon_module = operators_anyon
         return self._anyon_module
     
@@ -167,9 +172,9 @@ class OperatorModule:
         
         # Fallback: try all modules in order
         for loader in [self._load_spin_operators, 
-                       self._load_spin1_operators,
-                       self._load_fermion_operators,
-                       self._load_hardcore_operators]:
+                        self._load_spin1_operators,
+                        self._load_fermion_operators,
+                        self._load_hardcore_operators]:
             try:
                 module = loader()
                 if hasattr(module, name):
@@ -451,6 +456,8 @@ class OperatorModule:
         else:
             raise ValueError(f"Unknown module: {self._local_space_type}")
 
+    #? Computation
+
     def _compute_spin_correlations(self, 
                                 eigenvectors            : np.ndarray,
                                 eigenvalues             : np.ndarray,
@@ -460,43 +467,23 @@ class OperatorModule:
                                 nstates_to_store        : Optional[int]         = None,
                                 correlators             : Optional[list]        = None,
                                 logger                  : Optional['Logger']    = None,
-                                n_susceptibility_states : int                   = 10,
+                                # ---
+                                susc_nstates            : int                   = 10,
+                                susc_mus                : list                  = [0.1, 0.5, 1.0],
                                 safety_factor           : float                 = 0.6) -> Dict[str, np.ndarray]:
         """
         Computes Spin-Spin correlations, Total Magnetization projections, 
-        Fidelity Susceptibility, and Static Susceptibility in a MEMORY-SAFE way.
-
-        It automatically batches the eigenvectors to fit into available RAM.
-
-        Parameters
-        ----------
-        eigenvectors : np.ndarray
-            The eigenvectors (N_hilbert, N_states).
-        eigenvalues : np.ndarray
-            The eigenvalues (N_states,).
-        hilbert : HilbertSpace
-            The Hilbert space for operator generation.
-        lattice : Optional['Lattice']
-            The lattice object containing site information (.ns). If None, must be inferable from hilbert.
-        nstates_to_store : int, optional
-            Number of eigenstates to consider. If None, uses all available states.
-        correlators : list, optional
-            List of correlators to compute (e.g., ['xx', 'xy', 'zz']). If None, computes all.
-        logger : Logger, optional
-            Logger for progress updates.
-        n_susceptibility_states : int
-            Number of low-lying states to compute fidelity susceptibility for.
-        safety_factor : float
-            Fraction of available RAM to utilize (0.0 to 1.0). Lower is safer.
-
-        Returns
-        -------
-        Dict
-            Dictionary containing 'xx', 'xy'..., 'susceptibility_tensor', etc.
+        Fidelity Susceptibility, and Static Susceptibility.
+        
+        This method uses a unified approach safe for both symmetric and non-symmetric Hilbert spaces.
+        Correlations <S_a^i S_b^j> are computed by applying the composite operator (S_a^i S_b^j) 
+        to the state, then taking the overlap. This ensures correct handling of intermediate states 
+        in symmetric subspaces.
         """
-        import gc
         import numba
-
+        import time
+        import gc
+        
         # Setup & Dimensions
         ns                  = hilbert.ns
         nh, n_total         = eigenvectors.shape
@@ -504,238 +491,189 @@ class OperatorModule:
         n_threads           = numba.config.NUMBA_NUM_THREADS
         numba.set_num_threads(n_threads)
         
-        # Convert to complex once if not already
-        ev                  = eigenvectors[:, :n_states]    # (Nh, n_states)
-        ev_c_t              = ev.conj().T                   # (N_states, Nh) - usually fits in RAM if EV fits
+        ev                  = eigenvectors[:, :n_states]
+        ev_c_t              = ev.conj().T
         
-        # Dynamic Batch Size Estimation
-        # Size of one full Hilbert vector in GB
-        vec_gb              = (nh * 16) / (1024**3) 
-        
-        # Per batch index, we hold:
-        # 1. ev_batch
-        # 2. vec_xi, vec_yi, vec_zi (Site i ops)
-        # 3. vec_xj, vec_yj, vec_zj (Site j ops)
-        # 4. 1-2 Temporary arrays created by numpy during (conj * vec) multiplication
-        vecs_per_batch_idx  = 10.0
-        avail_mem           = get_available_memory_gb()             # GB
-        safe_mem            = avail_mem * safety_factor             # GB to use safely
-        
-        # Calculate how many states we can process at once
-        batch_size          = int(safe_mem / (vec_gb * vecs_per_batch_idx))
-        batch_size          = max(1, min(batch_size, n_states)) # Clamp between 1 and total states
-        
-        if logger:
-            logger.info(f"Memory Check: Available={avail_mem:.2f}GB. Vector Size={vec_gb:.4f}GB.",  lvl=2, color='cyan')
-            logger.info(f"Calculated safe batch size: {batch_size} states (out of {n_states}).",    lvl=3, color='green')
-
-        # Initialize Data Structures
+        # Determine needed operators
         ops_list            = ['xx', 'xy', 'xz', 'yx', 'yy', 'yz', 'zx', 'zy', 'zz'] if correlators is None else correlators
-        ops_set             = set(ops_list)                         # Fast lookup
         values              = {op: np.zeros((ns, ns, n_states), dtype=np.complex128) for op in ops_list}
         
-        # Projectors for total magnetization components. This 
-        Sx_proj             = np.zeros((n_states, n_states), dtype=np.complex128)
-        Sy_proj             = np.zeros((n_states, n_states), dtype=np.complex128)
-        Sz_proj             = np.zeros((n_states, n_states), dtype=np.complex128)
+        # Components needed for susceptibility/magnetization (single site)
+        # We derive this from the requested correlators to avoid unnecessary computations
+        needed_components   = set()
+        for op in ops_list:
+            for char in op:
+                if char in ('x', 'y', 'z'):
+                    needed_components.add(char)
+        needed_components   = sorted(list(needed_components))
         
-        # Load Operators (Local)
-        # Note: We create them once. JIT compilation happens on first call.
-        sig_x               = self.sig_x(lattice=lattice, ns=ns, type_act='local')
-        sig_y               = self.sig_y(lattice=lattice, ns=ns, type_act='local')
-        sig_z               = self.sig_z(lattice=lattice, ns=ns, type_act='local')
+        # Initialize projectors for total magnetization (for susceptibility)
+        mag_ops_matrix      = { comp: np.zeros((n_states, n_states), dtype=np.complex128) for comp in needed_components }
         
-        # Site j: ONLY needed if specific pairwise correlations are requested
-        # We look strictly at the second character of the operator string (e.g., 'xz' -> z on j)
-        need_xj             = not ops_set.isdisjoint({'xx', 'yx', 'zx'}) 
-        need_yj             = not ops_set.isdisjoint({'xy', 'yy', 'zy'})
-        need_zj             = not ops_set.isdisjoint({'xz', 'yz', 'zz'})
+        # Prepare correlation operators
+        # We cache operators to avoid JIT recompilation on repeated calls
+        corr_ops            = {}
+        ops_module          = self._load_spin_operators()
         
-        # Site i Buffers (Always allocate)
-        buf_xi              = np.zeros((nh, batch_size), dtype=np.complex128)
-        buf_yi              = np.zeros((nh, batch_size), dtype=np.complex128)
-        buf_zi              = np.zeros((nh, batch_size), dtype=np.complex128)
+        for op_name in ops_list:
+            cache_key = (op_name, ns, 'corr')
+            if cache_key in self._correlation_ops_cache:
+                corr_ops[op_name]   = self._correlation_ops_cache[cache_key]
+                continue
+                
+            if hasattr(ops_module, f'sig_{op_name}'):
+                # Use standard factory (e.g. sig_xy)
+                factory             = getattr(ops_module, f'sig_{op_name}')
+                op                  = factory(ns=ns, sites=None, type_act='corr')
+            elif op_name in ('xx', 'yy', 'zz'):
+                # Use sig_x, sig_y, sig_z respectively, but with type_act='corr'
+                c1                  = op_name[0]
+                factory             = getattr(ops_module, f'sig_{c1}')
+                op                  = factory(ns=ns, sites=None, type_act='corr')
+            else:
+                # Fallback for others not in mixed list
+                # Use make_nsite_correlator
+                c1, c2              = op_name[0], op_name[1]
+                op                  = ops_module.make_nsite_correlator([c1, c2], ns=ns, sites=None)
+            
+            self._correlation_ops_cache[cache_key] = op
+            corr_ops[op_name]                      = op
         
-        # Site j Buffers (Conditionally allocate)
-        buf_xj              = np.zeros((nh, batch_size), dtype=np.complex128) if need_xj else None
-        buf_yj              = np.zeros((nh, batch_size), dtype=np.complex128) if need_yj else None
-        buf_zj              = np.zeros((nh, batch_size), dtype=np.complex128) if need_zj else None
-        JIT_CHUNK_SIZE      = 8
+        # Prepare single-site operators for magnetization
+        # Also cached for performance
+        single_ops = {}
+        for comp in ['x', 'y', 'z']:
+            cache_key = (comp, ns, 'local')
+            if cache_key in self._correlation_ops_cache:
+                single_ops[comp] = self._correlation_ops_cache[cache_key]
+            else:
+                if comp == 'x':
+                    op = self.sig_x(ns=ns, type_act='local')
+                elif comp == 'y':
+                    op = self.sig_y(ns=ns, type_act='local')
+                elif comp == 'z':
+                    op = self.sig_z(ns=ns, type_act='local')
+                self._correlation_ops_cache[cache_key]  = op
+                single_ops[comp]                        = op
+
+        # Memory Management
+        vec_gb              = (nh * 16) / (1024**3)
+        # We need buffers for:
+        # 1. Output of correlation op (1 vector per batch)
+        # 2. Output of single ops (3 vectors per batch)
+        vecs_per_batch      = 1.0 + 4.0 # 1 for corr, 3 for single ops
+        avail_mem           = get_available_memory_gb()
+        safe_mem            = avail_mem * safety_factor
+        batch_size          = int(safe_mem / (vec_gb * vecs_per_batch))
+        batch_size          = max(1, min(batch_size, n_states))
+        
+        if logger:          logger.info(f"Correlations: Batch size {batch_size} states (avail: {avail_mem:.1f}GB)", lvl=2, color='cyan')
+            
+        from QES.Algebra.Hilbert.hilbert_local import choose_chunk_size
+        JIT_CHUNK_SIZE      = choose_chunk_size(hilbert.nh, n_threads)
         thread_buf_cache    = np.zeros((n_threads, nh, JIT_CHUNK_SIZE), dtype=np.complex128)
-        
-        # Main Computation Loop (Batched)
-        # Outer loop: Sites i
+
+        buf_corr            = np.zeros((nh, batch_size), dtype=np.complex128)
+        buf_single          = {comp: np.zeros((nh, batch_size), dtype=np.complex128) for comp in needed_components}
+
+        # Loop over sites
         for i in range(ns):
-            t_site      = time.time()
-            if logger:  logger.info(f"Computing correlations for site {i+1}/{ns}...", lvl=2)
+            t_site = time.time()
             
-            # Batched Loop over Eigenstates
+            # Loop over batches
             for b_start in range(0, n_states, batch_size):
-                # Slice the batch
-                # Shape: (Nh, current_batch_size)
-                b_end                       = min(b_start + batch_size, n_states)
-                ev_batch                    = ev[:, b_start:b_end] 
-                curr_width                  = b_end - b_start
+                b_end       = min(b_start + batch_size, n_states)
+                curr_width  = b_end - b_start
+                ev_batch    = ev[:, b_start:b_end]
                 
-                # Compute Site i operators on this batch
-                vec_xi, vec_yi, vec_zi      = None, None, None
-                
-                if buf_xi is not None:
-                    vec_xi = buf_xi[:, :curr_width]; vec_xi.fill(0)
-                    sig_x.matvec(ev_batch, i, hilbert=hilbert, out=vec_xi, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
-                
-                if buf_yi is not None:
-                    vec_yi = buf_yi[:, :curr_width]; vec_yi.fill(0)
-                    sig_y.matvec(ev_batch, i, hilbert=hilbert, out=vec_yi, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
-                if buf_zi is not None:
-                    vec_zi = buf_zi[:, :curr_width]; vec_zi.fill(0)
-                    sig_z.matvec(ev_batch, i, hilbert=hilbert, out=vec_zi, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
-
-                # Update Projections
-                if vec_xi is not None       : Sx_proj[:, b_start:b_end] += ev_c_t @ vec_xi
-                if vec_yi is not None       : Sy_proj[:, b_start:b_end] += ev_c_t @ vec_yi
-                if vec_zi is not None       : Sz_proj[:, b_start:b_end] += ev_c_t @ vec_zi
-                
-                # Pre-conjugate for inner loop dot products
-                vec_xi_c                    = vec_xi.conj() if vec_xi is not None else None
-                vec_yi_c                    = vec_yi.conj() if vec_yi is not None else None
-                vec_zi_c                    = vec_zi.conj() if vec_zi is not None else None
-
-                for j in range(i, ns):
+                # 1. Accumulate Magnetization / Susceptibility Terms (Single Site)
+                for comp in needed_components:
+                    buf     = buf_single[comp][:, :curr_width]
+                    buf.fill(0)
+                    single_ops[comp].matvec(ev_batch, i, hilbert=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
                     
-                    vec_xj, vec_yj, vec_zj  = None, None, None
+                    # Accumulate <n | S_comp^i | m> into total matrix                    
+                    block                                   = ev_c_t @ buf
+                    mag_ops_matrix[comp][:, b_start:b_end] += block
 
-                    # Optimization: Point to existing 'i' vectors if i==j
-                    if i == j:
-                        vec_xj, vec_yj, vec_zj  = vec_xi, vec_yi, vec_zi
-                    else:
-                        # Otherwise compute into 'j' buffers
-                        if buf_xj is not None:
-                            vec_xj              = buf_xj[:, :curr_width]; vec_xj.fill(0)
-                            sig_x.matvec(ev_batch, j, hilbert=hilbert, out=vec_xj, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                # Loop j
+                for j in range(ns):
+                    # For each requested correlator
+                    for op_name in ops_list:
+                        buf = buf_corr[:, :curr_width]
+                        buf.fill(0)
                         
-                        if buf_yj is not None:
-                            vec_yj              = buf_yj[:, :curr_width]; vec_yj.fill(0)
-                            sig_y.matvec(ev_batch, j, hilbert=hilbert, out=vec_yj, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
-                            
-                        if buf_zj is not None:
-                            vec_zj              = buf_zj[:, :curr_width]; vec_zj.fill(0)
-                            sig_z.matvec(ev_batch, j, hilbert=hilbert, out=vec_zj, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
-                    # Compute Expectations
-                    # Inner product: sum(v_i.conj * v_j)
-                    
-                    if 'xx' in ops_set and vec_xi_c is not None and vec_xj is not None:
-                        val                                 = np.sum(vec_xi_c * vec_xj, axis=0)
-                        values['xx'][i, j, b_start:b_end]   = val
-                        values['xx'][j, i, b_start:b_end]   = val.conj()
+                        # Apply composite operator S_a^i S_b^j
+                        corr_ops[op_name].matvec(ev_batch, i, j, hilbert=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                        val                                     = np.sum(ev[:, b_start:b_end].conj() * buf, axis=0)
+                        values[op_name][i, j, b_start:b_end]    = val
 
-                    if 'xy' in ops_set and vec_xi_c is not None and vec_yj is not None:
-                        val                                 = np.sum(vec_xi_c * vec_yj, axis=0)
-                        values['xy'][i, j, b_start:b_end]   = val
-                        values['xy'][j, i, b_start:b_end]   = val.conj()
-
-                    if 'xz' in ops_set and vec_xi_c is not None and vec_zj is not None:
-                        val                                 = np.sum(vec_xi_c * vec_zj, axis=0)
-                        values['xz'][i, j, b_start:b_end]   = val
-                        values['xz'][j, i, b_start:b_end]   = val.conj()
-                    
-                    if 'yx' in ops_set and vec_yi_c is not None and vec_xj is not None:
-                        val                                 = np.sum(vec_yi_c * vec_xj, axis=0)
-                        values['yx'][i, j, b_start:b_end]   = val
-                        values['yx'][j, i, b_start:b_end]   = val.conj()
-                    if 'yy' in ops_set and vec_yi_c is not None and vec_yj is not None:
-                        val                                 = np.sum(vec_yi_c * vec_yj, axis=0)
-                        values['yy'][i, j, b_start:b_end]   = val
-                        values['yy'][j, i, b_start:b_end]   = val.conj()
-                    if 'yz' in ops_set and vec_yi_c is not None and vec_zj is not None:
-                        val                                 = np.sum(vec_yi_c * vec_zj, axis=0)
-                        values['yz'][i, j, b_start:b_end]   = val
-                        values['yz'][j, i, b_start:b_end]   = val.conj()
-                        
-                    if 'zx' in ops_set and vec_zi_c is not None and vec_xj is not None:
-                        val                                 = np.sum(vec_zi_c * vec_xj, axis=0)
-                        values['zx'][i, j, b_start:b_end]   = val
-                        values['zx'][j, i, b_start:b_end]   = val.conj()
-                    if 'zy' in ops_set and vec_zi_c is not None and vec_yj is not None:
-                        val                                 = np.sum(vec_zi_c * vec_yj, axis=0)
-                        values['zy'][i, j, b_start:b_end]   = val
-                        values['zy'][j, i, b_start:b_end]   = val.conj()
-                    if 'zz' in ops_set and vec_zi_c is not None and vec_zj is not None:
-                        val                                 = np.sum(vec_zi_c * vec_zj, axis=0)
-                        values['zz'][i, j, b_start:b_end]   = val
-                        values['zz'][j, i, b_start:b_end]   = val.conj()
-            
-            # End of batch loop
+            if logger and (i + 1) % max(1, ns // 5) == 0: logger.info(f"Site {i+1}/{ns} done ({time.time()-t_site:.2f}s)", lvl=3)
             gc.collect()
-            
-            if logger: 
-                logger.info(f"Site {i+1} done in {time.time()-t_site:.2f}s", lvl=3)
-                log_memory_status(f"Post-Site {i+1}", logger, lvl=4)
+
+        # Post-Processing: Magnetization
+        values['magnetization'] = {}
+        for comp in needed_components:
+            # Diagonal of total spin matrix / ns
+            values['magnetization'][comp] = np.diag(mag_ops_matrix[comp]) / ns
         
         # Post-Processing: Susceptibilities
-        if logger: logger.info("Computing susceptibilities...", lvl=2)
-        
-        # 5a. Fidelity Susceptibility
-        mag_x                   = np.diag(Sx_proj) / ns
-        mag_y                   = np.diag(Sy_proj) / ns
-        mag_z                   = np.diag(Sz_proj) / ns
-        values['magnetization'] = {'x': mag_x, 'y': mag_y, 'z': mag_z}
-        
-        n_susceptibility_states = min(n_susceptibility_states, n_states)
-        if n_susceptibility_states > 0:
-            logger.info(f"Computing fidelity susceptibility for {n_susceptibility_states} states...", lvl=2)
-            
+        # Fidelity Susceptibility
+        susc_nstates    = min(susc_nstates, n_states)
+        susc_out        = {c: np.zeros((susc_nstates, len(susc_mus)), dtype=np.float64) for c in needed_components}
+        susc_out['tot'] = np.zeros((susc_nstates, len(susc_mus)), dtype=np.float64)
+
+        if susc_nstates > 1:
             try:
                 from QES.Algebra.Properties.statistical import fidelity_susceptibility_low_rank
             except ImportError:
-                pass
+                raise ImportError("fidelity_susceptibility_low_rank not found. Ensure QES package is properly installed.")
 
-            mu_val      = ns / np.sqrt(nh) # Scaling factor for fidelity susceptibility
-            fids        = {'x': [], 'y': [], 'z': [], 'tot': []}
+            proj_tot = sum(mag_ops_matrix.values())
+            gaps     = np.diff(eigenvalues[:susc_nstates+1])
+            scale    = np.median(gaps[gaps > 1e-12]) if np.any(gaps > 1e-12) else np.mean(np.abs(gaps))
+            energies = eigenvalues[:susc_nstates]  # keep consistent with your "low-rank/subspace" idea
 
-            for k in range(min(n_states, n_susceptibility_states)):
-                fs_x        = fidelity_susceptibility_low_rank(ev, Sx_proj,                     mu=mu_val, idx=k)
-                fs_y        = fidelity_susceptibility_low_rank(ev, Sy_proj,                     mu=mu_val, idx=k)
-                fs_z        = fidelity_susceptibility_low_rank(ev, Sz_proj,                     mu=mu_val, idx=k)
-                fs_total    = fidelity_susceptibility_low_rank(ev, Sx_proj + Sy_proj + Sz_proj, mu=mu_val, idx=k)
-                fids['x'].append(fs_x)
-                fids['y'].append(fs_y)
-                fids['z'].append(fs_z)
-                fids['tot'].append(fs_total)
-                
-            if logger:
-                logger.info("Fidelity susceptibility computation completed.", lvl=3)
-            
-            values['fidelity_susceptibility'] = {
-                'susceptibility/fid/x'      : fids['x'],
-                'susceptibility/fid/y'      : fids['y'],
-                'susceptibility/fid/z'      : fids['z'],
-                'susceptibility/fid/tot'    : fids['tot'],
-            }
+            for imu, mu in enumerate(susc_mus):
+                mu_val = mu * scale
 
+                for k in range(susc_nstates):
+                    susc_out['tot'][k, imu] = fidelity_susceptibility_low_rank(energies, proj_tot[:susc_nstates, :susc_nstates], mu=mu_val, idx=k)
+                    for comp in needed_components:
+                        susc_out[comp][k, imu] = fidelity_susceptibility_low_rank(energies, mag_ops_matrix[comp][:susc_nstates, :susc_nstates], mu=mu_val, idx=k)
+
+            values['fidelity_susceptibility']                           = {f'susceptibility/fid/{c}': susc_out[c] for c in needed_components}
+            values['fidelity_susceptibility']['susceptibility/fid/tot'] = susc_out['tot']
+            values['fidelity_susceptibility']['mus']                    = np.array(susc_mus)
+            values['fidelity_susceptibility']['mu_scale']               = scale
+        
         # Static Susceptibility Tensor
-        chi         = np.zeros((3,3), dtype=np.complex128)
-        ops_proj    = [Sx_proj, Sy_proj, Sz_proj]
-        E0          = eigenvalues[0]
-        
-        # Sum over excited states (n > 0)
-        # chi_ab = sum_{n!=0} <0|A|n><n|B|0> / (En - E0)
-        # ops_proj[a][0, n] is <0|S_a|n>
-        for a in range(3):
-            for b in range(3):
-                num = 0.0j
-                for n in range(1, n_states):
-                    denom = eigenvalues[n] - E0
-                    if np.abs(denom) > 1e-12:
-                        term = ops_proj[a][0, n] * ops_proj[b][n, 0] / denom
-                        num += term
-                chi[a, b] = num
-        
-        values['susceptibility_tensor'] = chi
+        if len(eigenvalues) > 1:
+            chi         = np.zeros((3, 3), dtype=np.complex128)
+            comp_idx    = {'x': 0, 'y': 1, 'z': 2}
+            E0          = eigenvalues[0]
+            
+            for a in needed_components:
+                for b in needed_components:
+                    num = 0.0j
+                    Pa  = mag_ops_matrix[a] # <n|Sa|m>
+                    Pb  = mag_ops_matrix[b]
+                    
+                    # Sum over n != 0
+                    for n in range(1, n_states):
+                        denom = eigenvalues[n] - E0
+                        if np.abs(denom) > 1e-12:
+                            # <0|Sa|n><n|Sb|0>
+                            term = Pa[0, n] * Pb[n, 0] / denom
+                            num += term
+                    
+                    chi[comp_idx[a], comp_idx[b]] = num
+            
+            values['susceptibility_tensor'] = chi
         
         if logger: logger.info("Correlation analysis completed.", lvl=2, color='green')
         return values
-    
+
     def compute_correlations(self, 
                             eigenvectors                : np.ndarray,
                             eigenvalues                 : np.ndarray,
@@ -783,12 +721,11 @@ class OperatorModule:
             return self._compute_spin_correlations(
                 eigenvectors                = eigenvectors,
                 eigenvalues                 = eigenvalues,
-                lattice                     = lattice,
                 hilbert                     = hilbert,
                 nstates_to_store            = nstates_to_store,
                 correlators                 = correlators,
                 logger                      = logger,
-                n_susceptibility_states     = n_susceptibility_states,
+                susc_nstates                = n_susceptibility_states,
                 safety_factor               = safety_factor
             )
         else:

@@ -452,7 +452,6 @@ class SpecialOperator(Operator, ABC):
     def dim(self):                      return self.hilbert_size
     @property
     def nh(self):                       return self.hilbert_size
-
     
     # ----------------------------------------------------------------------------------------------
     #! ACCESS TO OTHER MODULES RELATED TO HAMILTONIAN
@@ -1280,7 +1279,6 @@ class SpecialOperator(Operator, ABC):
             
             # Compile by calling once
             _                                   = wrapper(0)
-            
             compile_end                         = time.perf_counter()
             self._composition_int_fun           = wrapper
             self._log(f"Composition function compiled in {compile_end - compile_start:.6f} seconds.", log='info', lvl=3, color="green", verbose=self._verbose)

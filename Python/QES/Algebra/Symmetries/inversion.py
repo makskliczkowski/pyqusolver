@@ -116,63 +116,104 @@ def _apply_inversion_permutation(state: int, ns: int, base: int, perm: np.ndarra
             power *= base
         return new_state
 
-def _build_inversion_permutation(lattice: 'Lattice') -> np.ndarray:
+####################################################################################################
+
+def _wrap_int(n: int, L: int, pbc: bool) -> int:
+    if pbc:
+        return int(n % L)
+    return int(n) if (0 <= n < L) else -1
+
+def _build_inversion_permutation(lat: 'Lattice', *, center="bbox", tol=1e-7) -> np.ndarray:
     """
-    Build the site permutation array for spatial inversion.
-    
-    For a lattice with coordinates (nx, ny, nz), inversion maps:
-        (nx, ny, nz) -> (Lx-1-nx, Ly-1-ny, Lz-1-nz)
-    
-    This works for any lattice type (square, honeycomb, triangular, etc.)
-    as long as the lattice has coordinate information.
-    
-    Parameters
-    ----------
-    lattice : Lattice
-        Lattice instance with coordinate and indexing information
-        
-    Returns
-    -------
-    np.ndarray
-        Permutation array of shape (ns,) where perm[i] = inverted site index
+    Build inversion permutation perm[i] = j for a general multi-sublattice lattice.
+
+    Assumptions:
+    - lat.fracs[i] gives integer cell coords (nx,ny,nz)
+    - lat.subs[i] gives basis index beta
+    - lat.a1,a2,a3 and lat.basis define geometry
+    - periodic_flags() tells which directions wrap
     """
-    ns      = lattice.Ns
-    dim     = lattice.dim
-    lx      = lattice.Lx
-    ly      = lattice.Ly if dim >= 2 else 1
-    lz      = lattice.Lz if dim >= 3 else 1
-    
-    # Check if lattice has multi-site unit cell (e.g., honeycomb)
-    n_basis = len(lattice._basis) if hasattr(lattice, '_basis') and lattice._basis is not None and len(lattice._basis) > 0 else 1
-    perm    = np.zeros(ns, dtype=np.int64)
-    
-    for i in range(ns):
-        # Get the unit cell index and sublattice index
-        cell        = i // n_basis
-        sub         = i % n_basis
-        
-        # Extract cell coordinates
-        nx          = cell % lx
-        ny          = (cell // lx) % ly if dim >= 2 else 0
-        nz          = (cell // (lx * ly)) % lz if dim >= 3 else 0
-        
-        # Apply inversion: (nx, ny, nz) -> (Lx-1-nx, Ly-1-ny, Lz-1-nz)
-        nx_inv      = (lx - 1 - nx) % lx
-        ny_inv      = (ly - 1 - ny) % ly if dim >= 2 else 0
-        nz_inv      = (lz - 1 - nz) % lz if dim >= 3 else 0
-        
-        # Convert back to linear index
-        cell_inv    = nx_inv + ny_inv * lx + nz_inv * lx * ly
-        
-        # For multi-site unit cells, sublattice index is preserved under inversion
-        # (this is the standard convention for honeycomb, kagome, etc.)
-        # Some lattices may need sublattice permutation too - can be extended
-        i_inv       = cell_inv * n_basis + sub
-        perm[i]     = i_inv
+
+    r      = np.asarray(lat.rvectors, float)          # (Ns,3)
+    Ns     = r.shape[0]
+    Nb     = lat.basis.shape[0] if len(lat.basis) else 1
+
+    # pick inversion center
+    if isinstance(center, str):
+        c = center.lower()
+        if c == "bbox":
+            r0 = 0.5 * (r.min(axis=0) + r.max(axis=0))
+        elif c == "mean":
+            r0 = r.mean(axis=0)
+        else:
+            raise ValueError(f"Unknown center='{center}'")
+    else:
+        r0 = np.asarray(center, float).reshape(3)
+
+    a1 = np.asarray(lat.a1, float).reshape(3)
+    a2 = np.asarray(lat.a2, float).reshape(3)
+    a3 = np.asarray(lat.a3, float).reshape(3)
+    A  = np.column_stack([a1, a2, a3])     # (3,3)
+    Ainv = np.linalg.inv(A)
+
+    basis = np.asarray(lat.basis, float) if Nb > 1 else np.zeros((1,3), float)
+    Lx, Ly, Lz = lat.Lx, max(lat.Ly,1), max(lat.Lz,1)
+    pbcx, pbcy, pbcz = lat.periodic_flags()
+
+    # Build lookup: (nx,ny,nz,sub) -> site index
+    lookup = {}
+    for i in range(Ns):
+        nx, ny, nz = map(int, lat.fracs[i])
+        sub        = int(lat.subs[i]) if hasattr(lat, "subs") else int(i % Nb)
+        lookup[(nx, ny, nz, sub)] = i
+
+    perm = np.full(Ns, -1, dtype=np.int64)
+
+    for i in range(Ns):
+        target = 2.0 * r0 - r[i]
+
+        # Try all possible sublattices; choose the one whose basis makes target close to Bravais lattice point
+        best = None
+        for sub in range(Nb):
+            frac = (Ainv @ (target - basis[sub])).reshape(3)  # fractional Bravais coords (not wrapped)
+            nx = int(np.rint(frac[0]))
+            ny = int(np.rint(frac[1]))
+            nz = int(np.rint(frac[2]))
+
+            # wrap if periodic
+            if pbcx: nx %= Lx
+            if pbcy: ny %= Ly
+            if pbcz: nz %= Lz
+
+            # reconstruct and check error
+            recon = nx*a1 + ny*a2 + nz*a3 + basis[sub]
+            err   = np.linalg.norm(recon - target)
+
+            if best is None or err < best[0]:
+                best = (err, nx, ny, nz, sub)
+
+        err, nx, ny, nz, sub = best
+        if err > tol:
+            # No good match: inversion center might be wrong for your cluster or the geometry is inconsistent
+            raise ValueError(
+                f"Inversion target didn't match any site within tol={tol} for i={i}. "
+                f"Best err={err}. Try different center or larger tol."
+            )
+
+        j = lookup.get((nx, ny, nz, sub), -1)
+        if j < 0:
+            raise ValueError(f"Lookup failed for (nx,ny,nz,sub)=({nx},{ny},{nz},{sub}) at i={i}")
+        perm[i] = j
+
+    # Optional sanity: bijection for fully periodic clusters
+    if pbcx and pbcy and (lat.dim < 3 or pbcz):
+        if len(np.unique(perm)) != Ns:
+            raise ValueError("Permutation is not bijective; check center/tol/geometry.")
     return perm
 
 ####################################################################################################
 # InversionSymmetry class
+#!TODO: Add fermionic sign handling for inversion of fermionic states
 ####################################################################################################
 
 class InversionSymmetry(SymmetryOperator):

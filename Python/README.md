@@ -33,11 +33,11 @@ hs = HilbertSpace(ns=4, nhl=2)
 ### Modular subpackage imports
 ```python
 # Explicit subpackage import
-from QES.Algebra import HilbertSpace, Hamiltonian
-from QES.Algebra.Operator import operators_spin
+from QES.Algebra                import HilbertSpace, Hamiltonian
+from QES.Algebra.Operator.impl  import operators_spin
 
 # Low-level access
-from QES.Algebra.Hilbert import hilbert_jit_methods
+from QES.Algebra.Hilbert        import hilbert_jit_methods
 ```
 
 ---

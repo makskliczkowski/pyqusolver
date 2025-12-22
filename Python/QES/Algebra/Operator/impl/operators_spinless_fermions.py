@@ -103,19 +103,19 @@ from    enum import IntEnum
 ################################################################################
 
 try:
-    from QES.Algebra.Operator.operator              import Operator, OperatorTypeActing, create_operator, ensure_operator_output_shape_numba
-    from QES.Algebra.Operator.catalog               import register_local_operator
-    from QES.Algebra.Hilbert.hilbert_local          import LocalOpKernels, LocalSpaceTypes
-    from QES.Algebra.Operator.phase_utils           import bit_popcount, fermionic_parity_int, fermionic_parity_array
-    from QES.Algebra.Operator.special_operator      import CUSTOM_OP_BASE, CUSTOM_OP_MAX, is_custom_code
-    from QES.Algebra.Operator.operators_hardcore    import (
-                                                        hardcore_create_int,
-                                                        hardcore_create_np,
-                                                        hardcore_annihilate_int,
-                                                        hardcore_annihilate_np,
-                                                        hardcore_number_int,
-                                                        hardcore_number_np,
-                                                    )
+    from QES.Algebra.Operator.operator                  import Operator, OperatorTypeActing, create_operator, ensure_operator_output_shape_numba
+    from QES.Algebra.Operator.catalog                   import register_local_operator
+    from QES.Algebra.Hilbert.hilbert_local              import LocalOpKernels, LocalSpaceTypes
+    from QES.Algebra.Operator.phase_utils               import bit_popcount, fermionic_parity_int, fermionic_parity_array
+    from QES.Algebra.Operator.special_operator          import CUSTOM_OP_BASE
+    from QES.Algebra.Operator.impl.operators_hardcore   import (
+                                                            hardcore_create_int,
+                                                            hardcore_create_np,
+                                                            hardcore_annihilate_int,
+                                                            hardcore_annihilate_np,
+                                                            hardcore_number_int,
+                                                            hardcore_number_np,
+                                                        )
 except ImportError:
     raise ImportError("QES.Algebra.Operator and QES.Algebra.Hilbert modules are required for spinless fermion operators.")
 

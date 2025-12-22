@@ -7,21 +7,20 @@ fermionic operators, whereas ``statistics_angle = 0`` yields hard-core bosons.
 """
 
 from __future__ import annotations
-
 import numpy as np
 
-from QES.Algebra.Operator.catalog import register_local_operator
-from QES.Algebra.Hilbert.hilbert_local import LocalOpKernels, LocalSpaceTypes
-from QES.Algebra.Operator.operators_hardcore import (
-    hardcore_annihilate_int,
-    hardcore_annihilate_np,
-    hardcore_create_int,
-    hardcore_create_np,
-    hardcore_number_int,
-    hardcore_number_np,
-)
-from QES.general_python.algebra.utils import DEFAULT_NP_FLOAT_TYPE
 
+from QES.Algebra.Operator.catalog                   import register_local_operator
+from QES.Algebra.Hilbert.hilbert_local              import LocalOpKernels, LocalSpaceTypes
+from QES.general_python.algebra.utils               import DEFAULT_NP_FLOAT_TYPE
+from QES.Algebra.Operator.impl.operators_hardcore   import (
+                                                        hardcore_annihilate_int,
+                                                        hardcore_annihilate_np,
+                                                        hardcore_create_int,
+                                                        hardcore_create_np,
+                                                        hardcore_number_int,
+                                                        hardcore_number_np,
+                                                    )
 
 def _register_catalog_entries():
     """

@@ -64,8 +64,8 @@ Examples
 
 **Direct import for spin operators**::
 
-    >>> from QES.Algebra.Operator.operators_spin import sig_x, sig_y, sig_z
-    >>> from QES.Algebra.Operator.operators_spin import sig_plus, sig_minus
+    >>> from QES.Algebra.Operator.impl.operators_spin import sig_x, sig_y, sig_z
+    >>> from QES.Algebra.Operator.impl.operators_spin import sig_plus, sig_minus
     >>> 
     >>> # Create spin-z operator for all sites
     >>> Sz_total = sig_z(lattice=lattice, type_act='global')
@@ -75,7 +75,7 @@ Examples
 
 **Direct import for fermionic operators**::
 
-    >>> from QES.Algebra.Operator.operators_spinless_fermions import cdag, c, n_op
+    >>> from QES.Algebra.Operator.impl.operators_spinless_fermions import cdag, c, n_op
     >>> 
     >>> # Number operator
     >>> n = n_op(ns=10, sites=[0, 1, 2])
@@ -108,8 +108,8 @@ Examples
 See Also
 --------
 QES.Algebra.Operator.operator                       : Base Operator class documentation
-QES.Algebra.Operator.operators_spin                 : Spin operator documentation
-QES.Algebra.Operator.operators_spinless_fermions    : Fermion operator documentation
+QES.Algebra.Operator.impl.operators_spin                 : Spin operator documentation
+QES.Algebra.Operator.impl.operators_spinless_fermions    : Fermion operator documentation
 
 -----------------------------------------------------------
 File    : QES/Algebra/Operator/__init__.py
@@ -252,7 +252,7 @@ def help(verbose: bool = True) -> None:
 >>> Sz = ops.sig_z(lattice=lattice, type_act='local')
 
 # Direct import:
->>> from QES.Algebra.Operator.operators_spin import sig_z
+>>> from QES.Algebra.Operator.impl.operators_spin import sig_z
 >>> Sz = sig_z(lattice=lattice, type_act='global')
 
 # Operator types:

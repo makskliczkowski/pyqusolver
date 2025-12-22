@@ -45,8 +45,8 @@ except ImportError as e:
 
 # Operator imports
 try:
-    from QES.Algebra.Operator import operators_spin as op_spin
-    from QES.Algebra.Operator import operators_spinless_fermions as op_ferm
+    from QES.Algebra.Operator.impl import operators_spin as op_spin
+    from QES.Algebra.Operator.impl import operators_spinless_fermions as op_ferm
 except ImportError as e:
     raise ImportError(f"Required QES operator modules not found: {e}")
 

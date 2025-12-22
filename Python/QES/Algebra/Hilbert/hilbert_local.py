@@ -72,6 +72,16 @@ class LocalSpaceTypes(Enum):
     BOSONS              = "bosons"
 
 # ------------------------------------------------------------------
+#! JIT chunk size helper
+# ------------------------------------------------------------------
+
+def choose_chunk_size(nh, n_threads: int) -> int:
+    # target ~4 MB per thread max
+    bytes_per_thread    = 4 * 1024**2 // n_threads
+    max_chunk           = bytes_per_thread // (16 * nh)
+    return max(1, min(8, max_chunk))
+
+# ------------------------------------------------------------------
 #! Hilbert Basis Types
 # ------------------------------------------------------------------
 
@@ -118,15 +128,15 @@ def _ensure_operator_modules_for(local_type: LocalSpaceTypes) -> None:
     """
     try:
         if local_type == LocalSpaceTypes.SPIN_1_2:
-            import QES.Algebra.Operator.operators_spin                  # noqa: F401
+            import QES.Algebra.Operator.impl.operators_spin                  # noqa: F401
         elif local_type == LocalSpaceTypes.SPIN_1:
-            import QES.Algebra.Operator.operators_spin_1                # noqa: F401
+            import QES.Algebra.Operator.impl.operators_spin_1                # noqa: F401
         elif local_type == LocalSpaceTypes.SPINLESS_FERMIONS:
-            import QES.Algebra.Operator.operators_spinless_fermions     # noqa: F401,E402
+            import QES.Algebra.Operator.impl.operators_spinless_fermions     # noqa: F401,E402
         elif local_type == LocalSpaceTypes.ANYON_ABELIAN:
-            import QES.Algebra.Operator.operators_anyon                 # noqa: F401,E402
+            import QES.Algebra.Operator.impl.operators_anyon                 # noqa: F401,E402
         # elif local_type == LocalSpaceTypes.BOSONS:
-            # import QES.Algebra.Operator.operators_bosons  # noqa: F401,E402
+            # import QES.Algebra.Operator.impl.operators_bosons  # noqa: F401,E402
     except ImportError:
         # Optional module - if it is genuinely missing the catalog will
         # simply expose whatever was registered elsewhere.

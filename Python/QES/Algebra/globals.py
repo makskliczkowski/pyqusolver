@@ -135,7 +135,7 @@ class GlobalSymmetry(ABC):
         return self(state) and out_cond
 
 # ---------------------------
-# Global U(1) Symmetry
+#! Global U(1) Symmetry
 # ---------------------------
 
 def u1_sym(state: Union[int, np.ndarray], val: float) -> bool:
@@ -161,6 +161,95 @@ def get_u1_sym(lat: Lattice, val: float) -> GlobalSymmetry:
     sym = GlobalSymmetry(lat=lat, val=val, name=GlobalSymmetries.U1)
     sym.set_fun(u1_sym)
     return sym
+
+# --------------------------
+#! Global Z2 Symmetry
+# --------------------------
+
+def z2_parity_sym(state: Union[int, np.ndarray], val: float) -> bool:
+    """
+    Global Z2 parity symmetry.
+
+    Checks (-1)^N == val, where N = popcount(state).
+
+    Works for:
+    - spin-1/2 systems
+    - spinless fermions
+
+    Parameters
+    ----------
+    state : int or ndarray
+        Integer-encoded many-body state
+    val : float
+        Parity sector: +1 (even), -1 (odd)
+
+    Returns
+    -------
+    bool
+    """
+    # N = number of occupied sites / down spins
+    parity = (_popcount64(state) & 1)
+
+    # (-1)^N : even -> +1, odd -> -1
+    return (1 if parity == 0 else -1) == int(val)
+
+def get_z2_parity_sym(lat: Lattice, val: int) -> GlobalSymmetry:
+    """
+    Factory for global Z2 parity symmetry.
+
+    Parameters
+    ----------
+    lat : Lattice
+        Lattice (used only for ns)
+    val : int
+        Parity sector: +1 (even), -1 (odd)
+
+    Returns
+    -------
+    GlobalSymmetry
+    """
+    if val not in (+1, -1):
+        raise ValueError("Z2 parity sector must be +1 (even) or -1 (odd).")
+
+    sym = GlobalSymmetry(
+        lat     = lat,
+        val     = val,
+        name    = GlobalSymmetries.Z2_PARITY
+    )
+    sym.set_fun(z2_parity_sym)
+    return sym
+
+# --------------------------
+
+def parse_global_syms(lat: Lattice, sym_dict: dict) -> list[GlobalSymmetry]:
+    """
+    Parse a dictionary of global symmetries into a list of GlobalSymmetry objects.
+
+    Parameters
+    ----------
+    lat : Lattice
+        The lattice on which the symmetries are defined.
+    sym_dict : dict
+        Dictionary where keys are symmetry names (str) and values are symmetry values (float).
+
+    Returns
+    -------
+    list[GlobalSymmetry]
+        List of GlobalSymmetry objects.
+    """
+    syms = []
+    for name_str, val in sym_dict.items():
+        name_str = name_str.upper()
+        
+        # Create the appropriate GlobalSymmetry object based on the name
+        if name_str == 'U1':
+            sym = get_u1_sym(lat, val)
+        elif name_str == 'Z2_PARITY':
+            sym = get_z2_parity_sym(lat, int(val))
+        else:
+            raise ValueError(f"Unknown global symmetry name: {name_str}")
+        syms.append(sym)
+    return syms
 
 # --------------------------
 
@@ -213,6 +302,10 @@ def violates_global_syms(state: int, codes: np.ndarray, values: np.ndarray, arg0
         if sym_type == GlobalSymmetries.U1.value:
             if _popcount64(state) != int(sym_val):
                 return True  # Violates U(1) symmetry
+        elif sym_type == GlobalSymmetries.Z2_PARITY.value:
+            parity = _popcount64(state) & 1
+            if (1 if parity == 0 else -1) != int(sym_val):
+                return True
         # Additional symmetry types can be added here with elif blocks.
     
     return False # Does not violate any symmetries

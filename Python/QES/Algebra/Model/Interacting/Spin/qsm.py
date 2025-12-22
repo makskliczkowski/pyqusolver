@@ -14,13 +14,13 @@ Date    : 2025-02-17
 Version : 0.1
 """
 
-import numpy as np
-from typing import List, Union, Optional
+import  numpy as np
+from    typing import List, Union, Optional
 
 # Assume these are available from the QES package:
 import QES.Algebra.hilbert as hilbert_module
 import QES.Algebra.hamil as hamil_module
-from QES.Algebra.Operator import operators_spin as operators_spin_module
+from QES.Algebra.Operator.impl import operators_spin as operators_spin_module
 
 ##########################################################################################
 from QES.general_python.algebra.backend_linalg import hilbert_schmidt_norm, identity_sparse, kron_sparse

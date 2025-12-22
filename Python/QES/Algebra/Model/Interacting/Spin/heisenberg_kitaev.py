@@ -19,16 +19,15 @@ Changelog   :
 - 2025-11-01 1.2: Refactored code for performance improvements.
 """
 
-import numpy as np
-import numba
-from typing import List, Tuple, Union, Optional
+import  numpy as np
+from    typing import List, Tuple, Union, Optional
 
 # QES package imports
 try:
-    from QES.Algebra.hilbert                    import HilbertSpace
-    from QES.Algebra.hamil                      import Hamiltonian
-    import QES.Algebra.Operator.operators_spin  as operators_spin_module
-    from QES.general_python.lattices.honeycomb  import HoneycombLattice, X_BOND_NEI, Y_BOND_NEI, Z_BOND_NEI
+    from QES.Algebra.hilbert                        import HilbertSpace
+    from QES.Algebra.hamil                          import Hamiltonian
+    from QES.general_python.lattices.honeycomb      import HoneycombLattice, X_BOND_NEI, Y_BOND_NEI, Z_BOND_NEI
+    import QES.Algebra.Operator.impl.operators_spin as operators_spin_module
 except ImportError as e:
     raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 
@@ -37,7 +36,7 @@ except ImportError as e:
 ##########################################################################################
 
 try:
-    from QES.general_python.lattices.lattice import Lattice, LatticeType
+    from QES.general_python.lattices.lattice        import Lattice, LatticeType
 except ImportError as e:
     raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 

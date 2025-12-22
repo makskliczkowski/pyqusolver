@@ -1197,10 +1197,6 @@ def sig_z(  lattice     : Optional[Lattice]     = None,
         code        = code
     )
 
-# -----------------------------------------------------------------------------
-#! Factory function for sigma-plus (\sigma ^+)
-# -----------------------------------------------------------------------------
-
 def sig_p(  lattice     : Optional[Lattice]     = None,
             ns          : Optional[int]         = None,
             type_act    : OperatorTypeActing    = OperatorTypeActing.Global,
@@ -1231,10 +1227,6 @@ def sig_p(  lattice     : Optional[Lattice]     = None,
         modifies    = True,                          # \sigma ^+ flips bits
         code        = code
     )
-
-# -----------------------------------------------------------------------------
-#! Factory function for sigma-minus (\sigma ^ -)
-# -----------------------------------------------------------------------------
 
 def sig_m(  lattice     : Optional[Lattice]     = None,
             ns          : Optional[int]         = None,
@@ -1267,10 +1259,6 @@ def sig_m(  lattice     : Optional[Lattice]     = None,
         code        = code
     )
 
-# -----------------------------------------------------------------------------
-#! Factory function for sigma-pm (\sigma ^+ then \sigma ^ -)
-# -----------------------------------------------------------------------------
-
 def sig_pm( lattice     : Optional[Lattice]     = None,
             ns          : Optional[int]         = None,
             type_act    : OperatorTypeActing    = OperatorTypeActing.Global,
@@ -1299,10 +1287,6 @@ def sig_pm( lattice     : Optional[Lattice]     = None,
         modifies    = True,
         code        = code
     )
-    
-# -----------------------------------------------------------------------------
-#! Factory function for sigma-mp (\sigma ^ - then \sigma ^+)
-# -----------------------------------------------------------------------------
 
 def sig_mp( lattice     : Optional[Lattice]     = None,
             ns          : Optional[int]         = None,
@@ -1333,10 +1317,6 @@ def sig_mp( lattice     : Optional[Lattice]     = None,
         code        = code
     )
 
-# -----------------------------------------------------------------------------
-#! Factory function for sigma-k (\sigma _k)
-# -----------------------------------------------------------------------------
-
 def sig_k(  k           : float,
             lattice     : Optional[Lattice]     = None,
             ns          : Optional[int]         = None,
@@ -1363,10 +1343,6 @@ def sig_k(  k           : float,
         modifies    = False # \sigma _k leaves the state unchanged
     )
 
-# -----------------------------------------------------------------------------
-#! Factory function for sigma-total (\sum _total)
-# -----------------------------------------------------------------------------
-
 def sig_z_total( lattice     : Optional[Lattice]     = None,
                 ns          : Optional[int]         = None,
                 type_act    : OperatorTypeActing    = OperatorTypeActing.Global,
@@ -1390,6 +1366,136 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
         name        = "Sz_total",
         modifies    = False # \sum _total leaves the state unchanged
     )
+    
+# -----------------------------------------------------------------------------
+#! Pauli Operators
+# -----------------------------------------------------------------------------
+
+@numba.njit(nogil=True)
+def _apply_pauli_sequence_kernel(state, ns, sites, codes, spin_val):
+    """
+    Applies a sequence of Pauli operators to an integer state.
+    codes: 0=X, 1=Y, 2=Z
+    """
+    coeff = 1.0 + 0.0j
+    curr  = state
+    n     = len(codes)
+    
+    for i in range(n):
+        c = codes[i]
+        s = sites[i]
+        
+        if c == 0: # X
+            curr, cf = _sigma_x_core(curr, ns, (s,), spin_val)
+            coeff   *= cf
+        elif c == 1: # Y
+            curr, cf = _sigma_y_core(curr, ns, (s,), spin_val)
+            coeff   *= cf
+        elif c == 2: # Z
+            curr, cf = _sigma_z_core(curr, ns, (s,), spin_val)
+            coeff   *= cf
+    
+    return (curr,), (coeff,)
+
+@numba.njit(nogil=True)
+def _apply_pauli_sequence_kernel_np(state, sites, codes, spin_val):
+    """
+    Applies a sequence of Pauli operators to an array of state vectors.
+    codes: 0=X, 1=Y, 2=Z
+    """
+    coeff = 1.0 + 0.0j
+    curr  = state.copy()
+    n     = len(codes)
+    for i in range(n):
+        c = codes[i]
+        s = sites[i]
+        
+        if c == 0: # X
+            (curr,), (cf,) = sigma_x_np(curr, sites=(s,), spin_value=spin_val)
+            coeff   *= cf
+        elif c == 1: # Y
+            (curr,), (cf,) = sigma_y_np(curr, sites=(s,), spin_value=spin_val)
+            coeff   *= cf
+        elif c == 2: # Z
+            (curr,), (cf,) = sigma_z_np(curr, sites=(s,), spin_value=spin_val)
+            coeff   *= cf
+    return (curr,), (coeff,)
+
+def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act: Optional[Union[str, OperatorTypeActing]] = None, code: Optional[int] = None) -> Union[Callable, Operator]:
+    """
+    Apply a general string of Pauli operators O_n ... O_1 to vecs.
+    
+    Requires that each O_i is one of {X, Y, Z}.
+    
+    Parameters
+    ----------
+    op_codes : list[str or int]
+        List of operator codes ('X', 'Y', 'Z') or their integer mappings.
+    op_sites : list[int]
+        List of site indices where the operators act.
+    ns : int
+        Number of sites in the Hilbert space.
+    return_op : bool, optional
+        If True, returns an Operator object.
+    type_act : str or OperatorTypeActing, optional
+        The type of acting for the operator. Defaults to Global if sites provided, else Correlation.
+    """
+    
+    # map the operator codes to Pauli application kernel
+    op_codes_map    = { 'X': 0, 'Y': 1, 'Z': 2 }
+    op_codes_out    = []
+    for c in op_codes:
+        if isinstance(c, str):
+            code_upper = c.upper()
+            if code_upper in op_codes_map:
+                op_codes_out.append(op_codes_map[code_upper])
+            else:
+                raise ValueError(f"Invalid Pauli operator code: {c}. Must be one of 'X', 'Y', 'Z'.")
+        elif isinstance(c, int):
+            if c in (0, 1, 2):
+                op_codes_out.append(c)
+            else:
+                raise ValueError(f"Invalid Pauli operator integer code: {c}. Must be 0 (X), 1 (Y), or 2 (Z).")
+        else:
+            raise TypeError(f"Operator code must be str or int. Got: {type(c)}")
+    
+    # Prepare JIT arguments
+    op_codes_arr = np.array(op_codes_out, dtype=np.int32)
+    op_sites_arr = np.array(op_sites, dtype=np.int32) if op_sites is not None else np.array([], dtype=np.int32)
+    spin_val     = _SPIN
+    
+    if not return_op:
+        return _apply_pauli_sequence_kernel, (ns, op_sites_arr, op_codes_arr, spin_val)
+    else:
+        # Determine acting type
+        if type_act is None:
+            type_act = OperatorTypeActing.Global if op_sites is not None else OperatorTypeActing.Correlation
+        elif isinstance(type_act, str):
+            type_act = OperatorTypeActing.from_string(type_act)
+
+        # Create closure capturing fixed arrays
+        if OperatorTypeActing.is_type_global(type_act):
+            @numba.njit
+            def op_closure(state, ns_val, sites_val):
+                return _apply_pauli_sequence_kernel(state, ns_val, sites_val, op_codes_arr, spin_val)
+        else:
+            # Correlation expects (state, ns, sites_tuple) where sites_tuple comes from matvec(..., i, j)
+            @numba.njit
+            def op_closure(state, ns_val, sites_val):
+                return _apply_pauli_sequence_kernel(state, ns_val, sites_val, op_codes_arr, spin_val)
+
+        return create_operator(
+            type_act    = type_act,
+            op_func_int = op_closure,
+            op_func_np  = _apply_pauli_sequence_kernel_np,
+            op_func_jnp = None, #!TODO JAX
+            ns          = ns,
+            name        = 'Pauli:' + ','.join(f'S_{c}' for c in op_codes),
+            modifies    = True,
+            sites       = op_sites if OperatorTypeActing.is_type_global(type_act) else None,
+            extra_args  = (), # captured in closure
+            code        = code,
+        )
 
 # -----------------------------------------------------------------------------
 #! Most common mixtures
@@ -1416,9 +1522,10 @@ def create_sigma_mixed_int(op1_fun: Callable, op2_fun: Callable):
     
     @numba.njit(inline='always')
     def sigma_mixed_int_np(state, ns, sites, spin=True, spin_value=0.5):
+        
         if sites is None or len(sites) < 2:
             s_dumb, c_dumb = op1_fun(state, ns, sites, spin, spin_value)
-            return s_dumb, c_dumb.astype(np.complex128)
+            return s_dumb, (complex(c_dumb[0]),)
 
         # Apply Op 1
         s_arr1, c_arr1  = op1_fun(state, ns, [sites[0]], spin, spin_value)
@@ -1427,13 +1534,13 @@ def create_sigma_mixed_int(op1_fun: Callable, op2_fun: Callable):
         if coeff1 == 0.0 or (coeff1 == 0.0 + 0.0j):
             #! Force cast to complex so this branch matches the other branch
             #! even if op1 is purely real (like Sigma X or Z)
-            return s_arr1, c_arr1.astype(np.complex128) * 0.0
+            return s_arr1, (0.0j,)
             
         s_int           = s_arr1[0]
         s_arr2, c_arr2  = op2_fun(s_int, ns, [sites[1]], spin, spin_value)
         
         # Explicitly cast both to complex before multiplying to be 100% safe
-        return s_arr2, c_arr1.astype(np.complex128) * c_arr2.astype(np.complex128)
+        return s_arr2, (complex(coeff1) * complex(c_arr2[0]),)
     
     return sigma_mixed_int_np
 
@@ -1556,62 +1663,41 @@ sigma_xz_mixed_jnp      = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
 sigma_zy_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
 
 
-def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None) -> Operator:
+def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None, code: Optional[int] = None) -> Operator:
     r''' Factory for mixed sigma operators (e.g., \sigma _x \sigma _y). '''
     
     if sites is not None and len(sites) != 2:
         raise ValueError("Mixed sigma operators require exactly two sites.")
     
-    if name == 'xy':
-        int_func    = sigma_xy_mixed_int_np
-        np_func     = sigma_xy_mixed_np
-        jnp_func    = sigma_xy_mixed_jnp if JAX_AVAILABLE else None
-        code        = SPIN_LOOKUP_CODES.sig_xy_corr if sites is None else SPIN_LOOKUP_CODES.sig_xy_global
-    elif name == 'yx':
-        int_func    = sigma_yx_mixed_int_np
-        np_func     = sigma_yx_mixed_np
-        jnp_func    = sigma_yx_mixed_jnp if JAX_AVAILABLE else None
-        code        = SPIN_LOOKUP_CODES.sig_yx_corr if sites is None else SPIN_LOOKUP_CODES.sig_yx_global
-        
-    elif name == 'yz':
-        int_func    = sigma_yz_mixed_int_np
-        np_func     = sigma_yz_mixed_np
-        jnp_func    = sigma_yz_mixed_jnp if JAX_AVAILABLE else None
-        code        = SPIN_LOOKUP_CODES.sig_yz_corr if sites is None else SPIN_LOOKUP_CODES.sig_yz_global
-    elif name == 'zy':
-        int_func    = sigma_zy_mixed_int_np
-        np_func     = sigma_zy_mixed_np
-        jnp_func    = sigma_zy_mixed_jnp if JAX_AVAILABLE else None
-        code        = SPIN_LOOKUP_CODES.sig_zy_corr if sites is None else SPIN_LOOKUP_CODES.sig_zy_global
-    elif name == 'zx':
-        int_func    = sigma_zx_mixed_int_np
-        np_func     = sigma_zx_mixed_np
-        jnp_func    = sigma_zx_mixed_jnp if JAX_AVAILABLE else None
-        code        = SPIN_LOOKUP_CODES.sig_zx_corr if sites is None else SPIN_LOOKUP_CODES.sig_zx_global
-    elif name == 'xz':
-        int_func    = sigma_xz_mixed_int_np
-        np_func     = sigma_xz_mixed_np
-        jnp_func    = sigma_xz_mixed_jnp if JAX_AVAILABLE else None
-        code        = SPIN_LOOKUP_CODES.sig_xz_corr if sites is None else SPIN_LOOKUP_CODES.sig_xz_global
-    else:
+    # Map name to Pauli characters
+    name_map = {
+        'xy': ['X', 'Y'], 'yx': ['Y', 'X'],
+        'yz': ['Y', 'Z'], 'zy': ['Z', 'Y'],
+        'zx': ['Z', 'X'], 'xz': ['X', 'Z']
+    }
+    
+    if name not in name_map:
         raise ValueError(f"Unknown mixed sigma operator name: {name}")
+    
+    pauli_ops = name_map[name]
+    ns_val    = ns or (lattice.ns if lattice else None)
     
     if OperatorTypeActing.is_type_local(type_act):
         raise ValueError("Mixed sigma operators do not support local acting type.")
     
-    type_act        = OperatorTypeActing.Correlation if sites is None else OperatorTypeActing.Global
-    return create_operator(
-        type_act    = type_act,
-        op_func_int = int_func,
-        op_func_np  = np_func,
-        ns          = ns,
-        op_func_jnp = jnp_func,
-        lattice     = lattice,
-        name        = name,
-        modifies    = True,
-        code        = code,
-        sites       = sites,
-    )
+    # Determine type of acting and default code
+    if sites is not None:
+        type_act_val = OperatorTypeActing.Global
+        if code is None:
+            code_attr   = f"sig_{name}_global"
+            code        = getattr(SPIN_LOOKUP_CODES, code_attr, None)
+    else:
+        type_act_val = OperatorTypeActing.Correlation
+        if code is None:
+            code_attr   = f"sig_{name}_corr"
+            code        = getattr(SPIN_LOOKUP_CODES, code_attr, None)
+        
+    return pauli_string(pauli_ops, sites, ns_val, return_op=True, type_act=type_act_val, code=code)
 
 def sig_xy(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _x \sigma _y operator. '''
@@ -2094,40 +2180,35 @@ def sigma_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int, C
 #! Plaquette Operators
 # -----------------------------------------------------------------------------
 
-def apply_plaquette(vecs        : np.ndarray,
-                    plaquette   : np.ndarray,
-                    out         : np.ndarray,
-                    hilbert,
-                    bond_to_op  = {
-                        0   : sig_z,
-                        1   : sig_y,
-                        2   : sig_x,
-                    }):
+def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False):
     """
-    Apply the plaquette (flux) operator W_p to vecs depending on the provided plaquette.
-
-    The spin component at each site is the bond type
-    NOT used by the plaquette at that site.
+    Apply the plaquette (flux) operator W_p to vecs using a single optimized kernel.
+    This avoids intermediate projections when using symmetry-reduced bases.
 
     Parameters
     ----------
-    vecs : ndarray, shape (Nh, ns)
-        Input state vectors (batched).
     plaquette : list[int]
         site indices in CCW order.
     out : ndarray, shape (Nh, ns)
         Workspace, overwritten.
-
-    Returns
-    -------
-    out : ndarray
-        W_p |vecs>
+    bond_to_op : dict, optional
+        Mapping from bond types to spin operators.
+        Default is {0: sig_z, 1: sig_y, 2: sig_x}.
+    return_op : bool, optional
+        If True, returns the JIT function and arguments instead of applying.
     """
-    out[:]      = vecs
-    all_bonds   = set(bond_to_op.keys())
-    P           = len(plaquette)        # e.g., should be 6 for Honeycomb
-    lattice     = hilbert.lattice
     
+    # Default bond_to_op if None
+    if bond_to_op is None:
+        bond_to_op      = { 0: 'Z', 1: 'Y', 2: 'X' }
+
+    # Pre-calculate the sequence of operations
+    all_bonds           = set(bond_to_op.keys())
+    P                   = len(plaquette)
+    
+    op_codes            = []
+    op_sites            = []
+
     for k in range(P):
         site    = plaquette[k]
         prev    = plaquette[k - 1]
@@ -2142,17 +2223,55 @@ def apply_plaquette(vecs        : np.ndarray,
         # Missing bond determines spin component
         missing = (all_bonds - {b1, b2}).pop()
         op      = bond_to_op[missing]
-        out[:]  = op.matvec(out, site, hilbert=hilbert)
+        
+        op_codes.append(op)
+        op_sites.append(site)
 
-    return out
+    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op)
 
-# -----------------------------------------------------------------------------
-#! Finalize
-# -----------------------------------------------------------------------------
+def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False):
+    """
+    Apply a product of multiple plaquette operators W_{p1} W_{p2} ... to vecs 
+    using a single optimized kernel without intermediate projections.
 
-# Aliases for legacy/test compatibility
-sig_plus    = sig_p
-sig_minus   = sig_m
+    Parameters
+    ----------
+    vecs : ndarray
+        Input state vectors.
+    list_plaquettes : list of list[int]
+        List of plaquettes (each is a list of sites). 
+        The operators are applied in the order they appear in the list.
+    out : ndarray
+        Workspace.
+    """
+    
+    if bond_to_op is None:
+        bond_to_op  = {0: 'Z', 1: 'Y', 2: 'X'}
+
+    all_bonds       = set(bond_to_op.keys())
+    op_codes        = []
+    op_sites        = []
+
+    # Process each plaquette in the list
+    for plaquette in list_plaquettes:
+        P = len(plaquette)
+        for k in range(P):
+            site    = plaquette[k]
+            prev    = plaquette[k - 1]
+            nxt     = plaquette[(k + 1) % P]
+            b1      = lattice.bond_type(site, prev)
+            b2      = lattice.bond_type(site, nxt)
+
+            if b1 < 0 or b2 < 0:
+                raise RuntimeError(f"Invalid plaquette bonds at site {site}: {b1}, {b2}")
+
+            missing = (all_bonds - {b1, b2}).pop()
+            op      = bond_to_op[missing]
+            
+            op_codes.append(op)
+            op_sites.append(site)
+            
+    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op)
 
 ###############################################################################
 #! Registration with the operator catalog
@@ -2257,10 +2376,6 @@ def _register_catalog_entries():
         sign_convention     =   r"Acts locally without JW strings; lowers \sigma _z eigenvalue by one.",
         tags                =   ("spin", "lowering"),
     )
-
-# -----------------------------------------------------------------------------
-#! Register the catalog entries upon module import
-# -----------------------------------------------------------------------------
 
 _register_catalog_entries()
 

@@ -25,7 +25,7 @@ from typing import Union, Optional
 # Assume these are available from the QES package:
 from QES.Algebra.hilbert import HilbertSpace
 from QES.Algebra.hamil import Hamiltonian
-from QES.Algebra.Operator import operators_spin as operators_spin_module
+from QES.Algebra.Operator.impl import operators_spin as operators_spin_module
 
 ##########################################################################################
 try:

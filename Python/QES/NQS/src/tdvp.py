@@ -460,6 +460,12 @@ class TDVP:
                 The configured solver function for SR linear systems.
         """
         
+        # if self.use_minsr and self.sr_solve_lin is None:
+        #      # Default to SpectralExactSolver for MinSR
+        #     self.sr_solve_lin_t                 = solvers.SolverForm.MATRIX
+        #     self.sr_solve_lin                   = solvers.SpectralExactSolver(backend=self.backend, sigma=self.sr_diag_shift)
+        #     if self.logger and self.verbose:    self.logger.info("MinSR enabled. Defaulting to SpectralExactSolver with full matrix formation.", lvl=2, color='red')
+
         if self.sr_solve_lin is None:
             # Default to PseudoInverseSolver if no solver is provided
             self.sr_solve_lin_t     = solvers.SolverForm.MATRIX
@@ -487,7 +493,6 @@ class TDVP:
                 self.form_matrix    = False or self.sr_solve_forced
             else:
                 self.form_matrix    = True
-                
             if self.logger and self.verbose: self.logger.info(f"Solver form set to {'full matrix' if self.form_matrix else 'matrix-vector products'}.", lvl=2, color='red')
             
             #! set the solver function
@@ -902,7 +907,8 @@ class TDVP:
                                 precond_apply   =   self.sr_precond_fn,
                                 maxiter         =   self.sr_maxiter,
                                 tol             =   self.sr_pinv_tol,
-                                sigma           =   self.sr_diag_shift)
+                                sigma           =   self.sr_diag_shift,
+                                snr_tol         =   self.sr_snr_tol)
                                 
         elif self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
             # GRAM mode: Helper constructs linear operator from s and s_p.
@@ -916,15 +922,18 @@ class TDVP:
             else:
                 s   = mat_O
                 s_p = mat_O.T.conj()
-                
-            solution = solve_func(s             =   s,
-                                s_p             =   s_p,
-                                b               =   vec_b,
-                                x0              =   self._x0,
-                                precond_apply   =   self.sr_precond_fn,
-                                maxiter         =   self.sr_maxiter,
-                                tol             =   self.sr_pinv_tol,
-                                sigma           =   self.sr_diag_shift)
+            
+            solver_kwargs = {
+                's'             :   s,
+                's_p'           :   s_p,
+                'b'             :   vec_b,
+                'x0'            :   self._x0,
+                'precond_apply' :   self.sr_precond_fn,
+                'maxiter'       :   self.sr_maxiter,
+                'tol'           :   self.sr_pinv_tol,
+                'sigma'         :   self.sr_diag_shift,
+            }
+            solution            = solve_func(**solver_kwargs)
                                 
         elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
             # MATVEC mode: We provide the full matrix-vector product function
@@ -937,7 +946,8 @@ class TDVP:
                                             x0              =   self._x0,
                                             precond_apply   =   self.sr_precond_fn,
                                             maxiter         =   self.sr_maxiter,
-                                            tol             =   self.sr_pinv_tol)
+                                            tol             =   self.sr_pinv_tol,
+                                            snr_tol         =   self.sr_snr_tol)
         return solution
     
     def _solve_handle_x0(self, vec_b: Array, use_old_result: bool):

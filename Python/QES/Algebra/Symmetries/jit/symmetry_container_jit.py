@@ -47,6 +47,10 @@ _INVALID_REPR_IDX       = np.iinfo(_REPR_MAP_DTYPE).max         # ~4 billion, ma
 _INVALID_PHASE_IDX      = np.iinfo(_PHASE_IDX_DTYPE).max        # 255, marks invalid phase index
 _SYM_NORM_THRESHOLD     = 1e-7
 
+# -----------------------
+#! APPLY GROUP ELEMENT FUNCTION 
+# -----------------------
+
 @numba.njit(fastmath=True)
 def apply_group_element_compiled(state      : np.int64,     # input state
                                 ns          : np.int64,     # number of sites
@@ -142,6 +146,8 @@ def apply_group_element_compiled(state      : np.int64,     # input state
             pass
 
     return cur, phase
+
+# -----------------------
 
 @numba.njit(fastmath=True)
 def _compute_normalization_compiled(

@@ -28,6 +28,7 @@ try:
     NUMBA_AVAILABLE = True
 except ImportError:
     NUMBA_AVAILABLE = False
+    raise ImportError("Numba is required for JIT-compiled matrix building.")
 
 # ------------------------------------------------------------------------------------------
 
@@ -223,13 +224,16 @@ def _build_dense_same_sector_compact_jit(
 
             matrix[idx, k] += value * sym_factor
 
-# ------------------------------------------------------------------------------------------
+############################################################################################
+#! SAME SECTOR MATRIX BUILDING
+############################################################################################
 
 def _build_same_sector(hilbert_space    : HilbertSpace,
                     operator_func       : Callable,
                     sparse              : bool,
                     max_local_changes   : int,
-                    dtype               : np.dtype
+                    dtype               : np.dtype,
+                    check_sym           : bool
                 ) -> Union[sp.csr_matrix, np.ndarray]:
     """Build matrix for operator within same sector."""
     
@@ -247,6 +251,11 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
         else:
             compact_data    = hilbert_space.compact_symmetry_data
             if compact_data is not None:
+                # TODO: Implement dense projected builder if needed
+                if check_sym:
+                    # Fallback to sparse for projected build for now, or implement dense projected
+                    raise NotImplementedError("Dense matrix building with check_sym=True not yet implemented.")
+                
                 _build_dense_same_sector_compact_jit(
                     compact_data.representative_list,
                     compact_data.normalization,
@@ -260,27 +269,84 @@ def _build_same_sector(hilbert_space    : HilbertSpace,
         return matrix
     
     # Sparse matrix
-    max_nnz                 = nh * max_local_changes * (ns)         # estimate
+    # If using projected builder, we might have more elements per row than max_local_changes
+    # because of group sum. Scale estimate.
+    sym_factor = 1
+    if check_sym and hilbert_space._sym_container and hilbert_space._sym_container.compiled_group:
+        sym_factor = hilbert_space._sym_container.compiled_group.n_group
+        
+    max_nnz                 = nh * max_local_changes * (ns) * sym_factor    # estimate
     rows                    = np.zeros(max_nnz, dtype=np.int64)     # preallocate
     cols                    = np.zeros(max_nnz, dtype=np.int64)     # preallocate
     data                    = np.zeros(max_nnz, dtype=alloc_dtype)
 
     if not has_sym:
-        return _build_no_hilbert()
+        return _build_no_hilbert(operator_func, nh, ns, sparse, max_local_changes, alloc_dtype)
     else:
         # Use compact O(1) lookup
         compact_data        = hilbert_space.compact_symmetry_data
         
         if compact_data is not None:
-            # Fast path: O(1) lookups using compact structure (~5 bytes/state)
-            data_idx = _build_sparse_same_sector_compact_jit(
-                compact_data.representative_list,
-                compact_data.normalization,
-                compact_data.repr_map,
-                compact_data.phase_idx,
-                compact_data.phase_table,
-                operator_func, ns, rows, cols, data, 0 # initial data_idx
-            )
+            if check_sym:
+                
+                try:
+                    from QES.Algebra.Symmetries.jit.matrix_builder_jit import _build_sparse_projected_jit, _build_dense_projected_jit
+                except ImportError:
+                    raise ImportError("Projected matrix builder requires QES.Algebra.Symmetries.jit.matrix_builder_jit module.")
+                
+                # Use projected builder
+                sym_c = hilbert_space._sym_container
+                cg = sym_c.compiled_group
+                tb = sym_c.tables
+                
+                if sparse:
+                    data_idx = _build_sparse_projected_jit(
+                        rows, cols, data, 0,
+                        operator_func,
+                        compact_data.representative_list,
+                        compact_data.normalization,
+                        compact_data.repr_map,
+                        compact_data.normalization,
+                        compact_data.representative_list,
+                        np.int64(ns),
+                        cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi,
+                        tb.trans_perm, tb.trans_cross_mask, tb.refl_perm, tb.inv_perm, tb.parity_axis, tb.boundary_phase
+                    )
+                else:
+                    _build_dense_projected_jit(
+                        matrix,
+                        operator_func,
+                        compact_data.representative_list,
+                        compact_data.normalization,
+                        compact_data.repr_map,
+                        compact_data.normalization,
+                        compact_data.representative_list,
+                        np.int64(ns),
+                        cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi,
+                        tb.trans_perm, tb.trans_cross_mask, tb.refl_perm, tb.inv_perm, tb.parity_axis, tb.boundary_phase
+                    )
+                    return matrix # Dense case returns here
+            else:
+                if not sparse:
+                    _build_dense_same_sector_compact_jit(
+                        compact_data.representative_list,
+                        compact_data.normalization,
+                        compact_data.repr_map,
+                        compact_data.phase_idx,
+                        compact_data.phase_table,
+                        operator_func, matrix
+                    )
+                    return matrix
+
+                # Fast path: O(1) lookups using compact structure (~5 bytes/state)
+                data_idx = _build_sparse_same_sector_compact_jit(
+                    compact_data.representative_list,
+                    compact_data.normalization,
+                    compact_data.repr_map,
+                    compact_data.phase_idx,
+                    compact_data.phase_table,
+                    operator_func, ns, rows, cols, data, 0 # initial data_idx
+                )
         else:
              raise ValueError("Compact symmetry data missing for symmetric Hilbert space in sparse build.")
 
@@ -292,6 +358,7 @@ def _build_sector_change(hilbert_in         : object,
                         sparse              : bool,
                         max_local_changes   : int,
                         dtype               : Union[np.dtype, str],
+                        check_sym           : bool
                     ) -> Union[sp.csr_matrix, np.ndarray]:
     """Build rectangular matrix for sector-changing operator."""
     nh_in                       = hilbert_in.dim
@@ -308,16 +375,43 @@ def _build_sector_change(hilbert_in         : object,
     alloc_dtype                 = _determine_matrix_dtype(dtype, [hilbert_in, hilbert_out], operator_func, ns)
     
     # Check for compact symmetry data (preferred O(1) path)
-    compact_data_out            = getattr(hilbert_out, 'compact_symmetry_data', None)
+    compact_data_out            = getattr(hilbert_out,  'compact_symmetry_data', None)
+    compact_data_in             = getattr(hilbert_in,   'compact_symmetry_data', None) # Needed for projected build
     use_compact                 = compact_data_out is not None
     
     if not use_compact:
-         raise ValueError("Compact symmetry data missing for output Hilbert space in sector change build.")
+        raise ValueError("Compact symmetry data missing for output Hilbert space in sector change build.")
     
     if not sparse:
         # Dense matrix
         matrix                  = np.zeros((nh_out, nh_in), dtype=alloc_dtype)
         
+        if check_sym and compact_data_in and compact_data_out:
+            try:
+                from QES.Algebra.Symmetries.jit.matrix_builder_jit import _build_dense_projected_jit
+            except ImportError:
+                raise ImportError("Projected matrix builder requires QES.Algebra.Symmetries.jit.matrix_builder_jit module.")
+            
+            sym_c_in    = hilbert_in._sym_container
+            cg_in       = sym_c_in.compiled_group
+            cg_out      = hilbert_out._sym_container.compiled_group
+            tb          = sym_c_in.tables
+            
+            _build_dense_projected_jit(
+                matrix,
+                operator_func,
+                compact_data_in.representative_list,
+                compact_data_in.normalization,
+                compact_data_out.repr_map,
+                compact_data_out.normalization,
+                compact_data_out.representative_list,
+                np.int64(ns),
+                cg_in.n_group, cg_in.n_ops, cg_in.op_code, cg_in.arg0, cg_in.arg1,
+                cg_in.chi, cg_out.chi,
+                tb.trans_perm, tb.trans_cross_mask, tb.refl_perm, tb.inv_perm, tb.parity_axis, tb.boundary_phase
+            )
+            return matrix
+
         for idx_col in range(nh_in):
             state_col           = int(hilbert_in[idx_col])
             norm_col            = norm_in[idx_col] if norm_in is not None else 1.0
@@ -340,47 +434,75 @@ def _build_sector_change(hilbert_in         : object,
         return matrix
     
     # Sparse matrix
-    max_nnz         = nh_in * max_local_changes * ns
+    sym_factor = 1
+    if check_sym and hilbert_in._sym_container and hilbert_in._sym_container.compiled_group:
+        sym_factor = hilbert_in._sym_container.compiled_group.n_group
+
+    max_nnz         = nh_in * max_local_changes * ns * sym_factor
     rows            = np.zeros(max_nnz, dtype=np.int64)
     cols            = np.zeros(max_nnz, dtype=np.int64)
     data            = np.zeros(max_nnz, dtype=alloc_dtype)
     data_idx        = 0
     
-    # Iterate over input basis states
-    for idx_col in range(nh_in):
-        state_col           = int(hilbert_in[idx_col])
-        norm_col            = norm_in[idx_col] if norm_in is not None else 1.0
-        new_states, values  = operator_func(state_col)
+    if check_sym and compact_data_in and compact_data_out:
+        
+        try:
+            from QES.Algebra.Symmetries.jit.matrix_builder_jit import _build_sparse_projected_jit
+        except ImportError:
+            raise ImportError("Projected sparse matrix builder requires QES.Algebra.Symmetries.jit.matrix_builder_jit module.")
+        
+        # Projected build
+        sym_c_in    = hilbert_in._sym_container
+        cg_in       = sym_c_in.compiled_group
+        cg_out      = hilbert_out._sym_container.compiled_group
+        tb          = sym_c_in.tables
+        data_idx    = _build_sparse_projected_jit(
+            rows, cols, data, 0,
+            operator_func,
+            compact_data_in.representative_list,
+            compact_data_in.normalization,
+            compact_data_out.repr_map,
+            compact_data_out.normalization,
+            compact_data_out.representative_list,
+            np.int64(ns),
+            cg_in.n_group, cg_in.n_ops, cg_in.op_code, cg_in.arg0, cg_in.arg1,
+            cg_in.chi, cg_out.chi, # chi_in, chi_out
+            tb.trans_perm, tb.trans_cross_mask, tb.refl_perm, tb.inv_perm, tb.parity_axis, tb.boundary_phase
+        )
 
-        for new_state, value in zip(new_states, values):
-            if abs(value) < 1e-14:
-                continue
+    else:
+        # Standard fast path
+        # Iterate over input basis states
+        for idx_col in range(nh_in):
+            state_col           = int(hilbert_in[idx_col])
+            norm_col            = norm_in[idx_col] if norm_in is not None else 1.0
+            new_states, values  = operator_func(state_col)
 
-            # O(1) compact lookup
-            idx_row     = compact_data_out.repr_map[int(new_state)]
-            if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
-                continue
-            pidx        = compact_data_out.phase_idx[int(new_state)]
-            phase       = compact_data_out.phase_table[pidx]
-            norm_rep    = compact_data_out.normalization[idx_row]
-            sym_factor  = np.conj(phase) * norm_rep / norm_col
+            for new_state, value in zip(new_states, values):
+                if abs(value) < 1e-14:
+                    continue
 
-            matrix_elem = value * sym_factor
-            if abs(matrix_elem) > 1e-14:
-                rows[data_idx]       = int(idx_row)
-                cols[data_idx]       = int(idx_col)
-                data[data_idx]       = matrix_elem
-                data_idx            += 1
+                # O(1) compact lookup
+                idx_row     = compact_data_out.repr_map[int(new_state)]
+                if idx_row == 0xFFFFFFFF:  # _INVALID_REPR_IDX
+                    continue
+                pidx        = compact_data_out.phase_idx[int(new_state)]
+                phase       = compact_data_out.phase_table[pidx]
+                norm_rep    = compact_data_out.normalization[idx_row]
+                sym_factor  = np.conj(phase) * norm_rep / norm_col
+
+                matrix_elem = value * sym_factor
+                if abs(matrix_elem) > 1e-14:
+                    rows[data_idx]       = int(idx_row)
+                    cols[data_idx]       = int(idx_col)
+                    data[data_idx]       = matrix_elem
+                    data_idx            += 1
 
     return sp.csr_matrix((data[:data_idx], (rows[:data_idx], cols[:data_idx])), shape=(nh_out, nh_in), dtype=alloc_dtype)
 
 ############################################################################################
 #! WITHOUT HILBERT SPACE SUPPORT
 ############################################################################################
-
-# ------------------------------------------------------------------------------------------
-# 1. DENSE KERNEL (Fastest for small systems)
-# ------------------------------------------------------------------------------------------
 
 @numba.njit(nogil=True) # nogil for thread safety -> allows multi-threading if needed, stands for "no global interpreter lock"
 def _fill_dense_kernel(matrix, operator_func, nh):
@@ -399,10 +521,6 @@ def _fill_dense_kernel(matrix, operator_func, nh):
             # Bounds check and threshold check
             if (0 <= col < nh) and (np.abs(val) >= 1e-14):
                 matrix[row, col] += val
-
-# ------------------------------------------------------------------------------------------
-# 2. SPARSE KERNEL (The "Pause and Resume" Engine)
-# ------------------------------------------------------------------------------------------
 
 @numba.njit(nogil=True)
 def _fill_sparse_kernel(
@@ -511,6 +629,7 @@ def build_operator_matrix(
         dtype                   : np.dtype                  = np.float64,
         ns                      : Optional[int]             = None,
         nh                      : Optional[int]             = None,
+        check_sym               : bool                      = False
     ) -> Union[sp.csr_matrix, np.ndarray]:
     """
     Build operator matrix with support:
@@ -546,6 +665,11 @@ def build_operator_matrix(
             Number of sites (for operator_func). If hilbert_space is provided, defaults to hilbert_space.ns
         nh: 
             Hilbert space dimension. If hilbert_space is provided, defaults to hilbert_space.dim
+        check_sym:
+            If True, use strict projector logic for symmetric matrix building.
+            This expands states to the full symmetry orbit, applies operator, and projects back.
+            Necessary if operator does not strictly commute with symmetries (e.g. flux insertion)
+            or if using sophisticated symmetry breaking terms.
 
     Returns:
     ---------
@@ -586,13 +710,15 @@ def build_operator_matrix(
     ns = ns or hilbert_space.ns
     
     if hilbert_space_out is None:
-        return _build_same_sector(hilbert_space, operator_func, sparse, max_local_changes, dtype)
+        return _build_same_sector(hilbert_space, operator_func, sparse, max_local_changes, dtype, check_sym)
     else:
-        return _build_sector_change(hilbert_space, hilbert_space_out, operator_func, sparse, max_local_changes, dtype)
+        return _build_sector_change(hilbert_space, hilbert_space_out, operator_func, sparse, max_local_changes, dtype, check_sym)
 
 # ------------------------------------------------------------------------------------------
 #! Matrix-Free Operator Application (optimized!)
 # ------------------------------------------------------------------------------------------
+
+# a) No symmetry support
 
 @numba.njit(fastmath=True, parallel=True)
 def _apply_op_batch_jit(
@@ -606,7 +732,17 @@ def _apply_op_batch_jit(
         thread_buffers      : Optional[np.ndarray]  = None
     ) -> None:
     '''
-    Jitted batch operator application with symmetry support and chunking.
+    Jitted batch operator application with optional basis support.
+    This function works for no-symmetry Hilbert spaces.
+    
+    Notes
+    ----------
+    - We process the input vectors in chunks to manage memory usage. The chunk size can be adjusted.
+    - Each thread has its own buffer to avoid write conflicts.
+    - The operator function `op_func` should be jitted and have the signature:
+        (state: int, *args) -> (new_states: np.ndarray, values: np.ndarray)
+    - The function writes results directly into `vecs_out` -> no return value.
+    
     Parameters
     ----------
     vecs_in : np.ndarray
@@ -682,13 +818,10 @@ def _apply_op_batch_jit(
                 if abs(val) < 1e-15:    continue
                 
                 target_idx              = -1
-                sym_factor              = 1.0 + 0j
-                            
                 if has_basis:
                     idx = np.searchsorted(basis, new_state)
                     if idx < nh and basis[idx] == new_state:
                         target_idx = idx
-                        
                 else:
                     target_idx = new_state
 
@@ -710,6 +843,8 @@ def _apply_op_batch_jit(
                 # if vecs_out is column-major (F-contiguous) or row-major (C-contiguous).
                 # Assuming standard C-contiguous (row-major), strict loops are fine.
                 vecs_out[:, b_start + b_local] += bufs[t, :, b_local]
+
+# b) No symmetry with Fourier phases
 
 @numba.njit(parallel=False, fastmath=True)
 def _apply_fourier_batch_jit(
@@ -791,6 +926,8 @@ def _apply_fourier_batch_jit(
             for b in range(actual_width):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
 
+# c) Symmetry support with CompactSymmetryData - fast path when matvec preserves sectors
+
 @numba.njit(fastmath=True, parallel=True)
 def _apply_op_batch_compact_jit(
         vecs_in             : np.ndarray,
@@ -829,21 +966,20 @@ def _apply_op_batch_compact_jit(
 
         # Parallel Loop
         for k in numba.prange(nh):
-            tid         = numba.get_thread_id()
+            tid                 = numba.get_thread_id()
+            state               = representative_list[k]    # Get representative state
+            norm_k              = normalization[k]          # Normalization factor for this state
             
-            state       = representative_list[k]
-            norm_k      = normalization[k]
-            
-            new_states, values  = op_func(state, *args)
+            new_states, values  = op_func(state, *args)     # Apply operator -> new states and values
             
             for i in range(len(new_states)):
-                new_state = new_states[i]
-                val       = values[i]
+                new_state   = new_states[i]
+                val         = values[i]
 
                 if abs(val) < 1e-15: continue
                 
                 # Compact O(1) lookup
-                idx = repr_map[new_state]
+                idx         = repr_map[new_state]           # Get index in reduced basis -> maps to index of representative_list
                 if idx == _INVALID_REPR_IDX_NB:
                     continue
                 
@@ -861,6 +997,8 @@ def _apply_op_batch_compact_jit(
         for t in range(n_threads):
             for b in range(actual_width):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
+
+# d) Symmetry support with Fourier phases and CompactSymmetryData - fast path when matvec preserves sectors
 
 @numba.njit(fastmath=True, parallel=True)
 def _apply_fourier_batch_compact_jit(
@@ -930,6 +1068,10 @@ def _apply_fourier_batch_compact_jit(
         for t in range(n_threads):
             for b in range(actual_width):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
+
+# e) Symmetry support when matvec changes sectors 
+
+
 
 # -------------------------------------------------------------------------------
 #! Symmetry rotation matrix construction
