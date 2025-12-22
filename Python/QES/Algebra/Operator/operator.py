@@ -1265,7 +1265,7 @@ class Operator(GeneralMatrix):
                     compact_data_out.phase_idx,
                     compact_data_out.phase_table,
                     chunk_size      = chunk_size,
-                    thread_buffers  = th_buffer
+                    thread_buffers  = th_buffer,
                 )
                 
         elif use_projected_kernel and nhfull != hilbert_in.nh:
@@ -1312,7 +1312,8 @@ class Operator(GeneralMatrix):
                     sc.tables.boundary_phase,
                     
                     chunk_size      = chunk_size,
-                    thread_buffers  = th_buffer
+                    thread_buffers  = th_buffer,
+                    local_dim       = np.int64(hilbert_in.local_space.local_dim),
                 )
         else:
             # Fallback
@@ -1327,7 +1328,7 @@ class Operator(GeneralMatrix):
                 args,
                 basis           = basis,  
                 chunk_size      = chunk_size,
-                thread_buffers  = th_buffer
+                thread_buffers  = th_buffer,
             )
         
         if is_1d:

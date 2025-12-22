@@ -75,6 +75,7 @@ def _apply_op_batch_projected_compact_jit(
         # ... this list may grow in future ...
 
         *,
+        local_dim               : np.int64 = 2,
         chunk_size              : int = 4,
         thread_buffers          : Optional[np.ndarray] = None
     ) -> None:
@@ -201,6 +202,7 @@ def _apply_fourier_batch_projected_compact_jit(
         boundary_phase          : np.ndarray,
 
         *,
+        local_dim               : np.int64 = 2,
         chunk_size              : int = 4,
         thread_buffers          : Optional[np.ndarray] = None
     ) -> None:
@@ -309,7 +311,8 @@ def _build_sparse_projected_jit(
         refl_perm               : np.ndarray,
         inv_perm                : np.ndarray,
         parity_axis             : np.ndarray,
-        boundary_phase          : np.ndarray
+        boundary_phase          : np.ndarray,
+        local_dim               : np.int64 = 2,
     ):
     '''
     Sparse matrix builder for projected operators.
@@ -393,7 +396,8 @@ def _build_dense_projected_jit(
         refl_perm               : np.ndarray,
         inv_perm                : np.ndarray,
         parity_axis             : np.ndarray,
-        boundary_phase          : np.ndarray
+        boundary_phase          : np.ndarray,
+        local_dim               : np.int64 = 2,
     ):
     '''
     Dense matrix builder for projected operators.
@@ -444,3 +448,7 @@ def _build_dense_projected_jit(
                         continue
                         
                     matrix[idx, k] += factor
+
+# ----------------------------------------------------------------------
+#! End of File
+# ----------------------------------------------------------------------

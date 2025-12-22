@@ -602,7 +602,6 @@ class OperatorModule:
                     for op_name in ops_list:
                         buf = buf_corr[:, :curr_width]
                         buf.fill(0)
-                        
                         # Apply composite operator S_a^i S_b^j
                         corr_ops[op_name].matvec(ev_batch, i, j, hilbert=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
                         val                                     = np.sum(ev[:, b_start:b_end].conj() * buf, axis=0)
@@ -642,10 +641,10 @@ class OperatorModule:
                     for comp in needed_components:
                         susc_out[comp][k, imu] = fidelity_susceptibility_low_rank(energies, mag_ops_matrix[comp][:susc_nstates, :susc_nstates], mu=mu_val, idx=k)
 
-            values['fidelity_susceptibility']                           = {f'susceptibility/fid/{c}': susc_out[c] for c in needed_components}
-            values['fidelity_susceptibility']['susceptibility/fid/tot'] = susc_out['tot']
-            values['fidelity_susceptibility']['mus']                    = np.array(susc_mus)
-            values['fidelity_susceptibility']['mu_scale']               = scale
+            values['fidelity_susceptibility']                                = {f'susceptibility/fid/{c}': susc_out[c] for c in needed_components}
+            values['fidelity_susceptibility']['susceptibility/fid/tot']      = susc_out['tot']
+            values['fidelity_susceptibility']['susceptibility/fid/mus']      = np.array(susc_mus)
+            values['fidelity_susceptibility']['susceptibility/fid/mu_scale'] = scale
         
         # Static Susceptibility Tensor
         if len(eigenvalues) > 1:

@@ -92,6 +92,7 @@ def _rho_symmetries(
     rep_norm            : np.ndarray,   # (n_rep,) float64
 
     ns                  : np.int64,
+    local_dim           : np.int64,
     va                  : np.int64,
 
     # compiled group
@@ -119,8 +120,7 @@ def _rho_symmetries(
 
     Returns: rhoA (dimA, dimA) complex128
     """
-    dimA            = np.int64(1) << va
-    maskA           = dimA - 1
+    dimA            = local_dim ** va
     rhoA            = np.zeros((dimA, dimA), dtype=np.complex128)
 
     # cache structures
@@ -163,8 +163,10 @@ def _rho_symmetries(
             if amp == 0.0j:
                 continue
 
-            a = np.int64(s & maskA)
-            b = np.int64(s >> va)
+            # General splitting for any local_dim
+            # s = a + b * dimA
+            a = np.int64(s % dimA)
+            b = np.int64(s // dimA)
 
             row, inserted = _cache_find_or_insert(keys, used, vals, b, dimA)
             if inserted:
@@ -187,9 +189,11 @@ def rho_symmetries(state, va, hilbert: 'HilbertSpace', cache_size=256):
     ''' 
     Symmetric density of states
     '''
+    local_dim = hilbert.local_space.local_dim
+    
     if not hilbert.has_sym:
         from QES.general_python.physics.density_matrix import rho_numpy
-        dimA = hilbert.local_space.local_dim ** va
+        dimA = local_dim ** va
         dimB = hilbert.nh // dimA
         return rho_numpy(state, dimA, dimB)
     
@@ -204,6 +208,7 @@ def rho_symmetries(state, va, hilbert: 'HilbertSpace', cache_size=256):
                                 rep_list            = np.asarray(cd.representative_list, dtype=np.int64),
                                 rep_norm            = np.asarray(cd.normalization, dtype=np.float64),
                                 ns                  = np.int64(container.ns),
+                                local_dim           = np.int64(local_dim),
                                 va                  = np.int64(va),
 
                                 n_group             = np.int64(cg.n_group),
