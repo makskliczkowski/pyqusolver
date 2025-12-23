@@ -1473,27 +1473,17 @@ def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act:
         elif isinstance(type_act, str):
             type_act = OperatorTypeActing.from_string(type_act)
 
-        # Create closure capturing fixed arrays
-        if OperatorTypeActing.is_type_global(type_act):
-            @numba.njit
-            def op_closure(state, ns_val, sites_val):
-                return _apply_pauli_sequence_kernel(state, ns_val, sites_val, op_codes_arr, spin_val)
-        else:
-            # Correlation expects (state, ns, sites_tuple) where sites_tuple comes from matvec(..., i, j)
-            @numba.njit
-            def op_closure(state, ns_val, sites_val):
-                return _apply_pauli_sequence_kernel(state, ns_val, sites_val, op_codes_arr, spin_val)
 
         return create_operator(
             type_act    = type_act,
-            op_func_int = op_closure,
+            op_func_int = _apply_pauli_sequence_kernel,
             op_func_np  = _apply_pauli_sequence_kernel_np,
             op_func_jnp = None, #!TODO JAX
             ns          = ns,
             name        = 'Pauli:' + ','.join(f'S_{c}' for c in op_codes),
             modifies    = True,
             sites       = op_sites if OperatorTypeActing.is_type_global(type_act) else None,
-            extra_args  = (), # captured in closure
+            extra_args  = (op_codes_arr, spin_val),
             code        = code,
         )
 
