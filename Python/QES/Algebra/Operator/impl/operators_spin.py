@@ -34,7 +34,7 @@ except ImportError as e:
 try:
     import QES.general_python.common.binary     as _binary
     from QES.general_python.lattices.lattice    import Lattice
-    from QES.general_python.algebra.utils       import DEFAULT_NP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
+    from QES.general_python.algebra.utils       import DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_CPX_TYPE
     from QES.general_python.common.binary       import BACKEND_REPR as _SPIN, BACKEND_DEF_SPIN
 except ImportError as e:
     raise ImportError("Failed to import required QES general Python modules.") from e
@@ -1661,7 +1661,6 @@ sigma_yz_mixed_jnp      = create_sigma_mixed_jnp(sigma_y_jnp, sigma_z_jnp)
 sigma_zx_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_x_jnp)
 sigma_xz_mixed_jnp      = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
 sigma_zy_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
-
 
 def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None, code: Optional[int] = None) -> Operator:
     r''' Factory for mixed sigma operators (e.g., \sigma _x \sigma _y). '''

@@ -552,7 +552,7 @@ class SpecialOperator(Operator, ABC):
                 raise AttributeError("Operator module does not have a 'correlators' attribute.")
         else:
             if hasattr(op_module, 'compute_correlations'):
-                return op_module.compute_correlations(eigenvalues=self.eigenvalues, eigenvectors=self.eigenvectors,
+                return op_module.compute_correlations(eigenvalues=self.eigenvalues, eigenvectors=self.eigenvectors, correlators=correlators,
                     hilbert=self.hilbert_space, lattice=self._lattice, logger=self._logger, nstates_to_store=nstates_to_store,
                     n_susceptibility_states=n_susceptibility_states, safety_factor=safety_factor)
             else:

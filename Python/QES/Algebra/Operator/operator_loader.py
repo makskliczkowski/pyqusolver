@@ -499,21 +499,12 @@ class OperatorModule:
         values              = {op: np.zeros((ns, ns, n_states), dtype=np.complex128) for op in ops_list}
         
         # Components needed for susceptibility/magnetization (single site)
-        # We derive this from the requested correlators to avoid unnecessary computations
-        needed_components   = set()
-        for op in ops_list:
-            for char in op:
-                if char in ('x', 'y', 'z'):
-                    needed_components.add(char)
-        needed_components   = sorted(list(needed_components))
-        
-        # Initialize projectors for total magnetization (for susceptibility)
-        mag_ops_matrix      = { comp: np.zeros((n_states, n_states), dtype=np.complex128) for comp in needed_components }
-        
-        # Prepare correlation operators
-        # We cache operators to avoid JIT recompilation on repeated calls
-        corr_ops            = {}
+        needed_components   = sorted(list(set([c for op in ops_list for c in op if c in 'xyz'])))
         ops_module          = self._load_spin_operators()
+        
+        # Initialize projectors for total magnetization (for susceptibility), correlation operators, etc.
+        mag_ops_matrix      = { comp: np.zeros((n_states, n_states), dtype=np.complex128) for comp in needed_components }
+        corr_ops            = {}
         
         for op_name in ops_list:
             cache_key = (op_name, ns, 'corr')
@@ -568,13 +559,10 @@ class OperatorModule:
         batch_size          = max(1, min(batch_size, n_states))
         
         if logger:          logger.info(f"Correlations: Batch size {batch_size} states (avail: {avail_mem:.1f}GB)", lvl=2, color='cyan')
-            
-        from QES.Algebra.Hilbert.hilbert_local import choose_chunk_size
+        
         JIT_CHUNK_SIZE      = choose_chunk_size(hilbert.nh, n_threads)
         thread_buf_cache    = np.zeros((n_threads, nh, JIT_CHUNK_SIZE), dtype=np.complex128)
-
         buf_corr            = np.zeros((nh, batch_size), dtype=np.complex128)
-        buf_single          = {comp: np.zeros((nh, batch_size), dtype=np.complex128) for comp in needed_components}
 
         # Loop over sites
         for i in range(ns):
@@ -586,9 +574,9 @@ class OperatorModule:
                 curr_width  = b_end - b_start
                 ev_batch    = ev[:, b_start:b_end]
                 
-                # 1. Accumulate Magnetization / Susceptibility Terms (Single Site)
+                # Accumulate Magnetization / Susceptibility Terms (Single Site)
                 for comp in needed_components:
-                    buf     = buf_single[comp][:, :curr_width]
+                    buf     = buf_corr[:, :curr_width]
                     buf.fill(0)
                     single_ops[comp].matvec(ev_batch, i, hilbert=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
                     
@@ -597,14 +585,15 @@ class OperatorModule:
                     mag_ops_matrix[comp][:, b_start:b_end] += block
 
                 # Loop j
-                for j in range(ns):
+                for j in range(i, ns):
                     # For each requested correlator
                     for op_name in ops_list:
                         buf = buf_corr[:, :curr_width]
                         buf.fill(0)
+                        
                         # Apply composite operator S_a^i S_b^j
                         corr_ops[op_name].matvec(ev_batch, i, j, hilbert=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
-                        val                                     = np.sum(ev[:, b_start:b_end].conj() * buf, axis=0)
+                        val                                     = np.einsum('bi,ib->b', ev_c_t[b_start:b_end, :], buf)
                         values[op_name][i, j, b_start:b_end]    = val
 
             if logger and (i + 1) % max(1, ns // 5) == 0: logger.info(f"Site {i+1}/{ns} done ({time.time()-t_site:.2f}s)", lvl=3)
@@ -622,7 +611,7 @@ class OperatorModule:
         susc_out        = {c: np.zeros((susc_nstates, len(susc_mus)), dtype=np.float64) for c in needed_components}
         susc_out['tot'] = np.zeros((susc_nstates, len(susc_mus)), dtype=np.float64)
 
-        if susc_nstates > 1:
+        if susc_nstates >= 1:
             try:
                 from QES.Algebra.Properties.statistical import fidelity_susceptibility_low_rank
             except ImportError:

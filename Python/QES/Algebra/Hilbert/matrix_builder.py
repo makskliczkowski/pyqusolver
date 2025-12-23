@@ -33,7 +33,7 @@ except ImportError:
 # ------------------------------------------------------------------------------------------
 
 try:
-    from QES.Algebra.Symmetries.symmetry_container import _binary_search_representative_list, _INVALID_REPR_IDX_NB, _INVALID_PHASE_IDX_NB
+    from QES.Algebra.Symmetries.symmetry_container import _binary_search_representative_list, _INVALID_REPR_IDX_NB
 except ImportError as e:
     raise ImportError("QES.Algebra.Symmetries.symmetry_container module is required for matrix building: " + str(e))
 

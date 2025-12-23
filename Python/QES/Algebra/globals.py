@@ -4,14 +4,16 @@ Contains the GlobalSymmetry class for defining and checking global symmetries on
 '''
 
 # Import the necessary modules
+from    __future__  import annotations
+from    abc         import ABC, abstractmethod
+from    typing      import Callable, Union, Optional, TYPE_CHECKING
+import  numpy       as np
 import  numba
-import  numpy   as np
-from    typing  import Callable, Union, Optional
-from    abc     import ABC, abstractmethod
 
 # operator module for operator overloading (absolute import for reliability)
 try:
-    from QES.Algebra.Operator.operator          import GlobalSymmetries
+    if TYPE_CHECKING:
+        from QES.Algebra.Operator.operator      import GlobalSymmetries
     from QES.Algebra.Symmetries.base            import _popcount64
 except ImportError as e:
     raise ImportError("Failed to import Operator module. Ensure QES package is correctly installed.") from e
@@ -41,7 +43,7 @@ class GlobalSymmetry(ABC):
                 lat     : Optional[Lattice]     = None,
                 ns      : Optional[int]         = None,
                 val     : float                 = 0.0,
-                name    : GlobalSymmetries      = GlobalSymmetries.Other,
+                name    : 'GlobalSymmetries'    = 'Other',
                 backend : str                   = 'default'):
         '''
         Initialize the GlobalSymmetry object.
@@ -76,12 +78,12 @@ class GlobalSymmetry(ABC):
         """Set the checking function."""
         self.check = fun
 
-    def set_name(self, name: GlobalSymmetries) -> None:
+    def set_name(self, name: 'GlobalSymmetries') -> None:
         """Set the name of the symmetry."""
         self.name = name
 
     # ---------- GETTERS -----------
-    def get_name(self) -> GlobalSymmetries:
+    def get_name(self) -> 'GlobalSymmetries':
         """Return the symmetry name (enum element)."""
         return self.name
 
@@ -158,6 +160,7 @@ def get_u1_sym(lat: Lattice, val: float) -> GlobalSymmetry:
     Returns:
         An instance of GlobalSymmetry with name U1, value val, and the checking function set to U1_sym.
     """
+    from QES.Algebra.Operator.operator import GlobalSymmetries
     sym = GlobalSymmetry(lat=lat, val=val, name=GlobalSymmetries.U1)
     sym.set_fun(u1_sym)
     return sym
@@ -208,6 +211,8 @@ def get_z2_parity_sym(lat: Lattice, val: int) -> GlobalSymmetry:
     -------
     GlobalSymmetry
     """
+    from QES.Algebra.Operator.operator import GlobalSymmetries
+    
     if val not in (+1, -1):
         raise ValueError("Z2 parity sector must be +1 (even) or -1 (odd).")
 
@@ -221,7 +226,7 @@ def get_z2_parity_sym(lat: Lattice, val: int) -> GlobalSymmetry:
 
 # --------------------------
 
-def parse_global_syms(lat: Lattice, sym_dict: dict) -> list[GlobalSymmetry]:
+def parse_global_syms(lat: Lattice, sym_dict: dict) -> list['GlobalSymmetry']:
     """
     Parse a dictionary of global symmetries into a list of GlobalSymmetry objects.
 
@@ -253,7 +258,7 @@ def parse_global_syms(lat: Lattice, sym_dict: dict) -> list[GlobalSymmetry]:
 
 # --------------------------
 
-def to_codes(syms: list[GlobalSymmetry]) -> np.ndarray:
+def to_codes(syms: list['GlobalSymmetry']) -> np.ndarray:
     """
     Convert a list of GlobalSymmetry objects into a 2D numpy array of codes.
     
@@ -299,10 +304,10 @@ def violates_global_syms(state: int, codes: np.ndarray, values: np.ndarray, arg0
         sym_type    = codes[i]
         sym_val     = values[i]
         
-        if sym_type == GlobalSymmetries.U1.value:
+        if sym_type == 1:                                   # GlobalSymmetries.U1.value
             if _popcount64(state) != int(sym_val):
                 return True  # Violates U(1) symmetry
-        elif sym_type == GlobalSymmetries.Z2_PARITY.value:
+        elif sym_type == 2:                                 # GlobalSymmetries.Z2_PARITY.value
             parity = _popcount64(state) & 1
             if (1 if parity == 0 else -1) != int(sym_val):
                 return True

@@ -17,8 +17,7 @@ from    typing  import List, Tuple, TypeAlias
 # -------------------------------------------------------------------------
 
 try:
-    from QES.Algebra.globals                import GlobalSymmetries, violates_global_syms
-    from QES.Algebra.Symmetries.base        import CompiledGroup, SymmetryApplicationCodes, SymOpTables, _popcount64
+    from QES.Algebra.globals                import violates_global_syms
     from QES.Algebra.Symmetries.base        import OP_IDENTITY, OP_TRANSLATION, OP_REFLECTION, OP_PARITY, OP_INVERSION
     from QES.Algebra.Symmetries.translation import _apply_translation_prim
     from QES.Algebra.Symmetries.parity      import _apply_parity_prim
