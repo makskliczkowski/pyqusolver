@@ -718,6 +718,21 @@ def build_operator_matrix(
 #! Matrix-Free Operator Application (optimized!)
 # ------------------------------------------------------------------------------------------
 
+def ensure_thread_buffer(nh: int, chunk_size: int, dtype=np.complex128, thread_buffers: np.ndarray | None = None):
+    """
+    Allocate or validate a buffer of shape:
+        (n_threads, nh, chunk_size)
+        
+    for thread-safe operator application.
+    
+    This buffer is used in multi-threaded operator applications to avoid write conflicts.
+    """
+    n_threads = numba.get_num_threads()
+
+    if (thread_buffers is None or thread_buffers.ndim != 3 or thread_buffers.shape[0] != n_threads or thread_buffers.shape[1] != nh or thread_buffers.shape[2] != chunk_size):
+        return np.zeros((n_threads, nh, chunk_size), dtype=dtype)
+    return thread_buffers
+
 # a) No symmetry support
 
 @numba.njit(fastmath=True, parallel=True)
@@ -726,10 +741,9 @@ def _apply_op_batch_jit(
         vecs_out            : np.ndarray,
         op_func             : Callable,
         args                : Tuple,
-        *,
-        basis               : Optional[np.ndarray]  = None,
-        chunk_size          : int                   = 6,
-        thread_buffers      : Optional[np.ndarray]  = None
+        thread_buffers      : np.ndarray,
+        # basis -> leave basis for other kernels
+        chunk_size          : int = 6,
     ) -> None:
     '''
     Jitted batch operator application with optional basis support.
@@ -753,12 +767,10 @@ def _apply_op_batch_jit(
         Jitted operator function: (state, *args) -> (new_states, values)
     args : Tuple
         Additional arguments for op_func
-    basis : Optional[np.ndarray]
-        Basis states for no-symmetry case
+    thread_buffers : np.ndarray
+        Buffers for thread-safe writes. It already has shape (n_threads, nh, chunk_size). Need to be preallocated.
     chunk_size : int
         Size of chunks for batch processing
-    thread_buffers : Optional[np.ndarray]
-        Buffers for thread-safe writes
     
     Returns
     -------
@@ -766,27 +778,17 @@ def _apply_op_batch_jit(
     
     Example
     -------
-    >>> _apply_op_batch_jit(vecs_in, vecs_out, op_func, args, basis, representative_list, normalization, repr_idx, repr_phase, chunk_size=4)
-    
+    >>> _apply_op_batch_jit(vecs_in, vecs_out, op_func, args, thread_buffers, chunk_size=4)
     '''
     
     nh, n_batch         = vecs_in.shape
-    has_basis           = basis is not None
-    n_threads           = numba.get_num_threads()
+    n_threads           = thread_buffers.shape[0]
     
     # We process the batch in small chunks to prevent VRAM/RAM explosion.
     # Chunk size of 1 is safest for memory. 
     # If one has massive RAM, you can increase this to 2 or 4.
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
-    
-    # Create a buffer for EACH thread to write to safely
-    # Shape: (n_threads, nh, chunk_size)
-    if thread_buffers is None:
-        bufs            = np.zeros((n_threads, nh, chunk_size), dtype=np.complex128)
-    elif thread_buffers.shape[0] < n_threads:
-        # mismatched buffer size, we need to allocate ;/
-        bufs            = np.zeros((n_threads, nh, chunk_size), dtype=np.complex128)
 
     # Loop over the batch in chunks
     for b_start in range(0, n_batch, chunk_size):
@@ -799,16 +801,10 @@ def _apply_op_batch_jit(
         # Parallel Loop over Hilbert Space
         for k in numba.prange(nh):
             tid         = numba.get_thread_id()
-            
-            if has_basis:
-                # use basis array
-                state   = np.int64(basis[k])
-            else:
-                state   = np.int64(k)
-            
-            # [Compute Operator Action]
+            state       = np.int64(k)
+        
             # This returns new states and values (independent of batch index)
-            new_states, values  = op_func(state, *args)
+            new_states, values          = op_func(state, *args)
             
             # [Map & Write], assume it returns many states
             for i in range(len(new_states)):
@@ -818,14 +814,8 @@ def _apply_op_batch_jit(
                 if abs(val) < 1e-15:    continue
                 
                 target_idx              = -1
-                if has_basis:
-                    idx = np.searchsorted(basis, new_state)
-                    if idx < nh and basis[idx] == new_state:
-                        target_idx = idx
-                else:
-                    target_idx = new_state
+                target_idx              = new_state
 
-                # WRITE TO PRIVATE THREAD BUFFER
                 if 0 <= target_idx < nh:
                     # Apply to the current batch slice
                     # thread_buffers[tid, row, batch_col]
@@ -852,24 +842,46 @@ def _apply_fourier_batch_jit(
         vecs_out            : np.ndarray,
         phases              : np.ndarray,
         op_func             : Callable,
-        *,
-        basis               : Optional[np.ndarray]  = None,
-        thread_buffers      : Optional[np.ndarray]  = None,
-        chunk_size          : int                   = 4
+        thread_buffers      : np.ndarray,
+        chunk_size          : int = 4
     ) -> None:
+    r'''
+    Jitted batch operator application with Fourier phases.
+    This function works for no-symmetry Hilbert spaces with Fourier phase factors.
+    
+    Notes
+    ----------
+    - We process the input vectors in chunks to manage memory usage. The chunk size can be adjusted.
+    - Each thread has its own buffer to avoid write conflicts.
+    - The operator function `op_func` should be jitted and have the signature:
+        (state: int, site_idx: int) -> (new_states: np.ndarray, values: np.ndarray)
+    - The function writes results directly into `vecs_out` -> no return value.
+    
+    Parameters
+    ----------
+    vecs_in : np.ndarray
+        Input vectors (shape: nh x n_batch)
+    vecs_out : np.ndarray
+        Output vectors (shape: nh x n_batch)
+    phases : np.ndarray
+        Fourier phase factors for each site (shape: n_sites)
+    op_func : Callable
+        Jitted operator function: (state, site_idx) -> (new_states, values)
+    thread_buffers : np.ndarray
+        Buffers for thread-safe writes. It already has shape (n_threads, nh, chunk_size). Need to be preallocated.
+    chunk_size : int
+        Size of chunks for batch processing
+    Returns
+    -------
+    None (results are written to vecs_out)
+    '''
     
     nh, n_batch     = vecs_in.shape
     n_sites         = len(phases)
-    n_threads       = numba.get_num_threads()
-    has_basis       = basis is not None
+    n_threads       = thread_buffers.shape[0]
 
     # Buffer Management (Same logic as matvec)
-    bufs            = thread_buffers
-    
-    # Check if we need to allocate a fallback buffer
-    # (If buffer is missing OR too small for current thread count)
-    if bufs is None or bufs.shape[0] < n_threads:
-        bufs        = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
+    bufs            = thread_buffers 
         
     # Main Chunked Loop
     for b_start in range(0, n_batch, chunk_size):
@@ -877,23 +889,17 @@ def _apply_fourier_batch_jit(
         actual_width    = b_end - b_start
         
         # Reset active buffer area
-        bufs[:n_threads, :, :actual_width].fill(0.0)
+        bufs[:, :, :actual_width].fill(0.0)
 
         # PARALLEL LOOP over Hilbert Space
         for k in numba.prange(nh):
-            tid         = numba.get_thread_id()
+            # State Decoding
+            tid     = numba.get_thread_id()
+            state   = k
             
-            # 1. State Decoding
-            if has_basis:
-                state   = basis[k]
-            else:
-                state   = k
-
-            # 2. Site Loop (Summation for Fourier Transform)
+            # Site Loop (Summation for Fourier Transform)
             for site_idx in range(n_sites):
                 c_site              = phases[site_idx]
-                
-                # Apply Operator
                 new_states, values  = op_func(state, site_idx)
                 
                 for j in range(len(new_states)):
@@ -904,18 +910,10 @@ def _apply_fourier_batch_jit(
                     factor          = val * c_site 
                     if abs(factor) < 1e-15: continue
 
-                    # 3. Find Target Index
-                    target_idx      = -1
-                    sym_factor      = 1.0 + 0j
+                    # Find Target Index
+                    target_idx      = new_state
 
-                    if has_basis:
-                        target_idx = np.searchsorted(basis, new_state)
-                        if target_idx >= nh or basis[target_idx] != new_state:
-                            target_idx = -1
-                    else:
-                        target_idx = new_state
-
-                    # 4. Safe Write to Thread-Local Buffer
+                    # Safe Write to Thread-Local Buffer
                     if 0 <= target_idx < nh:
                         for b in range(actual_width):
                             bufs[tid, target_idx, b] += factor * vecs_in[k, b_start + b]
@@ -939,22 +937,17 @@ def _apply_op_batch_compact_jit(
         repr_map            : np.ndarray,
         phase_idx           : np.ndarray,
         phase_table         : np.ndarray,
-        *,
-        chunk_size          : int                   = 6,
-        thread_buffers      : Optional[np.ndarray]  = None
+        thread_buffers      : np.ndarray,
+        chunk_size          : int = 6,
     ) -> None:
     '''
     Jitted batch operator application using CompactSymmetryData for O(1) lookups.
     '''
     
     nh, n_batch         = vecs_in.shape
-    n_threads           = numba.get_num_threads()
-    
+    n_threads           = thread_buffers.shape[0]
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
-    
-    if thread_buffers is None or thread_buffers.shape[0] < n_threads:
-        bufs            = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
 
     # Loop over the batch in chunks
     for b_start in range(0, n_batch, chunk_size):
@@ -1011,8 +1004,8 @@ def _apply_fourier_batch_compact_jit(
         repr_map            : np.ndarray,
         phase_idx           : np.ndarray,
         phase_table         : np.ndarray,
-        thread_buffers      : Optional[np.ndarray]  = None,
-        chunk_size          : int                   = 4
+        thread_buffers      : np.ndarray,
+        chunk_size          : int = 6
     ) -> None:
     '''
     Jitted batch Fourier transform using CompactSymmetryData for O(1) lookups.
@@ -1020,12 +1013,10 @@ def _apply_fourier_batch_compact_jit(
     
     nh, n_batch     = vecs_in.shape
     n_sites         = len(phases)
-    n_threads       = numba.get_num_threads()
-    
+    n_threads       = thread_buffers.shape[0]
+    chunk_size      = min(chunk_size, n_batch)
     bufs            = thread_buffers
-    if bufs is None or bufs.shape[0] < n_threads:
-        bufs        = np.zeros((n_threads, nh, chunk_size), dtype=vecs_out.dtype)
-        
+    
     for b_start in range(0, n_batch, chunk_size):
         b_end           = min(b_start + chunk_size, n_batch)
         actual_width    = b_end - b_start
@@ -1069,8 +1060,75 @@ def _apply_fourier_batch_compact_jit(
             for b in range(actual_width):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
 
-# e) Symmetry support when matvec changes sectors 
+# ------
 
+def canonicalize_args(args):
+    """
+    Convert Python scalars to fixed-width numpy scalars so Numba doesn't
+    re-specialize on int32 vs int64 vs Python int etc.
+    """
+    if args is None:
+        return ()
+
+    if isinstance(args, tuple):
+        src = args
+    else:
+        src = (args,)
+
+    out = []
+    for a in src:
+        # ints
+        if isinstance(a, (int, np.integer)):
+            out.append(np.int64(a))
+            continue
+        # floats
+        if isinstance(a, (float, np.floating)):
+            out.append(np.float64(a))
+            continue
+        # complex
+        if isinstance(a, (complex, np.complexfloating)):
+            out.append(np.complex128(a))
+            continue
+        # leave objects/arrays as-is (Numba will type them if supported)
+        out.append(a)
+
+    return tuple(out)
+
+@numba.njit(cache=True)
+def _wrap_full(vecs_in, vecs_out, op_func, op_args, thread_buffers, chunk_size):
+    # full-space kernel: no kwargs, no closures
+    _apply_op_batch_jit(vecs_in, vecs_out, op_func, op_args, thread_buffers, chunk_size)
+
+@numba.njit(cache=True)
+def _wrap_compact(vecs_in, vecs_out, op_func, op_args,
+                  representative_list, normalization, repr_map, phase_idx, phase_table,
+                  thread_buffers, chunk_size):
+    _apply_op_batch_compact_jit(vecs_in, vecs_out, op_func, op_args,
+                                representative_list, normalization, repr_map, phase_idx, phase_table,
+                                thread_buffers, chunk_size)
+
+try:
+    from QES.Algebra.Symmetries.jit.matrix_builder_jit import _apply_op_batch_projected_compact_jit
+
+    @numba.njit(cache=True)
+    def _wrap_projected(vecs_in, vecs_out, op_func, op_args,
+                        repr_list_in, norm_in,
+                        repr_map_out, norm_out, repr_list_out,
+                        ns_val, n_group, n_ops, op_code, arg0, arg1,
+                        chi_in, chi_out,
+                        trans_perm, trans_cross_mask, refl_perm, inv_perm,
+                        parity_axis, boundary_phase,
+                        thread_buffers, chunk_size, local_dim):
+        _apply_op_batch_projected_compact_jit(
+            vecs_in, vecs_out, op_func, op_args,
+            repr_list_in, norm_in, repr_map_out, norm_out, repr_list_out,
+            ns_val, n_group, n_ops, op_code, arg0, arg1, chi_in, chi_out,
+            trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase,
+            thread_buffers, chunk_size, local_dim)
+        
+except ImportError:
+    _apply_op_batch_projected_compact_jit   = None
+    _wrap_projected                         = None
 
 
 # -------------------------------------------------------------------------------

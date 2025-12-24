@@ -125,7 +125,7 @@ from QES.general_python.lattices.lattice            import Lattice
 from QES.general_python.common.binary               import BACKEND_REPR as JAX_AVAILABLE, check_int, flip_int
 
 if JAX_AVAILABLE:
-    from QES.Algebra.Operator.jax.operators_spinless_fermions import c_dag_jnp, c_jnp, c_k_jnp, c_k_dag_jnp, n_jax, n_int_jax
+    from QES.Algebra.Operator.impl.jax.operators_spinless_fermions import c_dag_jnp, c_jnp, c_k_jnp, c_k_dag_jnp, n_jax, n_int_jax
 else:
     c_dag_jnp = c_jnp = c_k_jnp = c_k_dag_jnp = n_jax = n_jax_int = None
 

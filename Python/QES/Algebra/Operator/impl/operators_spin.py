@@ -47,23 +47,23 @@ if JAX_AVAILABLE:
     import jax
     import jax.numpy as jnp
     # sigma x
-    from QES.Algebra.Operator.jax.operators_spin import sigma_x_int_jnp, sigma_x_jnp, sigma_x_inv_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_x_int_jnp, sigma_x_jnp, sigma_x_inv_jnp
     # sigma y
-    from QES.Algebra.Operator.jax.operators_spin import sigma_y_int_jnp, sigma_y_jnp, sigma_y_real_jnp, sigma_y_inv_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_y_int_jnp, sigma_y_jnp, sigma_y_real_jnp, sigma_y_inv_jnp
     # sigma z
-    from QES.Algebra.Operator.jax.operators_spin import sigma_z_int_jnp, sigma_z_jnp, sigma_z_inv_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_z_int_jnp, sigma_z_jnp, sigma_z_inv_jnp
     # sigma plus
-    from QES.Algebra.Operator.jax.operators_spin import sigma_plus_int_jnp, sigma_plus_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_plus_int_jnp, sigma_plus_jnp
     # sigma minus
-    from QES.Algebra.Operator.jax.operators_spin import sigma_minus_int_jnp, sigma_minus_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_minus_int_jnp, sigma_minus_jnp
     # sigma pm
-    from QES.Algebra.Operator.jax.operators_spin import sigma_pm_int_jnp, sigma_pm_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_pm_int_jnp, sigma_pm_jnp
     # sigma mp
-    from QES.Algebra.Operator.jax.operators_spin import sigma_mp_int_jnp, sigma_mp_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_mp_int_jnp, sigma_mp_jnp
     # sigma k
-    from QES.Algebra.Operator.jax.operators_spin import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
     # sigma z total
-    from QES.Algebra.Operator.jax.operators_spin import sigma_z_total_int_jnp, sigma_z_total_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_z_total_int_jnp, sigma_z_total_jnp
 else:
     print("JAX is not available. JAX-based implementations of spin operators will not be accessible.")
     sigma_x_int_jnp         = sigma_x_jnp       = None
@@ -1472,7 +1472,6 @@ def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act:
             type_act = OperatorTypeActing.Global if op_sites is not None else OperatorTypeActing.Correlation
         elif isinstance(type_act, str):
             type_act = OperatorTypeActing.from_string(type_act)
-
 
         return create_operator(
             type_act    = type_act,

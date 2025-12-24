@@ -68,18 +68,18 @@ except ImportError:
 
 if JAX_AVAILABLE:
     try:
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_z_int_jnp, spin1_z_jnp, spin1_z_inv_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_plus_int_jnp, spin1_plus_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_minus_int_jnp, spin1_minus_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_x_int_jnp, spin1_y_int_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_pm_int_jnp, spin1_mp_int_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_zz_int_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_squared_int_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_z_total_int_jnp, spin1_z_total_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import spin1_z2_int_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_z_int_jnp, spin1_z_jnp, spin1_z_inv_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_plus_int_jnp, spin1_plus_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_minus_int_jnp, spin1_minus_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_x_int_jnp, spin1_y_int_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_pm_int_jnp, spin1_mp_int_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_zz_int_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_squared_int_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_z_total_int_jnp, spin1_z_total_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_z2_int_jnp
         # JAX matrices
-        from QES.Algebra.Operator.jax.operators_spin_1 import _S1_X_jnp, _S1_Y_jnp, _S1_Z_jnp
-        from QES.Algebra.Operator.jax.operators_spin_1 import _S1_PLUS_jnp, _S1_MINUS_jnp, _S1_Z2_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import _S1_X_jnp, _S1_Y_jnp, _S1_Z_jnp
+        from QES.Algebra.Operator.impl.jax.operators_spin_1 import _S1_PLUS_jnp, _S1_MINUS_jnp, _S1_Z2_jnp
     except ImportError:
         # JAX module not available, operators will be None
         pass

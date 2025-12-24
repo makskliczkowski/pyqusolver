@@ -509,7 +509,7 @@ class OperatorModule:
         for op_name in ops_list:
             cache_key = (op_name, ns, 'corr')
             if cache_key in self._correlation_ops_cache:
-                corr_ops[op_name]   = self._correlation_ops_cache[cache_key]
+                corr_ops[op_name] = self._correlation_ops_cache[cache_key]
                 continue
                 
             if hasattr(ops_module, f'sig_{op_name}'):
@@ -578,7 +578,7 @@ class OperatorModule:
                 for comp in needed_components:
                     buf     = buf_corr[:, :curr_width]
                     buf.fill(0)
-                    single_ops[comp].matvec(ev_batch, i, hilbert=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                    single_ops[comp].matvec(ev_batch, i, hilbert_in=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
                     
                     # Accumulate <n | S_comp^i | m> into total matrix                    
                     block                                   = ev_c_t @ buf
@@ -592,7 +592,7 @@ class OperatorModule:
                         buf.fill(0)
                         
                         # Apply composite operator S_a^i S_b^j
-                        corr_ops[op_name].matvec(ev_batch, i, j, hilbert=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                        corr_ops[op_name].matvec(ev_batch, i, j, hilbert_in=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
                         val                                     = np.einsum('bi,ib->b', ev_c_t[b_start:b_end, :], buf)
                         values[op_name][i, j, b_start:b_end]    = val
 

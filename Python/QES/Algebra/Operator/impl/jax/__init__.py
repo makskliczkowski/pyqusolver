@@ -24,9 +24,9 @@ Usage
 These modules are typically imported automatically by the parent operator modules
 when JAX is available. For direct access::
 
-    from QES.Algebra.Operator.jax.operators_spin import sigma_x_jnp, sigma_z_jnp
-    from QES.Algebra.Operator.jax.operators_spin_1 import spin1_z_jnp
-    from QES.Algebra.Operator.jax.operators_spinless_fermions import c_jnp, c_dag_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin import sigma_x_jnp, sigma_z_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spin_1 import spin1_z_jnp
+    from QES.Algebra.Operator.impl.jax.operators_spinless_fermions import c_jnp, c_dag_jnp
 
 Requirements
 ------------

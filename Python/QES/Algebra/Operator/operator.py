@@ -1146,8 +1146,7 @@ class Operator(GeneralMatrix):
             out             : Array         = None,
             thread_buffer   : Array         = None, 
             chunk_size      : int           = 1, 
-            dtype                           = None, 
-            **kwargs) -> Array:
+            dtype                           = None) -> Array:
         """
         Apply the operator matrix to a vector.
         
@@ -1196,7 +1195,7 @@ class Operator(GeneralMatrix):
             
             list of values, states if single particle picture is used.
         """
-        logger          = kwargs.get('logger', None) or hilbert_in._logger if hilbert_in is not None else None
+        logger          = hilbert_in._logger if hilbert_in is not None else None
         symmetry_mode   = symmetry_mode.lower() if symmetry_mode is not None else "auto"
         
         # No Hilbert space provided
@@ -1215,7 +1214,7 @@ class Operator(GeneralMatrix):
         
         # act on states using the Hilbert space and the operator function
         try:
-            from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_jit, _apply_op_batch_compact_jit
+            from QES.Algebra.Hilbert.matrix_builder import ensure_thread_buffer, canonicalize_args, _wrap_full, _wrap_compact, _wrap_projected
         except ImportError:
             raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
         
@@ -1231,13 +1230,14 @@ class Operator(GeneralMatrix):
         else:
             vecs_in = vecs
         
-        if hilbert_in is not None and vecs_in.shape[0] != hilbert_in.nh:
+        if hilbert_in is not None and vecs_in.shape[0] != nh:
             raise ValueError(f"Input vector size {vecs_in.shape[0]} does not match Hilbert space dimension {hilbert_in.nh}.")
         
         # output
-        vecs_out                = out if out is not None else np.zeros((nh, vecs_in.shape[1]), dtype=dtype if dtype is not None else np.complex128)
-        th_buffer               = thread_buffer if thread_buffer is not None else None
-        op_func                 = self._fun._fun_int
+        dtype                   = dtype if dtype is not None else vecs_in.dtype
+        vecs_out                = out if out is not None else np.zeros((nh, vecs_in.shape[1]), dtype=dtype)
+        chunk_size              = min(chunk_size, vecs_in.shape[1])
+        th_buffer               = ensure_thread_buffer(nh, chunk_size, dtype=dtype, thread_buffers=thread_buffer)
         
         # Check for CompactSymmetryData (O(1) lookup - fast)
         compact_data_out        = getattr(target_space,    'compact_symmetry_data', None)
@@ -1245,98 +1245,53 @@ class Operator(GeneralMatrix):
 
         # Logic to decide which kernel to use
         is_same_sector          = (hilbert_out is None or hilbert_out == hilbert_in)
-        force_project           = symmetry_mode.startswith('p')
+        force_project           = symmetry_mode.startswith('p') and nh != nhfull
         
         # Use projected kernel if forced OR if we are changing sectors (assuming we want to use symmetry if available)
         use_projected_kernel    = (compact_data_out is not None and compact_data_in is not None) and (force_project or not is_same_sector)
-        
         # Use fast kernel if same sector and compact data available and not forced to project
         use_fast_kernel         = (compact_data_out is not None and is_same_sector and not force_project and symmetry_mode in ("auto", "fast"))
 
+        op_args                 = canonicalize_args(args)
+        op_func                 = self._fun._fun_int
+
         if use_fast_kernel and nhfull != hilbert_in.nh:
-                _apply_op_batch_compact_jit(
-                    vecs_in,
-                    vecs_out,
-                    op_func,
-                    args,
-                    compact_data_out.representative_list,
-                    compact_data_out.normalization,
-                    compact_data_out.repr_map,
-                    compact_data_out.phase_idx,
-                    compact_data_out.phase_table,
-                    chunk_size      = chunk_size,
-                    thread_buffers  = th_buffer,
-                )
+            cd = compact_data_out
+            _wrap_compact(vecs_in, vecs_out, op_func, op_args, cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table, th_buffer, chunk_size)
                 
         elif use_projected_kernel and nhfull != hilbert_in.nh:
-                sc      = hilbert_in.sym_container
-                sc_out  = target_space.sym_container if getattr(target_space, 'sym_container', None) is not None else sc
-                ns      = hilbert_in.ns
-                
-                try:
-                    from QES.Algebra.Symmetries.jit.matrix_builder_jit import _apply_op_batch_projected_compact_jit
-                except ImportError:
-                    raise ImportError("JIT projected compact matrix builder not available. Ensure Numba is installed and QES is properly set up.")
-                
-                _apply_op_batch_projected_compact_jit(
-                    vecs_in,
-                    vecs_out,
-                    op_func,
-                    args,
-                    
-                    # Input basis
-                    compact_data_in.representative_list,
-                    compact_data_in.normalization,
-                    
-                    # Output basis mapping
-                    compact_data_out.repr_map,
-                    compact_data_out.normalization,
-                    compact_data_out.representative_list,
-                    
-                    # Symmetry group data (from Input space)
-                    ns,
-                    sc.compiled_group.n_group,
-                    sc.compiled_group.n_ops,
-                    sc.compiled_group.op_code,
-                    sc.compiled_group.arg0,
-                    sc.compiled_group.arg1,
-                    sc.compiled_group.chi,
-                    sc_out.compiled_group.chi,
-                    
-                    # Symmetry tables
-                    sc.tables.trans_perm,
-                    sc.tables.trans_cross_mask,
-                    sc.tables.refl_perm,
-                    sc.tables.inv_perm,
-                    sc.tables.parity_axis,
-                    sc.tables.boundary_phase,
-                    
-                    chunk_size      = chunk_size,
-                    thread_buffers  = th_buffer,
-                    local_dim       = np.int64(hilbert_in.local_space.local_dim),
-                )
-        else:
-            # Fallback
-            basis = getattr(target_space, 'basis', None)
-            if basis is not None and not isinstance(basis, np.ndarray):
-                basis = np.array(basis)
+            sc      = hilbert_in.sym_container
+            sc_out  = target_space.sym_container if getattr(target_space, 'sym_container', None) is not None else sc
+
+            _wrap_projected(
+                vecs_in, vecs_out, op_func, op_args,
+                compact_data_in.representative_list, compact_data_in.normalization,
+                compact_data_out.repr_map, compact_data_out.normalization, compact_data_out.representative_list,
+                np.int64(hilbert_in.ns),
+                sc.compiled_group.n_group,
+                sc.compiled_group.n_ops,
+                sc.compiled_group.op_code,
+                sc.compiled_group.arg0,
+                sc.compiled_group.arg1,
+                sc.compiled_group.chi,
+                sc_out.compiled_group.chi,
+                sc.tables.trans_perm,
+                sc.tables.trans_cross_mask,
+                sc.tables.refl_perm,
+                sc.tables.inv_perm,
+                sc.tables.parity_axis,
+                sc.tables.boundary_phase,
+                th_buffer,
+                chunk_size,
+                np.int64(hilbert_in.local_space.local_dim))
             
-            _apply_op_batch_jit(
-                vecs_in, 
-                vecs_out, 
-                op_func, 
-                args,
-                basis           = basis,  
-                chunk_size      = chunk_size,
-                thread_buffers  = th_buffer,
-            )
+        else:
+            _wrap_full(vecs_in, vecs_out, op_func, op_args, th_buffer, chunk_size)
         
-        if is_1d:
-            return vecs_out.flatten() # Return in original shape
-        return vecs_out
+        return vecs_out.ravel() if is_1d else vecs_out
     
     def matvec_fourier(self, phases: Array, vec: Array, hilbert: HilbertSpace, *, symmetry_mode: str = "auto", out: Optional[Array] = None, thread_buffer: Optional[Array] = None, chunk_size: int = 4) -> Array:
-        """
+        r"""
         Computes |out> = O_q |in> without constructing the matrix O_q.
         
         O_q = (1/sqrt(N)) * sum_j exp(i * k * r_j) * sigma_j
@@ -1372,7 +1327,7 @@ class Operator(GeneralMatrix):
             raise ValueError("Hilbert space must be provided for Fourier operator application.")
 
         try:
-            from QES.Algebra.Hilbert.matrix_builder import _apply_fourier_batch_jit, _apply_fourier_batch_compact_jit
+            from QES.Algebra.Hilbert.matrix_builder import _apply_fourier_batch_jit, _apply_fourier_batch_compact_jit, ensure_thread_buffer
         except ImportError:
             raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
 
@@ -1384,17 +1339,19 @@ class Operator(GeneralMatrix):
         
         # output
         vecs_out                = np.zeros_like(vecs_in, dtype=np.complex128) if out is None else out
-        basis                   = getattr(hilbert, 'basis', None)
-        if basis is not None:   basis = np.array(basis)
-
+        nh, n_batch             = vecs_in.shape
+        chunk_size              = min(chunk_size, n_batch)
+        thread_buffer           = ensure_thread_buffer(nh, chunk_size, dtype=np.complex128, thread_buffers=thread_buffer)
+        
         # This function must have signature (state, site_idx, *args)
         if not self.type_acting.is_local():
             raise ValueError("Fourier operator application requires a local operator. This means it needs to accept 'i' argument...")
         
         compact_data            = getattr(hilbert, 'compact_symmetry_data', None)
         symmetry_mode           = symmetry_mode.lower() if symmetry_mode is not None else "auto"
-        force_project           = symmetry_mode.startswith('p')
         
+        
+        force_project           = symmetry_mode.startswith('p') and hilbert.nh != hilbert.nhfull
         use_projected_kernel    = (compact_data is not None) and force_project
         use_fast_kernel         = (compact_data is not None) and (not force_project and symmetry_mode in ("auto", "fast"))
 
@@ -1410,8 +1367,8 @@ class Operator(GeneralMatrix):
                                 compact_data.repr_map,
                                 compact_data.phase_idx,
                                 compact_data.phase_table,
-                                thread_buffers  = thread_buffer,
-                                chunk_size      = chunk_size
+                                thread_buffer,
+                                chunk_size
                                 )
         
         elif use_projected_kernel and (hilbert.nhfull != hilbert.nh):
@@ -1457,8 +1414,8 @@ class Operator(GeneralMatrix):
                 sc.tables.parity_axis,
                 sc.tables.boundary_phase,
                 
-                chunk_size      = chunk_size,
-                thread_buffers  = thread_buffer
+                thread_buffer,
+                chunk_size,
             )
             
         else:
@@ -1468,9 +1425,8 @@ class Operator(GeneralMatrix):
                                     vecs_out,
                                     phases,
                                     self._fun._fun_int,
-                                    basis           = basis,
-                                    thread_buffers  = thread_buffer,
-                                    chunk_size      = chunk_size
+                                    thread_buffer,
+                                    chunk_size
                                     )
             
         if is_1d:

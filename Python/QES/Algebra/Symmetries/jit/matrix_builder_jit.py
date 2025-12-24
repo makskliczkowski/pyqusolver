@@ -73,11 +73,10 @@ def _apply_op_batch_projected_compact_jit(
         parity_axis             : np.ndarray,
         boundary_phase          : np.ndarray,
         # ... this list may grow in future ...
-
-        *,
-        local_dim               : np.int64 = 2,
-        chunk_size              : int = 4,
-        thread_buffers          : Optional[np.ndarray] = None
+        
+        thread_buffers          : np.ndarray,
+        local_dim               : np.int64  = 2,
+        chunk_size              : int       = 6,
     ) -> None:
     '''
     Apply operator in projected compact basis using symmetry group. This function
@@ -90,7 +89,7 @@ def _apply_op_batch_projected_compact_jit(
 
     nh_in, n_batch      = vecs_in.shape
     nh_out              = vecs_out.shape[0]
-    n_threads           = numba.get_num_threads()
+    n_threads           = thread_buffers.shape[0]
 
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
@@ -202,9 +201,9 @@ def _apply_fourier_batch_projected_compact_jit(
         boundary_phase          : np.ndarray,
 
         *,
+        thread_buffers          : np.ndarray,
         local_dim               : np.int64 = 2,
         chunk_size              : int = 4,
-        thread_buffers          : Optional[np.ndarray] = None
     ) -> None:
     '''
     Apply Fourier operator in projected compact basis using symmetry group.
@@ -214,8 +213,7 @@ def _apply_fourier_batch_projected_compact_jit(
     nh_in, n_batch      = vecs_in.shape
     nh_out              = vecs_out.shape[0]
     n_sites             = len(phases)
-    n_threads           = numba.get_num_threads()
-
+    n_threads           = thread_buffers.shape[0]
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
     
