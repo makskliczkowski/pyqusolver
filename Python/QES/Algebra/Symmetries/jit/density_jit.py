@@ -4,10 +4,10 @@
 
 import  numba
 import  numpy   as np
-from    typing  import TYPE_CHECKING
+from    typing  import TYPE_CHECKING, Tuple, Optional
 
 try:
-    from .symmetry_container_jit                    import apply_group_element_compiled
+    from .symmetry_container_jit                    import apply_group_element_fast, _NUMBA_OVERHEAD_SIZE
 except Exception as e:
     raise RuntimeError(f"Couldn't import symmetries correctly...")
 
@@ -86,117 +86,126 @@ def _flush_cache_into_rhoA(rhoA, used, vals):
 # ---------------------------------------------
 
 @numba.njit(cache=True, fastmath=True)
+
 def _rho_symmetries(
     c_red               : np.ndarray,   # (n_rep,) complex128 - states
-    rep_list            : np.ndarray,   # (n_rep,) int64
-    rep_norm            : np.ndarray,   # (n_rep,) float64
-
+    basis_args          : Tuple,        # (rep_list, rep_norm)
     ns                  : np.int64,
     local_dim           : np.int64,
     va                  : np.int64,
-
-    # compiled group
-    n_group             : np.int64,
-    n_ops               : np.ndarray,
-    op_code             : np.ndarray,
-    arg0                : np.ndarray,
-    arg1                : np.ndarray,
-    chi                 : np.ndarray,
-
-    # tables
-    trans_perm          : np.ndarray,
-    trans_cross_mask    : np.ndarray,
-    refl_perm           : np.ndarray,
-    inv_perm            : np.ndarray,
-    parity_axis         : np.ndarray,
-    boundary_phase      : np.ndarray,
-
+    cg_args             : Tuple,        # (n_group, ...)
+    tb_args             : Tuple,        # (tables...)
     cache_size          : np.int64,     # number of b-columns to cache
     flush_load_factor   : np.float64    = 0.5 # e.g. 0.5
 ) -> np.ndarray:
     """
     Build reduced density matrix rhoA of subsystem A (first va sites)
     directly from symmetry-reduced coefficients.
-
-    Returns: rhoA (dimA, dimA) complex128
+    
+    Parameters
+    ----------
+    c_red               : np.ndarray
+        Symmetry-reduced state vector (complex128) of shape (n_rep,).
+    basis_args          : Tuple
+        Tuple containing (rep_list, rep_norm):
+            rep_list : np.ndarray
+                List of representative states (int64) of shape (n_rep,).
+            rep_norm : np.ndarray
+                Normalization factors (float64) of shape (n_rep,).
+    ns                  : np.int64
+        Number of sites in the full system.
+    local_dim           : np.int64
+        Local Hilbert space dimension per site.
+    va                  : np.int64
+        Number of sites in subsystem A.
+    cg_args             : Tuple
+    
     """
-    dimA            = local_dim ** va
-    rhoA            = np.zeros((dimA, dimA), dtype=np.complex128)
+
+    rep_list, rep_norm          = basis_args
+    dimA                        = np.int64(local_dim ** va)
+    rhoA                        = np.zeros((dimA, dimA), dtype=np.complex128)
+
+    # Unpack cg
+    n_group, _, _, _, _, chi    = cg_args
 
     # cache structures
-    K               = int(cache_size)
-    keys            = np.empty(K, dtype=np.int64)
-    used            = np.zeros(K, dtype=np.uint8)
-    vals            = np.zeros((K, dimA), dtype=np.complex128)
+    K                           = int(cache_size)
+    keys                        = np.empty(K, dtype=np.int64)
+    used                        = np.zeros(K, dtype=np.uint8)
+    vals                        = np.zeros((K, dimA), dtype=np.complex128)
 
-    filled          = 0
-    limit           = int(flush_load_factor * K)
-    if limit < 1:   limit = 1
+    filled                      = 0
+    limit                       = int(flush_load_factor * K)
+    inv_sqrt_G                  = 1.0 / np.sqrt(n_group)
+    if limit < 1:               limit = 1
 
     # Loop over reps and group elements, spray amplitudes into columns
-    n_rep = rep_list.shape[0]
-    for r_idx in range(n_rep):
+    nh_red = rep_list.shape[0]
+    for r in range(nh_red):
+        Nk = rep_norm[r]
 
-        nr = rep_norm[r_idx]
-        if nr <= 0.0:
+        if Nk <= 0.0:
             continue
 
-        coeff = c_red[r_idx] / np.sqrt(nr)
-        if coeff == 0.0j:
+        ck = c_red[r]
+        if ck == 0.0j:
             continue
-
-        rstate = np.int64(rep_list[r_idx])
+        
+        rstate      = np.int64(rep_list[r])
+        invNk       = 1.0 / Nk
 
         for g in range(n_group):
+            s, ph       = apply_group_element_fast(rstate, ns, np.int64(g), cg_args, tb_args)
+            amp         = ck * np.conj(chi[g]) * ph * invNk * inv_sqrt_G
 
-            # apply group element to repstate
-            s, ph = apply_group_element_compiled(
-                rstate, ns, np.int64(g),
-                n_ops, op_code, arg0, arg1,
-                trans_perm, trans_cross_mask,
-                refl_perm, inv_perm,
-                parity_axis, boundary_phase
-            )
-
-            # amplitude contribution: coeff * conj(chi[g]) * phase
-            amp = coeff * np.conj(chi[g]) * ph
             if amp == 0.0j:
                 continue
 
-            # General splitting for any local_dim
-            # s = a + b * dimA
-            a = np.int64(s % dimA)
-            b = np.int64(s // dimA)
+            a               = np.int64(s % dimA)        # index in subsystem A, this is given by taking mod
+            b               = np.int64(s // dimA)       # index in subsystem B, this is given by integer division
+            slot, inserted  = _cache_find_or_insert(keys, used, vals, b, dimA)
 
-            row, inserted = _cache_find_or_insert(keys, used, vals, b, dimA)
             if inserted:
                 filled += 1
-                # flush if too full
+
                 if filled >= limit:
                     _flush_cache_into_rhoA(rhoA, used, vals)
-                    filled = 0
+                    filled  = 0
 
-            vals[row, a] += amp
-
-    # final flush
+            vals[slot, a] += amp
     _flush_cache_into_rhoA(rhoA, used, vals)
-
     return rhoA
 
 # ---------------------------------------------
 
-def rho_symmetries(state, va, hilbert: 'HilbertSpace', cache_size=256):
+
+def rho_symmetries(state, va, hilbert: 'HilbertSpace', cache_size=256, full_state: Optional[np.ndarray]=None) -> np.ndarray:
+
     ''' 
-    Symmetric density of states
+    Symmetric density of states rhoA for subsystem A of va sites,
+    from symmetry-reduced state vector.
+    ---------------------------------------------
+    Parameters:
+    state       : np.ndarray
+        Symmetry-reduced state vector (complex128).
+    va          : int
+        Number of sites in subsystem A.
+    hilbert     : HilbertSpace
+        Hilbert space with symmetries.
     '''
     local_dim = hilbert.local_space.local_dim
-    
-    if not hilbert.has_sym:
+
+    if hilbert.nhfull <= _NUMBA_OVERHEAD_SIZE or not hilbert.has_sym:
         from QES.general_python.physics.density_matrix import rho_numpy
+        if hilbert.has_sym:
+            final_state = hilbert.expand_state(state)
+        else:
+            final_state = state
         dimA = local_dim ** va
-        dimB = hilbert.nh // dimA
-        return rho_numpy(state, dimA, dimB)
-    
+        dimB = hilbert.nhfull // dimA
+        return rho_numpy(final_state, dimA, dimB)
+
     container               = hilbert.sym_container
     if container is None:   raise RuntimeError("The SymmetryContainer is necessary for density matrices with symmetries...")
     cg                      = container._compiled_group
@@ -205,26 +214,16 @@ def rho_symmetries(state, va, hilbert: 'HilbertSpace', cache_size=256):
 
     rhoA                    = _rho_symmetries(
                                 c_red               = np.asarray(state, dtype=np.complex128),
-                                rep_list            = np.asarray(cd.representative_list, dtype=np.int64),
-                                rep_norm            = np.asarray(cd.normalization, dtype=np.float64),
+                                basis_args          = (np.asarray(cd.representative_list, dtype=np.int64), np.asarray(cd.normalization, dtype=np.float64)),
                                 ns                  = np.int64(container.ns),
                                 local_dim           = np.int64(local_dim),
                                 va                  = np.int64(va),
-
-                                n_group             = np.int64(cg.n_group),
-                                n_ops               = cg.n_ops,
-                                op_code             = cg.op_code,
-                                arg0                = cg.arg0,
-                                arg1                = cg.arg1,
-                                chi                 = cg.chi,
-
-                                trans_perm          = tb.trans_perm,
-                                trans_cross_mask    = tb.trans_cross_mask,
-                                refl_perm           = tb.refl_perm,
-                                inv_perm            = tb.inv_perm,
-                                parity_axis         = tb.parity_axis,
-                                boundary_phase      = tb.boundary_phase,
-
+                                cg_args             = cg.args,
+                                tb_args             = tb.args,
                                 cache_size          = np.int64(cache_size)
                             )
     return rhoA
+
+# ---------------------------------------------
+# End of file
+# ---------------------------------------------

@@ -31,6 +31,7 @@ Description     : Lazy loader for operator modules based on LocalSpace type.
 ------------------------------------------------------------------------
 """
 
+import sys
 import numpy as np
 from typing                                     import Callable, List, Optional, TYPE_CHECKING, Dict
 
@@ -469,7 +470,7 @@ class OperatorModule:
                                 logger                  : Optional['Logger']    = None,
                                 # ---
                                 susc_nstates            : int                   = 10,
-                                susc_mus                : list                  = [0.1, 0.5, 1.0],
+                                susc_mus                : list                  = [0.01, 0.05, 0.1, 0.5, 1.0],
                                 safety_factor           : float                 = 0.6) -> Dict[str, np.ndarray]:
         """
         Computes Spin-Spin correlations, Total Magnetization projections, 
@@ -489,6 +490,7 @@ class OperatorModule:
         nh, n_total         = eigenvectors.shape
         n_states            = nstates_to_store if nstates_to_store is not None else n_total
         n_threads           = numba.config.NUMBA_NUM_THREADS
+        has_sym             = hilbert.has_sym
         numba.set_num_threads(n_threads)
         
         ev                  = eigenvectors[:, :n_states]
@@ -563,7 +565,7 @@ class OperatorModule:
         JIT_CHUNK_SIZE      = choose_chunk_size(hilbert.nh, n_threads)
         thread_buf_cache    = np.zeros((n_threads, nh, JIT_CHUNK_SIZE), dtype=np.complex128)
         buf_corr            = np.zeros((nh, batch_size), dtype=np.complex128)
-
+        
         # Loop over sites
         for i in range(ns):
             t_site = time.time()
@@ -576,7 +578,7 @@ class OperatorModule:
                 
                 # Accumulate Magnetization / Susceptibility Terms (Single Site)
                 for comp in needed_components:
-                    buf     = buf_corr[:, :curr_width]
+                    buf                                     = buf_corr[:, :curr_width]
                     buf.fill(0)
                     single_ops[comp].matvec(ev_batch, i, hilbert_in=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
                     
@@ -587,12 +589,13 @@ class OperatorModule:
                 # Loop j
                 for j in range(i, ns):
                     # For each requested correlator
+                    
                     for op_name in ops_list:
                         buf = buf_corr[:, :curr_width]
                         buf.fill(0)
                         
                         # Apply composite operator S_a^i S_b^j
-                        corr_ops[op_name].matvec(ev_batch, i, j, hilbert_in=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
+                        corr_ops[op_name].matvec(ev_batch, i, j, hilbert_in=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE, symmetry_mode="project")
                         val                                     = np.einsum('bi,ib->b', ev_c_t[b_start:b_end, :], buf)
                         values[op_name][i, j, b_start:b_end]    = val
 
@@ -603,7 +606,7 @@ class OperatorModule:
         values['magnetization'] = {}
         for comp in needed_components:
             # Diagonal of total spin matrix / ns
-            values['magnetization'][comp] = np.diag(mag_ops_matrix[comp]) / ns
+            values['magnetization'][comp] = np.mean(mag_ops_matrix[comp], axis=0)
         
         # Post-Processing: Susceptibilities
         # Fidelity Susceptibility

@@ -45,6 +45,7 @@ _INT_HUGE               = np.int64(0x7FFFFFFFFFFFFFFF)          # THE HUGEST!!!
 _INVALID_REPR_IDX       = np.iinfo(_REPR_MAP_DTYPE).max         # ~4 billion, marks state not in sector
 _INVALID_PHASE_IDX      = np.iinfo(_PHASE_IDX_DTYPE).max        # 255, marks invalid phase index
 _SYM_NORM_THRESHOLD     = 1e-7
+_NUMBA_OVERHEAD_SIZE    = 8096                                  # Approximate overhead size for Numba functions in bytes
 
 # -----------------------
 #! APPLY GROUP ELEMENT FUNCTION 
@@ -54,11 +55,12 @@ _SYM_NORM_THRESHOLD     = 1e-7
 def apply_group_element_compiled(state      : np.int64,     # input state
                                 ns          : np.int64,     # number of sites
                                 g           : np.int64,     # group element index
+                                # ---
                                 n_ops       : np.ndarray,   # number of primitive ops per group element
                                 op_code     : np.ndarray,   # primitive op codes
                                 arg0        : np.ndarray,   # first argument per op
                                 arg1        : np.ndarray,   # second argument per op
-                                # tables:
+                                # ---
                                 trans_perm  : np.ndarray,   # (n_trans, ns)         int64       -> translation permutations
                                 trans_cross : np.ndarray,   # (n_trans, ns)         uint8/bool  -> translation crossing masks
                                 refl_perm   : np.ndarray,   # (n_refl, ns)          int64       -> reflection permutations
@@ -68,43 +70,6 @@ def apply_group_element_compiled(state      : np.int64,     # input state
                             ) -> tuple[np.int64, np.complex128]:
     ''' 
     Apply compiled group element to integer state 
-    This function applies a group element 'g', which consists of a sequence of primitive symmetry operations,
-    to an integer-represented quantum state. It uses precomputed tables for efficiency.
-    
-    Parameters
-    ----------
-    state : np.int64
-        The input quantum state represented as an integer (bitstring).
-    ns : np.int64
-        The number of sites in the system.
-    g : np.int64
-        The index of the group element to apply.
-    n_ops : np.ndarray
-        Array containing the number of primitive operations for each group element.
-    op_code : np.ndarray
-        Array containing the operation codes for each primitive operation.
-    arg0 : np.ndarray
-        First argument for each primitive operation.
-    arg1 : np.ndarray
-        Second argument for each primitive
-        operation.
-    trans_perm : np.ndarray
-        Precomputed translation permutations
-    trans_cross : np.ndarray
-        Precomputed translation crossing masks
-    refl_perm : np.ndarray
-        Precomputed reflection permutations
-    parity_axis : np.ndarray
-        Precomputed parity axes
-    Returns
-    -------
-    new_state : np.int64
-        The transformed quantum state after applying the group element.
-    phase : np.complex128
-        The accumulated phase factor resulting from the symmetry operations.
-    Notes
-    -----
-    This function relies on primitive operation functions (_apply_translation_prim, _apply_perm_prim, _apply_parity_prim)
     '''
     
     cur     = state                         # current state 
@@ -114,8 +79,6 @@ def apply_group_element_compiled(state      : np.int64,     # input state
     for j in range(m):
         code = op_code[g, j]                # operation code -> which primitive operation to apply
         a0   = arg0[g, j]
-        # a1 = arg1[g, j]                   # reserved, use later
-        # a2 = arg1[g, j]                   # reserved, use later
 
         if code == OP_TRANSLATION:
             t_idx   = a0                    # translation index from precomputed table
@@ -136,15 +99,29 @@ def apply_group_element_compiled(state      : np.int64,     # input state
 
         elif code == OP_INVERSION:
             inv_idx     = a0
-            #TODO: Add different base...
             cur         = _apply_inversion_permutation(cur, ns, 2, inv_perm[inv_idx])
             phase      *= np.complex128(1.0 + 0.0j)
 
         else:
-            # identity / unknown => do nothing
             pass
 
     return cur, phase
+
+@numba.njit(fastmath=True)
+def apply_group_element_fast(state, ns, g, cg_args, tb_args):
+    r"""
+    Wrapper that accepts tuples from CompiledGroup.args and SymOpTables.args
+    to make passing data between JIT functions more generic and cleaner.
+    """
+    
+    # Unpack cg_args: (n_group, n_ops, op_code, arg0, arg1, chi)
+    n_ops, op_code, arg0, arg1 = cg_args[1], cg_args[2], cg_args[3], cg_args[4]
+    
+    # Unpack tb_args: (trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
+    trans_perm, trans_cross, refl_perm, inv_perm, parity_axis, bound_phase = tb_args
+    
+    return apply_group_element_compiled(state, ns, g, n_ops, op_code, arg0, arg1,
+        trans_perm, trans_cross, refl_perm, inv_perm, parity_axis, bound_phase)
 
 # -----------------------
 
@@ -152,81 +129,18 @@ def apply_group_element_compiled(state      : np.int64,     # input state
 def _compute_normalization_compiled(
     state               : np.int64,
     ns                  : np.int64,
-    # compiled group
     n_group             : np.int64,
-    n_ops               : np.ndarray,
-    op_code             : np.ndarray,
-    arg0                : np.ndarray,
-    arg1                : np.ndarray,
-    chi                 : np.ndarray,
-    # tables
-    trans_perm          : np.ndarray,
-    trans_cross_mask    : np.ndarray,
-    refl_perm           : np.ndarray,
-    inv_perm            : np.ndarray,
-    parity_axis         : np.ndarray,
-    boundary_phase      : np.ndarray,) -> np.float64:
+    cg_args             : Tuple,
+    tb_args             : Tuple
+) -> np.float64:
     """
     Compute normalization factor for a representative state using compiled group.
-    This function calculates the normalization factor for a given quantum state
-    by summing over the contributions from all group elements in the symmetry group.
-    
-    Parameters
-    ----------
-    state : np.int64
-        The input quantum state represented as an integer (bitstring).
-    ns : np.int64
-        The number of sites in the system.
-    n_group : np.int64
-        The number of group elements in the symmetry group.
-    n_ops : np.ndarray 
-        Array containing the number of primitive operations for each group element.
-    op_code : np.ndarray
-        Array containing the operation codes for each primitive operation.
-    arg0 : np.ndarray
-        First argument for each primitive operation.
-    arg1 : np.ndarray
-        Second argument for each primitive operation.
-    chi : np.ndarray
-        Character of each group element in the chosen irrep/sector.
-    trans_perm : np.ndarray
-        Precomputed translation permutations    
-    trans_cross_mask : np.ndarray
-        Precomputed translation crossing masks
-    refl_perm : np.ndarray
-        Precomputed reflection permutations
-    inv_perm : np.ndarray
-        Precomputed inversion permutations
-    parity_axis : np.ndarray
-        Precomputed parity axes
-    boundary_phase : np.ndarray
-        Precomputed boundary phase factors
-    Returns
-    -------
-    normalization : np.float64
-        The computed normalization factor for the input state.
-    Notes
-    -----
-    The normalization is computed as the square root of the absolute value of the sum over group elements,
-    weighted by the character of each group element.
     """
-
+    chi  = cg_args[5]
     proj = np.complex128(0.0 + 0.0j)
 
     for g in range(n_group):
-        new_state, phase = apply_group_element_compiled(
-            state, ns, g,
-            n_ops,
-            op_code,
-            arg0,
-            arg1,
-            trans_perm,
-            trans_cross_mask,
-            refl_perm,
-            inv_perm,
-            parity_axis,
-            boundary_phase,
-        )
+        new_state, phase = apply_group_element_fast(state, ns, g, cg_args, tb_args)
 
         if new_state == state:
             proj += np.conj(chi[g]) * phase
@@ -241,24 +155,13 @@ def _compute_normalization_compiled(
 def compute_normalization(
     reps                : np.ndarray,
     out_norm            : np.ndarray,
-    # ---
     ns                  : np.int64,
     n_group             : np.int64,
-    n_ops               : np.ndarray,
-    op_code             : np.ndarray,
-    arg0                : np.ndarray,
-    arg1                : np.ndarray,
-    chi                 : np.ndarray,
-    trans_perm          : np.ndarray,
-    trans_cross_mask    : np.ndarray,
-    refl_perm           : np.ndarray,
-    inv_perm            : np.ndarray,
-    parity_axis         : np.ndarray,
-    boundary_phase      : np.ndarray,
+    cg_args             : Tuple,
+    tb_args             : Tuple,
 ):
     for i in numba.prange(reps.shape[0]):
-        out_norm[i] = _compute_normalization_compiled(reps[i], ns, n_group, n_ops, op_code, arg0, arg1, chi,
-            trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
+        out_norm[i] = _compute_normalization_compiled(reps[i], ns, n_group, cg_args, tb_args)
 
 # -----------------------
 
@@ -277,108 +180,32 @@ def scan_chunk_find_representatives(
     start_state     : np.int64,
     end_state       : np.int64,
     ns              : np.int64,
-
-    # compiled group
     n_group         : np.int64,
-    n_ops           : np.ndarray,
-    op_code         : np.ndarray,
-    arg0            : np.ndarray,
-    arg1            : np.ndarray,
-    chi             : np.ndarray,
-
-    # operator tables
-    trans_perm      : np.ndarray,
-    trans_cross     : np.ndarray,
-    refl_perm       : np.ndarray,
-    inv_perm        : np.ndarray,
-    parity_axis     : np.ndarray,
-    bound_phase     : np.ndarray,
-
+    cg_args         : Tuple,
+    tb_args         : Tuple,
     # global constraints
     global_op_codes : np.ndarray,
     global_op_vals  : np.ndarray,
-
     # phase lookup
     g_to_pidx       : np.ndarray,
-
-    # outputs (preallocated!)
+    # outputs
     repr_map        : np.ndarray,
     repr_chunker    : np.ndarray,
     phase_idx       : np.ndarray
     ):
-    r''' 
-    Generate representative map and phase index for a chunk of states
-    Here, we fill only the portion of the representative map and phase index
-    corresponding to states in the range [start_state, end_state).
     
-    The basis is constructed later, checking the normalization after this map is built already.
-    
-    Parameters
-    ----------
-    start_state : np.int64
-        The starting integer state (inclusive) for this chunk.
-    end_state : np.int64
-        The ending integer state (exclusive) for this chunk.
-    ns : np.int64
-        The number of sites in the system.
-    n_group : np.int64
-        The number of group elements in the symmetry group.
-    n_ops : np.ndarray
-        Array containing the number of primitive operations for each group element.
-    op_code : np.ndarray
-        Array containing the operation codes for each primitive operation.
-    arg0 : np.ndarray
-        First argument for each primitive operation.
-    arg1 : np.ndarray
-        Second argument for each primitive operation.
-    # ---
-    trans_perm : np.ndarray
-        Precomputed translation permutations
-    trans_cross : np.ndarray
-        Precomputed translation crossing masks
-    refl_perm : np.ndarray
-        Precomputed reflection permutations
-    inv_perm : np.ndarray
-        Precomputed inversion permutations
-    parity_axis : np.ndarray
-        Precomputed parity axes
-    bound_phase : np.ndarray
-        Precomputed boundary phase factors
-    # ---
-    global_op_codes : np.ndarray
-        Codes for global symmetry operations to check.
-    global_op_vals : np.ndarray
-        Values for global symmetry operations to check.
-        
-    # ---
-    g_to_pidx : np.ndarray
-        Mapping from group element index to phase index.
-    repr_map : np.ndarray
-        Output array to store the representative state for each input state.
-    phase_idx : np.ndarray
-        Output array to store the phase index for each input state.
-    Returns
-    -------
-    '''
+    chi = cg_args[5]
 
     for state in numba.prange(start_state, end_state):
-    # for state in range(start_state, end_state):
-
         if violates_global_syms(state, global_op_codes, global_op_vals, ns):
             continue
 
         min_state   = _INT_HUGE
         min_g       = -1
-        norm        =  0.0
+        norm        = 0.0
 
         for g in range(n_group):
-            new_state, phase = apply_group_element_compiled(
-                state, ns, g,
-                n_ops, op_code, arg0, arg1,
-                trans_perm, trans_cross,
-                refl_perm, inv_perm,
-                parity_axis, bound_phase
-            )
+            new_state, phase = apply_group_element_fast(state, ns, g, cg_args, tb_args)
 
             if new_state < min_state:
                 min_state = new_state
@@ -387,14 +214,69 @@ def scan_chunk_find_representatives(
             if new_state == state:
                 norm += np.conj(chi[g]) * phase
             
-        is_correct = np.abs(norm) > _SYM_NORM_THRESHOLD
-        if is_correct:
-            
+        if np.abs(norm) > _SYM_NORM_THRESHOLD:
             if min_state == state and min_g != _INVALID_REPR_IDX:
                 repr_chunker[state - start_state] = True
 
             repr_map[state]     = min_state 
             phase_idx[state]    = g_to_pidx[min_g]
+
+# ---------------------------
+
+@numba.njit(parallel=True, fastmath=True)
+def expand_to_full_state_jit(
+    vec_red             : np.ndarray,
+    vec_full            : np.ndarray,
+    rep_list            : np.ndarray,
+    rep_norm            : np.ndarray,
+    ns                  : np.int64,
+    cg_args             : Tuple,
+    tb_args             : Tuple
+) -> None:
+    """
+    JIT-compiled state expansion: reduced basis -> full basis.
+    Supports both single vectors (1D) and multiple vectors (2D batch).
+    |ψ> = sum_k (ck / (Nk * sqrt(|G|))) sum_g chi^*(g) U(g) |rk>
+    """
+    n_group     = cg_args[0]
+    chi         = cg_args[5]
+    n_rep       = rep_list.shape[0]
+    inv_sqrt_G  = 1.0 / np.sqrt(float(n_group))
+    
+    is_batch    = (vec_red.ndim == 2)
+    n_batch     = vec_red.shape[1] if is_batch else 1
+
+    for r_idx in numba.prange(n_rep):
+        Nk      = rep_norm[r_idx]
+        if Nk <= 0.0: continue
+            
+        rstate  = rep_list[r_idx]
+        invNk   = 1.0 / Nk
+        
+        # Check if any element in the batch is non-zero for this representative
+        any_nonzero = False
+        if is_batch:
+            for b in range(n_batch):
+                if vec_red[r_idx, b] != 0.0j:
+                    any_nonzero = True
+                    break
+        else:
+            if vec_red[r_idx] != 0.0j:
+                any_nonzero = True
+        
+        if not any_nonzero:
+            continue
+
+        for g in range(n_group):
+            s, ph   = apply_group_element_fast(rstate, ns, np.int64(g), cg_args, tb_args)
+            # character contribution
+            w_g     = np.conj(chi[g]) * ph * invNk * inv_sqrt_G
+            
+            if is_batch:
+                for b in range(n_batch):
+                    vec_full[s, b] += vec_red[r_idx, b] * w_g
+            else:
+                vec_full[s] += vec_red[r_idx] * w_g
 
 # ---------------------------
 #! End of symmetry_container_jit.py

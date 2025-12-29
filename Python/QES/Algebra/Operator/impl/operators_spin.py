@@ -233,7 +233,7 @@ def _sigma_y_core(state, ns, sites, spin_value=_SPIN):
         new_state   = _binary.flip_int(new_state, pos)
     return new_state, coeff
 
-@numba.njit(cache=True, inline='always')
+@numba.njit(inline='always')
 def sigma_y_int_np_real(state, 
                         ns, 
                         sites,
@@ -1573,7 +1573,7 @@ def create_sigma_mixed_int_core(op1_fun: Callable, op2_fun: Callable):
     return sigma_mixed_int_core
 
 def create_sigma_mixed_np(op1_fun: Callable, op2_fun: Callable):
-    @numba.njit(cache=True)
+    @numba.njit
     def sigma_mixed_np(state, sites, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
         if sites is None or len(sites) < 2:
             s_dumb, c_dumb = op1_fun(state, sites, spin, spin_value)
@@ -1797,7 +1797,7 @@ def make_nsite_correlator(pauli_ops: List[str], ns: int, sites: Optional[List[in
     n_ops_val                       = n_ops
     
     # Create the numba-compatible integer function
-    @numba.njit(cache=True)
+    @numba.njit
     def nsite_correlator_int(state: int, ns_val: int, sites_tuple: tuple):
         """
         Apply n-site correlator: product of Pauli operators at specified sites.

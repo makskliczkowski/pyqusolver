@@ -45,7 +45,8 @@ try:
     from QES.Algebra.Symmetries.jit.symmetry_container_jit  import (
         apply_group_element_compiled, compute_normalization, scan_chunk_find_representatives, fill_representatives, 
         _SYM_NORM_THRESHOLD, _STATE_TYPE_NB, _REPR_MAP_DTYPE, _PHASE_IDX_DTYPE, _INT_HUGE,
-        _INVALID_REPR_IDX_NB, _INVALID_PHASE_IDX_NB, _INVALID_REPR_IDX, _INVALID_PHASE_IDX
+        _INVALID_REPR_IDX_NB, _INVALID_PHASE_IDX_NB, _INVALID_REPR_IDX, _INVALID_PHASE_IDX,
+        _NUMBA_OVERHEAD_SIZE
     )
 except ImportError as e:
     raise ImportError("Failed to import symmetry_container_jit module. Ensure QES package is correctly installed.") from e
@@ -1196,18 +1197,7 @@ class SymmetryContainer:
         min_g       = -1
         
         for g in range(cg.n_group):
-            new_state, _    = apply_group_element_compiled(
-                                np.int64(state), np.int64(self.ns), np.int64(g),
-                                n_ops               = cg.n_ops, 
-                                op_code             = cg.op_code, 
-                                arg0                = cg.arg0, 
-                                arg1                = cg.arg1,
-                                trans_perm          = tb.trans_perm, 
-                                trans_cross_mask    = tb.trans_cross_mask,
-                                refl_perm           = tb.refl_perm,
-                                inv_perm            = tb.inv_perm,
-                                parity_axis         = tb.parity_axis
-                            )
+            new_state, _ = apply_group_element_fast(np.int64(state), np.int64(self.ns), np.int64(g), cg.args, tb.args)
             
             if new_state < min_state:
                 min_state = int(new_state)
@@ -1419,6 +1409,44 @@ class SymmetryContainer:
         
         return float(norm)
     
+    def expand_state(self, vec_red: np.ndarray, vec_full: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Expand a symmetry-reduced state vector to the full Hilbert space.
+        Supports both single vectors (1D) and multiple vectors (2D batch).
+        
+        Parameters
+        ----------
+        vec_red : np.ndarray
+            Reduced-basis state vector(s). Shape (n_rep,) or (n_rep, n_batch).
+        vec_full : np.ndarray, optional
+            Preallocated full Hilbert space state vector(s).
+            
+        Returns
+        -------
+        vec_full : np.ndarray
+            Full Hilbert space state vector(s). Shape (nh_full,) or (nh_full, n_batch).
+        """
+        from .jit.symmetry_container_jit import expand_to_full_state_jit
+        
+        nh_full     = self.nhl ** self.ns
+        
+        if vec_full is None:
+            if vec_red.ndim == 2:
+                vec_full = np.zeros((nh_full, vec_red.shape[1]), dtype=np.complex128)
+            else:
+                vec_full = np.zeros(nh_full, dtype=np.complex128)
+        
+        expand_to_full_state_jit(
+            vec_red     = np.asarray(vec_red, dtype=np.complex128),
+            vec_full    = vec_full,
+            rep_list    = np.asarray(self._repr_list, dtype=np.int64),
+            rep_norm    = np.asarray(self._repr_norms, dtype=np.float64),
+            ns          = np.int64(self.ns),
+            cg_args     = self._compiled_group.args,
+            tb_args     = self._tables.args
+        )
+        return vec_full
+
     def check_global_symmetries(self, state: StateInt) -> bool:
         """
         Check if a state satisfies all global symmetry constraints.
@@ -1508,21 +1536,11 @@ class SymmetryContainer:
             end                 = min(start + chunk_size, nh_full)
 
             scan_chunk_find_representatives(
-                start, end, self.ns,
+                start, end, self.ns, self._compiled_group.n_group,
                 # compiled group data
-                self._compiled_group.n_group,
-                self._compiled_group.n_ops,
-                self._compiled_group.op_code,
-                self._compiled_group.arg0,
-                self._compiled_group.arg1,
-                self._compiled_group.chi,
+                self._compiled_group.args,
                 # symmetry tables
-                self._tables.trans_perm,
-                self._tables.trans_cross_mask,
-                self._tables.refl_perm,
-                self._tables.inv_perm,
-                self._tables.parity_axis,
-                self._tables.boundary_phase,
+                self._tables.args,
                 # globals
                 global_op_vals      = self._compiled_group.global_op_vals,
                 global_op_codes     = self._compiled_group.global_op_codes,
@@ -1555,18 +1573,10 @@ class SymmetryContainer:
                 out_norm            = representative_norms,
                 ns                  = np.int64(self.ns),
                 n_group             = self._compiled_group.n_group,
-                n_ops               = self._compiled_group.n_ops,
-                op_code             = self._compiled_group.op_code,
-                arg0                = self._compiled_group.arg0,
-                arg1                = self._compiled_group.arg1,
-                chi                 = self._compiled_group.chi,
+                # compiled group data
+                cg_args             = self._compiled_group.args,
                 # tables
-                trans_perm          = self._tables.trans_perm,
-                trans_cross_mask    = self._tables.trans_cross_mask,
-                refl_perm           = self._tables.refl_perm,
-                inv_perm            = self._tables.inv_perm,
-                parity_axis         = self._tables.parity_axis,
-                boundary_phase      = self._tables.boundary_phase,
+                tb_args             = self._tables.args,
             )
             if self.verbose: self.logger.info(f"Computed normalization factors for representatives. Took: {time.time() - t0:.2e}s", lvl=4, color='green')    
             

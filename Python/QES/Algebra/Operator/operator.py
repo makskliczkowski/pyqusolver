@@ -1256,34 +1256,29 @@ class Operator(GeneralMatrix):
         op_func                 = self._fun._fun_int
 
         if use_fast_kernel and nhfull != hilbert_in.nh:
-            cd = compact_data_out
-            _wrap_compact(vecs_in, vecs_out, op_func, op_args, cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table, th_buffer, chunk_size)
+            cd          = compact_data_out
+            basis_args  = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
+            _wrap_compact(vecs_in, vecs_out, op_func, op_args, basis_args, th_buffer, chunk_size)
                 
         elif use_projected_kernel and nhfull != hilbert_in.nh:
             sc      = hilbert_in.sym_container
             sc_out  = target_space.sym_container if getattr(target_space, 'sym_container', None) is not None else sc
 
+            # Pack cg_args with chi_in and chi_out
+            cg      = sc.compiled_group
+            cg_args = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, sc_out.compiled_group.chi)
+            
+            basis_in_args  = (compact_data_in.representative_list, compact_data_in.normalization)
+            basis_out_args = (compact_data_out.repr_map, compact_data_out.normalization, compact_data_out.representative_list)
+
             _wrap_projected(
                 vecs_in, vecs_out, op_func, op_args,
-                compact_data_in.representative_list, compact_data_in.normalization,
-                compact_data_out.repr_map, compact_data_out.normalization, compact_data_out.representative_list,
+                basis_in_args, basis_out_args,
+                cg_args, sc.tables.args,
                 np.int64(hilbert_in.ns),
-                sc.compiled_group.n_group,
-                sc.compiled_group.n_ops,
-                sc.compiled_group.op_code,
-                sc.compiled_group.arg0,
-                sc.compiled_group.arg1,
-                sc.compiled_group.chi,
-                sc_out.compiled_group.chi,
-                sc.tables.trans_perm,
-                sc.tables.trans_cross_mask,
-                sc.tables.refl_perm,
-                sc.tables.inv_perm,
-                sc.tables.parity_axis,
-                sc.tables.boundary_phase,
                 th_buffer,
-                chunk_size,
-                np.int64(hilbert_in.local_space.local_dim))
+                np.int64(hilbert_in.local_space.local_dim),
+                chunk_size)
             
         else:
             _wrap_full(vecs_in, vecs_out, op_func, op_args, th_buffer, chunk_size)
@@ -1357,16 +1352,14 @@ class Operator(GeneralMatrix):
 
         if use_fast_kernel and (hilbert.nhfull != hilbert.nh):
             # Fast path with compact data
+            cd                  = compact_data
+            basis_args          = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
             _apply_fourier_batch_compact_jit(
                                 vecs_in,
                                 vecs_out,
                                 phases,
                                 self._fun._fun_int,
-                                compact_data.representative_list,
-                                compact_data.normalization,
-                                compact_data.repr_map,
-                                compact_data.phase_idx,
-                                compact_data.phase_table,
+                                basis_args,
                                 thread_buffer,
                                 chunk_size
                                 )
@@ -1381,40 +1374,27 @@ class Operator(GeneralMatrix):
             except ImportError:
                 raise ImportError("JIT projected compact matrix builder not available.")
             
+            basis_in_args       = (compact_data.representative_list, compact_data.normalization)
+            basis_out_args      = (compact_data.repr_map, compact_data.normalization, compact_data.representative_list)
+            
+            cg                  = sc.compiled_group
+            cg_args             = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
+
             _apply_fourier_batch_projected_compact_jit(
                 vecs_in,
                 vecs_out,
                 phases,
                 self._fun._fun_int,
                 
-                # Input basis
-                compact_data.representative_list,
-                compact_data.normalization,
+                # Grouped basis and symmetry data
+                basis_in_args,
+                basis_out_args,
+                cg_args,
+                sc.tables.args,
                 
-                # Output basis (same as input)
-                compact_data.repr_map,
-                compact_data.normalization,
-                compact_data.representative_list,
-                
-                # Symmetry group data
-                ns,
-                sc.compiled_group.n_group,
-                sc.compiled_group.n_ops,
-                sc.compiled_group.op_code,
-                sc.compiled_group.arg0,
-                sc.compiled_group.arg1,
-                sc.compiled_group.chi,
-                sc.compiled_group.chi, # chi_in == chi_out
-                
-                # Tables
-                sc.tables.trans_perm,
-                sc.tables.trans_cross_mask,
-                sc.tables.refl_perm,
-                sc.tables.inv_perm,
-                sc.tables.parity_axis,
-                sc.tables.boundary_phase,
-                
+                np.int64(ns),
                 thread_buffer,
+                np.int64(hilbert.local_space.local_dim),
                 chunk_size,
             )
             

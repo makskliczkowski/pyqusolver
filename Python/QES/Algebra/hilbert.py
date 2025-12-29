@@ -1426,44 +1426,53 @@ class HilbertSpace(BaseHilbertSpace):
                     full_map.append(j)
         self.full_to_global_map = np.array(full_map, dtype=np.int64)
 
-    def expand_from_reduced_space(self, vec_reduced):
+    def expand_state(self, vec_reduced: np.ndarray, vec_full: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Expand a vector from the reduced symmetry sector back to the full Hilbert space.
         
         This method handles both global symmetries (via full_map) and local symmetries
         (via symmetry group expansion). If no symmetries are present, returns the input unchanged.
+        
+        Parameters:
+        -----------
+        vec_reduced (np.ndarray):
+            The vector in the reduced Hilbert space to expand.
+        vec_full (Optional[np.ndarray]):
+            Optional preallocated full vector to fill. If None, a new array is created.
+        
+        Returns:
+        --------
+        np.ndarray:
+            The expanded vector in the full Hilbert space.
         """
         # Check if we have any symmetries that reduce the space
         if not self.modifies:
             return np.asarray(vec_reduced)
         
+        if vec_full is None:
+            if vec_reduced.ndim == 2:
+                vec_full = np.zeros((int(self._nhfull), vec_reduced.shape[1]), dtype=vec_reduced.dtype)
+            else:
+                vec_full = np.zeros(int(self._nhfull), dtype=vec_reduced.dtype)
+        
         # If we have global symmetries with a full map, use that
         if self.check_global_symmetry and self.full_to_global_map is not None:
-            vec_full = np.zeros(self._nhfull, dtype=vec_reduced.dtype)
-            for i, state in enumerate(self.full_to_global_map):
-                if i < len(vec_reduced):
-                    vec_full[state] = vec_reduced[i]
+            nh_full = int(self._nhfull)
+            if vec_reduced.ndim == 2:
+                vec_full = np.zeros((nh_full, vec_reduced.shape[1]), dtype=vec_reduced.dtype)
+                for i, state in enumerate(self.full_to_global_map):
+                    if i < len(vec_reduced):
+                        vec_full[state, :] = vec_reduced[i, :]
+            else:
+                vec_full = np.zeros(nh_full, dtype=vec_reduced.dtype)
+                for i, state in enumerate(self.full_to_global_map):
+                    if i < len(vec_reduced):
+                        vec_full[state] = vec_reduced[i]
             return vec_full
         
-        # For local symmetries, expand using the symmetry group
-        if self.representative_list is not None and self.representative_norms is not None:
-            vec_full = np.zeros(2**self._ns, dtype=vec_reduced.dtype)
-            
-            for i, rep in enumerate(self.representative_list):
-                if i >= len(vec_reduced):
-                    continue
-                    
-                coeff = vec_reduced[i] / self.representative_norms[i] if self.representative_norms[i] != 0 else vec_reduced[i]
-                
-                # Apply all symmetry operations to expand this representative
-                for g in self.sym_group:
-                    try:
-                        state, phase = g(rep)
-                        vec_full[int(state)] += coeff * np.conjugate(phase)
-                    except Exception:
-                        continue
-                        
-            return vec_full
+        # For local symmetries, expand using the JIT-accelerated symmetry container method
+        if self._sym_container is not None and self.representative_list is not None:
+            return self._sym_container.expand_state(vec_reduced, vec_full)
         
         # Fallback: return unchanged
         return np.asarray(vec_reduced)

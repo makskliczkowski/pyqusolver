@@ -32,7 +32,7 @@ except ImportError:
 # ------------------------------------------------------------------------------------------
 
 try:
-    from QES.Algebra.Symmetries.jit.symmetry_container_jit import apply_group_element_compiled, _INVALID_REPR_IDX_NB
+    from QES.Algebra.Symmetries.jit.symmetry_container_jit import apply_group_element_fast, _INVALID_REPR_IDX_NB, _NUMBA_OVERHEAD_SIZE
 except ImportError as e:
     raise ImportError("QES.Algebra.Symmetries.symmetry_container module is required for matrix building: " + str(e))
 
@@ -45,61 +45,74 @@ def _apply_op_batch_projected_compact_jit(
         op_func                 : Callable,            # (state, *args) -> (new_states, values)
         args                    : Tuple,
 
-        # Input basis
-        representative_list_in  : np.ndarray,           # int64[nh_in]
-        normalization_in        : np.ndarray,           # float64[nh_in]
+        # Grouped basis and symmetry data
+        basis_in_args           : Tuple,               # (rep_list_in, norm_in)
+        basis_out_args          : Tuple,               # (repr_map_out, norm_out, rep_list_out)
+        cg_args                 : Tuple,               # (n_group, n_ops, op_code, arg0, arg1, chi_in, chi_out)
+        tb_args                 : Tuple,               # (trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
 
-        # Output basis mapping
-        repr_map_out            : np.ndarray,           # uint32[nh_full]
-        normalization_out       : np.ndarray,           # float64[nh_out]
-        representative_list_out : np.ndarray,           # int64[nh_out]
-
-        # compiled symmetry group apply (Input sector characters)
         ns                      : np.int64,
-        n_group                 : np.int64,
-        n_ops                   : np.ndarray,
-        # ... operator encoding ...                     -> needs to match apply_group_element_compiled
-        op_code                 : np.ndarray,
-        arg0                    : np.ndarray,
-        arg1                    : np.ndarray,
-        chi_in                  : np.ndarray,           # complex128[n_group]  (character per group element for INPUT sector)
-        chi_out                 : np.ndarray,           # complex128[n_group]  (character per group element for OUTPUT sector)
-
-        # symmetry data
-        trans_perm              : np.ndarray,
-        trans_cross_mask        : np.ndarray,
-        refl_perm               : np.ndarray,
-        inv_perm                : np.ndarray,
-        parity_axis             : np.ndarray,
-        boundary_phase          : np.ndarray,
-        # ... this list may grow in future ...
-        
         thread_buffers          : np.ndarray,
         local_dim               : np.int64  = 2,
         chunk_size              : int       = 6,
     ) -> None:
     '''
-    Apply operator in projected compact basis using symmetry group. This function
-    is necessary when the operator does not commute with the symmetry group. This means
-    that we need to expand the ket side using the projector (orbit sum), apply the operator,
-    and then project the bra side back to the representative basis.
-    
-    Supports applying operator between different symmetry sectors (hilbert_in -> hilbert_out).
+    Apply operator in projected compact basis using symmetry group. 
     '''
 
     nh_in, n_batch      = vecs_in.shape
     nh_out              = vecs_out.shape[0]
-    n_threads           = thread_buffers.shape[0]
+    
+    # Unpack basis
+    representative_list_in, normalization_in                    = basis_in_args
+    repr_map_out, normalization_out, representative_list_out    = basis_out_args
+    
+    # Unpack cg
+    n_group, _, _, _, _, chi_in, chi_out = cg_args
 
+    # Fast path for small Hilbert spaces to avoid parallel overhead
+    if nh_in <= _NUMBA_OVERHEAD_SIZE:
+        inv_n_group = 1.0 / float(n_group)
+        for k in range(nh_in):
+            rep     = np.int64(representative_list_in[k])
+            norm_k  = normalization_in[k]
+            if norm_k == 0.0: continue
+            
+            for g in range(n_group):
+                s, ph_g             = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
+                w_g                 = np.conj(chi_in[g]) * ph_g / norm_k 
+                new_states, values  = op_func(s, *args)
+                
+                for i in range(len(new_states)):
+                    new_state   = new_states[i]
+                    val         = values[i]
+                    if abs(val) < 1e-15: continue
+                    for h in range(n_group):
+                        s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
+                        
+                        idx         = repr_map_out[s_out]
+                        if idx == _INVALID_REPR_IDX_NB: 
+                            continue
+                        if representative_list_out[idx] != s_out: 
+                            continue
+                        
+                        norm_new = normalization_out[idx]
+                        if norm_new == 0.0: 
+                            continue
+                        
+                        w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
+                        factor  = val * w_g * w_h
+                        for b in range(n_batch):
+                            vecs_out[idx, b] += factor * vecs_in[k, b]
+        return
+
+    n_threads           = thread_buffers.shape[0]
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
     
-    # Buffer needs to match OUTPUT shape
     if bufs is None or bufs.shape[0] < n_threads or bufs.shape[1] != nh_out or bufs.shape[2] < chunk_size:
         bufs            = np.zeros((n_threads, nh_out, chunk_size), dtype=vecs_out.dtype)
 
-    # Precompute normalization factor 1/|G|
-    # matrix element = 1/(|G| * N_j * N_k) * sum_{g,h} ...
     inv_n_group         = 1.0 / float(n_group)
 
     for b_start in range(0, n_batch, chunk_size):
@@ -107,7 +120,6 @@ def _apply_op_batch_projected_compact_jit(
         actual_w        = b_end - b_start
         bufs[:n_threads, :, :actual_w].fill(0.0)
 
-        # Loop over reduced basis representatives (INPUT)
         for k in numba.prange(nh_in):
             tid         = numba.get_thread_id()
             rep         = np.int64(representative_list_in[k])
@@ -115,16 +127,9 @@ def _apply_op_batch_projected_compact_jit(
             if norm_k == 0.0:
                 continue
 
-            # Expand the ket using the projector (orbit sum)
-            # |k> ~ (1/norm_k) * Σ_g chi_in[g] * g|rep>
             for g in range(n_group):
-                s, ph_g = apply_group_element_compiled(rep, ns, np.int64(g), n_ops, op_code, arg0, arg1,
-                    trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
-
-                # ket weight
-                # |k> = 1/N_k * sum ...
-                # We use conj(chi) because P = sum chi* U
-                w_g                 = np.conj(chi_in[g]) * ph_g / norm_k 
+                s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
+                w_g     = np.conj(chi_in[g]) * ph_g / norm_k 
                 new_states, values  = op_func(s, *args)
 
                 for i in range(len(new_states)):
@@ -133,18 +138,11 @@ def _apply_op_batch_projected_compact_jit(
                     if abs(val) < 1e-15:
                         continue
                     
-                    # Output projection: sum_h chi_out^*(h) U(h) |new_state>
                     for h in range(n_group):
-                        s_out, ph_h = apply_group_element_compiled(new_state, ns, np.int64(h), n_ops, op_code, arg0, arg1,
-                                            trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
-                        
-                        # Check if s_out is a representative
+                        s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
                         idx = repr_map_out[s_out]
                         if idx == _INVALID_REPR_IDX_NB:
                             continue
-                            
-                        # Double check if it is indeed the representative (it should be if idx is valid and maps to itself)
-                        # We use representative_list_out to be sure
                         if representative_list_out[idx] != s_out:
                             continue
                         
@@ -152,9 +150,7 @@ def _apply_op_batch_projected_compact_jit(
                         if norm_new == 0.0:
                             continue
                         
-                        # Weight for this term
-                        # 1/(|G| * N_j) * chi_out^*(h) * ph_h
-                        w_h     = np.conj(chi_out[h]) * ph_h * inv_n_group / norm_new
+                        w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
                         factor  = val * w_g * w_h
 
                         for b in range(actual_w):
@@ -172,47 +168,74 @@ def _apply_fourier_batch_projected_compact_jit(
         phases                  : np.ndarray,          # (ns,) complex128
         op_func                 : Callable,            # (state, site_idx) -> (new_states, values)
 
-        # Input basis
-        representative_list_in  : np.ndarray,           # int64[nh_in]
-        normalization_in        : np.ndarray,           # float64[nh_in]
+        # Grouped basis and symmetry data
+        basis_in_args           : Tuple,
+        basis_out_args          : Tuple,
+        cg_args                 : Tuple,
+        tb_args                 : Tuple,
 
-        # Output basis mapping
-        repr_map_out            : np.ndarray,           # uint32[nh_full]
-        normalization_out       : np.ndarray,           # float64[nh_out]
-        representative_list_out : np.ndarray,           # int64[nh_out]
-
-        # compiled symmetry group apply (Input sector characters)
         ns                      : np.int64,
-        n_group                 : np.int64,
-        n_ops                   : np.ndarray,
-        # ... operator encoding ...                     -> needs to match apply_group_element_compiled
-        op_code                 : np.ndarray,
-        arg0                    : np.ndarray,
-        arg1                    : np.ndarray,
-        chi_in                  : np.ndarray,           # complex128[n_group]
-        chi_out                 : np.ndarray,           # complex128[n_group]
-
-        # symmetry data
-        trans_perm              : np.ndarray,
-        trans_cross_mask        : np.ndarray,
-        refl_perm               : np.ndarray,
-        inv_perm                : np.ndarray,
-        parity_axis             : np.ndarray,
-        boundary_phase          : np.ndarray,
-
-        *,
         thread_buffers          : np.ndarray,
         local_dim               : np.int64 = 2,
         chunk_size              : int = 4,
     ) -> None:
     '''
     Apply Fourier operator in projected compact basis using symmetry group.
-    Sum over sites and project.
     '''
 
     nh_in, n_batch      = vecs_in.shape
     nh_out              = vecs_out.shape[0]
     n_sites             = len(phases)
+    
+    # Unpack basis
+    representative_list_in, normalization_in                    = basis_in_args
+    repr_map_out, normalization_out, representative_list_out    = basis_out_args
+    
+    # Unpack cg
+    n_group, _, _, _, _, chi_in, chi_out = cg_args
+
+    # Fast path for small Hilbert spaces to avoid parallel overhead
+    if nh_in <= _NUMBA_OVERHEAD_SIZE:
+        inv_n_group = 1.0 / float(n_group)
+        for k in range(nh_in):
+            rep     = np.int64(representative_list_in[k])
+            norm_k  = normalization_in[k]
+            if norm_k == 0.0: continue
+            for g in range(n_group):
+                s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
+                w_g     = np.conj(chi_in[g]) * ph_g / norm_k 
+
+                # Sum over sites for Fourier
+                for site_idx in range(n_sites):
+                    c_site              = phases[site_idx]
+                    new_states, values  = op_func(s, site_idx)
+
+                    for i in range(len(new_states)):
+                        new_state       = new_states[i]
+                        val             = values[i]
+                        fourier_val     = val * c_site
+                        if abs(fourier_val) < 1e-15:
+                            continue
+                        
+                        for h in range(n_group):
+                            s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
+                            idx = repr_map_out[s_out]
+                            if idx == _INVALID_REPR_IDX_NB:
+                                continue
+                            if representative_list_out[idx] != s_out:
+                                continue
+                            
+                            norm_new = normalization_out[idx]
+                            if norm_new == 0.0:
+                                continue
+                            
+                            w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
+                            factor  = fourier_val * w_g * w_h
+
+                            for b in range(n_batch):
+                                vecs_out[idx, b] += factor * vecs_in[k, b]
+        return
+
     n_threads           = thread_buffers.shape[0]
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
@@ -235,33 +258,25 @@ def _apply_fourier_batch_projected_compact_jit(
                 continue
 
             for g in range(n_group):
-                s, ph_g = apply_group_element_compiled(rep, ns, np.int64(g), n_ops, op_code, arg0, arg1,
-                    trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
-
+                s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
                 w_g = np.conj(chi_in[g]) * ph_g / norm_k 
 
-                # Sum over sites for Fourier
                 for site_idx in range(n_sites):
                     c_site = phases[site_idx]
-                    
                     new_states, values = op_func(s, site_idx)
 
                     for i in range(len(new_states)):
                         new_state = new_states[i]
                         val       = values[i]
-                        
                         fourier_val = val * c_site
                         if abs(fourier_val) < 1e-15:
                             continue
                         
                         for h in range(n_group):
-                            s_out, ph_h = apply_group_element_compiled(new_state, ns, np.int64(h), n_ops, op_code, arg0, arg1,
-                                                trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
-                            
+                            s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
                             idx = repr_map_out[s_out]
                             if idx == _INVALID_REPR_IDX_NB:
                                 continue
-                            
                             if representative_list_out[idx] != s_out:
                                 continue
                             
@@ -269,7 +284,7 @@ def _apply_fourier_batch_projected_compact_jit(
                             if norm_new == 0.0:
                                 continue
                             
-                            w_h     = np.conj(chi_out[h]) * ph_h * inv_n_group / norm_new
+                            w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
                             factor  = fourier_val * w_g * w_h
 
                             for b in range(actual_w):
@@ -297,27 +312,18 @@ def _build_sparse_projected_jit(
         
         ns                      : np.int64,
         n_group                 : np.int64,
-        n_ops                   : np.ndarray,
-        op_code                 : np.ndarray,
-        arg0                    : np.ndarray,
-        arg1                    : np.ndarray,
-        chi_in                  : np.ndarray,
-        chi_out                 : np.ndarray,
-        
-        trans_perm              : np.ndarray,
-        trans_cross_mask        : np.ndarray,
-        refl_perm               : np.ndarray,
-        inv_perm                : np.ndarray,
-        parity_axis             : np.ndarray,
-        boundary_phase          : np.ndarray,
+        cg_args                 : Tuple,
+        tb_args                 : Tuple,
         local_dim               : np.int64 = 2,
     ):
     '''
     Sparse matrix builder for projected operators.
     '''
     
-    nh_in = len(representative_list_in)
+    nh_in       = len(representative_list_in)
     inv_n_group = 1.0 / float(n_group)
+    chi_in      = cg_args[5]
+    chi_out     = cg_args[6]
     
     for k in range(nh_in):
         rep = np.int64(representative_list_in[k])
@@ -326,8 +332,7 @@ def _build_sparse_projected_jit(
             continue
             
         for g in range(n_group):
-            s, ph_g = apply_group_element_compiled(rep, ns, np.int64(g), n_ops, op_code, arg0, arg1,
-                trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
+            s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
             
             w_g = np.conj(chi_in[g]) * ph_g / norm_k
             
@@ -340,8 +345,7 @@ def _build_sparse_projected_jit(
                     continue
                 
                 for h in range(n_group):
-                    s_out, ph_h = apply_group_element_compiled(new_state, ns, np.int64(h), n_ops, op_code, arg0, arg1,
-                        trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
+                    s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
                     
                     idx = repr_map_out[s_out]
                     if idx == _INVALID_REPR_IDX_NB:
@@ -382,27 +386,18 @@ def _build_dense_projected_jit(
         
         ns                      : np.int64,
         n_group                 : np.int64,
-        n_ops                   : np.ndarray,
-        op_code                 : np.ndarray,
-        arg0                    : np.ndarray,
-        arg1                    : np.ndarray,
-        chi_in                  : np.ndarray,
-        chi_out                 : np.ndarray,
-        
-        trans_perm              : np.ndarray,
-        trans_cross_mask        : np.ndarray,
-        refl_perm               : np.ndarray,
-        inv_perm                : np.ndarray,
-        parity_axis             : np.ndarray,
-        boundary_phase          : np.ndarray,
+        cg_args                 : Tuple,
+        tb_args                 : Tuple,
         local_dim               : np.int64 = 2,
     ):
     '''
     Dense matrix builder for projected operators.
     '''
     
-    nh_in = len(representative_list_in)
+    nh_in       = len(representative_list_in)
     inv_n_group = 1.0 / float(n_group)
+    chi_in      = cg_args[5]
+    chi_out     = cg_args[6]
     
     for k in range(nh_in):
         rep = np.int64(representative_list_in[k])
@@ -411,8 +406,7 @@ def _build_dense_projected_jit(
             continue
             
         for g in range(n_group):
-            s, ph_g = apply_group_element_compiled(rep, ns, np.int64(g), n_ops, op_code, arg0, arg1,
-                trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
+            s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
             
             w_g = np.conj(chi_in[g]) * ph_g / norm_k
             
@@ -425,8 +419,7 @@ def _build_dense_projected_jit(
                     continue
                 
                 for h in range(n_group):
-                    s_out, ph_h = apply_group_element_compiled(new_state, ns, np.int64(h), n_ops, op_code, arg0, arg1,
-                        trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
+                    s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
                     
                     idx = repr_map_out[s_out]
                     if idx == _INVALID_REPR_IDX_NB:

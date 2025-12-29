@@ -33,7 +33,7 @@ except ImportError:
 # ------------------------------------------------------------------------------------------
 
 try:
-    from QES.Algebra.Symmetries.symmetry_container import _binary_search_representative_list, _INVALID_REPR_IDX_NB
+    from QES.Algebra.Symmetries.symmetry_container import _binary_search_representative_list, _INVALID_REPR_IDX_NB, _NUMBA_OVERHEAD_SIZE
 except ImportError as e:
     raise ImportError("QES.Algebra.Symmetries.symmetry_container module is required for matrix building: " + str(e))
 
@@ -782,6 +782,21 @@ def _apply_op_batch_jit(
     '''
     
     nh, n_batch         = vecs_in.shape
+    
+    # Fast path for small Hilbert spaces to avoid parallel overhead
+    if nh <= _NUMBA_OVERHEAD_SIZE:
+        for k in range(nh):
+            state               = np.int64(k)
+            new_states, values  = op_func(state, *args)
+            for i in range(len(new_states)):
+                target_idx      = new_states[i]
+                val             = values[i]
+                if abs(val) < 1e-15: continue
+                if 0 <= target_idx < nh:
+                    for b in range(n_batch):
+                        vecs_out[target_idx, b] += val * vecs_in[k, b]
+        return 
+
     n_threads           = thread_buffers.shape[0]
     
     # We process the batch in small chunks to prevent VRAM/RAM explosion.
@@ -876,6 +891,25 @@ def _apply_fourier_batch_jit(
     None (results are written to vecs_out)
     '''
     
+    if vecs_in.shape[0] <= _NUMBA_OVERHEAD_SIZE:
+        nh, n_batch     = vecs_in.shape
+        n_sites         = len(phases)
+        for k in range(nh):
+            state       = k
+            for site_idx in range(n_sites):
+                c_site              = phases[site_idx]
+                new_states, values  = op_func(state, site_idx)
+                for j in range(len(new_states)):
+                    new_state       = new_states[j]
+                    val             = values[j]
+                    factor          = val * c_site
+                    if abs(factor) < 1e-15: continue
+                    target_idx      = new_state
+                    if 0 <= target_idx < nh:
+                        for b in range(n_batch):
+                            vecs_out[target_idx, b] += factor * vecs_in[k, b]
+        return
+    
     nh, n_batch     = vecs_in.shape
     n_sites         = len(phases)
     n_threads       = thread_buffers.shape[0]
@@ -932,11 +966,7 @@ def _apply_op_batch_compact_jit(
         vecs_out            : np.ndarray,
         op_func             : Callable,
         args                : Tuple,
-        representative_list : np.ndarray,
-        normalization       : np.ndarray,
-        repr_map            : np.ndarray,
-        phase_idx           : np.ndarray,
-        phase_table         : np.ndarray,
+        basis_args          : Tuple,        # (rep_list, norm, repr_map, p_idx, p_table)
         thread_buffers      : np.ndarray,
         chunk_size          : int = 6,
     ) -> None:
@@ -944,7 +974,32 @@ def _apply_op_batch_compact_jit(
     Jitted batch operator application using CompactSymmetryData for O(1) lookups.
     '''
     
-    nh, n_batch         = vecs_in.shape
+    nh, n_batch = vecs_in.shape
+    representative_list, normalization, repr_map, phase_idx, phase_table = basis_args
+    
+    # Fast path for small Hilbert spaces to avoid parallel overhead
+    if nh <= _NUMBA_OVERHEAD_SIZE:
+        for k in range(nh):
+            state               = representative_list[k]
+            norm_k              = normalization[k]
+            new_states, values  = op_func(state, *args)
+            for i in range(len(new_states)):
+                new_state   = new_states[i]
+                val         = values[i]
+                if abs(val) < 1e-15:    
+                    continue
+                idx         = repr_map[new_state]
+                if idx == _INVALID_REPR_IDX_NB: 
+                    continue
+                pidx        = phase_idx[new_state]
+                phase       = phase_table[pidx]
+                norm_new    = normalization[idx]
+                sym_factor  = np.conj(phase) * (norm_new / norm_k)
+                factor      = val * sym_factor
+                for b in range(n_batch):
+                    vecs_out[idx, b] += factor * vecs_in[k, b]
+        return
+
     n_threads           = thread_buffers.shape[0]
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
@@ -999,11 +1054,7 @@ def _apply_fourier_batch_compact_jit(
         vecs_out            : np.ndarray,
         phases              : np.ndarray,
         op_func             : Callable,
-        representative_list : np.ndarray,
-        normalization       : np.ndarray,
-        repr_map            : np.ndarray,
-        phase_idx           : np.ndarray,
-        phase_table         : np.ndarray,
+        basis_args          : Tuple,
         thread_buffers      : np.ndarray,
         chunk_size          : int = 6
     ) -> None:
@@ -1011,7 +1062,34 @@ def _apply_fourier_batch_compact_jit(
     Jitted batch Fourier transform using CompactSymmetryData for O(1) lookups.
     '''
     
-    nh, n_batch     = vecs_in.shape
+    nh, n_batch         = vecs_in.shape
+    representative_list, normalization, repr_map, phase_idx, phase_table = basis_args
+
+    if nh <= _NUMBA_OVERHEAD_SIZE:
+        for k in range(nh):
+            state               = representative_list[k]
+            norm_k              = normalization[k]
+            n_sites             = len(phases)
+            for site_idx in range(n_sites):
+                c_site              = phases[site_idx]
+                new_states, values  = op_func(state, site_idx)
+                for j in range(len(new_states)):
+                    new_state       = new_states[j]
+                    val             = values[j]
+                    factor          = val * c_site 
+                    if abs(factor) < 1e-15: continue
+                    idx             = repr_map[new_state]
+                    if idx == _INVALID_REPR_IDX_NB:
+                        continue
+                    pidx        = phase_idx[new_state]
+                    phase       = phase_table[pidx]
+                    norm_new    = normalization[idx]
+                    sym_factor  = np.conj(phase) * (norm_new / norm_k)
+                    total_factor= factor * sym_factor
+                    for b in range(n_batch):
+                        vecs_out[idx, b] += total_factor * vecs_in[k, b]
+        return
+    
     n_sites         = len(phases)
     n_threads       = thread_buffers.shape[0]
     chunk_size      = min(chunk_size, n_batch)
@@ -1094,42 +1172,25 @@ def canonicalize_args(args):
 
     return tuple(out)
 
-@numba.njit(cache=True)
+@numba.njit
 def _wrap_full(vecs_in, vecs_out, op_func, op_args, thread_buffers, chunk_size):
     # full-space kernel: no kwargs, no closures
     _apply_op_batch_jit(vecs_in, vecs_out, op_func, op_args, thread_buffers, chunk_size)
 
-@numba.njit(cache=True)
-def _wrap_compact(vecs_in, vecs_out, op_func, op_args,
-                  representative_list, normalization, repr_map, phase_idx, phase_table,
-                  thread_buffers, chunk_size):
-    _apply_op_batch_compact_jit(vecs_in, vecs_out, op_func, op_args,
-                                representative_list, normalization, repr_map, phase_idx, phase_table,
-                                thread_buffers, chunk_size)
+@numba.njit
+def _wrap_compact(vecs_in, vecs_out, op_func, op_args, basis_args, thread_buffers, chunk_size):
+    _apply_op_batch_compact_jit(vecs_in, vecs_out, op_func, op_args, basis_args, thread_buffers, chunk_size)
 
 try:
     from QES.Algebra.Symmetries.jit.matrix_builder_jit import _apply_op_batch_projected_compact_jit
 
-    @numba.njit(cache=True)
-    def _wrap_projected(vecs_in, vecs_out, op_func, op_args,
-                        repr_list_in, norm_in,
-                        repr_map_out, norm_out, repr_list_out,
-                        ns_val, n_group, n_ops, op_code, arg0, arg1,
-                        chi_in, chi_out,
-                        trans_perm, trans_cross_mask, refl_perm, inv_perm,
-                        parity_axis, boundary_phase,
-                        thread_buffers, chunk_size, local_dim):
-        _apply_op_batch_projected_compact_jit(
-            vecs_in, vecs_out, op_func, op_args,
-            repr_list_in, norm_in, repr_map_out, norm_out, repr_list_out,
-            ns_val, n_group, n_ops, op_code, arg0, arg1, chi_in, chi_out,
-            trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase,
-            thread_buffers, chunk_size, local_dim)
+    @numba.njit
+    def _wrap_projected(vecs_in, vecs_out, op_func, op_args, basis_in_args, basis_out_args, cg_args, tb_args, ns_val, thread_buffers, chunk_size, local_dim):
+        _apply_op_batch_projected_compact_jit(vecs_in, vecs_out, op_func, op_args, basis_in_args, basis_out_args, cg_args, tb_args, ns_val, thread_buffers, local_dim, chunk_size)
         
 except ImportError:
     _apply_op_batch_projected_compact_jit   = None
     _wrap_projected                         = None
-
 
 # -------------------------------------------------------------------------------
 #! Symmetry rotation matrix construction
