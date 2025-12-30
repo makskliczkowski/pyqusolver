@@ -578,7 +578,7 @@ class OperatorModule:
                 
                 # Accumulate Magnetization / Susceptibility Terms (Single Site)
                 for comp in needed_components:
-                    buf                                     = buf_corr[:, :curr_width]
+                    buf = buf_corr[:, :curr_width]
                     buf.fill(0)
                     single_ops[comp].matvec(ev_batch, i, hilbert_in=hilbert, out=buf, thread_buffer=thread_buf_cache, chunk_size=JIT_CHUNK_SIZE)
                     
@@ -606,7 +606,7 @@ class OperatorModule:
         values['magnetization'] = {}
         for comp in needed_components:
             # Diagonal of total spin matrix / ns
-            values['magnetization'][comp] = np.mean(mag_ops_matrix[comp], axis=0)
+            values['magnetization'][comp] = np.diag(mag_ops_matrix[comp]) / ns
         
         # Post-Processing: Susceptibilities
         # Fidelity Susceptibility

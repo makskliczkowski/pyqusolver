@@ -1692,8 +1692,8 @@ class GeneralMatrix(spla.LinearOperator):
 ║          Base class for matrix operations, diagonalization, and              ║
 ║          spectral analysis in quantum systems.                               ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Inheritance: GeneralMatrix → scipy.sparse.linalg.LinearOperator            ║
-║  Subclasses:  Operator → Hamiltonian                                         ║
+║  Inheritance: GeneralMatrix -> scipy.sparse.linalg.LinearOperator            ║
+║  Subclasses:  Operator -> Hamiltonian                                         ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Quick Start:                                                                ║
 ║    1. Build the matrix:     obj.build()                                      ║

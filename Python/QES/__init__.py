@@ -31,51 +31,9 @@ __email__           = "maksymilian.kliczkowski@pwr.edu.pl"
 __license__         = "CC-BY-4.0"
 __description__     = "Quantum Eigen Solver: Comprehensive framework for quantum eigenvalue problem solving"
 
-__all__ = [
-    # RNG / backend helpers (public stable API surface)
-    "qes_reseed",
-    "qes_next_key",
-    "qes_split_keys",
-    "qes_seed_scope",
-    # Discovery utilities
-    "list_modules",
-    "describe_module",
-    # --- Convenience API exports (lazy) ---
-    # Core
-    "HilbertSpace",
-    "Hamiltonian",
-    "Operator",
-    # Solvers
-    "NQS",
-    "MonteCarloSolver",
-    "Sampler",
-    # Networks
-    "RBM",
-    "CNN",
-    "ResNet",
-    "Autoregressive",
-    "SimpleNet",
-    "choose_network",
-    # Global accessor re-exports
-    "get_logger",
-    "get_backend_manager",
-    "get_numpy_rng",
-    "reseed_all",
-    "next_jax_key",
-    "split_jax_keys",
-    # Meta
-    "__version__",
-    "__author__",
-    "__email__",
-    "__license__",
-    "__description__",
-]
-
-####################################################################################################
-
 import importlib
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 
 # Centralized globals (lazy singletons)
 from .qes_globals import (
@@ -118,68 +76,154 @@ def qes_seed_scope(seed: int, *, touch_numpy_global: bool = False, touch_python_
         yield suite
 
 # ----------------------------------------------------------------------------
-# Lazy access to top-level subpackages and common classes (keeps `import QES` light)
+# Lazy Import Configuration
 # ----------------------------------------------------------------------------
 
-# Top-level packages accessible as `QES.Submodule`
-_SUBMODULES: Dict[str, str] = {
-    'Algebra'           : 'QES.Algebra',
-    'NQS'               : 'QES.NQS',
-    'Solver'            : 'QES.Solver',
-    'general_python'    : 'QES.general_python',
-}
+# Mapping of attribute names to (module_relative_path, attribute_name_in_module)
+# If attribute_name_in_module is None, the module itself is imported.
+_LAZY_IMPORTS = {
+    # Top-level packages
+    'Algebra'           : ('.Algebra',          None),
+    'NQS'               : ('.NQS',              None),
+    'Solver'            : ('.Solver',           None),
+    'general_python'    : ('.general_python',   None),
 
-# Specific classes/functions accessible as `from QES import Object` or `QES.Object`
-_API_EXPORTS: Dict[str, str] = {
-    # Core from QES.Algebra
-    'HilbertSpace'      : 'QES.Algebra.hilbert',
-    'Hamiltonian'       : 'QES.Algebra.hamil',
-    'Operator'          : 'QES.Algebra.Operator.operator',
-    # Core from QES.NQS
-    'NQS'               : 'QES.NQS.nqs',
-    # Core from QES.Solver
-    'MonteCarloSolver'  : 'QES.Solver.MonteCarlo.montecarlo',
-    'Sampler'           : 'QES.Solver.MonteCarlo.sampler',
+    # Core classes from QES.Algebra
+    'HilbertSpace'      : ('.Algebra.hilbert',          'HilbertSpace'),
+    'Hamiltonian'       : ('.Algebra.hamil',            'Hamiltonian'),
+    'Operator'          : ('.Algebra.Operator.operator','Operator'),
+
+    # Core classes from QES.NQS
+    'NQS_Model'         : ('.NQS.nqs',                  'NQS'), 
+    
+    # Core classes from QES.Solver
+    'MonteCarloSolver'  : ('.Solver.MonteCarlo.montecarlo', 'MonteCarloSolver'),
+    'Sampler'           : ('.Solver.MonteCarlo.sampler',    'Sampler'),
+
     # Networks from QES.general_python.ml
-    'RBM'               : 'QES.general_python.ml.net_impl.networks.net_rbm',
-    'CNN'               : 'QES.general_python.ml.net_impl.networks.net_cnn',
-    'ResNet'            : 'QES.general_python.ml.net_impl.networks.net_res',
-    'Autoregressive'    : 'QES.general_python.ml.net_impl.networks.net_autoregressive',
-    'SimpleNet'         : 'QES.general_python.ml.net_impl.net_simple',
-    'choose_network'    : 'QES.general_python.ml.networks',
+    'RBM'               : ('.general_python.ml.net_impl.networks.net_rbm',             'RBM'),
+    'CNN'               : ('.general_python.ml.net_impl.networks.net_cnn',             'CNN'),
+    'ResNet'            : ('.general_python.ml.net_impl.networks.net_res',             'ResNet'),
+    'Autoregressive'    : ('.general_python.ml.net_impl.networks.net_autoregressive',  'Autoregressive'),
+    'SimpleNet'         : ('.general_python.ml.net_impl.net_simple',                   'SimpleNet'),
+    'choose_network'    : ('.general_python.ml.networks',                              'choose_network'),
+
+    # Common Utilities (Lazy & Flattened)
+    'log_memory_status'         : ('.general_python.common',    'log_memory_status'),
+    'check_memory_for_operation': ('.general_python.common',    'check_memory_for_operation'),
+    'Timer'                     : ('.general_python.common',    'Timer'),
+
+    # Aliases for general_python modules (convenience)
+    'gp_ml'                     : ('.general_python.ml',        None),
+    'gp_algebra'                : ('.general_python.algebra',   None),
+    'gp_common'                 : ('.general_python.common',    None),
+    'gp_lattices'               : ('.general_python.lattices',  None),
+    'gp_maths'                  : ('.general_python.maths',     None),
+    'gp_physics'                : ('.general_python.physics',   None),
+    
+    # Deeper aliases
+    'gp_networks'               : ('.general_python.ml.networks', None),
+    'gp_flog'                   : ('.general_python.common.flog', None),
 }
 
-# Deeper submodules accessible as `QES.alias`, e.g., `QES.gp_ml`
-_LAZY_MODULES: Dict[str, str] = {
-    # general_python modules
-    'gp_ml'                     : 'QES.general_python.ml',
-    'gp_algebra'                : 'QES.general_python.algebra',
-    'gp_common'                 : 'QES.general_python.common',
-    'gp_lattices'               : 'QES.general_python.lattices',
-    'gp_maths'                  : 'QES.general_python.maths',
-    'gp_physics'                : 'QES.general_python.physics',
-    # ML submodules
-    'gp_activation_functions'   : 'QES.general_python.ml.net_impl.activation_functions',
-    'gp_interface_net_flax'     : 'QES.general_python.ml.net_impl.interface_net_flax',
-    'gp_net_general'            : 'QES.general_python.ml.net_impl.net_general',
-    'gp_networks'               : 'QES.general_python.ml.networks',
-    'gp_schedulers'             : 'QES.general_python.ml.schedulers',
-    # Common utilities
-    'gp_flog'                   : 'QES.general_python.common.flog',
-    'gp_timer'                  : 'QES.general_python.common.timer',
-    'gp_binary'                 : 'QES.general_python.common.binary',
-    'gp_directories'            : 'QES.general_python.common.directories',
-}
+# Cache for lazily loaded modules/attributes
+_LAZY_CACHE = {}
+
+if TYPE_CHECKING:
+    from . import Algebra
+    from . import NQS
+    from . import Solver
+    from . import general_python
+    
+    # Core
+    from .Algebra.hilbert import HilbertSpace
+    from .Algebra.hamil import Hamiltonian
+    from .Algebra.Operator.operator import Operator
+    
+    # Solver
+    from .Solver.MonteCarlo.montecarlo                              import MonteCarloSolver
+    from .Solver.MonteCarlo.sampler                                 import Sampler
+    
+    # Networks
+    from .general_python.ml.net_impl.networks.net_rbm               import RBM
+    from .general_python.ml.net_impl.networks.net_cnn               import CNN
+    from .general_python.ml.net_impl.networks.net_res               import ResNet
+    from .general_python.ml.net_impl.networks.net_autoregressive    import Autoregressive
+    from .general_python.ml.net_impl.net_simple                     import SimpleNet
+    from .general_python.ml.networks                                import choose_network
+    
+    # Utilities
+    from .general_python.common.memory                              import log_memory_status, check_memory_for_operation
+    from .general_python.common.timer                               import Timer
+
+    # Aliases
+    from .general_python import ml as gp_ml
+    from .general_python import algebra as gp_algebra
+    from .general_python import common as gp_common
+    from .general_python import lattices as gp_lattices
+    from .general_python import maths as gp_maths
+    from .general_python import physics as gp_physics
+
+
+def _lazy_import(name: str):
+    """
+    Lazily import a module or attribute based on _LAZY_IMPORTS configuration.
+    """
+    if name in _LAZY_CACHE:
+        return _LAZY_CACHE[name]
+    
+    if name not in _LAZY_IMPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    
+    module_path, attr_name = _LAZY_IMPORTS[name]
+    
+    try:
+        # Import the module
+        module = importlib.import_module(module_path, package=__name__)
+        
+        # If attr_name is None, we want the module itself
+        if attr_name is None:
+            result = module
+        else:
+            result = getattr(module, attr_name)
+        
+        _LAZY_CACHE[name] = result
+        return result
+    except ImportError as e:
+        raise ImportError(f"Failed to import lazy module '{name}' from '{module_path}': {e}") from e
+
 
 def __getattr__(name: str) -> Any:  # PEP 562
-    if name in _SUBMODULES:
-        return importlib.import_module(_SUBMODULES[name])
-    if name in _API_EXPORTS:
-        mod = importlib.import_module(_API_EXPORTS[name])
-        return getattr(mod, name)
-    if name in _LAZY_MODULES:
-        return importlib.import_module(_LAZY_MODULES[name])
-    raise AttributeError(f"module 'QES' has no attribute {name!r}")
+    return _lazy_import(name)
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
+
+
+__all__ = [
+    # RNG / backend helpers (public stable API surface)
+    "qes_reseed",
+    "qes_next_key",
+    "qes_split_keys",
+    "qes_seed_scope",
+    # Discovery utilities
+    "list_modules",
+    "describe_module",
+    # Global accessor re-exports
+    "get_logger",
+    "get_backend_manager",
+    "get_numpy_rng",
+    "reseed_all",
+    "next_jax_key",
+    "split_jax_keys",
+    # Meta
+    "__version__",
+    "__author__",
+    "__email__",
+    "__license__",
+    "__description__",
+] + list(_LAZY_IMPORTS.keys())
 
 # -------------------------------------------------------------------------------------------------
 #! End of QES package initialization

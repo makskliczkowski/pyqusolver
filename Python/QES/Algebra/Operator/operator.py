@@ -754,7 +754,7 @@ class Operator(GeneralMatrix):
         This is useful for iterative diagonalization methods.
         '''        
         def _matvec(x, *args):
-            return self.matvec(x, *args, hilbert=self._hilbert_space)
+            return self.matvec(x, *args, hilbert_in=self._hilbert_space)
         return _matvec
 
     # -------------------------------
@@ -1789,7 +1789,7 @@ class Operator(GeneralMatrix):
 ║           Quantum operator class for acting on basis states.                 ║
 ║       Supports integer, NumPy, and JAX representations.                      ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Inheritance: Operator → GeneralMatrix → LinearOperator                      ║
+║  Inheritance: Operator -> GeneralMatrix -> LinearOperator                      ║
 ║  Subclasses:  Hamiltonian                                                    ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Quick Start:                                                                ║

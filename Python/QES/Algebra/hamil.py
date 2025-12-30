@@ -1397,7 +1397,7 @@ class Hamiltonian(BasisAwareOperator):
         
         # Prepare solver kwargs (remove our custom parameters)
         solver_kwargs   = {key: val for key, val in kwargs.items() 
-                        if key not in ['method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which']}
+                        if key not in ['method', 'backend', 'use_scipy', 'hilbert', 'store_basis', 'hermitian', 'k', 'which']}
         
         matrix_to_diag  = self._hamil
         if method == 'exact':

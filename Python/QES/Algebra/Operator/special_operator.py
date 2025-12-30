@@ -1385,7 +1385,7 @@ class SpecialOperator(Operator, ABC):
 ║         'Sx/L': 11, 'Sy/L': 12, 'Sz/L': 13, ...                              ║
 ║         'SxSy/C': 21, 'SzSz/C': 23, ...}                                     ║
 ║      Set by: setup_instruction_codes() from operator module                  ║
-║      Used by: _resolve_operator_code() to translate names → codes            ║
+║      Used by: _resolve_operator_code() to translate names -> codes            ║
 ║                                                                              ║
 ║  _instr_codes : List[int]  [INSTANCE]                                        ║
 ║      List of operator codes actually added to THIS Hamiltonian.              ║
@@ -1397,7 +1397,7 @@ class SpecialOperator(Operator, ABC):
 ║  _instr_max_out : int  [BUFFER SIZE]                                         ║
 ║      Maximum output states the composition function can produce.             ║
 ║      Formula: len(_instr_codes) + 1                                          ║
-║      Reason: Each operator → at most 1 off-diagonal + 1 diagonal sum         ║
+║      Reason: Each operator -> at most 1 off-diagonal + 1 diagonal sum         ║
 ║                                                                              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  WORKFLOW:                                                                   ║
@@ -1448,7 +1448,7 @@ class SpecialOperator(Operator, ABC):
 ║  Registration Variables:                                                     ║
 ║    _custom_op_registry : Dict[int, Callable]                                 ║
 ║        Maps custom codes (≥1000) to numba-compiled operator functions        ║
-║        Function signature: (state: int, ns: int, sites: tuple) → (s', c)     ║
+║        Function signature: (state: int, ns: int, sites: tuple) -> (s', c)     ║
 ║                                                                              ║
 ║    _custom_op_arity : Dict[int, int]                                         ║
 ║        Maps custom codes to number of sites they act on                      ║
@@ -1546,7 +1546,7 @@ class SpecialOperator(Operator, ABC):
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  INSTRUCTION CODE SYSTEM                                                     ║
 ║  ─────────────────────────────────────────────────────────────────────────── ║
-║  _lookup_codes      : Dict[str,int] - Catalog of operator name → code        ║
+║  _lookup_codes      : Dict[str,int] - Catalog of operator name -> code        ║
 ║  _instr_codes       : List[int]     - Codes for operators in this instance   ║
 ║  _instr_coeffs      : List[float]   - Coefficients for each operator         ║
 ║  _instr_sites       : List[List]    - Sites for each operator (padded)       ║
@@ -1557,8 +1557,8 @@ class SpecialOperator(Operator, ABC):
 ║                                                                              ║
 ║  CUSTOM OPERATORS                                                            ║
 ║  ─────────────────────────────────────────────────────────────────────────── ║
-║  _custom_op_registry : Dict[int,Callable] - Custom code → function           ║
-║  _custom_op_arity    : Dict[int,int]      - Custom code → num sites          ║
+║  _custom_op_registry : Dict[int,Callable] - Custom code -> function           ║
+║  _custom_op_arity    : Dict[int,int]      - Custom code -> num sites          ║
 ║  _custom_op_counter  : int                - Next custom code (≥1000)         ║
 ║  _has_custom_ops     : bool               - Any custom ops registered?       ║
 ║                                                                              ║
@@ -1592,8 +1592,8 @@ class SpecialOperator(Operator, ABC):
 ║     Abstract base for operators with instruction code composition system.    ║
 ║      Enables efficient JIT-compiled Hamiltonian matrix construction.         ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Inheritance: SpecialOperator → Operator → GeneralMatrix → LinearOperator   ║
-║  Extended by: BasisAwareOperator → Hamiltonian → Model Subclasses            ║
+║  Inheritance: SpecialOperator -> Operator -> GeneralMatrix -> LinearOperator   ║
+║  Extended by: BasisAwareOperator -> Hamiltonian -> Model Subclasses            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Core Concept: Instruction Code System                                       ║
 ║    • Each operator type has an integer code (e.g., Sx=1, Sz=3, SzSz=23)      ║

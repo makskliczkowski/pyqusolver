@@ -631,10 +631,10 @@ USAGE
 JIT FUNCTIONS (numba.njit compatible)
 -------------------------------------
     from QES.Algebra.Symmetries import (
-        _compact_get_sym_factor,   # (state, k, ...) → (idx, sym_factor)
-        _compact_is_in_sector,     # (state, repr_map) → bool
-        _compact_get_repr_idx,     # (state, repr_map) → int
-        _compact_get_phase,        # (state, phase_idx, phase_table) → complex
+        _compact_get_sym_factor,   # (state, k, ...) -> (idx, sym_factor)
+        _compact_is_in_sector,     # (state, repr_map) -> bool
+        _compact_get_repr_idx,     # (state, repr_map) -> int
+        _compact_get_phase,        # (state, phase_idx, phase_table) -> complex
     )
 ''',
 
@@ -658,7 +658,7 @@ SYMMETRY DATA
     .normalization              : Alias for representative_norms
     .compact_symmetry_data      : CompactSymmetryData structure (primary)
     .has_compact_symmetry_data  : bool                  - whether compact data exists
-    .repr_idx                   : uint32[nh_full]       - state → repr index
+    .repr_idx                   : uint32[nh_full]       - state -> repr index
     .repr_phase                 : complex128[nh_full]   - symmetry phases
 
 -----------

@@ -3298,6 +3298,68 @@ class NQS(MonteCarloSolver):
         S2                          = -jnp.log(swap_mean)
         return float(jnp.real(S2))
 
+    def compute_topological_entropy(self, radius: Optional[float] = None, **renyi_kwargs) -> dict:
+        """
+        Compute the Topological Entanglement Entropy (gamma) using the Kitaev-Preskill construction.
+        
+        Uses the lattice geometry to define regions A, B, C.
+        Formula: gamma = S_A + S_B + S_C - S_AB - S_BC - S_AC + S_ABC
+        
+        Parameters
+        ----------
+        radius : float, optional
+            Radius for region definition (passed to region_kitaev_preskill).
+            Defaults to avoiding system wrapping if None.
+        **renyi_kwargs : dict
+            Arguments passed to compute_renyi2 (e.g., num_samples, num_chains).
+            
+        Returns
+        -------
+        dict
+            Dictionary containing 'gamma' and individual entropies.
+        """
+        if not hasattr(self._model, 'lattice') or self._model.lattice is None:
+            raise ValueError("Lattice is required for topological entropy calculation.")
+            
+        # Get regions
+        regions = self._model.lattice.regions.region_kitaev_preskill(radius=radius)
+        
+        entropies = {}
+        # Keys required for Kitaev-Preskill: A, B, C, AB, BC, AC, ABC
+        required_keys = ['A', 'B', 'C', 'AB', 'BC', 'AC', 'ABC']
+        
+        self.log(f"Computing Topological Entropy (Kitaev-Preskill)...", lvl=1, color='blue')
+        
+        for key in required_keys:
+            if key not in regions:
+                continue
+                
+            region_indices = regions[key]
+            if len(region_indices) == 0:
+                entropies[key] = 0.0
+                continue
+                
+            self.log(f"  Computing S2 for region {key} (size={len(region_indices)})...", lvl=2)
+            # Use static compute_renyi2
+            s2 = NQS.compute_renyi2(self, region=region_indices, **renyi_kwargs)
+            entropies[key] = s2
+            
+        # Calculate Gamma
+        # gamma = S_A + S_B + S_C - S_AB - S_BC - S_AC + S_ABC
+        try:
+            gamma = (entropies['A'] + entropies['B'] + entropies['C'] 
+                    - entropies['AB'] - entropies['BC'] - entropies['AC'] 
+                    + entropies['ABC'])
+        except KeyError as e:
+            self.log(f"Missing region for TEE calculation: {e}", lvl=1, color='red')
+            gamma = float('nan')
+            
+        return {
+            'gamma': gamma,
+            'entropies': entropies,
+            'regions': regions
+        }
+
     #####################################
     #! SAMPLES FOR MCMC, IF APPLICABLE
     #####################################

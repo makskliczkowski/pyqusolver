@@ -167,8 +167,8 @@ hamil_topics = {
 ║                                                                              ║
 ║  IMPORTANT: Matrix Reference Override                                        ║
 ║    Hamiltonian overrides _get_matrix_reference() to auto-select:             ║
-║      • Many-body (is_manybody=True)  → uses _hamil (full many-body matrix)   ║
-║      • Quadratic (is_manybody=False) → uses _hamil_sp (single-particle)      ║
+║      • Many-body (is_manybody=True)  -> uses _hamil (full many-body matrix)   ║
+║      • Quadratic (is_manybody=False) -> uses _hamil_sp (single-particle)      ║
 ║    This ensures diag, trace, norms, etc. use the correct matrix!             ║
 ║                                                                              ║
 ║  Use Operator.help() or GeneralMatrix.help() for full inherited methods.     ║
@@ -182,7 +182,7 @@ hamil_overview = r"""
 ║         Quantum Hamiltonian class for many-body and quadratic systems.       ║
 ║            Supports diagonalization, local energy, and k-space.              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Inheritance: Hamiltonian → Operator → GeneralMatrix → LinearOperator       ║
+║  Inheritance: Hamiltonian -> Operator -> GeneralMatrix -> LinearOperator       ║
 ║  Model Subclasses: HeisenbergKitaev, TransverseIsing, FreeFermions, ...      ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Quick Start:                                                                ║
