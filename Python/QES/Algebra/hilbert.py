@@ -1242,6 +1242,8 @@ class HilbertSpace(BaseHilbertSpace):
     @property
     def repr_norms(self):                       return self.representative_norms
     @property
+    def compact_symmetry_data(self):            return self._sym_container.compact_data if self._sym_container else None
+    @property
     def dtype(self):                            return self._dtype
         
     @property

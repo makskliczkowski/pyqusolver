@@ -1317,13 +1317,15 @@ class SymmetryContainer:
         if len(element) == 0:
             return 1.0  # Identity element
         
-        from collections import Counter
-        
-        # Count how many times each generator appears
+        # We assume the group is Abelian and generators commute
         character = 1.0
-        op_counts = Counter(element)
         
-        for op, count in op_counts.items():
+        for entry in element:
+            if isinstance(entry, tuple):
+                op, count = entry
+            else:
+                op, count = entry, 1
+                
             # Find the sector for this operator
             sector_value    = None
             op_in           = op[0] if isinstance(op, tuple) else op
@@ -1336,7 +1338,6 @@ class SymmetryContainer:
                 continue
             
             # Use polymorphic get_character method from the operator
-            # This delegates the character computation to the symmetry class itself
             character *= op_in.get_character(count, sector_value, lattice=self.lattice, ns=self.ns)
         
         return character

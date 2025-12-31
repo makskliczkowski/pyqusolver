@@ -38,7 +38,59 @@ except ImportError as e:
 
 # ------------------------------------------------------------------------------------------
 
-@numba.njit(fastmath=True, parallel=True, nogil=True)
+@numba.njit(fastmath=True)
+def _apply_op_batch_projected_compact_seq_jit(
+        vecs_in                 : np.ndarray,          # (nh_in, n_batch)
+        vecs_out                : np.ndarray,          # (nh_out, n_batch)
+        op_func                 : Callable,            # (state, *args) -> (new_states, values)
+        args                    : Tuple,
+
+        # Grouped basis and symmetry data
+        basis_in_args           : Tuple,               # (rep_list_in, norm_in)
+        basis_out_args          : Tuple,               # (repr_map_out, norm_out, rep_list_out)
+        cg_args                 : Tuple,               # (n_group, n_ops, op_code, arg0, arg1, chi_in, chi_out)
+        tb_args                 : Tuple,               # (trans_perm, trans_cross_mask, refl_perm, inv_perm, parity_axis, boundary_phase)
+
+        ns                      : np.int64,
+    ) -> None:
+    ''' Sequential batch operator application in projected compact basis. '''
+    nh_in, n_batch      = vecs_in.shape
+    representative_list_in, normalization_in                    = basis_in_args
+    repr_map_out, normalization_out, representative_list_out    = basis_out_args
+    n_group, _, _, _, _, chi_in, chi_out = cg_args
+    inv_n_group         = 1.0 / float(n_group)
+
+    for k in range(nh_in):
+        rep         = np.int64(representative_list_in[k])
+        norm_k      = normalization_in[k]
+        if norm_k == 0.0: continue
+
+        for g in range(n_group):
+            s, ph_g             = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
+            w_g                 = np.conj(chi_in[g]) * ph_g / norm_k 
+            new_states, values  = op_func(s, *args)
+
+            for i in range(len(new_states)):
+                new_state = new_states[i]
+                val       = values[i]
+                if abs(val) < 1e-15: continue
+                
+                for h in range(n_group):
+                    s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
+                    idx = repr_map_out[s_out]
+                    if idx == _INVALID_REPR_IDX_NB: continue
+                    if representative_list_out[idx] != s_out: continue
+                    
+                    norm_new  = normalization_out[idx]
+                    if norm_new == 0.0: continue
+                    
+                    w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
+                    factor  = val * w_g * w_h
+                    for b in range(n_batch):
+                        vecs_out[idx, b] += factor * vecs_in[k, b]
+
+# @numba.njit(fastmath=True, parallel=True, nogil=True)
+@numba.njit(fastmath=True)
 def _apply_op_batch_projected_compact_jit(
         vecs_in                 : np.ndarray,          # (nh_in, n_batch)
         vecs_out                : np.ndarray,          # (nh_out, n_batch)
@@ -161,7 +213,63 @@ def _apply_op_batch_projected_compact_jit(
             for b in range(actual_w):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
 
-@numba.njit(fastmath=True, parallel=True, nogil=True)
+@numba.njit(fastmath=True)
+def _apply_fourier_batch_projected_compact_seq_jit(
+        vecs_in                 : np.ndarray,          # (nh_in, n_batch)
+        vecs_out                : np.ndarray,          # (nh_out, n_batch)
+        phases                  : np.ndarray,          # (ns,) complex128
+        op_func                 : Callable,            # (state, site_idx) -> (new_states, values)
+
+        # Grouped basis and symmetry data
+        basis_in_args           : Tuple,
+        basis_out_args          : Tuple,
+        cg_args                 : Tuple,
+        tb_args                 : Tuple,
+
+        ns                      : np.int64,
+    ) -> None:
+    ''' Sequential Fourier batch operator application in projected compact basis. '''
+    nh_in, n_batch      = vecs_in.shape
+    n_sites             = len(phases)
+    representative_list_in, normalization_in                    = basis_in_args
+    repr_map_out, normalization_out, representative_list_out    = basis_out_args
+    n_group, _, _, _, _, chi_in, chi_out = cg_args
+    inv_n_group         = 1.0 / float(n_group)
+
+    for k in range(nh_in):
+        rep     = np.int64(representative_list_in[k])
+        norm_k  = normalization_in[k]
+        if norm_k == 0.0: continue
+        for g in range(n_group):
+            s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
+            w_g     = np.conj(chi_in[g]) * ph_g / norm_k 
+
+            for site_idx in range(n_sites):
+                c_site              = phases[site_idx]
+                new_states, values  = op_func(s, site_idx)
+
+                for i in range(len(new_states)):
+                    new_state       = new_states[i]
+                    val             = values[i]
+                    fourier_val     = val * c_site
+                    if abs(fourier_val) < 1e-15: continue
+                    
+                    for h in range(n_group):
+                        s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
+                        idx = repr_map_out[s_out]
+                        if idx == _INVALID_REPR_IDX_NB: continue
+                        if representative_list_out[idx] != s_out: continue
+                        
+                        norm_new = normalization_out[idx]
+                        if norm_new == 0.0: continue
+                        
+                        w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
+                        factor  = fourier_val * w_g * w_h
+                        for b in range(n_batch):
+                            vecs_out[idx, b] += factor * vecs_in[k, b]
+
+# @numba.njit(fastmath=True, parallel=True, nogil=True)
+@numba.njit(fastmath=True)
 def _apply_fourier_batch_projected_compact_jit(
         vecs_in                 : np.ndarray,          # (nh_in, n_batch)
         vecs_out                : np.ndarray,          # (nh_out, n_batch)
@@ -294,7 +402,7 @@ def _apply_fourier_batch_projected_compact_jit(
             for b in range(actual_w):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
 
-@numba.njit(nogil=True)
+@numba.njit
 def _build_sparse_projected_jit(
         rows                    : np.ndarray,
         cols                    : np.ndarray,
@@ -371,7 +479,7 @@ def _build_sparse_projected_jit(
                     
     return data_idx
 
-@numba.njit(nogil=True)
+@numba.njit
 def _build_dense_projected_jit(
         matrix                  : np.ndarray,
         

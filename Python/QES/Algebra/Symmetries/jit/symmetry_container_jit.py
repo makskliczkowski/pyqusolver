@@ -45,7 +45,7 @@ _INT_HUGE               = np.int64(0x7FFFFFFFFFFFFFFF)          # THE HUGEST!!!
 _INVALID_REPR_IDX       = np.iinfo(_REPR_MAP_DTYPE).max         # ~4 billion, marks state not in sector
 _INVALID_PHASE_IDX      = np.iinfo(_PHASE_IDX_DTYPE).max        # 255, marks invalid phase index
 _SYM_NORM_THRESHOLD     = 1e-7
-_NUMBA_OVERHEAD_SIZE    = 8096                                  # Approximate overhead size for Numba functions in bytes
+_NUMBA_OVERHEAD_SIZE    = 2**24                                 # remove threads for small arrays to check
 
 # -----------------------
 #! APPLY GROUP ELEMENT FUNCTION 
@@ -202,7 +202,7 @@ def scan_chunk_find_representatives(
 
         min_state   = _INT_HUGE
         min_g       = -1
-        norm        = 0.0
+        proj        = np.complex128(0.0 + 0.0j)
 
         for g in range(n_group):
             new_state, phase = apply_group_element_fast(state, ns, g, cg_args, tb_args)
@@ -212,9 +212,9 @@ def scan_chunk_find_representatives(
                 min_g     = g
                 
             if new_state == state:
-                norm += np.conj(chi[g]) * phase
+                proj += np.conj(chi[g]) * phase
             
-        if np.abs(norm) > _SYM_NORM_THRESHOLD:
+        if np.abs(proj) > _SYM_NORM_THRESHOLD:
             if min_state == state and min_g != _INVALID_REPR_IDX:
                 repr_chunker[state - start_state] = True
 
