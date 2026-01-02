@@ -65,13 +65,13 @@ def _apply_translation_prim(state: np.int64, ns: np.int64, perm: np.ndarray, cro
 
     for src in range(ns):
         # Check if site `src` is occupied in `state`
-        if (state >> (ns - 1 - src)) & 1:
+        if (state >> src) & 1:
             dest        = perm[src]
-            new_state  |= np.int64(1) << (ns - 1 - dest)
+            new_state  |= np.int64(1) << dest
 
     occ_cross = np.int64(0)
     for src in range(ns):
-        if crossing_mask[src] != 0 and ((state >> (ns - 1 - src)) & 1):
+        if crossing_mask[src] != 0 and ((state >> src) & 1):
             occ_cross += 1
 
     return new_state, occ_cross

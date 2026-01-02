@@ -31,9 +31,9 @@ def _apply_perm_prim(state: np.int64, ns: np.int64, perm: np.ndarray) -> np.int6
     
     new_state = np.int64(0)
     for src in range(ns):
-        if (state >> (ns - 1 - src)) & 1:
+        if (state >> src) & 1:
             dest        = perm[src]
-            new_state  |= np.int64(1) << (ns - 1 - dest)
+            new_state  |= np.int64(1) << dest
     return new_state
 
 class ReflectionSymmetry(SymmetryOperator):

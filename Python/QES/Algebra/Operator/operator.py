@@ -750,12 +750,12 @@ class Operator(GeneralMatrix):
     @property
     def matvec_fun(self):
         '''
-        Returns the matrix-vector multiplication function for the Hamiltonian.
-        This is useful for iterative diagonalization methods.
+        Returns a pre-optimized matrix-vector multiplication function.
+        Pre-calculates the kernel path and pre-canonicalizes arguments to minimize iteration overhead.
         '''        
+        
         def _matvec(x, *args):
-            return self.matvec(x, *args, hilbert_in=self._hilbert_space)
-        return _matvec
+            return self.matvec(x, *args)
 
     # -------------------------------
     
@@ -1137,14 +1137,19 @@ class Operator(GeneralMatrix):
             return cur[:, 0]
         return cur
 
+    # -----------------------------------
+    #! Matrix-vector multiplication
+    # -----------------------------------
+
     def matvec(self, 
             vecs            : Array, 
             *args, 
             hilbert_in      : HilbertSpace  = None, 
             hilbert_out     : HilbertSpace  = None, 
             symmetry_mode   : str           = "auto",
+            multithreaded   : bool          = False,
             out             : Array         = None,
-            thread_buffer   : Array         = None, 
+            thread_buffer   : Array         = None,
             chunk_size      : int           = 1, 
             dtype                           = None) -> Array:
         """
@@ -1214,7 +1219,15 @@ class Operator(GeneralMatrix):
         
         # act on states using the Hilbert space and the operator function
         try:
-            from QES.Algebra.Hilbert.matrix_builder import ensure_thread_buffer, canonicalize_args, _wrap_full, _wrap_compact, _wrap_projected
+            from QES.Algebra.Hilbert.matrix_builder import (
+                ensure_thread_buffer, canonicalize_args, 
+                _apply_op_batch_jit, _apply_op_batch_compact_jit,
+                _apply_op_batch_seq_jit, _apply_op_batch_compact_seq_jit
+            )
+            from QES.Algebra.Symmetries.jit.matrix_builder_jit import (
+                _apply_op_batch_projected_compact_jit, 
+                _apply_op_batch_projected_compact_seq_jit
+            )
         except ImportError:
             raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
         
@@ -1236,8 +1249,6 @@ class Operator(GeneralMatrix):
         # output
         dtype                   = dtype if dtype is not None else vecs_in.dtype
         vecs_out                = out if out is not None else np.zeros((nh, vecs_in.shape[1]), dtype=dtype)
-        chunk_size              = min(chunk_size, vecs_in.shape[1])
-        th_buffer               = ensure_thread_buffer(nh, chunk_size, dtype=dtype, thread_buffers=thread_buffer)
         
         # Check for CompactSymmetryData (O(1) lookup - fast)
         compact_data_out        = getattr(target_space,    'compact_symmetry_data', None)
@@ -1255,43 +1266,72 @@ class Operator(GeneralMatrix):
         op_args                 = canonicalize_args(args)
         op_func                 = self._fun._fun_int
 
-        if use_fast_kernel and nhfull != hilbert_in.nh:
-            cd          = compact_data_out
-            basis_args  = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
-            _wrap_compact(vecs_in, vecs_out, op_func, op_args, basis_args, th_buffer, chunk_size)
+        if not multithreaded:
+            # SEQUENTIAL PATH
+            if use_fast_kernel and nhfull != hilbert_in.nh:
+                cd          = compact_data_out
+                basis_args  = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
+                _apply_op_batch_compact_seq_jit(vecs_in, vecs_out, op_func, op_args, basis_args)
+            
+            elif use_projected_kernel and nhfull != hilbert_in.nh:
+                sc      = hilbert_in.sym_container
+                sc_out  = target_space.sym_container if getattr(target_space, 'sym_container', None) is not None else sc
+                cg      = sc.compiled_group
                 
-        elif use_projected_kernel and nhfull != hilbert_in.nh:
-            sc      = hilbert_in.sym_container
-            sc_out  = target_space.sym_container if getattr(target_space, 'sym_container', None) is not None else sc
+                basis_in_args  = (compact_data_in.representative_list, compact_data_in.normalization)
+                basis_out_args = (compact_data_out.repr_map, compact_data_out.normalization, compact_data_out.representative_list)
+                cg_args        = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, sc_out.compiled_group.chi)
 
-            # Pack cg_args with chi_in and chi_out
-            cg      = sc.compiled_group
-            cg_args = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, sc_out.compiled_group.chi)
-            
-            basis_in_args  = (compact_data_in.representative_list, compact_data_in.normalization)
-            basis_out_args = (compact_data_out.repr_map, compact_data_out.normalization, compact_data_out.representative_list)
-
-            _wrap_projected(
-                vecs_in, vecs_out, op_func, op_args,
-                basis_in_args, basis_out_args,
-                cg_args, sc.tables.args,
-                np.int64(hilbert_in.ns),
-                th_buffer,
-                np.int64(hilbert_in.local_space.local_dim),
-                chunk_size)
-            
+                _apply_op_batch_projected_compact_seq_jit(
+                    vecs_in, vecs_out, op_func, op_args,
+                    basis_in_args, basis_out_args,
+                    cg_args, sc.tables.args,
+                    np.int64(hilbert_in.ns))
+            else:
+                _apply_op_batch_seq_jit(vecs_in, vecs_out, op_func, op_args)
+        
         else:
-            _wrap_full(vecs_in, vecs_out, op_func, op_args, th_buffer, chunk_size)
+            # MULTITHREADED PATH
+            chunk_size          = min(chunk_size, vecs_in.shape[1])
+            th_buffer           = ensure_thread_buffer(nh, chunk_size, dtype=dtype, thread_buffers=thread_buffer)
+
+            if use_fast_kernel and nhfull != hilbert_in.nh:
+                cd          = compact_data_out
+                basis_args  = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
+                _apply_op_batch_compact_jit(vecs_in, vecs_out, op_func, op_args, basis_args, th_buffer, chunk_size)
+            
+            elif use_projected_kernel and nhfull != hilbert_in.nh:
+                sc      = hilbert_in.sym_container
+                sc_out  = target_space.sym_container if getattr(target_space, 'sym_container', None) is not None else sc
+
+                # Pack cg_args with chi_in and chi_out
+                cg      = sc.compiled_group
+                cg_args = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, sc_out.compiled_group.chi)
+                
+                basis_in_args  = (compact_data_in.representative_list, compact_data_in.normalization)
+                basis_out_args = (compact_data_out.repr_map, compact_data_out.normalization, compact_data_out.representative_list)
+
+                _apply_op_batch_projected_compact_jit(
+                    vecs_in, vecs_out, op_func, op_args,
+                    basis_in_args, basis_out_args,
+                    cg_args, sc.tables.args,
+                    np.int64(hilbert_in.ns),
+                    th_buffer,
+                    local_dim=np.int64(hilbert_in.local_space.local_dim),
+                    chunk_size=chunk_size)
+            
+            else:
+                _apply_op_batch_jit(vecs_in, vecs_out, op_func, op_args, th_buffer, chunk_size)
         
         return vecs_out.ravel() if is_1d else vecs_out
-    
-    def matvec_fourier(self, phases: Array, vec: Array, hilbert: HilbertSpace, *, symmetry_mode: str = "auto", out: Optional[Array] = None, thread_buffer: Optional[Array] = None, chunk_size: int = 4) -> Array:
+
+    def matvec_fourier(self, phases: Array, vec: Array, hilbert: HilbertSpace, *, symmetry_mode: str = "auto", multithreaded: bool = False, out: Optional[Array] = None, thread_buffer: Optional[Array] = None, chunk_size: int = 4) -> Array:
         r"""
         Computes |out> = O_q |in> without constructing the matrix O_q.
-        
         O_q = (1/sqrt(N)) * sum_j exp(i * k * r_j) * sigma_j
+
         If dagger=True, computes O_q^dagger (conjugates the phase).
-        
+
         Parameters:
         -----------
         phases (Array):
@@ -1305,24 +1345,32 @@ class Operator(GeneralMatrix):
             - "fast"                    -> assume operator preserves symmetry sector (commuting case)
             - "project"                 -> compute y = P O P x (always correct, slower)
             - "none"                    -> ignore symmetries (explicit basis / full space)
+        multithreaded (bool):
+            If True, use multi-threaded execution.
         out (Array, optional):
             Preallocated output array for |out>. If None, a new array is created.
         thread_buffer (Array, optional):
             Buffer for thread-local storage to optimize performance.
         chunk_size (int, optional):
             Number of vectors to process in each chunk for performance optimization. Default is 4.
-        
         Returns:
         --------
         Array:
             The resulting state vector |out> after applying the Fourier operator.
-        """
 
+        """    
         if hilbert is None:
             raise ValueError("Hilbert space must be provided for Fourier operator application.")
 
         try:
-            from QES.Algebra.Hilbert.matrix_builder import _apply_fourier_batch_jit, _apply_fourier_batch_compact_jit, ensure_thread_buffer
+            from QES.Algebra.Hilbert.matrix_builder import (
+                _apply_fourier_batch_jit, _apply_fourier_batch_compact_jit, ensure_thread_buffer,
+                _apply_fourier_batch_seq_jit, _apply_fourier_batch_compact_seq_jit
+            )
+            from QES.Algebra.Symmetries.jit.matrix_builder_jit import (
+                _apply_fourier_batch_projected_compact_seq_jit
+            )
+
         except ImportError:
             raise ImportError("JIT matrix builder not available. Ensure Numba is installed and QES is properly set up.")
 
@@ -1331,84 +1379,102 @@ class Operator(GeneralMatrix):
             vecs_in = vec[:, np.newaxis]
         else:
             vecs_in = vec
-        
+
         # output
         vecs_out                = np.zeros_like(vecs_in, dtype=np.complex128) if out is None else out
         nh, n_batch             = vecs_in.shape
-        chunk_size              = min(chunk_size, n_batch)
-        thread_buffer           = ensure_thread_buffer(nh, chunk_size, dtype=np.complex128, thread_buffers=thread_buffer)
-        
+
         # This function must have signature (state, site_idx, *args)
         if not self.type_acting.is_local():
             raise ValueError("Fourier operator application requires a local operator. This means it needs to accept 'i' argument...")
-        
+
         compact_data            = getattr(hilbert, 'compact_symmetry_data', None)
         symmetry_mode           = symmetry_mode.lower() if symmetry_mode is not None else "auto"
-        
-        
+
         force_project           = symmetry_mode.startswith('p') and hilbert.nh != hilbert.nhfull
         use_projected_kernel    = (compact_data is not None) and force_project
         use_fast_kernel         = (compact_data is not None) and (not force_project and symmetry_mode in ("auto", "fast"))
 
-        if use_fast_kernel and (hilbert.nhfull != hilbert.nh):
-            # Fast path with compact data
-            cd                  = compact_data
-            basis_args          = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
-            _apply_fourier_batch_compact_jit(
-                                vecs_in,
-                                vecs_out,
-                                phases,
-                                self._fun._fun_int,
-                                basis_args,
-                                thread_buffer,
-                                chunk_size
-                                )
-        
-        elif use_projected_kernel and (hilbert.nhfull != hilbert.nh):
-            # Projected path
-            sc = hilbert.sym_container
-            ns = hilbert.ns
-            
-            try:
-                from QES.Algebra.Symmetries.jit.matrix_builder_jit import _apply_fourier_batch_projected_compact_jit
-            except ImportError:
-                raise ImportError("JIT projected compact matrix builder not available.")
-            
-            basis_in_args       = (compact_data.representative_list, compact_data.normalization)
-            basis_out_args      = (compact_data.repr_map, compact_data.normalization, compact_data.representative_list)
-            
-            cg                  = sc.compiled_group
-            cg_args             = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
+        if not multithreaded:
+            # SEQUENTIAL PATH
+            if use_fast_kernel and (hilbert.nhfull != hilbert.nh):
+                cd                  = compact_data
+                basis_args          = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
+                _apply_fourier_batch_compact_seq_jit(vecs_in, vecs_out, phases, self._fun._fun_int, basis_args)
 
-            _apply_fourier_batch_projected_compact_jit(
-                vecs_in,
-                vecs_out,
-                phases,
-                self._fun._fun_int,
-                
-                # Grouped basis and symmetry data
-                basis_in_args,
-                basis_out_args,
-                cg_args,
-                sc.tables.args,
-                
-                np.int64(ns),
-                thread_buffer,
-                np.int64(hilbert.local_space.local_dim),
-                chunk_size,
-            )
-            
+            elif use_projected_kernel and (hilbert.nhfull != hilbert.nh):
+                sc                  = hilbert.sym_container
+                ns                  = np.int64(hilbert.ns)
+                cg                  = sc.compiled_group
+                basis_in_args       = (compact_data.representative_list, compact_data.normalization)
+                basis_out_args      = (compact_data.repr_map, compact_data.normalization, compact_data.representative_list)
+                cg_args             = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
+                _apply_fourier_batch_projected_compact_seq_jit(vecs_in, vecs_out, phases, self._fun._fun_int, basis_in_args, basis_out_args, cg_args, sc.tables.args, ns)
+
+            else:
+                _apply_fourier_batch_seq_jit(vecs_in, vecs_out, phases, self._fun._fun_int)
+
         else:
-            # Fallback path (no symmetry or full space)
-            _apply_fourier_batch_jit(
+            # MULTITHREADED PATH
+            chunk_size              = min(chunk_size, n_batch)
+            thread_buffer           = ensure_thread_buffer(nh, chunk_size, dtype=np.complex128, thread_buffers=thread_buffer)
+
+            if use_fast_kernel and (hilbert.nhfull != hilbert.nh):
+                # Fast path with compact data
+                cd                  = compact_data
+                basis_args          = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
+
+                _apply_fourier_batch_compact_jit(
                                     vecs_in,
                                     vecs_out,
                                     phases,
                                     self._fun._fun_int,
+                                    basis_args,
                                     thread_buffer,
                                     chunk_size
                                     )
-            
+
+            elif use_projected_kernel and (hilbert.nhfull != hilbert.nh):
+                # Projected path
+                sc = hilbert.sym_container
+                ns = hilbert.ns
+
+                try:
+                    from QES.Algebra.Symmetries.jit.matrix_builder_jit import _apply_fourier_batch_projected_compact_jit
+                except ImportError:
+                    raise ImportError("JIT projected compact matrix builder not available.")
+
+                basis_in_args       = (compact_data.representative_list, compact_data.normalization)
+                basis_out_args      = (compact_data.repr_map, compact_data.normalization, compact_data.representative_list)
+                cg                  = sc.compiled_group
+                cg_args             = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
+
+                _apply_fourier_batch_projected_compact_jit(
+                    vecs_in,
+                    vecs_out,
+                    phases,
+                    self._fun._fun_int,
+                    # Grouped basis and symmetry data
+                    basis_in_args,
+                    basis_out_args,
+                    cg_args,
+                    sc.tables.args,
+                    np.int64(ns),
+                    thread_buffer,
+                    np.int64(hilbert.local_space.local_dim),
+                    chunk_size,
+                )
+            else:
+                # Fallback path (no symmetry or full space)
+                _apply_fourier_batch_jit(
+                                        vecs_in,
+                                        vecs_out,
+                                        phases,
+                                        self._fun._fun_int,
+                                        thread_buffer,
+                                        chunk_size
+                                        )
+
         if is_1d:
             return vecs_out.flatten()
         return vecs_out

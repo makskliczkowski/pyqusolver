@@ -453,6 +453,81 @@ class SpecialOperator(Operator, ABC):
     @property
     def nh(self):                       return self.hilbert_size
     
+    @property
+    def matvec_fun(self) -> Optional[Callable]:
+        """
+        Returns an optimized matrix-vector multiplication function for iterative solvers.
+        Pre-calculates all necessary contexts and uses sequential kernels to avoid 
+        overhead from multithreading and buffer allocations.
+        """
+        
+        hilbert_in                      = self._hilbert_space
+        if hilbert_in is None:
+            return None
+        
+        nh                              = hilbert_in.nh
+        nhfull                          = hilbert_in.nhfull
+        has_sym                         = (nh != nhfull)
+        
+        op_func                         = self._fun._fun_int
+        if op_func is None:
+            return None
+            
+        from QES.Algebra.Hilbert.matrix_builder import canonicalize_args
+        op_args                         = canonicalize_args(()) 
+        
+        # Determine Path
+        compact_data                    = getattr(hilbert_in, 'compact_symmetry_data', None)
+        use_fast                        = has_sym and (compact_data is not None)
+        
+        if not has_sym:
+            # Path 1: No symmetry (Full Hilbert space)
+            from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_seq_jit
+            
+            def _matvec_seq(x):
+                is_1d = (x.ndim == 1)
+                v_in  = x[:, np.newaxis] if is_1d else x
+                # We allocate v_out here as it must be returned to the solver
+                v_out = np.zeros(v_in.shape, dtype=x.dtype)
+                _apply_op_batch_seq_jit(v_in, v_out, op_func, op_args)
+                return v_out.ravel() if is_1d else v_out
+            return _matvec_seq
+                
+        elif use_fast:
+            # Path 2: Fast path (CompactSymmetryData lookups)
+            from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_compact_seq_jit
+            cd          = compact_data
+            basis_args  = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
+            
+            def _matvec_compact_seq(x):
+                is_1d = (x.ndim == 1)
+                v_in  = x[:, np.newaxis] if is_1d else x
+                v_out = np.zeros(v_in.shape, dtype=x.dtype)
+                _apply_op_batch_compact_seq_jit(v_in, v_out, op_func, op_args, basis_args)
+                return v_out.ravel() if is_1d else v_out
+            return _matvec_compact_seq
+            
+        else:
+            # Path 3: Fallback (Projected compact basis)
+            from QES.Algebra.Symmetries.jit.matrix_builder_jit import _apply_op_batch_projected_compact_seq_jit
+            sc              = hilbert_in.sym_container
+            cg              = sc.compiled_group
+            tb              = sc.tables
+            ns_val          = np.int64(hilbert_in.ns)
+            
+            basis_in_args   = (compact_data.representative_list, compact_data.normalization)
+            basis_out_args  = (compact_data.repr_map, compact_data.normalization, compact_data.representative_list)
+            cg_args         = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
+            tb_args         = tb.args
+            
+            def _matvec_projected_seq(x):
+                is_1d = (x.ndim == 1)
+                v_in  = x[:, np.newaxis] if is_1d else x
+                v_out = np.zeros(v_in.shape, dtype=x.dtype)
+                _apply_op_batch_projected_compact_seq_jit(v_in, v_out, op_func, op_args, basis_in_args, basis_out_args, cg_args, tb_args, ns_val)
+                return v_out.ravel() if is_1d else v_out
+            return _matvec_projected_seq
+    
     # ----------------------------------------------------------------------------------------------
     #! ACCESS TO OTHER MODULES RELATED TO HAMILTONIAN
     # ----------------------------------------------------------------------------------------------
@@ -1267,14 +1342,14 @@ class SpecialOperator(Operator, ABC):
             if is_complex:
                 @numba.njit(nogil=True, inline='always', fastmath=True)
                 def wrapper(state: int):
-                    states_buf  = np.empty(max_out, dtype=np.int64)
-                    vals_buf    = np.empty(max_out, dtype=np.complex128)
+                    states_buf  = np.zeros(max_out, dtype=np.int64)
+                    vals_buf    = np.zeros(max_out, dtype=np.complex128)
                     return instr_function(state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
             else:
                 @numba.njit(nogil=True, inline='always', fastmath=True)
                 def wrapper(state: int):
-                    states_buf  = np.empty(max_out, dtype=np.int64)
-                    vals_buf    = np.empty(max_out, dtype=np.float64)
+                    states_buf  = np.zeros(max_out, dtype=np.int64)
+                    vals_buf    = np.zeros(max_out, dtype=np.float64)
                     return instr_function(state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
             
             # Compile by calling once
