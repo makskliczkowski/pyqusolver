@@ -1455,7 +1455,7 @@ class Hamiltonian(BasisAwareOperator):
             
             if hasattr(result, 'converged'):
                 if result.converged:
-                    if result.iterations is not None:
+                    if result.iterations is not None and result.iterations > 0:
                         self._log(f"  Converged in {result.iterations} iterations", lvl=2, log='debug')
                 else:
                     self._log(f"  Warning: Did not converge after {result.iterations} iterations", lvl=2, color="yellow")

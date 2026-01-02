@@ -45,7 +45,7 @@ _INT_HUGE               = np.int64(0x7FFFFFFFFFFFFFFF)          # THE HUGEST!!!
 _INVALID_REPR_IDX       = np.iinfo(_REPR_MAP_DTYPE).max         # ~4 billion, marks state not in sector
 _INVALID_PHASE_IDX      = np.iinfo(_PHASE_IDX_DTYPE).max        # 255, marks invalid phase index
 _SYM_NORM_THRESHOLD     = 1e-7
-_NUMBA_OVERHEAD_SIZE    = 8096                                  # Approximate overhead size for Numba functions in bytes
+_NUMBA_OVERHEAD_SIZE    = 2**24                                 # remove threads for small arrays to check
 
 # -----------------------
 #! APPLY GROUP ELEMENT FUNCTION 
