@@ -1451,14 +1451,7 @@ class Hamiltonian(BasisAwareOperator):
         
         if verbose:
             method_used = self._diag_engine.get_method_used()
-            self._log(f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds, {diag_duration/3600:.6f} hours.", lvl=2, color="green")
-            
-            if hasattr(result, 'converged'):
-                if result.converged:
-                    if result.iterations is not None and result.iterations > 0:
-                        self._log(f"  Converged in {result.iterations} iterations", lvl=2, log='debug')
-                else:
-                    self._log(f"  Warning: Did not converge after {result.iterations} iterations", lvl=2, color="yellow")
+            self._log(f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds, {diag_duration/3600:.6f} hours.", lvl=2, color="green")            
             self._log(f"  Ground state energy: {self._eig_val[0]:.10f}", lvl=2, log='debug')
 
     # ----------------------------------------------------------------------------------------------
