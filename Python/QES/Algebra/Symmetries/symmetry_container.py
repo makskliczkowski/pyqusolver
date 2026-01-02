@@ -1531,10 +1531,12 @@ class SymmetryContainer:
         
         if self.verbose: self.logger.info("Identifying unique representatives...", lvl = 3, color = 'cyan')
         chunk_size              = min(chunk_size, nh_full) # affordable chunk size
-        repr_chunker            = np.zeros((chunk_size,), dtype=np.bool_)
         repr_counter            = 0
         for start in range(0, nh_full, chunk_size):
             end                 = min(start + chunk_size, nh_full)
+            actual_chunk_size   = end - start
+            # Reset repr_chunker for each chunk to avoid overcounting
+            repr_chunker        = np.zeros((actual_chunk_size,), dtype=np.bool_)
 
             scan_chunk_find_representatives(
                 start, end, self.ns, self._compiled_group.n_group,

@@ -38,7 +38,7 @@ except ImportError as e:
 
 # ------------------------------------------------------------------------------------------
 
-@numba.njit(fastmath=True)
+@numba.njit(fastmath=True, cache=True, inline='always')
 def _apply_op_batch_projected_compact_seq_jit(
         vecs_in                 : np.ndarray,          # (nh_in, n_batch)
         vecs_out                : np.ndarray,          # (nh_out, n_batch)
@@ -63,17 +63,21 @@ def _apply_op_batch_projected_compact_seq_jit(
     for k in range(nh_in):
         rep         = np.int64(representative_list_in[k])
         norm_k      = normalization_in[k]
-        if norm_k == 0.0: continue
+        if norm_k == 0.0: 
+            continue
+        inv_norm_k  = 1.0 / norm_k
 
         for g in range(n_group):
             s, ph_g             = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
-            w_g                 = np.conj(chi_in[g]) * ph_g / norm_k 
+            w_g                 = np.conj(chi_in[g]) * ph_g * inv_norm_k
             new_states, values  = op_func(s, *args)
+            n_new               = len(new_states)
 
-            for i in range(len(new_states)):
+            for i in range(n_new):
                 new_state = new_states[i]
                 val       = values[i]
                 if abs(val) < 1e-15: continue
+                val_w_g   = val * w_g
                 
                 for h in range(n_group):
                     s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
@@ -85,7 +89,7 @@ def _apply_op_batch_projected_compact_seq_jit(
                     if norm_new == 0.0: continue
                     
                     w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
-                    factor  = val * w_g * w_h
+                    factor  = val_w_g * w_h
                     for b in range(n_batch):
                         vecs_out[idx, b] += factor * vecs_in[k, b]
 
@@ -213,7 +217,7 @@ def _apply_op_batch_projected_compact_jit(
             for b in range(actual_w):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
 
-@numba.njit(fastmath=True)
+@numba.njit(fastmath=True, cache=True, inline='always')
 def _apply_fourier_batch_projected_compact_seq_jit(
         vecs_in                 : np.ndarray,          # (nh_in, n_batch)
         vecs_out                : np.ndarray,          # (nh_out, n_batch)
@@ -237,22 +241,26 @@ def _apply_fourier_batch_projected_compact_seq_jit(
     inv_n_group         = 1.0 / float(n_group)
 
     for k in range(nh_in):
-        rep     = np.int64(representative_list_in[k])
-        norm_k  = normalization_in[k]
+        rep         = np.int64(representative_list_in[k])
+        norm_k      = normalization_in[k]
         if norm_k == 0.0: continue
+        inv_norm_k  = 1.0 / norm_k
+        
         for g in range(n_group):
             s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
-            w_g     = np.conj(chi_in[g]) * ph_g / norm_k 
+            w_g     = np.conj(chi_in[g]) * ph_g * inv_norm_k
 
             for site_idx in range(n_sites):
                 c_site              = phases[site_idx]
                 new_states, values  = op_func(s, site_idx)
+                n_new               = len(new_states)
 
-                for i in range(len(new_states)):
+                for i in range(n_new):
                     new_state       = new_states[i]
                     val             = values[i]
                     fourier_val     = val * c_site
                     if abs(fourier_val) < 1e-15: continue
+                    fourier_w_g     = fourier_val * w_g
                     
                     for h in range(n_group):
                         s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
@@ -264,7 +272,7 @@ def _apply_fourier_batch_projected_compact_seq_jit(
                         if norm_new == 0.0: continue
                         
                         w_h     = np.conj(chi_out[h]) * np.conj(ph_h) * inv_n_group / norm_new
-                        factor  = fourier_val * w_g * w_h
+                        factor  = fourier_w_g * w_h
                         for b in range(n_batch):
                             vecs_out[idx, b] += factor * vecs_in[k, b]
 

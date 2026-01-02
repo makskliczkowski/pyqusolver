@@ -735,7 +735,7 @@ def ensure_thread_buffer(nh: int, chunk_size: int, dtype=np.complex128, thread_b
 
 # a) No symmetry support
 
-@numba.njit(fastmath=True)
+@numba.njit(fastmath=True, cache=True)
 def _apply_op_batch_seq_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -747,13 +747,15 @@ def _apply_op_batch_seq_jit(
     for k in range(nh):
         state               = np.int64(k)
         new_states, values  = op_func(state, *args)
-        for i in range(len(new_states)):
+        n_new               = len(new_states)
+        for i in range(n_new):
             target_idx      = new_states[i]
+            if not (0 <= target_idx < nh):
+                continue
             val             = values[i]
             if abs(val) < 1e-15: continue
-            if 0 <= target_idx < nh:
-                for b in range(n_batch):
-                    vecs_out[target_idx, b] += val * vecs_in[k, b]
+            for b in range(n_batch):
+                vecs_out[target_idx, b] += val * vecs_in[k, b]
 
 @numba.njit(fastmath=True, parallel=True)
 def _apply_op_batch_jit(
@@ -871,7 +873,7 @@ def _apply_op_batch_jit(
 
 # b) No symmetry with Fourier phases
 
-@numba.njit(fastmath=True)
+@numba.njit(fastmath=True, cache=True)
 def _apply_fourier_batch_seq_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -886,15 +888,15 @@ def _apply_fourier_batch_seq_jit(
         for site_idx in range(n_sites):
             c_site              = phases[site_idx]
             new_states, values  = op_func(state, site_idx)
-            for j in range(len(new_states)):
-                new_state       = new_states[j]
+            n_new               = len(new_states)
+            for j in range(n_new):
+                target_idx      = new_states[j]
+                if not (0 <= target_idx < nh): continue
                 val             = values[j]
                 factor          = val * c_site
                 if abs(factor) < 1e-15: continue
-                target_idx      = new_state
-                if 0 <= target_idx < nh:
-                    for b in range(n_batch):
-                        vecs_out[target_idx, b] += factor * vecs_in[k, b]
+                for b in range(n_batch):
+                    vecs_out[target_idx, b] += factor * vecs_in[k, b]
 
 # @numba.njit(parallel=False, fastmath=True)
 @numba.njit(fastmath=True)
@@ -1006,7 +1008,7 @@ def _apply_fourier_batch_jit(
 
 # c) Symmetry support with CompactSymmetryData - fast path when matvec preserves sectors
 
-@numba.njit(fastmath=True)
+@numba.njit(fastmath=True, cache=True)
 def _apply_op_batch_compact_seq_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -1020,20 +1022,21 @@ def _apply_op_batch_compact_seq_jit(
     for k in range(nh):
         state               = representative_list[k]
         norm_k              = normalization[k]
+        inv_norm_k          = 1.0 / norm_k if norm_k > 0.0 else 0.0
         new_states, values  = op_func(state, *args)
-        for i in range(len(new_states)):
+        n_new               = len(new_states)
+        for i in range(n_new):
             new_state   = new_states[i]
-            val         = values[i]
-            if abs(val) < 1e-15:    
-                continue
             idx         = repr_map[new_state]
             if idx == _INVALID_REPR_IDX_NB: 
+                continue
+            val         = values[i]
+            if abs(val) < 1e-15: 
                 continue
             pidx        = phase_idx[new_state]
             phase       = phase_table[pidx]
             norm_new    = normalization[idx]
-            sym_factor  = np.conj(phase) * (norm_new / norm_k)
-            factor      = val * sym_factor
+            factor      = val * np.conj(phase) * norm_new * inv_norm_k
             for b in range(n_batch):
                 vecs_out[idx, b] += factor * vecs_in[k, b]
 
@@ -1125,7 +1128,7 @@ def _apply_op_batch_compact_jit(
 
 # d) Symmetry support with Fourier phases and CompactSymmetryData - fast path when matvec preserves sectors
 
-@numba.njit(fastmath=True)
+@numba.njit(fastmath=True, cache=True)
 def _apply_fourier_batch_compact_seq_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -1140,22 +1143,24 @@ def _apply_fourier_batch_compact_seq_jit(
     for k in range(nh):
         state               = representative_list[k]
         norm_k              = normalization[k]
+        inv_norm_k          = 1.0 / norm_k if norm_k > 0.0 else 0.0
         for site_idx in range(n_sites):
             c_site              = phases[site_idx]
             new_states, values  = op_func(state, site_idx)
-            for j in range(len(new_states)):
+            n_new               = len(new_states)
+            for j in range(n_new):
                 new_state       = new_states[j]
-                val             = values[j]
-                factor          = val * c_site 
-                if abs(factor) < 1e-15: continue
                 idx             = repr_map[new_state]
                 if idx == _INVALID_REPR_IDX_NB:
+                    continue
+                val             = values[j]
+                factor          = val * c_site 
+                if abs(factor) < 1e-15:
                     continue
                 pidx        = phase_idx[new_state]
                 phase       = phase_table[pidx]
                 norm_new    = normalization[idx]
-                sym_factor  = np.conj(phase) * (norm_new / norm_k)
-                total_factor= factor * sym_factor
+                total_factor= factor * np.conj(phase) * norm_new * inv_norm_k
                 for b in range(n_batch):
                     vecs_out[idx, b] += total_factor * vecs_in[k, b]
 
