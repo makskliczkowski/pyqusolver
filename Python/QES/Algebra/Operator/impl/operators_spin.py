@@ -2217,7 +2217,7 @@ def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = No
         op_sites.append(site)
         op_bonds.append(missing)
 
-    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op), op_codes
+    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op), op_bonds
 
 def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False):
     """
