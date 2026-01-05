@@ -2191,6 +2191,7 @@ def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = No
         bond_to_op      = { 0: 'Z', 1: 'Y', 2: 'X' }
 
     # Pre-calculate the sequence of operations
+    all_bonds           = set(bond_to_op.keys())
     P                   = len(plaquette)
     
     op_codes            = []
@@ -2198,16 +2199,18 @@ def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = No
 
     for k in range(P):
         site    = plaquette[k]
+        prev    = plaquette[k - 1]
         nxt     = plaquette[(k + 1) % P]
 
-        # Get the bond type from current site to next site
-        bond    = lattice.bond_type(site, nxt)
+        b1      = lattice.bond_type(site, prev)
+        b2      = lattice.bond_type(site, nxt)
 
-        if bond < 0:
-            raise RuntimeError(f"Invalid plaquette bond from site {site} to {nxt}: bond_type={bond}")
+        if b1 < 0 or b2 < 0:
+            raise RuntimeError(f"Invalid plaquette bonds at site {site}: {b1}, {b2}")
 
-        # Apply operator corresponding to this bond type
-        op      = bond_to_op[bond]
+        # Missing bond determines spin component
+        missing = (all_bonds - {b1, b2}).pop()
+        op      = bond_to_op[missing]
         
         op_codes.append(op)
         op_sites.append(site)
@@ -2233,6 +2236,7 @@ def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = 
     if bond_to_op is None:
         bond_to_op  = {0: 'Z', 1: 'Y', 2: 'X'}
 
+    all_bonds       = set(bond_to_op.keys())
     op_codes        = []
     op_sites        = []
 
@@ -2241,16 +2245,16 @@ def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = 
         P = len(plaquette)
         for k in range(P):
             site    = plaquette[k]
+            prev    = plaquette[k - 1]
             nxt     = plaquette[(k + 1) % P]
+            b1      = lattice.bond_type(site, prev)
+            b2      = lattice.bond_type(site, nxt)
 
-            # Get the bond type from current site to next site
-            bond    = lattice.bond_type(site, nxt)
+            if b1 < 0 or b2 < 0:
+                raise RuntimeError(f"Invalid plaquette bonds at site {site}: {b1}, {b2}")
 
-            if bond < 0:
-                raise RuntimeError(f"Invalid plaquette bond from site {site} to {nxt}: bond_type={bond}")
-
-            # Apply operator corresponding to this bond type
-            op      = bond_to_op[bond]
+            missing = (all_bonds - {b1, b2}).pop()
+            op      = bond_to_op[missing]
             
             op_codes.append(op)
             op_sites.append(site)
