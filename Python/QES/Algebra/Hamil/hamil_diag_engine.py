@@ -265,7 +265,7 @@ class DiagonalizationEngine:
             self.logger.info(f"Computed {len(self._result.eigenvalues)} eigenvalues", lvl=2)
             if self._result.converged and self._result.iterations is not None and self._result.iterations > 0:
                 self.logger.info(f"Converged in {self._result.iterations} iterations", lvl=2)
-            else:
+            elif self._result.iterations is not None and self._result.iterations > 0:
                 self.logger.warning(f"  Warning: Did not converge after {self._result.iterations} iterations", lvl=2)
         return self._result
     
