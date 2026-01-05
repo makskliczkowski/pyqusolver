@@ -1412,17 +1412,24 @@ class Hamiltonian(BasisAwareOperator):
 
         # Perform diagonalization
         try:
+            # Extract multithreaded setting (default to False for small systems, True for large)
+            use_multithreaded       = solver_kwargs.pop('multithreaded', self._nh > 100000)  # Auto-enable for large systems
+            matvec_chunk_size       = solver_kwargs.pop('matvec_chunk_size', 6)
+            
+            # Create matvec closure with hilbert space for thread buffer pre-allocation
+            _matvec_with_hilbert    = lambda x: self.matvec_fun(x, hilbert=self._hilbert_space, multithreaded=use_multithreaded, chunk_size=matvec_chunk_size)
+            
             result = self._diag_engine.diagonalize(
-                A               = matrix_to_diag,
-                matvec          = self.matvec_fun,
-                n               = self._nh, 
-                k               = k,
-                hermitian       = hermitian,
-                which           = which,
-                store_basis     = store_basis,
-                dtype           = self._dtype,
-                **solver_kwargs
-            )
+                    A               = matrix_to_diag,
+                    matvec          = _matvec_with_hilbert,
+                    n               = self._nh, 
+                    k               = k,
+                    hermitian       = hermitian,
+                    which           = which,
+                    store_basis     = store_basis,
+                    dtype           = self._dtype,
+                    **solver_kwargs
+                )
         except Exception as e:
             raise RuntimeError(f"Diagonalization failed with method '{method}': {e}") from e
         

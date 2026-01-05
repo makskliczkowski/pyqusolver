@@ -356,6 +356,9 @@ def _apply_fourier_batch_projected_compact_jit(
     chunk_size          = min(chunk_size, n_batch)
     bufs                = thread_buffers
     
+    # CRITICAL: This should rarely trigger if thread_buffers are pre-allocated properly in matvec_fun
+    # If this allocates on every call, memory usage explodes (e.g., 2GB × iterations)
+    # See Operator.matvec_fun for proper pre-allocation pattern
     if bufs is None or bufs.shape[0] < n_threads or bufs.shape[1] != nh_out or bufs.shape[2] < chunk_size:
         bufs            = np.zeros((n_threads, nh_out, chunk_size), dtype=vecs_out.dtype)
 

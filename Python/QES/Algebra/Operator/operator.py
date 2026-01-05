@@ -751,11 +751,35 @@ class Operator(GeneralMatrix):
     def matvec_fun(self):
         '''
         Returns a pre-optimized matrix-vector multiplication function.
-        Pre-calculates the kernel path and pre-canonicalizes arguments to minimize iteration overhead.
+        Pre-allocates thread buffers only when multithreaded=True to avoid wasting memory.
         '''        
         
-        def _matvec(x, *args):
-            return self.matvec(x, *args)
+        # Pre-allocate thread buffers once for reuse (critical for memory efficiency in Lanczos/Arnoldi)
+        _thread_buffer_cache = None
+        
+        def _matvec(x, *args, hilbert=None, **kwargs):
+            nonlocal _thread_buffer_cache
+            
+            # Only allocate thread buffer if multithreaded mode is requested
+            multithreaded = kwargs.get('multithreaded', False)
+            
+            if multithreaded and hilbert is not None and _thread_buffer_cache is None:
+                try:
+                    from QES.Algebra.Hilbert.matrix_builder import ensure_thread_buffer
+                    nh                      = hilbert.nh
+                    chunk_size              = kwargs.get('chunk_size', 6)
+                    dtype                   = kwargs.get('dtype', np.complex128)
+                    _thread_buffer_cache    = ensure_thread_buffer(nh, chunk_size, dtype=dtype)
+                except ImportError:
+                    pass  # Fall back to per-call allocation if imports unavailable
+            
+            # Pass pre-allocated buffer to avoid reallocation (only if allocated)
+            if _thread_buffer_cache is not None and 'thread_buffer' not in kwargs:
+                kwargs['thread_buffer'] = _thread_buffer_cache
+            
+            return self.matvec(x, *args, hilbert_in=hilbert, **kwargs)
+        
+        return _matvec
 
     # -------------------------------
     
