@@ -1412,12 +1412,8 @@ class Hamiltonian(BasisAwareOperator):
 
         # Perform diagonalization
         try:
-            # Extract multithreaded setting (default to False for small systems, True for large)
-            use_multithreaded       = solver_kwargs.pop('multithreaded', self._nh > 100000)  # Auto-enable for large systems
-            matvec_chunk_size       = solver_kwargs.pop('matvec_chunk_size', 6)
-            
             # Create matvec closure with hilbert space for thread buffer pre-allocation
-            _matvec_with_hilbert    = lambda x: self.matvec_fun(x, hilbert=self._hilbert_space, multithreaded=use_multithreaded, chunk_size=matvec_chunk_size)
+            _matvec_with_hilbert    = self.matvec_fun
             
             result = self._diag_engine.diagonalize(
                     A               = matrix_to_diag,
