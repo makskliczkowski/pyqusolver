@@ -1372,7 +1372,7 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
 # -----------------------------------------------------------------------------
 
 @numba.njit(nogil=True)
-def _apply_pauli_sequence_kernel(state, ns, sites, codes, spin_val):
+def _apply_pauli_sequence_kernel(state, ns, sites, codes, spin_val=1.0):
     """
     Applies a sequence of Pauli operators to an integer state.
     codes: 0=X, 1=Y, 2=Z
@@ -1398,7 +1398,7 @@ def _apply_pauli_sequence_kernel(state, ns, sites, codes, spin_val):
     return (curr,), (coeff,)
 
 @numba.njit(nogil=True)
-def _apply_pauli_sequence_kernel_np(state, sites, codes, spin_val):
+def _apply_pauli_sequence_kernel_np(state, sites, codes, spin_val=1.0):
     """
     Applies a sequence of Pauli operators to an array of state vectors.
     codes: 0=X, 1=Y, 2=Z
@@ -1463,6 +1463,7 @@ def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act:
     op_codes_arr = np.array(op_codes_out, dtype=np.int32)
     op_sites_arr = np.array(op_sites, dtype=np.int32) if op_sites is not None else np.array([], dtype=np.int32)
     spin_val     = _SPIN
+    # spin_val     = 1.0
     
     if not return_op:
         return _apply_pauli_sequence_kernel, (ns, op_sites_arr, op_codes_arr, spin_val)
