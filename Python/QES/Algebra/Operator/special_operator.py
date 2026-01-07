@@ -460,7 +460,7 @@ class SpecialOperator(Operator, ABC):
         Pre-calculates all necessary contexts and uses sequential kernels to avoid 
         overhead from multithreading and buffer allocations.
         """
-        
+        from QES.general_python.common.memory import log_memory_status
         hilbert_in                      = self._hilbert_space
         if hilbert_in is None:
             return None
@@ -485,12 +485,14 @@ class SpecialOperator(Operator, ABC):
             from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_seq_jit
             
             def _matvec_seq(x):
-                is_1d = (x.ndim == 1)
-                v_in  = x[:, np.newaxis] if is_1d else x
+                is_1d       = (x.ndim == 1)
+                v_in        = x[:, np.newaxis] if is_1d else x
                 # We allocate v_out here as it must be returned to the solver
-                v_out = np.zeros(v_in.shape, dtype=x.dtype)
+                v_out       = np.zeros(v_in.shape, dtype=x.dtype)
                 _apply_op_batch_seq_jit(v_in, v_out, op_func, op_args)
+                # log_memory_status("After _apply_op_batch_seq_jit", logger=self._logger)
                 return v_out.ravel() if is_1d else v_out
+            
             return _matvec_seq
                 
         elif use_fast:
@@ -504,6 +506,7 @@ class SpecialOperator(Operator, ABC):
                 v_in  = x[:, np.newaxis] if is_1d else x
                 v_out = np.zeros(v_in.shape, dtype=x.dtype)
                 _apply_op_batch_compact_seq_jit(v_in, v_out, op_func, op_args, basis_args)
+                # log_memory_status("After _apply_op_batch_compact_seq_jit", logger=self._logger)
                 return v_out.ravel() if is_1d else v_out
             return _matvec_compact_seq
             
@@ -525,6 +528,7 @@ class SpecialOperator(Operator, ABC):
                 v_in  = x[:, np.newaxis] if is_1d else x
                 v_out = np.zeros(v_in.shape, dtype=x.dtype)
                 _apply_op_batch_projected_compact_seq_jit(v_in, v_out, op_func, op_args, basis_in_args, basis_out_args, cg_args, tb_args, ns_val)
+                # log_memory_status("After _apply_op_batch_projected_compact_seq_jit", logger=self._logger)
                 return v_out.ravel() if is_1d else v_out
             return _matvec_projected_seq
     

@@ -191,10 +191,10 @@ class DiagonalizationEngine:
                 Store Krylov basis for iterative methods. Default is True.
             **kwargs : dict
                 Additional arguments passed to the solver:
-                - tol               : float - Convergence tolerance
-                - max_iter          : int   - Maximum iterations
-                - block_size        : int   - Block size for Block Lanczos
-                - reorthogonalize   : bool  - Enable reorthogonalization
+                - tol               : float     - Convergence tolerance
+                - max_iter          : int       - Maximum iterations
+                - block_size        : int       - Block size for Block Lanczos
+                - reorthogonalize   : bool      - Enable reorthogonalization
 
         Returns:
         --------

@@ -38,7 +38,7 @@ except ImportError as e:
 
 # ------------------------------------------------------------------------------------------
 
-@numba.njit(fastmath=True, cache=True, inline='always')
+@numba.njit(fastmath=True, inline='always')
 def _apply_op_batch_projected_compact_seq_jit(
         vecs_in                 : np.ndarray,          # (nh_in, n_batch)
         vecs_out                : np.ndarray,          # (nh_out, n_batch)
@@ -217,7 +217,7 @@ def _apply_op_batch_projected_compact_jit(
             for b in range(actual_w):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
 
-@numba.njit(fastmath=True, cache=True, inline='always')
+@numba.njit(fastmath=True, inline='always')
 def _apply_fourier_batch_projected_compact_seq_jit(
         vecs_in                 : np.ndarray,          # (nh_in, n_batch)
         vecs_out                : np.ndarray,          # (nh_out, n_batch)
@@ -412,6 +412,10 @@ def _apply_fourier_batch_projected_compact_jit(
         for t in range(n_threads):
             for b in range(actual_w):
                 vecs_out[:, b_start + b] += bufs[t, :, b]
+
+# ----------------------------------------------------------------------
+#! Sparse/Dense matrix builders for projected operators
+# ----------------------------------------------------------------------
 
 @numba.njit
 def _build_sparse_projected_jit(
