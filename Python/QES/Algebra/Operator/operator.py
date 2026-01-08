@@ -295,7 +295,12 @@ class Operator(GeneralMatrix):
         """
         String representation of the operator.
         """
-        return f"Operator({self._name}, type_acting={self.type_acting.name}, eigval={self._eigval}, type={self._type.name})"
+        eigval_str      = f"eigval={self._eigval:.4g}" if not np.isclose(self._eigval, 1.0) else ""
+        type_str        = f"type={self._type.name}" if self._type != SymmetryGenerators.Other else ""
+        type_act_str    = f"act={self.type_acting.name}"
+        name_str        = f'{self._name}' if self._name else "Operator"
+        props           = ",".join(filter(None, [type_act_str, eigval_str, type_str]))
+        return f"{name_str}({props})"
     
     #################################
     #! Initialize functions

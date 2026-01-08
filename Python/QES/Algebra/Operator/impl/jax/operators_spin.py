@@ -771,7 +771,8 @@ if JAX_AVAILABLE:
         def body_fun(i, total_val):
             pos     = sites_arr[i]
             bit     = _binary.jaxpy.check_arr_jax(state, pos)
-            factor  = (2 * bit - 1.0) * spin_value
+            # Pauli Z eigenvalue: +1 for spin-up (bit=0), -1 for spin-down (bit=1)
+            factor  = (1.0 - 2.0 * bit) * spin_value
             return total_val + factor * jnp.exp(1j * k * pos)
         total   = lax.fori_loop(0, len(sites), body_fun, total)
         sqrt_l  = jnp.sqrt(jnp.array(len(sites)))

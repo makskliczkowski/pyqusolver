@@ -1371,7 +1371,7 @@ def sig_z_total( lattice     : Optional[Lattice]     = None,
 #! Pauli Operators
 # -----------------------------------------------------------------------------
 
-@numba.njit(nogil=True)
+@numba.njit(nogil=True, inline='always')
 def _apply_pauli_sequence_kernel(state, ns, sites, codes, spin_val=1.0):
     """
     Applies a sequence of Pauli operators to an integer state.
@@ -1421,7 +1421,7 @@ def _apply_pauli_sequence_kernel_np(state, sites, codes, spin_val=1.0):
             coeff   *= cf
     return (curr,), (coeff,)
 
-def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act: Optional[Union[str, OperatorTypeActing]] = None, code: Optional[int] = None) -> Union[Callable, Operator]:
+def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act: Optional[Union[str, OperatorTypeActing]] = None, code: Optional[int] = None, spin_value: float = 1.0) -> Union[Callable, Operator]:
     """
     Apply a general string of Pauli operators O_n ... O_1 to vecs.
     
@@ -1461,9 +1461,8 @@ def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act:
     
     # Prepare JIT arguments
     op_codes_arr = np.array(op_codes_out, dtype=np.int32)
-    op_sites_arr = np.array(op_sites, dtype=np.int32) if op_sites is not None else np.array([], dtype=np.int32)
-    spin_val     = _SPIN
-    # spin_val     = 1.0
+    op_sites_arr = np.array(op_sites, dtype=np.int32) if op_sites is not None else np.array([], dtype=np.int32) 
+    spin_val     = spin_value or _SPIN
     
     if not return_op:
         return _apply_pauli_sequence_kernel, (ns, op_sites_arr, op_codes_arr, spin_val)
@@ -2169,7 +2168,7 @@ def sigma_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int, C
 #! Plaquette Operators
 # -----------------------------------------------------------------------------
 
-def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False):
+def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False, spin_value: float = 1.0):
     """
     Apply the plaquette (flux) operator W_p to vecs using a single optimized kernel.
     This avoids intermediate projections when using symmetry-reduced bases.
@@ -2218,9 +2217,9 @@ def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = No
         op_sites.append(site)
         op_bonds.append(missing)
         
-    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op), op_bonds
+    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op, spin_value=spin_value), op_bonds
 
-def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False):
+def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False, spin_value: float = 1.0):
     """
     Apply a product of multiple plaquette operators W_{p1} W_{p2} ... to vecs 
     using a single optimized kernel without intermediate projections.
@@ -2262,7 +2261,7 @@ def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = 
             op_codes.append(op)
             op_sites.append(site)
             
-    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op)
+    return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op, spin_value=spin_value)
 
 ###############################################################################
 #! Registration with the operator catalog

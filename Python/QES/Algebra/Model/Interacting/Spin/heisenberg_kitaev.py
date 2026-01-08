@@ -392,26 +392,28 @@ class HeisenbergKitaev(Hamiltonian):
 
         #! iterate over all the sites
         elems           =   0
+        # log             =   'info'
+        log             =   'debug'
         for i in range(self.ns):
-            self._log(f"Starting i: {i}", lvl = 1, log = 'debug')
+            self._log(f"Starting i: {i}", lvl = 1, log = log)
             
             #? z-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if Hamiltonian._ADD_CONDITION(self._hz, i):
                 z_field = SINGLE_TERM_MULT * self._hz[i]
                 self.add(op_sz_l, multiplier = z_field, modifies = False, sites = [i])
-                self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = 'debug')
+                self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = log)
 
             #? y-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if Hamiltonian._ADD_CONDITION(self._hy, i):
                 y_field = SINGLE_TERM_MULT * self._hy[i]
                 self.add(op_sy_l, multiplier = y_field, modifies = True, sites = [i])
-                self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl = 2, log = 'debug')
+                self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl = 2, log = log)
 
             #? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if Hamiltonian._ADD_CONDITION(self._hx, i):
                 x_field = SINGLE_TERM_MULT * self._hx[i]
                 self.add(op_sx_l, multiplier = x_field, modifies = True, sites = [i])
-                self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = 'debug')
+                self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = log)
             
             #? impurities - now supports arbitrary spin directions via spherical coordinates
             # Format: (site, phi, theta, amplitude) where all are stored in this 4-tuple format
@@ -428,19 +430,19 @@ class HeisenbergKitaev(Hamiltonian):
                     imp_z       = SINGLE_TERM_MULT * ampl * cos_theta
                     if Hamiltonian._ADD_CONDITION(imp_z):
                         self.add(op_sz_l, multiplier=imp_z, modifies=False, sites=[i])
-                        self._log(f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log='debug')
+                        self._log(f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log=log)
                     
                     # X-component: sin(theta) * cos(phi) * amplitude
                     imp_x       = SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
                     if Hamiltonian._ADD_CONDITION(imp_x):
                         self.add(op_sx_l, multiplier=imp_x, modifies=True, sites=[i])
-                        self._log(f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log='debug')
+                        self._log(f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log=log)
                     
                     # Y-component: sin(theta) * sin(phi) * amplitude
                     imp_y       = SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
                     if Hamiltonian._ADD_CONDITION(imp_y):
                         self.add(op_sy_l, multiplier=imp_y, modifies=True, sites=[i])
-                        self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log='debug')
+                        self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log)
 
             #? now check the correlation operators
             nn_num = nn_nums[i]
@@ -474,15 +476,15 @@ class HeisenbergKitaev(Hamiltonian):
                 if True:
                     if Hamiltonian._ADD_CONDITION(sz_sz):
                         self.add(op_sz_sz_c, sites = [i, nei], multiplier = sz_sz, modifies = False)
-                        self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl = 2, log = log)
                         elems += 1
                     if Hamiltonian._ADD_CONDITION(sx_sx):
                         self.add(op_sx_sx_c, sites = [i, nei], multiplier = sx_sx, modifies = True)
-                        self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl = 2, log = log)
                         elems += 1
                     if Hamiltonian._ADD_CONDITION(sy_sy):
                         self.add(op_sy_sy_c, sites = [i, nei], multiplier = sy_sy, modifies = True)
-                        self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl = 2, log = log)
                         elems += 1
                 
                 
@@ -493,7 +495,7 @@ class HeisenbergKitaev(Hamiltonian):
                         val = self._gx * phase * CORR_TERM_MULT
                         self.add(op_sy_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sz_sy_c, sites = [i, nei], multiplier = val, modifies = True)
-                        self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
                         elems += 2
 
                     # #? Gamma_y terms
@@ -501,7 +503,7 @@ class HeisenbergKitaev(Hamiltonian):
                         val = self._gy * phase * CORR_TERM_MULT
                         self.add(op_sz_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sx_sz_c, sites = [i, nei], multiplier = val, modifies = True)
-                        self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
                         elems += 2
 
                     # #? Gamma_z terms
@@ -509,11 +511,11 @@ class HeisenbergKitaev(Hamiltonian):
                         val = self._gz * phase * CORR_TERM_MULT
                         self.add(op_sx_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sy_sx_c, sites = [i, nei], multiplier = val, modifies = True)
-                        self._log(f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}", lvl = 2, log = 'debug')
+                        self._log(f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
                         elems += 2
 
                 #! Finalize the operator addition for this neighbor
-                self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = 'debug')
+                self._log(f"Finished processing neighbor {nei} of site {i}", lvl = 2, log = log)
         
         self._log(f"Total NN elements added: {elems}", color='red', lvl=3, verbose=self._verbose)
         self._log("Successfully set local energy operators...", lvl=1, log='info', verbose=self._verbose)
