@@ -192,7 +192,7 @@ class DiagonalizationEngine:
             **kwargs : dict
                 Additional arguments passed to the solver:
                 - tol               : float     - Convergence tolerance
-                - max_iter          : int       - Maximum iterations
+                - maxiter          : int       - Maximum iterations
                 - block_size        : int       - Block size for Block Lanczos
                 - reorthogonalize   : bool      - Enable reorthogonalization
 
@@ -273,9 +273,7 @@ class DiagonalizationEngine:
     #! Krylov Basis Management
     # ------------------------------------------------------------------------------------
     
-    def _extract_krylov_basis(self,
-                             A      : Optional[NDArray],
-                             matvec : Optional[Callable]):
+    def _extract_krylov_basis(self, A : Optional[NDArray], matvec : Optional[Callable]):
         r"""
         Extract and store the Krylov basis from eigenvectors.
         

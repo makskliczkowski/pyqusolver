@@ -1553,10 +1553,10 @@ def create_sigma_mixed_int_core(op1_fun: Callable, op2_fun: Callable):
     '''
     
     @numba.njit(inline='always')
-    def sigma_mixed_int_core(state, ns, sites):
+    def sigma_mixed_int_core(state, ns, sites, spin_val=_SPIN):
         
         if sites is None or len(sites) < 2:
-            s_dumb, c_dumb = op1_fun(state, ns, sites)
+            s_dumb, c_dumb = op1_fun(state, ns, sites, spin_val)
             return s_dumb, np.complex128(c_dumb)
 
         # Apply Op 1
@@ -1568,7 +1568,7 @@ def create_sigma_mixed_int_core(op1_fun: Callable, op2_fun: Callable):
             return s_arr1, np.complex128(c_arr1) * 0.0
             
         s_int           = s_arr1
-        s_arr2, c_arr2  = op2_fun(s_int, ns, [sites[1]])
+        s_arr2, c_arr2  = op2_fun(s_int, ns, [sites[1]], spin_val)
         # Explicitly cast both to complex before multiplying to be 100% safe
         return s_arr2, np.complex128(c_arr1) * np.complex128(c_arr2)
     
@@ -1867,7 +1867,7 @@ def sig_xyz(ns: int, sites: Optional[List[int]] = None, lattice: Optional[Lattic
 #? COMPOSITION FUNCTION BASED ON THE CODES!
 # -----------------------------------------------------------------------------
 
-def sigma_composition_integer(is_complex: bool, only_apply: bool = False) -> Callable:
+def sigma_composition_integer(is_complex: bool, only_apply: bool = False, spin_value: float = _SPIN) -> Callable:
     r'''
     Creates a sigma operator composition kernel based on a list of operator codes. 
     It supports both real and complex coefficients.
@@ -1897,78 +1897,78 @@ def sigma_composition_integer(is_complex: bool, only_apply: bool = False) -> Cal
         
         #! 2) LOCAL OPERATORS
         if code == SPIN_LOOKUP_CODES.sig_x_local:
-            s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_1)
+            s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_1, spin_value=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_y_local:
-            s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_1)
+            s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_1, spin_value=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_z_local:
-            s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_1)
+            s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_1, spin_value=spin_value)
             is_diagonal     = True
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_p_local:
-            s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_1)
+            s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_1, spin_value=spin_value)
             current_s       = s_arr[0]
             current_c       = dtype(c_arr[0])
         elif code == SPIN_LOOKUP_CODES.sig_m_local:
-            s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_1)
+            s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_1, spin_value=spin_value)
             current_s       = s_arr[0]
             current_c       = dtype(c_arr[0])
         #! 3) CORRELATION OPERATORS
         elif code == SPIN_LOOKUP_CODES.sig_x_corr:
-            s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = _sigma_x_core(state, ns, sites=sites_2, spin_value=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_y_corr:
-            s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = _sigma_y_core(state, ns, sites=sites_2, spin_value=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_z_corr:
-            s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = _sigma_z_core(state, ns, sites=sites_2, spin_value=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
             is_diagonal     = True
         elif code == SPIN_LOOKUP_CODES.sig_p_corr:
-            s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_plus_int_np(state, ns, sites=sites_2, spin_value=spin_value)
             current_s       = s_arr[0]
             current_c       = dtype(c_arr[0])
         elif code == SPIN_LOOKUP_CODES.sig_m_corr:
-            s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_minus_int_np(state, ns, sites=sites_2, spin_value=spin_value)
             current_s       = s_arr[0]
             current_c       = dtype(c_arr[0])
         elif code == SPIN_LOOKUP_CODES.sig_xy_corr:
-            s_arr, c_arr    = sigma_xy_mixed_int_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_xy_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_yx_corr:
-            s_arr, c_arr    = sigma_yx_mixed_int_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_yx_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_xz_corr:
-            s_arr, c_arr    = sigma_xz_mixed_int_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_xz_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_zx_corr:
-            s_arr, c_arr    = sigma_zx_mixed_int_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_zx_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_yz_corr:
-            s_arr, c_arr    = sigma_yz_mixed_int_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_yz_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_zy_corr:
-            s_arr, c_arr    = sigma_zy_mixed_int_core(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_zy_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr
             current_c       = dtype(c_arr)
         elif code == SPIN_LOOKUP_CODES.sig_pm_corr:
-            s_arr, c_arr    = sigma_pm_int_np(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_pm_int_np(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr[0]
             current_c       = dtype(c_arr[0])
         elif code == SPIN_LOOKUP_CODES.sig_mp_corr:
-            s_arr, c_arr    = sigma_mp_int_np(state, ns, sites=sites_2)
+            s_arr, c_arr    = sigma_mp_int_np(state, ns, sites=sites_2, spin_val=spin_value)
             current_s       = s_arr[0]
             current_c       = dtype(c_arr[0])
         else:
@@ -1979,7 +1979,7 @@ def sigma_composition_integer(is_complex: bool, only_apply: bool = False) -> Cal
     if only_apply:
         return sigma_operator_composition_single_op
     
-    @numba.njit(nogil=True) # compile separately for real/complex
+    @numba.njit(fastmath=True, boundscheck=False) # compile separately for real/complex
     def sigma_operator_composition_int(state: int, nops: int, codes, sites, coeffs, ns: int, out_states, out_vals):
         ''' Creates a combined operator based on this list of codes. '''
         ptr         = 0
@@ -2014,7 +2014,7 @@ def sigma_composition_integer(is_complex: bool, only_apply: bool = False) -> Cal
     
     return sigma_operator_composition_int
 
-def sigma_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int, Callable], custom_op_arity: Dict[int, int]):
+def sigma_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int, Callable], custom_op_arity: Dict[int, int], spin_value: float = _SPIN) -> Callable:
     r"""
     Creates a sigma operator composition kernel that supports both predefined and custom operators.
     
@@ -2082,7 +2082,7 @@ def sigma_composition_with_custom(is_complex: bool, custom_op_funcs: Dict[int, C
                 return i
         return -1
     
-    apply_predefined_operator = sigma_composition_integer(is_complex, only_apply=True)
+    apply_predefined_operator = sigma_composition_integer(is_complex, only_apply=True, spin_value=spin_value)
     
     @numba.njit(nogil=True)
     def sigma_operator_composition_with_custom_int(state: int, nops: int, codes, sites, coeffs, ns: int, out_states, out_vals):

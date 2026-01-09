@@ -308,6 +308,7 @@ class SpecialOperator(Operator, ABC):
         self._hilbert_space         = None  # Will be set by _handle_system
         self._logger                = hilbert_space.logger if (logger is None and hilbert_space is not None) else logger
         self._verbose               = verbose
+        self._iterator              = 0     # For tracking iterations in matvec
         
         #! general Hamiltonian info
         self._name                  = "Hamiltonian" if name is None else name
@@ -479,18 +480,20 @@ class SpecialOperator(Operator, ABC):
         # Determine Path
         compact_data                    = getattr(hilbert_in, 'compact_symmetry_data', None)
         use_fast                        = has_sym and (compact_data is not None)
-        
+        self._iterator                  = 0
         if not has_sym:
             # Path 1: No symmetry (Full Hilbert space)
             from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_seq_jit
             
             def _matvec_seq(x):
-                is_1d       = (x.ndim == 1)
-                v_in        = x[:, np.newaxis] if is_1d else x
+                is_1d           = (x.ndim == 1)
+                v_in            = x[:, np.newaxis] if is_1d else x
                 # We allocate v_out here as it must be returned to the solver
-                v_out       = np.zeros(v_in.shape, dtype=x.dtype)
+                v_out           = np.zeros(v_in.shape, dtype=x.dtype)
+                self._iterator += 1
                 _apply_op_batch_seq_jit(v_in, v_out, op_func, op_args)
                 # log_memory_status("After _apply_op_batch_seq_jit", logger=self._logger)
+                # print(f"Matvec iteration {self._iterator} completed.")
                 return v_out.ravel() if is_1d else v_out
             
             return _matvec_seq
@@ -498,14 +501,15 @@ class SpecialOperator(Operator, ABC):
         elif use_fast:
             # Path 2: Fast path (CompactSymmetryData lookups)
             from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_compact_seq_jit
-            cd          = compact_data
-            basis_args  = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
+            cd                  = compact_data
+            basis_args          = (cd.representative_list, cd.normalization, cd.repr_map, cd.phase_idx, cd.phase_table)
             
             def _matvec_compact_seq(x):
-                is_1d = (x.ndim == 1)
-                v_in  = x[:, np.newaxis] if is_1d else x
-                v_out = np.zeros(v_in.shape, dtype=x.dtype)
+                is_1d           = (x.ndim == 1)
+                v_in            = x[:, np.newaxis] if is_1d else x
+                v_out           = np.zeros(v_in.shape, dtype=x.dtype)
                 _apply_op_batch_compact_seq_jit(v_in, v_out, op_func, op_args, basis_args)
+                self._iterator += 1
                 # log_memory_status("After _apply_op_batch_compact_seq_jit", logger=self._logger)
                 return v_out.ravel() if is_1d else v_out
             return _matvec_compact_seq
@@ -523,6 +527,7 @@ class SpecialOperator(Operator, ABC):
             cg_args         = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
             tb_args         = tb.args
             
+            @numba.njit
             def _matvec_projected_seq(x):
                 is_1d = (x.ndim == 1)
                 v_in  = x[:, np.newaxis] if is_1d else x
@@ -1344,16 +1349,16 @@ class SpecialOperator(Operator, ABC):
             is_complex                          = getattr(self, '_iscpx', False) or self._dtype == np.complex128
             
             if is_complex:
-                @numba.njit(nogil=True, inline='always', fastmath=True)
+                @numba.njit(nogil=True, fastmath=True, boundscheck=False, cache=False)
                 def wrapper(state: int):
-                    states_buf  = np.zeros(max_out, dtype=np.int64)
-                    vals_buf    = np.zeros(max_out, dtype=np.complex128)
+                    states_buf  = np.empty(max_out, dtype=np.int64)
+                    vals_buf    = np.empty(max_out, dtype=np.complex128)
                     return instr_function(state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
             else:
-                @numba.njit(nogil=True, inline='always', fastmath=True)
+                @numba.njit(nogil=True, fastmath=True, boundscheck=False, cache=False)
                 def wrapper(state: int):
-                    states_buf  = np.zeros(max_out, dtype=np.int64)
-                    vals_buf    = np.zeros(max_out, dtype=np.float64)
+                    states_buf  = np.empty(max_out, dtype=np.int64)
+                    vals_buf    = np.empty(max_out, dtype=np.float64)
                     return instr_function(state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
             
             # Compile by calling once

@@ -1214,25 +1214,29 @@ class Hamiltonian(BasisAwareOperator):
                 self._hamil = sigma @ backend.block([[ self._hamil_sp,  self._delta_sp          ],
                                         [self._delta_sp.conj().T, self._hamil_sp.conj().T       ]])
     
-    def diagonalize(self, build: bool = False, verbose: bool = False, **kwargs):
+    def diagonalize(self, method: str = 'exact', build: bool = False, verbose: bool = False, **kwargs):
         """
         Diagonalizes the Hamiltonian matrix using a modular, flexible approach.
         
         This method provides a unified interface to multiple diagonalization strategies:
-        - 'auto'            : Automatically select method based on matrix size/properties
-        - 'exact'           : Full diagonalization (all eigenvalues)
-        - 'lanczos'         : Lanczos iteration for sparse symmetric matrices
-            - 'nh'              : Hamiltonian size threshold for auto Lanczos
-            - 'k'               : Number of eigenvalues to compute
-            - 'which'           : Which eigenvalues to find
-            - 'tol'             : Convergence tolerance
-            - 'max_iter'        : Maximum iterations
-            - 'sigma'           : Shift for shift-invert mode
+        
+        method:
+            - 'auto'            : Automatically select method based on matrix size/properties
+            - 'exact'           : Full diagonalization (all eigenvalues)
+            - 'lanczos'         : Lanczos iteration for sparse symmetric matrices
+                - 'nh'              : Hamiltonian size threshold for auto Lanczos
+                - 'k'               : Number of eigenvalues to compute
+                - 'which'           : Which eigenvalues to find
+                - 'tol'             : Convergence tolerance
+                - 'maxiter'         : Maximum iterations
+                - 'sigma'           : Shift for shift-invert mode
+                
         -----------
         Additional iterative methods:
         - 'block_lanczos'   : Block Lanczos for multiple eigenpairs
         - 'arnoldi'         : Arnoldi iteration for general matrices
         - 'shift-invert'    : Shift-invert mode for interior eigenvalues
+        - 'OPInv'           : Operator Inversion method - for SciPy backend only
         
         Other features:
         -----------
@@ -1279,7 +1283,7 @@ class Hamiltonian(BasisAwareOperator):
         --------
         tol : float
             Convergence tolerance. Default: 1e-10.
-        max_iter : int
+        maxiter : int
             Maximum number of iterations. Default: auto.
     
         Block Lanczos Specific:
@@ -1345,8 +1349,7 @@ class Hamiltonian(BasisAwareOperator):
         
         # Extract parameters
         if True:
-            method          = kwargs.get("method", self._diag_method)
-            if method in kwargs: kwargs.pop("method")
+            method          = method or self._diag_method
             
             backend_str     = kwargs.get("backend", None)
             if backend_str in kwargs: kwargs.pop("backend")
@@ -1354,7 +1357,7 @@ class Hamiltonian(BasisAwareOperator):
             use_scipy       = kwargs.get("use_scipy", True)
             if use_scipy in kwargs: kwargs.pop("use_scipy")
 
-            store_basis     = kwargs.get("store_basis", True)
+            store_basis     = kwargs.get("store_basis", False)
             if store_basis in kwargs: kwargs.pop("store_basis")
 
             k               = kwargs.get("k", None)
@@ -1381,7 +1384,7 @@ class Hamiltonian(BasisAwareOperator):
         # Log start
         if verbose:
             self._log(f"Diagonalization started using method='{method}'...", lvl=1, verbose=verbose, color="blue")
-            if k is not None and kwargs.get('method', 'exact') != 'exact':
+            if k is not None and method != 'exact':
                 self._log(f"Computing {k} eigenvalues", lvl=2, verbose=verbose)
             self._log(f"Backend: {backend_str}", lvl=2, verbose=verbose)
         
@@ -1414,18 +1417,17 @@ class Hamiltonian(BasisAwareOperator):
         try:
             # Create matvec closure with hilbert space for thread buffer pre-allocation
             _matvec_with_hilbert    = self.matvec_fun
-            
-            result = self._diag_engine.diagonalize(
-                    A               = matrix_to_diag,
-                    matvec          = _matvec_with_hilbert,
-                    n               = self._nh, 
-                    k               = k,
-                    hermitian       = hermitian,
-                    which           = which,
-                    store_basis     = store_basis,
-                    dtype           = self._dtype,
-                    **solver_kwargs
-                )
+            result                  = self._diag_engine.diagonalize(
+                                        A               = matrix_to_diag,
+                                        matvec          = _matvec_with_hilbert,
+                                        n               = self._nh, 
+                                        k               = k,
+                                        hermitian       = hermitian,
+                                        which           = which,
+                                        store_basis     = store_basis,
+                                        dtype           = self._dtype,
+                                        **solver_kwargs
+                                    )
         except Exception as e:
             raise RuntimeError(f"Diagonalization failed with method '{method}': {e}") from e
         
@@ -1443,8 +1445,6 @@ class Hamiltonian(BasisAwareOperator):
         if JAX_AVAILABLE:
             if hasattr(self._eig_val, "block_until_ready"):
                 self._eig_val = self._eig_val.block_until_ready()
-            if hasattr(self._eig_vec, "block_until_ready"):
-                self._eig_vec = self._eig_vec.block_until_ready()
         
         # Calculate average energy
         self._calculate_av_en()
