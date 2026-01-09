@@ -357,7 +357,17 @@ class HeisenbergKitaev(Hamiltonian):
                 for local energy contributions.
             - self._nonlocal_ops: a list containing tuples of (operator, [site index, neighbor index],
                 coefficient) for two-site interactions.
-                
+            
+        Model: Heisenberg-Kitaev-Gamma with external fields and impurities.
+        
+        \[
+            H_hei = \sum_{\langle i,j \rangle} J (S_i^x S_j^x + S_i^y S_j^y + \Delta S_i^z S_j^z)
+            H_kit = -\sum_{\langle i,j \rangle_\gamma} K_\gamma S_i^\gamma S_j^\gamma
+            H_gam = -\sum_{\langle i,j \rangle_\gamma} \Gamma^\gamma (S_i^\alpha S_j^\beta + S_i^\beta S_j^\alpha)
+            H_mag = -\sum_{i} (h_x S_i^x + h_y S_i^y + h_z S_i^z)
+            H_all = H_hei + H_kit + H_gam + H_mag
+        \]
+            
         Note:
             This method updates internal state and does not return a value.
         """
@@ -399,19 +409,19 @@ class HeisenbergKitaev(Hamiltonian):
             
             #? z-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if Hamiltonian._ADD_CONDITION(self._hz, i):
-                z_field = SINGLE_TERM_MULT * self._hz[i]
+                z_field = -SINGLE_TERM_MULT * self._hz[i]
                 self.add(op_sz_l, multiplier = z_field, modifies = False, sites = [i])
                 self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl = 2, log = log)
 
             #? y-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if Hamiltonian._ADD_CONDITION(self._hy, i):
-                y_field = SINGLE_TERM_MULT * self._hy[i]
+                y_field = -SINGLE_TERM_MULT * self._hy[i]
                 self.add(op_sy_l, multiplier = y_field, modifies = True, sites = [i])
                 self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl = 2, log = log)
 
             #? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
             if Hamiltonian._ADD_CONDITION(self._hx, i):
-                x_field = SINGLE_TERM_MULT * self._hx[i]
+                x_field = -SINGLE_TERM_MULT * self._hx[i]
                 self.add(op_sx_l, multiplier = x_field, modifies = True, sites = [i])
                 self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = log)
             
@@ -427,19 +437,19 @@ class HeisenbergKitaev(Hamiltonian):
                     cos_phi     = np.cos(phi)
                     
                     # Z-component: cos(theta) * amplitude
-                    imp_z       = SINGLE_TERM_MULT * ampl * cos_theta
+                    imp_z       = -SINGLE_TERM_MULT * ampl * cos_theta
                     if Hamiltonian._ADD_CONDITION(imp_z):
                         self.add(op_sz_l, multiplier=imp_z, modifies=False, sites=[i])
                         self._log(f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log=log)
                     
                     # X-component: sin(theta) * cos(phi) * amplitude
-                    imp_x       = SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
+                    imp_x       = -SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
                     if Hamiltonian._ADD_CONDITION(imp_x):
                         self.add(op_sx_l, multiplier=imp_x, modifies=True, sites=[i])
                         self._log(f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log=log)
                     
                     # Y-component: sin(theta) * sin(phi) * amplitude
-                    imp_y       = SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
+                    imp_y       = -SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
                     if Hamiltonian._ADD_CONDITION(imp_y):
                         self.add(op_sy_l, multiplier=imp_y, modifies=True, sites=[i])
                         self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log)
@@ -467,11 +477,11 @@ class HeisenbergKitaev(Hamiltonian):
                 #! check the directional bond contributions - Kitaev
                 if True:
                     if nn == HEI_KIT_Z_BOND_NEI:
-                        sz_sz  += phase * CORR_TERM_MULT * self._kz if self._kz is not None else 0.0
+                        sz_sz  -= phase * CORR_TERM_MULT * self._kz if self._kz is not None else 0.0
                     elif nn == HEI_KIT_Y_BOND_NEI:
-                        sy_sy  += phase * CORR_TERM_MULT * self._ky if self._ky is not None else 0.0
+                        sy_sy  -= phase * CORR_TERM_MULT * self._ky if self._ky is not None else 0.0
                     elif nn == HEI_KIT_X_BOND_NEI:
-                        sx_sx  += phase * CORR_TERM_MULT * self._kx if self._kx is not None else 0.0
+                        sx_sx  -= phase * CORR_TERM_MULT * self._kx if self._kx is not None else 0.0
                         
                 if True:
                     if Hamiltonian._ADD_CONDITION(sz_sz):
@@ -492,7 +502,7 @@ class HeisenbergKitaev(Hamiltonian):
                 if True:
                     #? Gamma_x terms
                     if Hamiltonian._ADD_CONDITION(self._gx) and nn == HEI_KIT_X_BOND_NEI:
-                        val = self._gx * phase * CORR_TERM_MULT
+                        val = -self._gx * phase * CORR_TERM_MULT
                         self.add(op_sy_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sz_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
@@ -500,7 +510,7 @@ class HeisenbergKitaev(Hamiltonian):
 
                     # #? Gamma_y terms
                     if Hamiltonian._ADD_CONDITION(self._gy) and nn == HEI_KIT_Y_BOND_NEI:
-                        val = self._gy * phase * CORR_TERM_MULT
+                        val = -self._gy * phase * CORR_TERM_MULT
                         self.add(op_sz_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sx_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
@@ -508,7 +518,7 @@ class HeisenbergKitaev(Hamiltonian):
 
                     # #? Gamma_z terms
                     if Hamiltonian._ADD_CONDITION(self._gz) and nn == HEI_KIT_Z_BOND_NEI:
-                        val = self._gz * phase * CORR_TERM_MULT
+                        val = -self._gz * phase * CORR_TERM_MULT
                         self.add(op_sx_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sy_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
@@ -519,8 +529,7 @@ class HeisenbergKitaev(Hamiltonian):
         
         self._log(f"Total NN elements added: {elems}", color='red', lvl=3, verbose=self._verbose)
         self._log("Successfully set local energy operators...", lvl=1, log='info', verbose=self._verbose)
-        
-    # ----------------------------------------------------------------------------------------------
-
+    
 ##########################################################################################
 #! EOF
+##########################################################################################
