@@ -1376,14 +1376,16 @@ def _apply_pauli_sequence_kernel(state, ns, sites, codes, spin_val=1.0):
     """
     Applies a sequence of Pauli operators to an integer state.
     codes: 0=X, 1=Y, 2=Z
+    
+    The codes and sites are from left to right but the operator application must be from right to left
     """
     coeff = 1.0 + 0.0j
     curr  = state
     n     = len(codes)
     
     for i in range(n):
-        c = codes[i]
-        s = sites[i]
+        c = codes[n - 1 - i]
+        s = sites[n - 1 - i]
         
         if c == 0: # X
             curr, cf = _sigma_x_core(curr, ns, (s,), spin_val)
@@ -1407,8 +1409,8 @@ def _apply_pauli_sequence_kernel_np(state, sites, codes, spin_val=1.0):
     curr  = state.copy()
     n     = len(codes)
     for i in range(n):
-        c = codes[i]
-        s = sites[i]
+        c = codes[n - 1 - i]
+        s = sites[n - 1 - i]
         
         if c == 0: # X
             (curr,), (cf,) = sigma_x_np(curr, sites=(s,), spin_value=spin_val)
@@ -2188,7 +2190,7 @@ def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = No
     
     # Default bond_to_op if None
     if bond_to_op is None:
-        bond_to_op      = { 0: 'Z', 1: 'Y', 2: 'X' }
+        bond_to_op      = { 0: 'X', 1: 'Y', 2: 'Z' }
 
     # Pre-calculate the sequence of operations
     all_bonds           = set(bond_to_op.keys())
@@ -2216,7 +2218,7 @@ def spin_plaquette(plaquette: np.ndarray, lattice: 'Lattice', *, bond_to_op = No
         op_codes.append(op)
         op_sites.append(site)
         op_bonds.append(missing)
-        
+    
     return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op, spin_value=spin_value), op_bonds
 
 def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = None, return_op: bool = False, spin_value: float = 1.0):
@@ -2260,7 +2262,7 @@ def spin_plaquettes(list_plaquettes : list, lattice: 'Lattice', *, bond_to_op = 
             
             op_codes.append(op)
             op_sites.append(site)
-            
+                
     return pauli_string(op_codes, op_sites, lattice.ns, return_op=return_op, spin_value=spin_value)
 
 ###############################################################################
