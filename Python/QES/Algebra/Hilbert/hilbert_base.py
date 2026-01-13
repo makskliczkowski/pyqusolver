@@ -223,6 +223,27 @@ class BaseHilbertSpace(ABC):
         return len(self._global_syms) > 0
 
     @property
+    def has_sym_generators(self) -> bool:
+        """
+        Returns True if symmetry generators are defined (even without basis reduction).
+        
+        Use this property when you need to know if symmetry operations are available
+        for applying to states (e.g., for NQS symmetry projections).
+        """
+        return (self._sym_container is not None and len(self._sym_container.generators) > 0)
+    
+    @property  
+    def has_sym_reduction(self) -> bool:
+        """
+        Returns True if the Hilbert space basis has been reduced by symmetries.
+        
+        This is the stricter check - it returns True only when representative 
+        states have been computed and the effective dimension is smaller than 
+        the full Hilbert space dimension.
+        """
+        return self._nh != self._nhfull
+
+    @property
     def has_complex_symmetries(self) -> bool:
         """Check if symmetry phases are complex."""
         return self._has_complex_symmetries

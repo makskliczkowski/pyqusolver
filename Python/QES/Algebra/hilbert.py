@@ -1062,7 +1062,6 @@ class HilbertSpace(BaseHilbertSpace):
             self.representative_norms   = None
             return
 
-
         # Generate basis using the new memory-efficient method
         try:
             # Check for integer overflow on huge systems
@@ -1310,7 +1309,51 @@ class HilbertSpace(BaseHilbertSpace):
     @property
     def fulldim(self):                          return self._nhfull
     @property
-    def has_sym(self):                          return self._nh != self._nhfull
+    def has_sym(self):
+        """
+        Returns True if symmetries are defined for this Hilbert space.
+        
+        This property checks for the presence of symmetry generators, NOT whether 
+        the basis has been reduced. Use `has_sym_reduction` to check if the basis
+        has actually been reduced.
+        
+        Note
+        ----
+        For NQS applications with large systems, symmetries may be defined 
+        (`gen_basis=False`) without generating the full representative mapping.
+        In this case, `has_sym` returns True while `has_sym_reduction` returns False.
+        """
+        # Check if symmetry container exists with actual generators
+        if self._sym_container is not None:
+            if len(self._sym_container.generators) > 0:
+                return True
+            if len(self._sym_container.symmetry_group) > 1:  
+                return True
+            
+        # Fallback: check if basis was reduced
+        return self._nh != self._nhfull
+    
+    @property
+    def has_sym_generators(self):
+        """
+        Returns True if symmetry generators are defined (even without basis reduction).
+        
+        Use this property when you need to know if symmetry operations are available
+        for applying to states (e.g., for NQS symmetry projections).
+        """
+        return (self._sym_container is not None and len(self._sym_container.generators) > 0)
+    
+    @property  
+    def has_sym_reduction(self):
+        """
+        Returns True if the Hilbert space basis has been reduced by symmetries.
+        
+        This is the stricter check - it returns True only when representative 
+        states have been computed and the effective dimension is smaller than 
+        the full Hilbert space dimension.
+        """
+        return self._nh != self._nhfull
+    
     @property
     def Nh(self):                               return self._nh
     @property

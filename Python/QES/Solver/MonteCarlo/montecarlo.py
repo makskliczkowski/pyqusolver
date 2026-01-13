@@ -265,7 +265,7 @@ class MonteCarloSolver(Solver):
 
     # ----------------
     
-    def log(self, msg : str, log : Union[int, str] = Logger.LEVELS_R['info'], lvl : int = 0, color : str = "white", append_msg = True):
+    def log(self, msg : str, log : Union[int, str] = Logger.LEVELS_R['info'], lvl : int = 0, color : str = "white", append_msg = False):
         """
         Log the message.
         
@@ -279,7 +279,7 @@ class MonteCarloSolver(Solver):
         if isinstance(log, str):
             log = Logger.LEVELS_R[log]
         if append_msg:
-            msg = f"[{self.__class__}] {msg}"
+            msg = f"[{self.__str__}] {msg}"
         msg = self._logger.colorize(msg, color)
         self._logger.say(msg, log=log, lvl=lvl)
 

@@ -2126,19 +2126,19 @@ def create_operator(type_act        : int | OperatorTypeActing,
         sites_np        = np.array(sites, dtype = np.int32) if sites is not None else np.array([], dtype=np.int32)
         
         if isinstance(op_func_int, CPUDispatcher):
-            fun_int = _make_global_closure(op_func_int, ns, sites, extra_args) if sites is not None else \
-                    _make_global_closure(op_func_int, ns, extra_args)
+            fun_int     = _make_global_closure(op_func_int, ns, sites, extra_args) if sites is not None else \
+                        _make_global_closure(op_func_int, ns, extra_args)
         else:
-            def fun_int(state): return op_func_int(state, ns, sites, *extra_args)
+            def fun_int(state):     return op_func_int(state, ns, sites, *extra_args)
 
-        def fun_np(state):
-            return op_func_np(state, sites_np, *extra_args)
-
-        if JAX_AVAILABLE:
-            fun_jnp = make_jax_operator_closure(op_func_jnp, sites, *extra_args)
+        def fun_np(state):          return op_func_np(state, sites_np, *extra_args)
+        
+        # ----------
+        
+        if JAX_AVAILABLE and op_func_jnp is not None:
+            fun_jnp                 = make_jax_operator_closure(op_func_jnp, sites, *extra_args)
         else:
-            def fun_jnp(state):
-                return state, 0.0
+            def fun_jnp(state):     return state, 0.0
         
         op_name =   (name if name is not None else op_func_int.__name__) + "/"
         op_name +=  "-".join(str(site) for site in sites)
@@ -2157,21 +2157,19 @@ def create_operator(type_act        : int | OperatorTypeActing,
     elif OperatorTypeActing.is_type_local(type_act):
         
         if isinstance(op_func_int, CPUDispatcher):
-            fun_int = _make_local_closure(op_func_int, ns, extra_args)
+            fun_int                 = _make_local_closure(op_func_int, ns, extra_args)
         else:
-            def fun_int(state, i):
-                # sites_1 = np.array([i], dtype=np.int32)
-                return op_func_int(state, ns, (i,), *extra_args)
+            def fun_int(state, i):  return op_func_int(state, ns, (i,), *extra_args)
 
         def fun_np(state, i):
             sites_1 = np.array([i], dtype=np.int32)
             return op_func_np(state, sites_1, *extra_args)
         
-        if JAX_AVAILABLE:
+        if JAX_AVAILABLE and op_func_jnp is not None:
             @jax.jit
             def fun_jnp(state, i):
-                sites_jnp = jnp.array([i], dtype = jnp.int32)
-                return op_func_jnp(state, sites_jnp, *extra_args)
+                # Pass tuple - operator will convert via jnp.asarray() internally
+                return op_func_jnp(state, (i,), *extra_args)
         else:
             def fun_jnp(state, i):
                 return state, 0.0
@@ -2201,11 +2199,11 @@ def create_operator(type_act        : int | OperatorTypeActing,
             sites_2 = np.array([i, j], dtype=np.int32)
             return op_func_np(state, sites_2, *extra_args)
         
-        if JAX_AVAILABLE:
+        if JAX_AVAILABLE and op_func_jnp is not None:
             @jax.jit
             def fun_jnp(state, i, j):
-                sites_jnp = jnp.array([i, j], dtype = jnp.int32)
-                return op_func_jnp(state, sites_jnp, *extra_args)
+                # Pass tuple - operator will convert via jnp.asarray() internally
+                return op_func_jnp(state, (i, j), *extra_args)
         else:
             def fun_jnp(state, i, j):
                 return state, 0.0

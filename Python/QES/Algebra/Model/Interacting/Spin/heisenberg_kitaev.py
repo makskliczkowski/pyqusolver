@@ -389,14 +389,14 @@ class HeisenbergKitaev(Hamiltonian):
         op_sz_sz_c      =   operators_spin_module.sig_z(lattice = lattice, type_act = operators_spin_module.OperatorTypeActing.Correlation)
         
         # Create Gamma operators as products of correlation operators
-        op_sx_sy_c      =   operators_spin_module.sig_xy(lattice=lattice)
-        op_sy_sx_c      =   operators_spin_module.sig_yx(lattice=lattice)
+        op_sx_sy_c      =   operators_spin_module.sig_xy(lattice=lattice, spin_value=0.5)
+        op_sy_sx_c      =   operators_spin_module.sig_yx(lattice=lattice, spin_value=0.5)
         
-        op_sz_sx_c      =   operators_spin_module.sig_zx(lattice=lattice)
-        op_sx_sz_c      =   operators_spin_module.sig_xz(lattice=lattice)
+        op_sz_sx_c      =   operators_spin_module.sig_zx(lattice=lattice, spin_value=0.5)
+        op_sx_sz_c      =   operators_spin_module.sig_xz(lattice=lattice, spin_value=0.5)
         
-        op_sy_sz_c      =   operators_spin_module.sig_yz(lattice=lattice)
-        op_sz_sy_c      =   operators_spin_module.sig_zy(lattice=lattice)
+        op_sy_sz_c      =   operators_spin_module.sig_yz(lattice=lattice, spin_value=0.5)
+        op_sz_sy_c      =   operators_spin_module.sig_zy(lattice=lattice, spin_value=0.5)
         nn_nums         =   [lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else \
                             [lattice.get_nn_num(i) for i in range(self.ns)]
 

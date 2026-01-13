@@ -121,7 +121,7 @@ if _JAX_AVAILABLE_FOR_SYMMETRY:
 #########################################
 
 class NQS(MonteCarloSolver):
-    '''
+    r'''
     Neural Quantum State (NQS) Solver.
     
     Implements a Monte Carlo-based training method for optimizing NQS models.
@@ -234,7 +234,7 @@ class NQS(MonteCarloSolver):
                 logger      : Optional[Logger]                              =   None,
                 verbose     : bool                                          =   True,
                 **kwargs):
-        '''
+        r'''
         Initialize the NQS solver.
         
         Parameters:
@@ -524,14 +524,14 @@ class NQS(MonteCarloSolver):
         else:
             self._ansatz_func       = current_ansatz
 
-    def reset(self):
+    def reset(self, **kwargs):
         """
         Resets the initialization state of the object and reinitializes the underlying network.
         This method marks the object as not initialized and forces a reinitialization of the associated
         neural network by calling its `force_init` method.
         """
         
-        self._initialized = False
+        self._initialized       = False
         self._net.force_init()
         
         # Rebuild ansatz pipeline after network reset
@@ -548,7 +548,7 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         #! Initialize unified evaluation engine
         # --------------------------------------------------
-        self._eval_engine = NQSEvalEngine(self, batch_size=batch_size, **kwargs)
+        self._eval_engine = NQSEvalEngine(self, batch_size=self.batch_size, **kwargs)
 
         #######################################
         #! Directory to save the results
@@ -557,12 +557,12 @@ class NQS(MonteCarloSolver):
         self._init_directory()
         
         # Initialize the Manager
-        self.ckpt_manager = NQSCheckpointManager(directory=self._dir_detailed, use_orbax=kwargs.get('use_orbax', True), max_to_keep=kwargs.get('orbax_max_to_keep', 3), logger=self._logger)
+        self.ckpt_manager   = NQSCheckpointManager(directory=self._dir_detailed, use_orbax=kwargs.get('use_orbax', True), max_to_keep=kwargs.get('orbax_max_to_keep', 3), logger=self._logger)
         
         # --------------------------------------------------
         #! Exact information (Ground Truth)
         # --------------------------------------------------
-        self._exact_info            = None
+        self._exact_info    = None
     
     #####################################
     #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
@@ -595,8 +595,12 @@ class NQS(MonteCarloSolver):
         """
         
         base                = Directories(self._dir)
-        detailed            = base.join(str(self._model), create=False)
+        #! symmeties summary
+        if self._model.hilbert.has_sym:
+            base            = base.join(f"{self._model.hilbert.symmetry_directory_name}", create=False)
 
+        detailed            = base.join(str(self._model), create=False)
+        
         #! add the lattice information if needed
         if self._model.lattice is not None:
             detailed        = detailed.join(str(self._model.lattice), create=False)
@@ -730,7 +734,6 @@ class NQS(MonteCarloSolver):
             self.log(f"Exact information set from array: {self._exact_info['exact_energy']}", lvl=1)
         else:
             raise ValueError("Exact information must be provided as a dictionary or numpy array.")
-        
 
     def get_exact(self, **kwargs) -> Optional['NQSTrainStats']:
         '''
@@ -745,9 +748,13 @@ class NQS(MonteCarloSolver):
             
             if not stats.has_exact:
                 if self.model.eig_val is None:
-                    self.model.diagonalize(method='lanczos', k=kwargs.get('k', 10), store_basis=False, 
-                                            verbose=kwargs.get('verbose', True), use_scipy=kwargs.get('use_scipy', True), 
-                                            tol=kwargs.get('tol', 1e-7), max_iter=kwargs.get('max_iter', 200))
+                    self.model.diagonalize( method                      =   'lanczos', 
+                                            k                           =   kwargs.get('k', 6), 
+                                            store_basis                 =   False, 
+                                            verbose                     =   kwargs.get('verbose', True), 
+                                            use_scipy                   =   kwargs.get('use_scipy', True), 
+                                            tol                         =   kwargs.get('tol', 1e-7), 
+                                            maxiter                     =   kwargs.get('max_iter', 200))
                 pred                        =   self.model.eigenvalues
                 if stats is not None:
                     stats.exact_predictions =   pred
@@ -1845,9 +1852,9 @@ class NQS(MonteCarloSolver):
         sample_dtype = self._sampler._statetype
         
         # Abstract arrays
-        abstract_configs = jax.ShapeDtypeStruct((1, self._nvisible), sample_dtype)
-        abstract_ansatze = jax.ShapeDtypeStruct((1,), self._dtype) # Log ansatz is complex/float depending on net
-        abstract_probs   = jax.ShapeDtypeStruct((1,), self._dtype) # Probs usually real but passed as net dtype often
+        abstract_configs    = jax.ShapeDtypeStruct((1, self._nvisible), sample_dtype)
+        abstract_ansatze    = jax.ShapeDtypeStruct((1,), self._dtype) # Log ansatz is complex/float depending on net
+        abstract_probs      = jax.ShapeDtypeStruct((1,), self._dtype) # Probs usually real but passed as net dtype often
         
         # Use eval_shape on the static single_step function
         # We need to partial the static args first
@@ -2506,7 +2513,7 @@ class NQS(MonteCarloSolver):
             symmetrize          : Optional[bool]            = None,
             **kwargs
         ) -> "NQSTrainStats":
-        """
+        r"""
         Train the NQS using the NQSTrainer.
 
         It creates (or reuses) an NQSTrainer instance and runs the training loop, supporting

@@ -40,12 +40,18 @@ except ImportError as e:
     raise ImportError("Failed to import required QES general Python modules.") from e
 
 ################################################################################
-JAX_AVAILABLE = os.getenv("PY_JAX_AVAILABLE", "0") == "1"
+try:
+    import jax
+    import jax.numpy as jnp
+    JAX_AVAILABLE   = True
+except ImportError:
+    jax             = None
+    jnp             = None
+    JAX_AVAILABLE   = False
+    
 ################################################################################
 
 if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
     # sigma x
     from QES.Algebra.Operator.impl.jax.operators_spin import sigma_x_int_jnp, sigma_x_jnp, sigma_x_inv_jnp
     # sigma y
@@ -64,23 +70,26 @@ if JAX_AVAILABLE:
     from QES.Algebra.Operator.impl.jax.operators_spin import sigma_k_int_jnp, sigma_k_jnp, sigma_k_inv_jnp
     # sigma z total
     from QES.Algebra.Operator.impl.jax.operators_spin import sigma_z_total_int_jnp, sigma_z_total_jnp
+    # pauli string
+    from QES.Algebra.Operator.impl.jax.operators_spin import apply_pauli_sequence_jnp
 else:
     print("JAX is not available. JAX-based implementations of spin operators will not be accessible.")
-    sigma_x_int_jnp         = sigma_x_jnp       = None
-    sigma_x_jnp             = None
-    sigma_x_inv_jnp         = None
-    sigma_y_int_jnp         = sigma_y_jnp       = None
-    sigma_y_real_jnp        = None
-    sigma_y_inv_jnp         = None
-    sigma_z_int_jnp         = sigma_z_jnp       = None
-    sigma_z_inv_jnp         = None
-    sigma_plus_int_jnp      = sigma_plus_jnp    = None
-    sigma_minus_int_jnp     = sigma_minus_jnp   = None
-    sigma_pm_int_jnp        = sigma_pm_jnp      = None
-    sigma_mp_int_jnp        = sigma_mp_jnp      = None
-    sigma_k_int_jnp         = sigma_k_jnp       = None
-    sigma_k_inv_jnp         = None
-    sigma_z_total_int_jnp   = sigma_z_total_jnp = None
+    sigma_x_int_jnp             = sigma_x_jnp       = None
+    sigma_x_jnp                 = None
+    sigma_x_inv_jnp             = None
+    sigma_y_int_jnp             = sigma_y_jnp       = None
+    sigma_y_real_jnp            = None
+    sigma_y_inv_jnp             = None
+    sigma_z_int_jnp             = sigma_z_jnp       = None
+    sigma_z_inv_jnp             = None
+    sigma_plus_int_jnp          = sigma_plus_jnp    = None
+    sigma_minus_int_jnp         = sigma_minus_jnp   = None
+    sigma_pm_int_jnp            = sigma_pm_jnp      = None
+    sigma_mp_int_jnp            = sigma_mp_jnp      = None
+    sigma_k_int_jnp             = sigma_k_jnp       = None
+    sigma_k_inv_jnp             = None
+    sigma_z_total_int_jnp       = sigma_z_total_jnp = None
+    apply_pauli_sequence_jnp    = None
     
 #! Standard Pauli matrices
 ################################################################################
@@ -1441,6 +1450,10 @@ def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act:
         If True, returns an Operator object.
     type_act : str or OperatorTypeActing, optional
         The type of acting for the operator. Defaults to Global if sites provided, else Correlation.
+    code : int, optional
+        Custom code for the operator.
+    spin_value : float, optional
+        The spin value to use in the operator application. Defaults to 1.0.
     """
     
     # map the operator codes to Pauli application kernel
@@ -1464,7 +1477,7 @@ def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act:
     # Prepare JIT arguments
     op_codes_arr = np.array(op_codes_out, dtype=np.int32)
     op_sites_arr = np.array(op_sites, dtype=np.int32) if op_sites is not None else np.array([], dtype=np.int32) 
-    spin_val     = spin_value or _SPIN
+    spin_val     = spin_value if spin_value is not None else _SPIN
     
     if not return_op:
         return _apply_pauli_sequence_kernel, (ns, op_sites_arr, op_codes_arr, spin_val)
@@ -1479,7 +1492,7 @@ def pauli_string(op_codes, op_sites, ns: int, return_op: bool = False, type_act:
             type_act    = type_act,
             op_func_int = _apply_pauli_sequence_kernel,
             op_func_np  = _apply_pauli_sequence_kernel_np,
-            op_func_jnp = None, #!TODO JAX
+            op_func_jnp = apply_pauli_sequence_jnp if JAX_AVAILABLE else None,
             ns          = ns,
             name        = 'Pauli:' + ','.join(f'S_{c}' for c in op_codes),
             modifies    = True,
@@ -1653,7 +1666,7 @@ sigma_zx_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_x_jnp)
 sigma_xz_mixed_jnp      = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
 sigma_zy_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
 
-def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None, code: Optional[int] = None) -> Operator:
+def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None, code: Optional[int] = None, spin_value: float = _SPIN) -> Operator:
     r''' Factory for mixed sigma operators (e.g., \sigma _x \sigma _y). '''
     
     if sites is not None and len(sites) != 2:
@@ -1687,26 +1700,26 @@ def make_sigma_mixed(name, lattice=None, ns=None, type_act='global', sites=None,
             code_attr   = f"sig_{name}_corr"
             code        = getattr(SPIN_LOOKUP_CODES, code_attr, None)
         
-    return pauli_string(pauli_ops, sites, ns_val, return_op=True, type_act=type_act_val, code=code)
+    return pauli_string(pauli_ops, sites, ns_val, return_op=True, type_act=type_act_val, code=code, spin_value=spin_value)
 
 def sig_xy(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _x \sigma _y operator. '''
-    return make_sigma_mixed('xy', lattice, ns, type_act=type_act, sites=sites)
+    return make_sigma_mixed('xy', lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 def sig_yx(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _y \sigma _x operator. '''
-    return make_sigma_mixed('yx', lattice, ns, type_act=type_act, sites=sites)
+    return make_sigma_mixed('yx', lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 def sig_yz(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _y \sigma _z operator. '''
-    return make_sigma_mixed('yz', lattice, ns, type_act=type_act, sites=sites)
+    return make_sigma_mixed('yz', lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 def sig_zy(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _z \sigma _y operator. '''
-    return make_sigma_mixed('zy', lattice, ns, type_act=type_act, sites=sites)
+    return make_sigma_mixed('zy', lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 def sig_zx(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _z \sigma _x operator. '''
-    return make_sigma_mixed('zx', lattice, ns, type_act=type_act, sites=sites)
+    return make_sigma_mixed('zx', lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 def sig_xz(lattice=None, ns=None, type_act='global', sites=None, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> Operator:
     r''' Factory for the \sigma _x \sigma _z operator. '''
-    return make_sigma_mixed('xz', lattice, ns, type_act=type_act, sites=sites)
+    return make_sigma_mixed('xz', lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 
 # -----------------------------------------------------------------------------
 #! N-SITE CORRELATOR FACTORY (for arbitrary multi-site operators)

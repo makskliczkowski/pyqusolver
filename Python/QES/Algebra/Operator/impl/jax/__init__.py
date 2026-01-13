@@ -65,6 +65,8 @@ if JAX_AVAILABLE:
         sigma_pm_jnp, sigma_mp_jnp,
         sigma_k_jnp, sigma_k_inv_jnp,
         sigma_z_total_jnp,
+        # Pauli string operator
+        apply_pauli_sequence_jnp,
     )
     
     # Spin-1 operators
@@ -120,6 +122,7 @@ if JAX_AVAILABLE:
         'sigma_pm_jnp', 'sigma_mp_jnp',
         'sigma_k_jnp', 'sigma_k_inv_jnp',
         'sigma_z_total_jnp',
+        'apply_pauli_sequence_jnp',
         # Spin-1
         '_S1_X_jnp', '_S1_Y_jnp', '_S1_Z_jnp', '_S1_PLUS_jnp', '_S1_MINUS_jnp', '_S1_Z2_jnp',
         'spin1_z_int_jnp', 'spin1_plus_int_jnp', 'spin1_minus_int_jnp',

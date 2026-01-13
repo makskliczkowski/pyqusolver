@@ -851,6 +851,116 @@ if JAX_AVAILABLE:
         return ensure_operator_output_shape_jax(state, coeff)
 
 # -----------------------------------------------------------------------------
+#! Pauli String Operator (sequence of Pauli gates)
+# -----------------------------------------------------------------------------
+
+if JAX_AVAILABLE:
+
+    def _apply_pauli_sequence_jnp(state, sites, codes, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
+        r"""
+        Apply a sequence of Pauli operators to a JAX array state.
+        
+        Parameters
+        ----------
+        state : jnp.ndarray
+            The quantum state array.
+        sites : array-like
+            The sites where each Pauli operator acts.
+        codes : array-like
+            The Pauli operator codes: 0=X, 1=Y, 2=Z.
+        spin : bool
+            If True, use the spin convention for flipping bits.
+        spin_value : float
+            The spin value multiplier.
+            
+        Returns
+        -------
+        tuple
+            (new_state, coeff) where new_state is the state after applying 
+            all operators and coeff is the accumulated coefficient.
+        """
+        sites_arr = jnp.asarray(sites)
+        codes_arr = jnp.asarray(codes)
+        n         = codes_arr.shape[0]
+        
+        def body_fun(i, carry):
+            curr_state, curr_coeff = carry
+            
+            # Apply operators from right to left (reverse order)
+            idx  = n - 1 - i
+            site = sites_arr[idx]
+            code = codes_arr[idx]
+            
+            # Apply X: flip bit, coeff *= spin_value
+            def apply_x(state_c):
+                st, c   = state_c
+                new_st  = jax.lax.cond(
+                    spin,
+                    lambda s    :   _binary.jaxpy.flip_array_jax_spin(s, site),
+                    lambda s    :   _binary.jaxpy.flip_array_jax_nspin(s, site),
+                    st
+                )
+                return (new_st, c * spin_value)
+            
+            # Apply Y: flip bit, coeff *= ±i*spin_value (sign depends on bit)
+            def apply_y(state_c):
+                st, c   = state_c
+                bit     = _binary.jaxpy.check_arr_jax(st, site)
+                factor  = jax.lax.cond(
+                    bit,
+                    lambda _    :   1j * spin_value,
+                    lambda _    :   -1j * spin_value,
+                    operand     =   None
+                )
+                new_st = jax.lax.cond(
+                    spin,
+                    lambda s    :   _binary.jaxpy.flip_array_jax_spin(s, site),
+                    lambda s    :   _binary.jaxpy.flip_array_jax_nspin(s, site),
+                    st
+                )
+                return (new_st, c * factor)
+            
+            # Apply Z: no flip, coeff *= ±spin_value (sign depends on bit)
+            def apply_z(state_c):
+                st, c   = state_c
+                bit     = _binary.jaxpy.check_arr_jax(st, site)
+                factor  = jax.lax.cond(
+                    bit,
+                    lambda _    :   spin_value,
+                    lambda _    :   -spin_value,
+                    operand     =   None
+                )
+                return (st, c * factor)
+            
+            # Use nested lax.cond to select based on code
+            # code == 0 -> X, code == 1 -> Y, code == 2 -> Z
+            new_state, new_coeff = jax.lax.cond(
+                code == 0,
+                apply_x,
+                lambda sc: jax.lax.cond(
+                    code == 1,
+                    apply_y,
+                    apply_z,
+                    sc
+                ),
+                (curr_state, curr_coeff)
+            )
+            
+            return (new_state, new_coeff)
+        
+        init                        = (state, 1.0 + 0.0j)
+        final_state, final_coeff    = jax.lax.fori_loop(0, n, body_fun, init)
+        return ensure_operator_output_shape_jax(final_state, final_coeff)
+
+    @jax.jit
+    def apply_pauli_sequence_jnp(state, sites, codes, spin_value: float = _SPIN):
+        """
+        JIT-compiled wrapper for Pauli sequence application (array state).
+        spin parameter is set to True by default for compatibility.
+        """
+        return _apply_pauli_sequence_jnp(state, sites, codes, spin=True, spin_value=spin_value)
+
+# -----------------------------------------------------------------------------
 
 if not JAX_AVAILABLE:
     sigma_x_int_jnp = np
