@@ -108,6 +108,17 @@ class NetworkFactory:
                 "dtype"             : "Data type for weights ('float32', 'complex128', etc.)",
             }
         ),
+        'pp': NetworkInfo(
+            "PairProduct",
+            "Pair Product Ansatz",
+            "Captures pairwise correlations via Pfaffian. Effective for fermions and frustrated spins.",
+            arguments = {
+                "use_rbm"           : "Whether to augment with an RBM component (bool, default: True)",
+                "input_shape"       : "Shape of the 1D input (e.g., `(n_spins,)`)",
+                "init_scale"        : "Initialization scale for F matrix (float, default: 0.01)",
+                "dtype"             : "Data type for weights ('float32', 'complex128', etc.)",
+            }
+        ),
         'activations': list_activations('jax')
     }
 
@@ -355,11 +366,34 @@ Usage
     print(net)
     # > ComplexResNet(reshape=(8, 8), features=32, depth=4, ...)
 """
+        pp = """
+Pair Product (PP) Ansatz for NQS.
+
+Captures pairwise correlations in the wavefunction using a Pfaffian structure.
+Particularly effective for fermionic systems and frustrated spins.
+
+Usage
+-----
+    from QES.general_python.ml.networks import choose_network
+    
+    # 1. Define PP Parameters
+    # -----------------------
+    pp_params = {
+        'input_shape'   : (64,),        # 64 sites
+        'init_scale'    : 0.01,         # Small initialization
+        'dtype'         : 'complex128'  # Essential for quantum phases
+    }
+    
+    # 2. Create the Network
+    # ---------------------
+    net = choose_network('pp', **pp_params)
+"""
         return {
                 'rbm'    : rbm,
                 'cnn'    : cnn,
                 'ar'     : ar,
                 'resnet' : res, 
+                'pp'     : pp,
             }
 
 # ----------------------------------

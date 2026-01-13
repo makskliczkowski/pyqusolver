@@ -1735,12 +1735,13 @@ class VMCSampler(Sampler):
                 
                 # Update Instance State (PT version stores full replica state)
                 final_states, final_logprobas, final_rng_k, final_num_proposed, final_num_accepted = final_state_tuple
-                if not reinitialized_for_call:
-                    self._states            = final_states
-                    self._logprobas         = final_logprobas
-                    self._num_proposed      = final_num_proposed
-                    self._num_accepted      = final_num_accepted
-                    self._rng_k             = final_rng_k
+                
+                # Always update the state because the previous buffer was donated and is now invalid
+                self._states                = final_states
+                self._logprobas             = final_logprobas
+                self._num_proposed          = final_num_proposed
+                self._num_accepted          = final_num_accepted
+                self._rng_k                 = final_rng_k
                 
                 # Return only the physical replica state (index 0) for user interface consistency
                 final_state_info = (self._states[0], self._logprobas[0])
@@ -1763,12 +1764,13 @@ class VMCSampler(Sampler):
         
             # Update Instance State (JAX)
             final_states, final_logprobas, final_rng_k, final_num_proposed, final_num_accepted = final_state_tuple
-            if not reinitialized_for_call:
-                self._states            = final_states
-                self._logprobas         = final_logprobas
-                self._num_proposed      = final_num_proposed
-                self._num_accepted      = final_num_accepted
-                self._rng_k             = final_rng_k
+            
+            # Always update the state because the previous buffer was donated and is now invalid
+            self._states            = final_states
+            self._logprobas         = final_logprobas
+            self._num_proposed      = final_num_proposed
+            self._num_accepted      = final_num_accepted
+            self._rng_k             = final_rng_k
                 
             final_state_info            = (self._states, self._logprobas)
             return final_state_info, samples_tuple, probs
