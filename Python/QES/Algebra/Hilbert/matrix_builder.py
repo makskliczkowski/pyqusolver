@@ -735,7 +735,7 @@ def ensure_thread_buffer(nh: int, chunk_size: int, dtype=np.complex128, thread_b
 
 # a) No symmetry support
 
-@numba.njit(cache=True, boundscheck=False)
+@numba.njit(boundscheck=False)
 def _apply_op_batch_seq_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -757,7 +757,7 @@ def _apply_op_batch_seq_jit(
             for b in range(n_batch):
                 vecs_out[target_idx, b] += val * vecs_in[k, b]
 
-@numba.njit(parallel=True, nogil=True, cache=True)
+@numba.njit(parallel=True, nogil=True)
 def _apply_op_batch_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -873,7 +873,7 @@ def _apply_op_batch_jit(
 
 # b) No symmetry with Fourier phases
 
-@numba.njit(cache=True)
+@numba.njit
 def _apply_fourier_batch_seq_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -899,7 +899,7 @@ def _apply_fourier_batch_seq_jit(
                     vecs_out[target_idx, b] += factor * vecs_in[k, b]
 
 # @numba.njit(parallel=False, fastmath=True)
-@numba.njit(parallel=True, cache=True)
+@numba.njit(parallel=True)
 def _apply_fourier_batch_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,
@@ -1008,7 +1008,7 @@ def _apply_fourier_batch_jit(
 
 # c) Symmetry support with CompactSymmetryData - fast path when matvec preserves sectors
 
-@numba.njit(cache=True)
+@numba.njit
 def _apply_op_batch_compact_seq_jit(
         vecs_in             : np.ndarray,
         vecs_out            : np.ndarray,

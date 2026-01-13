@@ -437,19 +437,19 @@ class HeisenbergKitaev(Hamiltonian):
                     cos_phi     = np.cos(phi)
                     
                     # Z-component: cos(theta) * amplitude
-                    imp_z       = -SINGLE_TERM_MULT * ampl * cos_theta
+                    imp_z       = SINGLE_TERM_MULT * ampl * cos_theta
                     if Hamiltonian._ADD_CONDITION(imp_z):
                         self.add(op_sz_l, multiplier=imp_z, modifies=False, sites=[i])
                         self._log(f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log=log)
                     
                     # X-component: sin(theta) * cos(phi) * amplitude
-                    imp_x       = -SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
+                    imp_x       = SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
                     if Hamiltonian._ADD_CONDITION(imp_x):
                         self.add(op_sx_l, multiplier=imp_x, modifies=True, sites=[i])
                         self._log(f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log=log)
                     
                     # Y-component: sin(theta) * sin(phi) * amplitude
-                    imp_y       = -SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
+                    imp_y       = SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
                     if Hamiltonian._ADD_CONDITION(imp_y):
                         self.add(op_sy_l, multiplier=imp_y, modifies=True, sites=[i])
                         self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log)
@@ -474,7 +474,7 @@ class HeisenbergKitaev(Hamiltonian):
                     sx_sx   = phase * CORR_TERM_MULT * self._j[i]                if self._j is not None else 0.0  # Heisenberg - value of SxSx (multiplier)
                     sy_sy   = phase * CORR_TERM_MULT * self._j[i]                if self._j is not None else 0.0  # Heisenberg - value of SySy (multiplier)
 
-                #! check the directional bond contributions - Kitaev
+                #! check the directional bond contributions - Kitaev (they are subtracted - ferromagnetic)
                 if True:
                     if nn == HEI_KIT_Z_BOND_NEI:
                         sz_sz  -= phase * CORR_TERM_MULT * self._kz if self._kz is not None else 0.0
@@ -498,11 +498,11 @@ class HeisenbergKitaev(Hamiltonian):
                         elems += 1
                 
                 
-                #! Gamma terms
+                #! Gamma terms - these are off-diagonal couplings, they are added - antiferromagnetic
                 if True:
                     #? Gamma_x terms
                     if Hamiltonian._ADD_CONDITION(self._gx) and nn == HEI_KIT_X_BOND_NEI:
-                        val = -self._gx * phase * CORR_TERM_MULT
+                        val = self._gx * phase * CORR_TERM_MULT
                         self.add(op_sy_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sz_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
@@ -510,7 +510,7 @@ class HeisenbergKitaev(Hamiltonian):
 
                     # #? Gamma_y terms
                     if Hamiltonian._ADD_CONDITION(self._gy) and nn == HEI_KIT_Y_BOND_NEI:
-                        val = -self._gy * phase * CORR_TERM_MULT
+                        val = self._gy * phase * CORR_TERM_MULT
                         self.add(op_sz_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sx_sz_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
@@ -518,7 +518,7 @@ class HeisenbergKitaev(Hamiltonian):
 
                     # #? Gamma_z terms
                     if Hamiltonian._ADD_CONDITION(self._gz) and nn == HEI_KIT_Z_BOND_NEI:
-                        val = -self._gz * phase * CORR_TERM_MULT
+                        val = self._gz * phase * CORR_TERM_MULT
                         self.add(op_sx_sy_c, sites = [i, nei], multiplier = val, modifies = True)
                         self.add(op_sy_sx_c, sites = [i, nei], multiplier = val, modifies = True)
                         self._log(f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}", lvl = 2, log = log)
