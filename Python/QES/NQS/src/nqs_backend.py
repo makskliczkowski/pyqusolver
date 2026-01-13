@@ -238,13 +238,26 @@ class NumpyBackend(BackendInterface):
 class JAXBackend(BackendInterface):
     '''JAX backend implementation.'''
 
-    name: str = "jax"
+    name: str   = "jax"
+    
+    # Class-level cache for JIT'd functions to prevent recompilation
+    _jit_cache  = {}
+    
+    @classmethod
+    def _get_cached_jit(cls, func, static_argnums):
+        """Get or create cached JIT'd function to avoid recompilation."""
+        key = (id(func), static_argnums)
+        if key not in cls._jit_cache:
+            cls._jit_cache[key] = jax.jit(func, static_argnums=static_argnums)
+        return cls._jit_cache[key]
 
     def eval_batched(self, net: nn.Module, params: Array, states: Array):
-        return jax.jit(net_utils.jaxpy.eval_batched_jax, static_argnums=(0,1))(net, params, states)
+        jitted = self._get_cached_jit(net_utils.jaxpy.eval_batched_jax, (0,1))
+        return jitted(net, params, states)
 
     def apply_callable(self, func: Callable, params: Array, states: Array):
-        return jax.jit(net_utils.jaxpy.apply_callable_batched_jax, static_argnums=(0,4,6))(func, params, states)
+        jitted = self._get_cached_jit(net_utils.jaxpy.apply_callable_batched_jax, (0,4,6))
+        return jitted(func, params, states)
 
     def local_energy(self, hamiltonian: Hamiltonian) -> Callable[[Any, Any], Any]:
         return hamiltonian.get_loc_energy_jax_fun()

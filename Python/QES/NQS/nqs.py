@@ -1554,7 +1554,7 @@ class NQS(MonteCarloSolver):
     #####################################
     
     @staticmethod
-    @partial(jax.jit, static_argnums=(0, 3, 4))
+    @partial(jax.jit, static_argnames=['net_apply', 'single_sample_flat_grad_fun', 'batch_size'])
     def log_derivative_jax(
             net_apply                   : Callable,                                     # The network's apply function f(p, x)
             params                      : Any,                                          # Network parameters p

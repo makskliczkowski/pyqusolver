@@ -312,6 +312,12 @@ class TDVP:
         self.dtype              = dtype
         self.verbose            = verbose
         
+        # Mixed precision for SR stability
+        # SR covariance operations MUST use float64 to avoid numerical instability
+        # during pseudo-inverse. This is critical for stable training.
+        self._sr_dtype          = np.float64 if dtype is None or np.issubdtype(dtype, np.floating) else np.complex128
+        self._sr_real_dtype     = np.float64
+        
         # Logger
         self.logger             = logger    
         
@@ -416,13 +422,13 @@ class TDVP:
         self._loss_c_fn             = sr.loss_centered_jax                  if self.is_jax else sr.loss_centered
         self._deriv_c_fn            = sr.derivatives_centered_jax           if self.is_jax else sr.derivatives_centered
         
-        # covariance functions - standard and minsr
+        # covariance functions - standard and minsr (already JIT'd in sr module)
         if self.use_minsr:
             self._covariance_fn     = sr.covariance_jax_minsr               if self.is_jax else sr.covariance_np_minsr
         else:
             self._covariance_fn     = sr.covariance_jax                     if self.is_jax else sr.covariance_np
 
-        # modified and standard preparation functions
+        # modified and standard preparation functions (already JIT'd in sr module)
         self._prepare_fn            = sr.solve_jax_prepare                  if self.is_jax else sr.solve_numpy_prepare
         self._prepare_fn_m          = sr.solve_jax_prepare_modified_ratios  if self.is_jax else sr.solve_numpy_prepare
             
@@ -432,9 +438,10 @@ class TDVP:
                 self._gradient_fn_j     = jax.jit(self._gradient_fn)
                 self._loss_c_fn_j       = jax.jit(self._loss_c_fn)
                 self._deriv_c_fn_j      = jax.jit(self._deriv_c_fn)
-                self._covariance_fn_j   = jax.jit(self._covariance_fn)      # covariance function already jitted internally
-                self._prepare_fn_j      = jax.jit(self._prepare_fn)
-                self._prepare_fn_m_j    = jax.jit(self._prepare_fn_m)
+                # These ARE decorated with @jax.jit in sr module - don't double-wrap
+                self._covariance_fn_j   = self._covariance_fn
+                self._prepare_fn_j      = self._prepare_fn
+                self._prepare_fn_m_j    = self._prepare_fn_m
             else:
                 self._gradient_fn_j     = self._gradient_fn
                 self._loss_c_fn_j       = self._loss_c_fn
@@ -627,6 +634,34 @@ class TDVP:
         '''
         self.grad_clip = grad_clip
     
+    def _promote_to_sr_precision(self, array: Array) -> Array:
+        '''
+        Promote array to high precision (float64/complex128) for SR operations.
+        
+        CRITICAL for numerical stability: SR covariance matrices must be
+        computed and stored in float64 to avoid precision loss during
+        pseudo-inverse computation.
+        
+        Parameters
+        ----------
+        array : Array
+            Input array to promote
+            
+        Returns
+        -------
+        Array
+            Array promoted to float64/complex128 for SR stability
+        '''
+        import numpy as _np
+        if self.is_jax and JAX_AVAILABLE:
+            if _np.iscomplexobj(array):
+                return jnp.asarray(array, dtype=jnp.complex128)
+            return jnp.asarray(array, dtype=jnp.float64)
+        else:
+            if _np.iscomplexobj(array):
+                return _np.asarray(array, dtype=_np.complex128)
+            return _np.asarray(array, dtype=_np.float64)
+
     def _apply_grad_clip(self, gradient: Array) -> Array:
         '''
         Apply gradient clipping to the parameter update direction.
@@ -793,6 +828,12 @@ class TDVP:
 
         with self._time('prepare', self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
             loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m = prepare
+        
+        #! CRITICAL: Promote to high precision for SR numerical stability
+        var_deriv_c         = self._promote_to_sr_precision(var_deriv_c)
+        loss_c              = self._promote_to_sr_precision(loss_c)
+        if var_deriv_m is not None:
+            var_deriv_m     = self._promote_to_sr_precision(var_deriv_m)
             
         # for minsr, it is unnecessary to calculate the force vector, unless specifically requested or if we want to debug
         # Force vector F is O^dag * E_loc. MinSR solves T * lambda = E_loc, then x = O^dag * lambda.

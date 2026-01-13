@@ -1951,7 +1951,9 @@ class VMCSampler(Sampler):
         int_dtype = DEFAULT_JP_INT_TYPE
         n_replicas = self._n_replicas
         
-        @jax.jit
+        # Use donate_argnums to allow JAX to reuse input buffers.
+        # For PT sampling, states_init and rng_k_init are transformed, so donation is safe.
+        @partial(jax.jit, donate_argnums=(0, 1))    # Donate states_init and rng_k_init
         def wrapped_pt_sampler(states_init          : jax.Array,
                                rng_k_init           : jax.Array,
                                params               : Any,
@@ -2049,7 +2051,7 @@ class VMCSampler(Sampler):
         # This wrapper handles default values for initial counters
         int_dtype                       = DEFAULT_JP_INT_TYPE
 
-        @jax.jit
+        @partial(jax.jit, donate_argnums=(0, 1))  # Donate states_init and rng_k_init
         def wrapped_sampler(states_init         : jax.Array,
                             rng_k_init          : jax.Array,
                             params              : Any,
