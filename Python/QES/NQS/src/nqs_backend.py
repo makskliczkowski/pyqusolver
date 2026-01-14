@@ -351,7 +351,8 @@ class JAXBackend(BackendInterface):
         '''Convert input to JAX array with optional dtype.'''
         if dtype is not None:
             return jnp.array(x, dtype=dtype, **kwargs)
-
+        return jnp.array(x, **kwargs)
+    
     @staticmethod
     def is_jax_array(x):
         '''Check if input is a JAX array.'''

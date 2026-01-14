@@ -545,7 +545,7 @@ class NQSTrainer:
         # JIT Compile Critical Paths
         # We pre-compile the sampling and step functions to avoid runtime overhead
         # self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
-        self._single_step_jit   = jax.jit(nqs.wrap_single_step_jax(batch_size = n_batch))
+        self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
         
         # Define a function that runs the WHOLE step (ODE + TDVP + Energy)
         def train_step_logic(f, est_fn, y, t, configs, configs_ansatze, probabilities, lower_states):

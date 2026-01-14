@@ -688,7 +688,7 @@ class VMCSampler(Sampler):
             jnp.ndarray: The acceptance probability(ies).
         '''
         delta   = jnp.real(candidate_val) - jnp.real(current_val)
-        ratio   = jnp.exp(jnp.clip(beta * mu * delta, a_max=30.0)) # prevent overflow
+        ratio   = jnp.exp(jnp.minimum(beta * mu * delta, 30.0)) # prevent overflow
         return ratio
     
     @staticmethod
@@ -706,7 +706,7 @@ class VMCSampler(Sampler):
         '''
 
         log_acceptance_ratio = beta * mu * np.real(candidate_val - current_val)
-        return np.exp(log_acceptance_ratio)
+        return np.exp(np.minimum(log_acceptance_ratio, 30.0))
     
     def acceptance_probability(self, current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
         r'''
@@ -749,7 +749,7 @@ class VMCSampler(Sampler):
                 @partial(jax.jit, static_argnames=('beta',))
                 def _accept_jax_dynamic_beta(cv, cdv, beta, mu):
                     log_acceptance_ratio = beta * jnp.real(cdv - cv) * mu
-                    return jnp.exp(log_acceptance_ratio)
+                    return jnp.exp(jnp.minimum(log_acceptance_ratio, 30.0))
                 return _accept_jax_dynamic_beta(current_val, candidate_val, use_beta, mu)
             else:
                 return self._acceptance_probability_jax(current_val, candidate_val, beta=use_beta, mu=mu)

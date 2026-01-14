@@ -51,11 +51,19 @@ ensuring optimal performance and differentiability using the JAX ecosystem.
 
 ################################################################################
 
-import jax
-import jax.numpy as jnp
-from functools import partial
-from typing import Tuple, Optional, List, Callable, Union
-from QES.Algebra.Hamil.hamil_energy_helper import unpack_operator_terms, flatten_operator_terms
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError as e:
+    raise ImportError("JAX is required for this module. Please install JAX to proceed.") from e
+    
+from functools  import partial
+from typing     import Tuple, Optional, List, Callable, Union
+
+try:
+    from QES.Algebra.Hamil.hamil_energy_helper import unpack_operator_terms, flatten_operator_terms
+except ImportError as e:
+    raise ImportError("Failed to import from hamil_energy_helper. Ensure the module exists and is accessible.") from e
 
 ################################################################################
 # Diagonal (non-modifying) contribution – no sites
@@ -98,16 +106,16 @@ def local_energy_jax_nonmod_nosites(
 
     # Work in the multiplying dtype.
     dtype_e         = multipliers.dtype
-    multipliers     = jnp.asarray(multipliers)
+    multipliers     = jnp.asarray(multipliers, dtype=dtype_e)
 
-    def scan_fn(carry, i):
+    def loop_body(i, carry):
         _, coeff    = jax.lax.switch(i, functions, state)
         coeff       = jnp.asarray(coeff, dtype=dtype_e)
         contrib     = jnp.squeeze(coeff) * multipliers[i]
-        return carry + contrib, jnp.zeros((), dtype=dtype_e)
+        return carry + contrib
 
     init        = jnp.zeros((), dtype=dtype_e)
-    total, _    = jax.lax.scan(scan_fn, init, jnp.arange(num_local, dtype=jnp.int32))
+    total       = jax.lax.fori_loop(0, num_local, loop_body, init)
     return total.reshape((1,))
 
 ################################################################################
@@ -305,8 +313,8 @@ def local_energy_jax_wrap(
             # --------------------------------------------------------------
             # 3) Modifying operators WITHOUT sites
             # --------------------------------------------------------------
-            for op, mult in zip(f_mod_nos_t, m_mod_nos_arr):
-            # for i in range(len(f_mod_nos_t)):
+            # for op, mult in zip(f_mod_nos_t, m_mod_nos_arr):
+            for i in range(len(f_mod_nos_t)):
                 op                  = f_mod_nos_t[i]
                 mult                = m_mod_nos_arr[i]
                 new_states, coeffs  = op(state) # (K, ns), (K,)

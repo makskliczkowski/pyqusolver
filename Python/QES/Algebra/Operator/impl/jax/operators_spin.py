@@ -89,7 +89,7 @@ if JAX_AVAILABLE:
         Returns:
             A tuple (state, coeff) with the updated state and accumulated coefficient.
         """
-        sites = jnp.asarray(sites)
+        sites       = jnp.asarray(sites)
         def body(i, carry):
             curr_state, curr_coeff  = carry
             # sites is static, so extract the site.
@@ -99,7 +99,7 @@ if JAX_AVAILABLE:
             new_coeff               = curr_coeff * spin_value
             return (new_state, new_coeff)
 
-        num_sites   = len(sites)
+        num_sites   = sites.shape[0]
         init        = (state, 1.0)
         final_state, final_coeff = lax.fori_loop(0, num_sites, body, init)
         return ensure_operator_output_shape_jax(final_state, final_coeff)
@@ -311,7 +311,7 @@ if JAX_AVAILABLE:
         """
         # Body function for the fori_loop. The loop variable 'i' runs over site indices.
         
-        sites = jnp.array(sites)
+        sites   = jnp.asarray(sites)
         
         def body(i, coeff):
             # Since sites is a static Python list, we can extract the site index.
@@ -330,7 +330,7 @@ if JAX_AVAILABLE:
             return coeff * factor
 
         # Use lax.fori_loop to accumulate the coefficient over all sites.
-        coeff = lax.fori_loop(0, len(sites), body, 1.0)
+        coeff = lax.fori_loop(0, sites.shape[0], body, 1.0)
         return ensure_operator_output_shape_jax(state, coeff)
         # return state, coeff
 
@@ -421,15 +421,15 @@ if JAX_AVAILABLE:
             return lax.cond(curr_coeff == 0.0, skip_branch, compute_branch, operand=None)
         
         init                        = (state, 1.0)
-        final_state, final_coeff    = lax.fori_loop(0, len(sites), body, init)
+        final_state, final_coeff    = lax.fori_loop(0, sites.shape[0], body, init)
         return ensure_operator_output_shape_jax(final_state, final_coeff)
         # return final_state, final_coeff
 
-    # @jax.jit
+    @jax.jit(static_argnums=(2,))
     def sigma_plus_jnp(state,
-                        sites       : Union[List[int], None],
-                        spin        : bool = BACKEND_DEF_SPIN,
-                        spin_value  : float = _SPIN):
+                    sites       : Union[List[int], None],
+                    spin        : bool  = BACKEND_DEF_SPIN,
+                    spin_value  : float = _SPIN):
         r"""
         sigma ⁺ on a JAX array state.
         Uses lax.fori_loop.
@@ -454,7 +454,7 @@ if JAX_AVAILABLE:
                 return new_state, coeff_new
             return jax.lax.cond(coeff_in == 0.0, skip_branch, compute_branch, operand=None)
         
-        new_state, coeff = lax.fori_loop(0, len(sites), body_fun, (state, 1.0))
+        new_state, coeff = lax.fori_loop(0, sites_arr.shape[0], body_fun, (state, 1.0))
         return ensure_operator_output_shape_jax(new_state, coeff)
         # return new_state, coeff
 
@@ -488,7 +488,7 @@ if JAX_AVAILABLE:
                 return (new_state, new_coeff)
             return lax.cond(curr_coeff == 0.0, skip_branch, compute_branch, operand=None)
         init                        = (state, 1.0)
-        final_state, final_coeff    = lax.fori_loop(0, len(sites), body, init)
+        final_state, final_coeff    = lax.fori_loop(0, sites_arr.shape[0], body, init)
         return ensure_operator_output_shape_jax(final_state, final_coeff)
         # return final_state, final_coeff
 
@@ -517,7 +517,7 @@ if JAX_AVAILABLE:
                                                     operand=None)
                 return new_state, coeff_new
             return jax.lax.cond(coeff_in == 0.0, skip_branch, compute_branch, operand=None)
-        new_state, coeff = lax.fori_loop(0, len(sites), body_fun, (state, 1.0))
+        new_state, coeff = lax.fori_loop(0, sites_arr.shape[0], body_fun, (state, 1.0))
         return ensure_operator_output_shape_jax(new_state, coeff)
         # return new_state, coeff
 
@@ -560,7 +560,7 @@ if JAX_AVAILABLE:
                     operand = None
                 )
 
-        new_state = lax.fori_loop(0, len(sites), body_fun, state)
+        new_state = lax.fori_loop(0, sites_arr.shape[0], body_fun, state)
         return new_state, coeff
 
     @partial(jax.jit, static_argnums=(2,))
@@ -596,7 +596,7 @@ if JAX_AVAILABLE:
                 return (new_state, new_coeff)
             return lax.cond(curr_coeff == 0.0, skip_branch, compute_branch, operand=None)
         init                     = (state, 1.0)
-        final_state, final_coeff = lax.fori_loop(0, len(sites), body, init)
+        final_state, final_coeff = lax.fori_loop(0, sites.shape[0], body, init)
         return ensure_operator_output_shape_jax(final_state, final_coeff)
         # return final_state, final_coeff
 
@@ -634,7 +634,7 @@ if JAX_AVAILABLE:
                 return (new_state, new_coeff)
             return lax.cond(curr_coeff == 0.0, skip_branch, compute_branch, operand=None)
         init                     = (state, 1.0)
-        final_state, final_coeff = lax.fori_loop(0, len(sites), body, init)
+        final_state, final_coeff = lax.fori_loop(0, sites.shape[0], body, init)
         return ensure_operator_output_shape_jax(final_state, final_coeff)
         # return final_state, final_coeff
 
@@ -686,7 +686,7 @@ if JAX_AVAILABLE:
                     )
                 return new_state, coeff_new
             return jax.lax.cond(coeff_in == 0.0, skip_branch, compute_branch, operand=None)
-        new_state, coeff = lax.fori_loop(0, len(sites), body_fun, (state, 1.0))
+        new_state, coeff = lax.fori_loop(0, sites_arr.shape[0], body_fun, (state, 1.0))
         return ensure_operator_output_shape_jax(new_state, coeff)
         # return new_state, coeff
 
@@ -714,8 +714,8 @@ if JAX_AVAILABLE:
                             lambda _: -1.0,
                             operand=None)
             return total + factor * jnp.exp(1j * k * site)
-        total   = lax.fori_loop(0, len(sites), body, 0.0+0j)
-        sqrt_l  = jnp.sqrt(jnp.array(len(sites)))
+        total   = lax.fori_loop(0, sites.shape[0], body, 0.0+0j)
+        sqrt_l  = jnp.sqrt(jnp.array(sites.shape[0]))
         norm    = lax.cond(sites.shape[0] > 0, lambda _: sqrt_l, lambda _: jnp.array(1.0), operand=None)
         return state, total / norm
 
@@ -752,8 +752,8 @@ if JAX_AVAILABLE:
             # Pauli Z eigenvalue: +1 for spin-up (bit=0), -1 for spin-down (bit=1)
             factor  = (1.0 - 2.0 * bit) * spin_value
             return total_val + factor * jnp.exp(1j * k * pos)
-        total   = lax.fori_loop(0, len(sites), body_fun, total)
-        sqrt_l  = jnp.sqrt(jnp.array(len(sites)))
+        total   = lax.fori_loop(0, sites_arr.shape[0], body_fun, total)
+        sqrt_l  = jnp.sqrt(jnp.array(sites_arr.shape[0]))
         norm    = lax.cond(
             sites_arr.shape[0] > 0,
             lambda _: sqrt_l,
@@ -825,7 +825,7 @@ if JAX_AVAILABLE:
             bit     = (state & bitmask) > 0
             factor  = 2 * bit - 1.0
             return coeff + factor * spin_value
-        coeff = lax.fori_loop(0, len(sites), body, coeff)
+        coeff = lax.fori_loop(0, sites_arr.shape[0], body, coeff)
         return ensure_operator_output_shape_jax(state, coeff)
 
 # -----------------------------------------------------------------------------

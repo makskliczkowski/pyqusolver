@@ -2238,9 +2238,9 @@ class NQS(MonteCarloSolver):
         if params is None:
             params = self._net.get_params()
         elif isinstance(params, jnp.ndarray):
-            shapes = shapes if shapes is not None else self._params_shapes
-            sizes  = sizes if sizes is not None else self._params_sizes
-            iscpx  = iscpx if iscpx is not None else self._params_is_cpx
+            shapes = shapes if shapes   is not None else self._params_shapes
+            sizes  = sizes  if sizes    is not None else self._params_sizes
+            iscpx  = iscpx  if iscpx    is not None else self._params_iscpx
             params = self.transform_flat_params(params, shapes, sizes, iscpx)
 
         # set the parameters
