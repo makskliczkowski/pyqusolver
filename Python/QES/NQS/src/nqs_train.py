@@ -470,6 +470,11 @@ class NQSTrainer:
         self.n_batch            = n_batch
         self.verbose            = nqs.verbose
         self.dtype              = dtype if dtype is not None else nqs.dtype
+        if dtype is None and hasattr(nqs, "_precision_policy"):
+            if getattr(nqs, "_iscpx", False):
+                self.dtype      = nqs._precision_policy.accum_complex_dtype
+            else:
+                self.dtype      = nqs._precision_policy.accum_real_dtype
         
         # Validate lower states
         if lower_states is not None:
@@ -544,7 +549,6 @@ class NQSTrainer:
         
         # JIT Compile Critical Paths
         # We pre-compile the sampling and step functions to avoid runtime overhead
-        # self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
         self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
         
         # Define a function that runs the WHOLE step (ODE + TDVP + Energy)
@@ -564,10 +568,27 @@ class NQSTrainer:
             # info is TDVPStepInfo, meta is (shapes, sizes, iscpx)
             return new_params, new_t, (info, meta)
         
-        # JIT compile the training step for maximum performance.
-        # Mark 'f' (TDVP), 'est_fn' (estimation function), and 'lower_states' (list) as static.
-        # This assumes TDVP object configuration doesn't change during training.
-        self._step_jit          = jax.jit(train_step_logic, static_argnames=['f', 'est_fn', 'lower_states'])
+        self._step_nojit        = train_step_logic
+
+        def train_step_logic_no_lower(f, est_fn, y, t, configs, configs_ansatze, probabilities):
+            return train_step_logic(
+                f,
+                est_fn,
+                y,
+                t,
+                configs,
+                configs_ansatze,
+                probabilities,
+                lower_states=None,
+            )
+
+        # JIT compile the training step for maximum performance (no excited-state penalties).
+        # Mark 'f' (TDVP) and 'est_fn' (estimation function) as static.
+        # The lower_states path stays non-jitted because it carries Python objects.
+        if self.lower_states:
+            self._step_jit      = self._step_nojit
+        else:
+            self._step_jit      = jax.jit(train_step_logic_no_lower, static_argnames=['f', 'est_fn'])
                     
         # State
         self.stats              = NQSTrainStats()
@@ -815,7 +836,8 @@ class NQSTrainer:
                 params_j            = nqs_lower.get_params(),
                 configs_j           = cfgs_lower,
                 beta_j              = nqs_lower.beta_penalty,
-                backend_np          = self.nqs.backend
+                backend_np          = self.nqs.backend,
+                dtype               = self.tdvp.dtype
             )
             lower_contr.append(penalty)
         return lower_contr
@@ -983,18 +1005,25 @@ class NQSTrainer:
                 if epoch == 0:                  self._log(f"Prepared lower states for excited state handling", lvl=1, color='green', verbose=self.verbose)
                 # Physics Step (TDVP / ODE) (Timed)
                 params_flat                     = self.nqs.get_params(unravel=True)
+                step_kwargs                     = {
+                                                    "f"                 : self.tdvp,
+                                                    "y"                 : params_flat,
+                                                    "t"                 : 0.0,
+                                                    "est_fn"            : self._single_step_jit,
+                                                    "configs"           : cfgs,
+                                                    "configs_ansatze"   : cfgs_psi,
+                                                    "probabilities"     : probs,
+                                                }
+                step_fn                         = self._step_jit
+                if lower_contr is not None:
+                    step_fn                     = self._step_nojit
+                    step_kwargs["lower_states"] = lower_contr
+                    
                 step_out                        = self._timed_execute(
-                                                    "step", 
-                                                    self._step_jit,
-                                                    f               = self.tdvp,
-                                                    y               = params_flat,
-                                                    t               = 0.0,
-                                                    est_fn          = self._single_step_jit,
-                                                    configs         = cfgs,
-                                                    configs_ansatze = cfgs_psi,
-                                                    probabilities   = probs,
-                                                    lower_states    = lower_contr,
-                                                    epoch           = global_epoch
+                                                    "step",
+                                                    step_fn,
+                                                    epoch   =   global_epoch,
+                                                    **step_kwargs,
                                                 )
                 dparams, _, (tdvp_info, shapes_info)    = step_out
                 mean_loss                               = tdvp_info.mean_energy

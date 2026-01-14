@@ -425,7 +425,7 @@ if JAX_AVAILABLE:
         return ensure_operator_output_shape_jax(final_state, final_coeff)
         # return final_state, final_coeff
 
-    @jax.jit(static_argnums=(2,))
+    @partial(jax.jit, static_argnums=(2,))
     def sigma_plus_jnp(state,
                     sites       : Union[List[int], None],
                     spin        : bool  = BACKEND_DEF_SPIN,

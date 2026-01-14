@@ -128,6 +128,7 @@ class TDVPLowerPenalty:
     r_el                    : np.array = None  # (n_j,) complex; ratios E_loc^{W}(\sigma )Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs
     # backend
     backend_np              : Any = jnp if JAX_AVAILABLE else np
+    dtype                   : Any = None
     
     def compute_ratios(self):
         '''
@@ -151,8 +152,25 @@ class TDVPLowerPenalty:
         self.r_el = self.backend_np.exp(self.excited_on_lower - self.lower_on_lower)
 
     def __post_init__(self):
-        self.r_le = jnp.zeros_like(self.configs_j, dtype=jnp.complex64)
-        self.r_el = jnp.zeros_like(self.configs_j, dtype=jnp.complex64)
+        backend = self.backend_np
+        if backend is None:
+            backend = jnp if JAX_AVAILABLE else np
+            self.backend_np = backend
+        dtype = self.dtype
+        if dtype is None:
+            try:
+                dtype = backend.result_type(
+                    self.excited_on_lower,
+                    self.lower_on_lower,
+                    self.lower_on_excited,
+                    self.excited_on_excited,
+                )
+            except Exception:
+                dtype = getattr(self.excited_on_lower, "dtype", None)
+        if dtype is None:
+            dtype = jnp.complex64 if backend is jnp else np.complex64
+        self.r_le = backend.zeros_like(self.excited_on_lower, dtype=dtype)
+        self.r_el = backend.zeros_like(self.excited_on_lower, dtype=dtype)
         self.compute_ratios()
 
 #################################################################

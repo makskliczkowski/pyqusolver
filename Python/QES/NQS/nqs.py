@@ -26,6 +26,7 @@ Description     : Neural Quantum State (NQS) Solver implementation.
 import os
 import time
 import warnings
+import numpy as np
 
 # Some Globals for safety
 # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"]     = "false" 
@@ -45,6 +46,7 @@ try:
     from .src.nqs_checkpoint_manager            import NQSCheckpointManager
     from .src.nqs_symmetry                      import NQSSymmetricAnsatz
     from .src.nqs_engine                        import NQSEvalEngine, NQSObservable, NQSLoss
+    from .src.nqs_precision                     import NQSPrecisionPolicy, resolve_precision_policy, cast_for_precision
 except ImportError as e:
     raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
 
@@ -420,6 +422,9 @@ class NQS(MonteCarloSolver):
         self._holomorphic           = self._net.is_holomorphic
         self._analytic              = self._net.has_analytic_grad
         self._dtype                 = self._net.dtype
+
+        # Precision policy (mixed precision for stable paths)
+        self._precision_policy      = resolve_precision_policy(self._dtype, is_jax=self._isjax, **kwargs)
         
         # Initialize SymmetryHandler
         self.symmetry_handler       = NQSSymmetricAnsatz(self)
@@ -676,7 +681,7 @@ class NQS(MonteCarloSolver):
             self._initialized       = True
             # Rebuild ansatz pipeline after network initialization
             # self._rebuild_ansatz_function()
-    
+
     #####################################
     
     @property
@@ -874,8 +879,12 @@ class NQS(MonteCarloSolver):
             sampler_kwargs['therm_steps']   = kwargs.get('s_therm_steps', 100)
             sampler_kwargs.pop('s_therm_steps', None)
             
-            sampler_kwargs['statetype']     = kwargs.get('s_statetype', jnp.float32 if self._isjax else np.float32)
+            default_state_dtype             = self._precision_policy.state_dtype if hasattr(self, "_precision_policy") else (jnp.float32 if self._isjax else np.float32)
+            sampler_kwargs['statetype']     = kwargs.get('s_statetype', default_state_dtype)
             sampler_kwargs.pop('s_statetype', None)
+
+            if 's_sample_dtype' in kwargs:
+                sampler_kwargs['sample_dtype'] = kwargs.pop('s_sample_dtype')
             
             sampler_kwargs['initstate']     = kwargs.get('s_initstate', None)
             sampler_kwargs.pop('s_initstate', None)
@@ -1293,7 +1302,8 @@ class NQS(MonteCarloSolver):
             
         # check if the probabilities are provided
         if probabilities is None:
-            probabilities = self._backend.ones_like(ansatze).astype(ansatze.dtype)
+            prob_dtype      = self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else ansatze.dtype
+            probabilities   = self._nqsbackend.asarray(self._backend.ones_like(ansatze), dtype=prob_dtype)
             
         output = []
         for i, f in enumerate(functions):
@@ -1670,12 +1680,22 @@ class NQS(MonteCarloSolver):
         
         if self._isjax:
             if not self._analytic:
-                return self.log_derivative_jax(self._ansatz_func, params, states, self._flat_grad_func, batch_size)
-            return self.log_derivative_jax(self._grad_func, params, states, self._flat_grad_func, batch_size)
+                grads, shapes, sizes, is_cpx = self.log_derivative_jax(self._ansatz_func, params, states, self._flat_grad_func, batch_size)
+            else:
+                grads, shapes, sizes, is_cpx = self.log_derivative_jax(self._grad_func, params, states, self._flat_grad_func, batch_size)
+            accum_real_dtype    = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
+            accum_complex_dtype = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
+            grads = cast_for_precision(grads, accum_real_dtype, accum_complex_dtype, self._isjax)
+            return grads, shapes, sizes, is_cpx
         
         if not self._analytic:
-            return self.log_derivative_np(self._ansatz_func, params, batch_size, states, self._flat_grad_func)
-        return self.log_derivative_np(self._grad_func, params, batch_size, states, self._flat_grad_func)
+            grads = self.log_derivative_np(self._ansatz_func, params, batch_size, states, self._flat_grad_func)
+        else:
+            grads = self.log_derivative_np(self._grad_func, params, batch_size, states, self._flat_grad_func)
+        accum_real_dtype    = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
+        accum_complex_dtype = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
+        grads = cast_for_precision(grads, accum_real_dtype, accum_complex_dtype, self._isjax)
+        return grads
 
     def log_deriv(self, *args, **kwargs):
         r''' Alias for log_derivative. \partial _W log(psi) = \partial _W psi / psi '''
@@ -1835,7 +1855,8 @@ class NQS(MonteCarloSolver):
                  result = NQS._single_step(params, configs, configs_ansatze, probabilities, 
                      ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
                      flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
-                     batch_size=batch_size, t=t
+                     batch_size=batch_size, t=t,
+                     use_jax=False
                  )
                  return result.params_shapes, result.params_sizes, result.params_cpx
              finally:
@@ -1854,14 +1875,21 @@ class NQS(MonteCarloSolver):
         # Abstract arrays
         abstract_configs    = jax.ShapeDtypeStruct((1, self._nvisible), sample_dtype)
         abstract_ansatze    = jax.ShapeDtypeStruct((1,), self._dtype) # Log ansatz is complex/float depending on net
-        abstract_probs      = jax.ShapeDtypeStruct((1,), self._dtype) # Probs usually real but passed as net dtype often
+        prob_dtype          = self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else self._dtype
+        abstract_probs      = jax.ShapeDtypeStruct((1,), prob_dtype) # Probs are real, use precision policy
         
         # Use eval_shape on the static single_step function
         # We need to partial the static args first
+        accum_real_dtype   = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
+        accum_complex_dtype = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
+
         single_step_partial = partial(NQS._single_step,
             ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
             flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
-            batch_size=batch_size, t=t
+            batch_size=batch_size, t=t,
+            accum_real_dtype=accum_real_dtype,
+            accum_complex_dtype=accum_complex_dtype,
+            use_jax=self._isjax,
         )
         
         result_abstract = jax.eval_shape(single_step_partial, params, abstract_configs, abstract_ansatze, abstract_probs)
@@ -1893,13 +1921,19 @@ class NQS(MonteCarloSolver):
 
         # ! Bind the static arguments via partial
         # This helps JAX identify them as non-differentiable configuration
+        accum_real_dtype            = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
+        accum_complex_dtype         = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
+
         single_step_jax             = partial(NQS._single_step, 
-                                        ansatz_fn       =   ansatz_fn, 
-                                        local_loss_fn   =   local_loss_fn,
-                                        flat_grad_fn    =   flat_grad_fn, 
-                                        apply_fn        =   apply_fn, 
-                                        batch_size      =   batch_size, 
-                                        compute_grad_f  =   compute_grad_f
+                                        ansatz_fn           =   ansatz_fn, 
+                                        local_loss_fn       =   local_loss_fn,
+                                        flat_grad_fn        =   flat_grad_fn, 
+                                        apply_fn            =   apply_fn, 
+                                        batch_size          =   batch_size, 
+                                        compute_grad_f      =   compute_grad_f,
+                                        accum_real_dtype    =   accum_real_dtype,
+                                        accum_complex_dtype =   accum_complex_dtype,
+                                        use_jax             =   self._isjax,
                                     )
 
         # ! Create the JIT-compiled wrapper
@@ -1927,6 +1961,10 @@ class NQS(MonteCarloSolver):
                     local_loss_fn   : Callable  = None,
                     flat_grad_fn    : Callable  = None,
                     compute_grad_f  : Callable  = net_utils.jaxpy.compute_gradients_batched,
+                    # precision (Static input for JIT)
+                    accum_real_dtype    : Any   = None,
+                    accum_complex_dtype : Any   = None,
+                    use_jax             : bool  = True,
                     # Static for evaluation
                     batch_size      : int       = None,
                     t               : float     = None,
@@ -1957,6 +1995,12 @@ class NQS(MonteCarloSolver):
                                             single_sample_flat_grad_fun = flat_grad_fn,
                                             batch_size                  = batch_size
                                         )
+
+        # Promote numerically sensitive outputs if requested
+        v          = cast_for_precision(v, accum_real_dtype, accum_complex_dtype, use_jax)
+        means      = cast_for_precision(means, accum_real_dtype, accum_complex_dtype, use_jax)
+        stds       = cast_for_precision(stds, accum_real_dtype, accum_complex_dtype, use_jax)
+        flat_grads = cast_for_precision(flat_grads, accum_real_dtype, accum_complex_dtype, use_jax)
 
         return NQSSingleStepResult(loss=v, loss_mean=means, loss_std=stds, grad_flat=flat_grads, params_shapes=shapes, params_sizes=sizes, params_cpx=iscpx)
 
@@ -2001,6 +2045,8 @@ class NQS(MonteCarloSolver):
         
         # call the appropriate single step function
         if isinstance(self._nqsproblem, WavefunctionPhysics):
+            accum_real_dtype     = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
+            accum_complex_dtype  = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
             return self._single_step(params         =   params, 
                                     configs         =   configs, 
                                     configs_ansatze =   configs_ansatze, 
@@ -2010,6 +2056,9 @@ class NQS(MonteCarloSolver):
                                     local_loss_fn   =   loss_function,
                                     flat_grad_fn    =   flat_grad_fun,
                                     compute_grad_f  =   compute_grad_fun,
+                                    accum_real_dtype    =   accum_real_dtype,
+                                    accum_complex_dtype =   accum_complex_dtype,
+                                    use_jax             =   self._isjax,
                                     batch_size      =   self._batch_size,
                                     **kwargs)
             

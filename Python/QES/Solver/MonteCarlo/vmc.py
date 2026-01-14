@@ -310,14 +310,19 @@ class VMCSampler(Sampler):
         if self._isjax and self._sample_dtype is None:
             # Auto-enable mixed precision for double precision models
             if self._dtype == jnp.complex128:
-                self._sample_dtype = jnp.complex64
+                self._sample_dtype              = jnp.complex64
             elif self._dtype == jnp.float64:
-                self._sample_dtype = jnp.float32
+                self._sample_dtype              = jnp.float32
             else:
-                self._sample_dtype = self._dtype
+                self._sample_dtype              = self._dtype
         
         if self._sample_dtype is None:
-            self._sample_dtype = self._dtype
+            self._sample_dtype                  = self._dtype
+
+        # -----------------------------------------------------------------
+        # Determine if the network is complex-valued
+        # ----------------------------------------------------------------- 
+               
 
         # -----------------------------------------------------------------
         # Resolve update function
@@ -468,7 +473,8 @@ class VMCSampler(Sampler):
             network_callable, parameters = net.get_apply()
             return network_callable, parameters
         elif hasattr(net, 'apply') and callable(net.apply):
-            return net.apply, self.net.geta_params() if hasattr(net, 'geta_params') else self._parameters
+            params = net.get_params() if hasattr(net, 'get_params') and callable(net.get_params) else None
+            return net.apply, params
         elif callable(net):
             return net, None # Assume no external parameters needed unless provided at sample time
         raise ValueError("Invalid network object provided. Needs to be callable or have an 'apply' method.")
@@ -886,49 +892,49 @@ class VMCSampler(Sampler):
         num_chains          = chain_init.shape[0]
         # Optimized: assume net_callable_fun handles batches directly (no vmap)
         # This allows efficient matrix-matrix multiplications on GPU
-        logproba_fun        = lambda x: jnp.real(net_callable_fun(params, x))
+        logproba_fun        = lambda x: net_callable_fun(params, x)
         proposer_fn         = jax.vmap(update_proposer, in_axes=(0, 0))
         
-        # Define the single-step function *inside* so it closes over the arguments
-        def _sweep_chain_jax_step_inner(step_idx, carry):
+        # Define the single-step function *inside* so it closes over the arguments.
+        def _sweep_chain_jax_step_inner(carry, _):
             chain_in, current_val_in, current_key, num_prop, num_acc = carry
-            
+
             # One for this step and one for the next carry
             key_step, next_key_carry    = jax.random.split(current_key)
             # Proposer and acceptance keys
             key_prop_base, key_acc      = jax.random.split(key_step)
             chain_prop_keys             = jax.random.split(key_prop_base, num_chains)
-            
+
             #! Single MCMC update step logic
             # Propose update
             new_chain               = proposer_fn(chain_in, chain_prop_keys)    # [num_chains, state_shape]
             new_val                 = logproba_fun(new_chain)                   # [num_chains] (or [num_chains, 1])
             if new_val.ndim > 1:    new_val = new_val.squeeze()
-            
-            #! Calculate the log-probability of the new state - like MCSampler._logprob_jax
-            delta                   = new_val - current_val_in                  # [num_chains]
-            ratio                   = jnp.exp(beta * mu * delta)                # [num_chains]
 
-            #! Calculate acceptance probabilities (using accept_config_fun)
-            u                       = jax.random.uniform(key_acc, shape=(num_chains))
-            keep                    = u < ratio                                 # [num_chains,]  
+            #! Calculate the log-probability of the new state - like MCSampler._logprob_jax
+            delta                   = jnp.real(new_val - current_val_in)        # [num_chains]
+            log_acc                 = beta * mu * delta                         # [num_chains]
+
+            #! Calculate acceptance in log space to avoid overflow
+            log_u                   = jnp.log(jax.random.uniform(key_acc, shape=(num_chains)))
+            keep                    = log_u < log_acc                           # [num_chains,]
             # accept/reject updates
             # broadcast accept mask over state dims
-            mask                    = keep.reshape((num_chains,) + (1,) * (chain_in.ndim - 1)) 
+            mask                    = keep.reshape((num_chains,) + (1,) * (chain_in.ndim - 1))
             # Reshape mask for broadcasting: (num_chains, 1, 1...) depending on state shape
-            chain_out               = jnp.where(mask, new_chain, chain_in)  
+            chain_out               = jnp.where(mask, new_chain, chain_in)
             val_out                 = jnp.where(keep, new_val, current_val_in)
             proposed_out            = num_prop + 1
             accepted_out            = num_acc + keep.astype(num_acc.dtype)
-            
+
             new_carry               = (chain_out, val_out, next_key_carry, proposed_out, accepted_out)
-            return new_carry
+            return new_carry, None
         
         # Initial carry now includes the RNG key
         initial_carry   = (chain_init, current_val_init, rng_k_init, num_proposed_init, num_accepted_init)
         
-        # Use lax.fori_loop (Efficient Loop, no history saving)
-        final_carry     = jax.lax.fori_loop(0, steps, _sweep_chain_jax_step_inner, initial_carry)
+        # Use lax.scan to fuse the MCMC steps.
+        final_carry, _ = jax.lax.scan(_sweep_chain_jax_step_inner, initial_carry, None, length=steps)
         
         # Unpack final results
         final_chain, final_val, final_key, final_prop, final_acc = final_carry
@@ -1087,10 +1093,9 @@ class VMCSampler(Sampler):
                                             params              = params,
                                             steps               = steps,
                                             update_proposer     = use_update_proposer,
-                                            log_proba_fun       = use_log_proba_fun,
-                                            accept_config_fun   = use_accept_config_fun,
                                             net_callable_fun    = use_net_callable_fun,
-                                            mu                  = self._mu)
+                                            mu                  = self._mu,
+                                            beta                = self._beta)
         # otherwise, numpy it is
         return self._run_mcmc_steps_np(chain                =   chain,
                                         logprobas           =   logprobas,
@@ -1314,7 +1319,7 @@ class VMCSampler(Sampler):
         '''
         
         # Optimized: batched initial evaluation
-        logprobas_init = jnp.real(net_callable_fun(params, states_init))
+        logprobas_init = net_callable_fun(params, states_init)
         if logprobas_init.ndim > 1: logprobas_init = logprobas_init.squeeze()
 
         #! Phase 1: Thermalization
@@ -1348,20 +1353,22 @@ class VMCSampler(Sampler):
                 mu                    = mu,
                 beta                  = beta
             )
-            # Return updated carry and collect the new chain state.
-            return new_carry, new_carry[0]
+            # Return updated carry and collect the new chain state and log-probability.
+            return new_carry, (new_carry[0], new_carry[1])
 
         # Initialize the carry for the scan with the thermalized state and counters.
-        initial_scan_carry = (states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm)
+        initial_scan_carry                      = (states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm)
 
         # Run the scan for the specified number of sample steps.
-        final_carry, collected_samples = jax.lax.scan(sample_scan_body, initial_scan_carry, None, length=num_samples)
+        final_carry, collected_samples          = jax.lax.scan(sample_scan_body, initial_scan_carry, None, length=num_samples)
 
         # Flatten the collected states from all sample steps.
-        configs_flat        = collected_samples.reshape((-1,) + shape)
+        collected_states, collected_logprobas   = collected_samples
+        configs_flat                            = collected_states.reshape((-1,) + shape)
+        logprobas_flat                          = collected_logprobas.reshape((-1,))
         
-        # Evaluate the network in a fully batched (vectorized) manner to obtain log_\psi .
-        batched_log_ansatz  = VMCSampler._batched_network_apply(params, configs_flat, net_callable_fun)
+        # Use the stored log-probabilities as the ansatz (single evaluation path).
+        batched_log_ansatz                      = logprobas_flat
 
         # Compute the importance weights (Stable implementation).
         log_prob_exponent   = (1.0 / logprob_fact - mu)
@@ -1393,7 +1400,7 @@ class VMCSampler(Sampler):
         
         Args:
             states: (n_replicas, n_chains, *shape) - Current configurations
-            log_psi: (n_replicas, n_chains) - Real part of log probability
+            log_psi: (n_replicas, n_chains) - log probability (real or complex; real part used)
             betas: (n_replicas,) - Inverse temperatures (1.0 = physical)
             key: JAX RNG key
             mu: Distribution power (usually 2.0 for Born rule)
@@ -1412,8 +1419,9 @@ class VMCSampler(Sampler):
         # 2. Identify pairs (i, j) where j = i + 1
         beta_i                  = betas[:-1]    # (n_replicas-1,)
         beta_j                  = betas[1:]     # (n_replicas-1,)
-        lpsi_i                  = log_psi[:-1]  # (n_replicas-1, n_chains)
-        lpsi_j                  = log_psi[1:]   # (n_replicas-1, n_chains)
+        log_psi_real            = jnp.real(log_psi)
+        lpsi_i                  = log_psi_real[:-1]  # (n_replicas-1, n_chains)
+        lpsi_j                  = log_psi_real[1:]   # (n_replicas-1, n_chains)
         
         # 3. Acceptance Probability (Log Space)
         # A = min(1, exp( (beta_i - beta_j) * mu * (log_psi_j - log_psi_i) ))
@@ -1549,7 +1557,7 @@ class VMCSampler(Sampler):
         
         # Compute initial log probabilities for all replicas
         states_flat         = states_init.reshape((-1,) + shape)
-        logprobas_flat      = VMCSampler._batched_network_apply(params, states_flat, lambda p, x: jnp.real(net_callable_fun(p, x)))
+        logprobas_flat      = VMCSampler._batched_network_apply(params, states_flat, net_callable_fun)
         logprobas_init      = logprobas_flat.reshape((states_init.shape[0], states_init.shape[1]))
         
         # Thermalization with PT swaps
@@ -1600,23 +1608,25 @@ class VMCSampler(Sampler):
         # collected_states: (num_samples, n_chains, *shape)
         configs_flat        = collected_states.reshape((-1,) + shape)
         log_psi_flat        = collected_log_psi.reshape((-1,))
+        ansatz_flat         = log_psi_flat
+        log_psi_real        = jnp.real(ansatz_flat)
         
         # Standard re-weighting for physical beta (pt_betas[0], usually 1.0)
         phys_beta           = pt_betas[0]
         log_prob_exponent   = (1.0 / logprob_fact - mu * phys_beta)
         
-        log_unnorm          = log_prob_exponent * log_psi_flat
+        log_unnorm          = log_prob_exponent * log_psi_real
         log_unnorm_max      = jnp.max(log_unnorm)
         probs               = jnp.exp(log_unnorm - log_unnorm_max)
         probs_norm          = probs / jnp.maximum(jnp.sum(probs), 1e-10) * (num_samples * num_chains)
         
-        return final_carry, (configs_flat, log_psi_flat), probs_norm
+        return final_carry, (configs_flat, ansatz_flat), probs_norm
     
     ###################################################################
     #! PUBLIC SAMPLING INTERFACE
     ###################################################################
     
-    def _sample_reinitialize(self, used_num_chains, used_num_samples):
+    def _sample_reinitialize(self, used_num_chains, used_num_samples, used_num_therm=None):
         '''
         Reinitialize the sampler with the given parameters.
         Parameters:
@@ -1633,6 +1643,10 @@ class VMCSampler(Sampler):
         '''
         self._numchains         = used_num_chains   if used_num_chains  is not None else self._numchains
         self._numsamples        = used_num_samples  if used_num_samples is not None else self._numsamples
+        if used_num_therm is not None:
+            self._therm_steps           = used_num_therm
+            self._total_therm_updates   = self._therm_steps * self._sweep_steps * self._size
+        self._total_sample_updates_per_chain = self._numsamples * self._updates_per_sample * self._numchains
         self.reset()
         current_states          = self._states
         current_proposed        = self._num_proposed
@@ -1669,11 +1683,11 @@ class VMCSampler(Sampler):
         if parameters is not None:
             current_params = parameters
         elif self._parameters is not None:
+            current_params = self._parameters
+        elif hasattr(self._net, 'get_params') and callable(self._net.get_params):
             current_params = self._net.get_params()
         elif hasattr(self._net, 'params'):
             current_params = self._net.params
-        elif hasattr(self._net, 'get_params'):
-            current_params = self._net.get_params()
         net_callable = self._net_callable
         return net_callable, current_params
     
@@ -1732,7 +1746,7 @@ class VMCSampler(Sampler):
         if used_num_chains != self._numchains or used_num_samples != self._numsamples or used_num_therm != self._therm_steps:
             print(f"(Warning) Running sample with {used_num_chains} chains (instance default is {self._numchains}). State reinitialized for this call.")
             reinitialized_for_call                              = True
-            current_states, current_proposed, current_accepted  = self._sample_reinitialize(used_num_chains, used_num_samples)
+            current_states, current_proposed, current_accepted  = self._sample_reinitialize(used_num_chains, used_num_samples, used_num_therm)
             
         # check the parameters - if not given, use the current parameters
         net_callable, current_params = self._sample_callable(parameters)
@@ -1971,8 +1985,7 @@ class VMCSampler(Sampler):
                                 "pt_betas"              : self._pt_betas,
                                 "logprob_fact"          : self._logprob_fact,
                                 "update_proposer"       : self._upd_fun,
-                                "net_callable_fun"      : self._net_callable,
-                                "sample_dtype"          : self._sample_dtype
+                                "net_callable_fun"      : self._net_callable
                             }
         
         partial_sampler = partial(VMCSampler._static_sample_pt_jax, **baked_args)
