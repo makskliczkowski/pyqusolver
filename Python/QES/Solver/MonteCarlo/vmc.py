@@ -172,31 +172,33 @@ class VMCSampler(Sampler):
     
     def __init__(self,
                 net,
-                shape       : Tuple[int, ...],
+                shape           : Tuple[int, ...],
                 *,
-                pt_betas    : Optional[np.ndarray]          = None,
-                pt_replicas : Optional[int]                 = None,
+                pt_betas        : Optional[np.ndarray]          = None,
+                pt_replicas     : Optional[int]                 = None,
                 # RNG
-                rng         : np.random.Generator           = None,
+                rng             : np.random.Generator           = None,
                 rng_k                                       = None,
                 # UPD
-                upd_fun     : Optional[Callable]            = None,
+                upd_fun         : Optional[Callable]            = None,
                 # OTHER
-                mu          : float                         = 2.0,
-                beta        : float                         = 1.0,
-                therm_steps : int                           = 100,
-                sweep_steps : int                           = 100,
+                mu              : float                         = 2.0,
+                beta            : float                         = 1.0,
+                therm_steps     : int                           = 100,
+                sweep_steps     : int                           = 100,
                 seed                                        = None,
-                hilbert     : 'HilbertSpace'                = None,
-                numsamples  : int                           = 1,
-                numchains   : int                           = 1,
-                numupd      : int                           = 1,
+                hilbert         : 'HilbertSpace'                = None,
+                numsamples      : int                           = 1,
+                numchains       : int                           = 1,
+                numupd          : int                           = 1,
                 initstate                                   = None,
-                backend     : str                           = 'default',
-                logprob_fact: float                         = 0.5,
-                statetype   : Union[np.dtype, jnp.dtype]    = np.float32,
-                makediffer  : bool                          = True,
+                backend         : str                           = 'default',
+                logprob_fact    : float                         = 0.5,
+                statetype       : Union[np.dtype, jnp.dtype]    = np.float32,
+                makediffer      : bool                          = True,
                 logger                                      = None,
+                dtype           : Optional[Any]                 = None,
+                sample_dtype    : Optional[Any]                 = None,
                 **kwargs):
         r"""
         Initialize the MCSampler.
@@ -243,6 +245,11 @@ class VMCSampler(Sampler):
                 Type of the state (e.g., np.float32, jnp.float32, np.int32).
             makediffer (bool):
                 Whether to make states distinguishable (default: True).
+            dtype (Optional[Any]):
+                Data type for network parameters (e.g., jnp.complex128).
+            sample_dtype (Optional[Any]):
+                Data type for sampling computations. If None, it is inferred from `dtype` to enable mixed precision 
+                (e.g. complex128 -> complex64) for faster sampling on GPUs.
             **kwargs:
                 Additional arguments for the base Sampler class and Parallel Tempering:
                 
@@ -294,6 +301,24 @@ class VMCSampler(Sampler):
         self._updates_per_sample                = self._sweep_steps                         # Steps between samples
         self._total_sample_updates_per_chain    = numsamples * self._updates_per_sample * self._numchains
         
+        # -----------------------------------------------------------------
+        # Mixed Precision Setup
+        # -----------------------------------------------------------------
+        self._dtype                             = dtype if dtype is not None else (jnp.complex128 if JAX_AVAILABLE else np.complex128)
+        self._sample_dtype                      = sample_dtype
+        
+        if self._isjax and self._sample_dtype is None:
+            # Auto-enable mixed precision for double precision models
+            if self._dtype == jnp.complex128:
+                self._sample_dtype = jnp.complex64
+            elif self._dtype == jnp.float64:
+                self._sample_dtype = jnp.float32
+            else:
+                self._sample_dtype = self._dtype
+        
+        if self._sample_dtype is None:
+            self._sample_dtype = self._dtype
+
         # -----------------------------------------------------------------
         # Resolve update function
         # -----------------------------------------------------------------
@@ -1935,19 +1960,20 @@ class VMCSampler(Sampler):
         static_num_chains   = num_chains if num_chains is not None else self._numchains
         
         # Bake in all static configuration
-        baked_args = {
-            "num_samples"           : static_num_samples,
-            "num_chains"            : static_num_chains,
-            "n_replicas"            : self._n_replicas,
-            "total_therm_updates"   : self._total_therm_updates,
-            "updates_per_sample"    : self._updates_per_sample,
-            "shape"                 : self._shape,
-            "mu"                    : self._mu,
-            "pt_betas"              : self._pt_betas,
-            "logprob_fact"          : self._logprob_fact,
-            "update_proposer"       : self._upd_fun,
-            "net_callable_fun"      : self._net_callable,
-        }
+        baked_args          = {
+                                "num_samples"           : static_num_samples,
+                                "num_chains"            : static_num_chains,
+                                "n_replicas"            : self._n_replicas,
+                                "total_therm_updates"   : self._total_therm_updates,
+                                "updates_per_sample"    : self._updates_per_sample,
+                                "shape"                 : self._shape,
+                                "mu"                    : self._mu,
+                                "pt_betas"              : self._pt_betas,
+                                "logprob_fact"          : self._logprob_fact,
+                                "update_proposer"       : self._upd_fun,
+                                "net_callable_fun"      : self._net_callable,
+                                "sample_dtype"          : self._sample_dtype
+                            }
         
         partial_sampler = partial(VMCSampler._static_sample_pt_jax, **baked_args)
         int_dtype = DEFAULT_JP_INT_TYPE

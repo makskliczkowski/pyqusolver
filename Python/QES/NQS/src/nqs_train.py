@@ -561,14 +561,13 @@ class NQSTrainer:
                 probabilities   =   probabilities,
                 lower_states    =   lower_states
             )
-            loss_info = (info.mean_energy, info.std_energy)
-            return new_params, new_t, (loss_info, meta)
+            # info is TDVPStepInfo, meta is (shapes, sizes, iscpx)
+            return new_params, new_t, (info, meta)
         
-        # NOTE: Do NOT JIT train_step_logic because TDVP has side effects (stores global phase).
-        # TODO: Investigate if there's a way to JIT this without side effects.
-        # JIT compilation would cause tracer leaks from compute_global_phase_evolution.
-        self._step_jit          = train_step_logic
-        # self._step_jit          = jax.jit(train_step_logic, static_argnames=['f', 'est_fn', 'lower_states'])
+        # JIT compile the training step for maximum performance.
+        # Mark 'f' (TDVP), 'est_fn' (estimation function), and 'lower_states' (list) as static.
+        # This assumes TDVP object configuration doesn't change during training.
+        self._step_jit          = jax.jit(train_step_logic, static_argnames=['f', 'est_fn', 'lower_states'])
                     
         # State
         self.stats              = NQSTrainStats()
@@ -997,14 +996,20 @@ class NQSTrainer:
                                                     lower_states    = lower_contr,
                                                     epoch           = global_epoch
                                                 )
-                dparams, _, ((mean_loss, std_loss), meta) = step_out
+                dparams, _, (tdvp_info, shapes_info)    = step_out
+                mean_loss                               = tdvp_info.mean_energy
+                std_loss                                = tdvp_info.std_energy
 
                 # Update Weights (Timed)
-                self._timed_execute("update", self.nqs.set_params, dparams, shapes=meta[0], sizes=meta[1], iscpx=meta[2], epoch=global_epoch)
+                self._timed_execute("update", self.nqs.set_params, dparams, shapes=shapes_info[0], sizes=shapes_info[1], iscpx=shapes_info[2], epoch=global_epoch)
 
                 # Global Phase Integration
-                # No heavy computation here, simple scalar update
-                self.tdvp.update_global_phase(dt=lr)
+                # Extract theta0_dot from JIT output and update TDVP state
+                if tdvp_info.theta0_dot is not None:
+                    self.tdvp._theta0_dot = tdvp_info.theta0_dot
+                    self.tdvp.update_global_phase(dt=lr)
+                
+                # Record global phase
                 self.stats.global_phase.append(self.tdvp.global_phase)
 
                 # Logging & Storage
