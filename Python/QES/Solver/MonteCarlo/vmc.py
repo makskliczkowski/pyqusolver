@@ -363,6 +363,7 @@ class VMCSampler(Sampler):
         # -----------------------------------------------------------------
         # Static sampler function (standard or PT)
         # -----------------------------------------------------------------
+        self._jit_cache                         = {}    # Cache for JIT-compiled samplers
         self._static_sample_fun                 = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
         self._static_pt_sampler                 = None  # Lazily created on first PT sample call
         self._name                              = "VMC"
@@ -411,6 +412,7 @@ class VMCSampler(Sampler):
         # Invalidate cached static samplers to force recompilation with new chain count
         self._static_sample_fun = None
         self._static_pt_sampler = None
+        self._jit_cache         = {}
 
     def __repr__(self):
         """
@@ -663,6 +665,7 @@ class VMCSampler(Sampler):
         # Invalidate cache
         self._static_sample_fun = None
         self._static_pt_sampler = None
+        self._jit_cache         = {}
 
     def set_global_update(self, p_global: float, global_fraction: float = 0.5):
         """
@@ -2225,12 +2228,25 @@ class VMCSampler(Sampler):
             RuntimeError: If the backend is neither 'jax' nor 'numpy'.
         """
         
+        # Check cache
+        cache_key = (num_samples if num_samples is not None else self._numsamples,
+                     num_chains if num_chains is not None else self._numchains,
+                     self._isjax)
+
+        if hasattr(self, '_jit_cache') and cache_key in self._jit_cache:
+            return self._jit_cache[cache_key]
+
         if self._isjax:
-            return self._get_sampler_jax(num_samples, num_chains)
+            sampler = self._get_sampler_jax(num_samples, num_chains)
         elif not self._isjax:
-            return self._get_sampler_np(num_samples, num_chains)
+            sampler = self._get_sampler_np(num_samples, num_chains)
         else:
             raise RuntimeError("Sampler backend must be either 'jax' or 'numpy'.")
+
+        if hasattr(self, '_jit_cache'):
+            self._jit_cache[cache_key] = sampler
+
+        return sampler
 
         # Calculate actual batch size generated
         total_batch = config['s_numchains'] * config['s_numsamples']
@@ -2279,6 +2295,7 @@ class VMCSampler(Sampler):
         # Invalidate cache
         self._static_sample_fun = None
         self._static_pt_sampler = None
+        self._jit_cache         = {}
 
 #########################################
 #! EOF
