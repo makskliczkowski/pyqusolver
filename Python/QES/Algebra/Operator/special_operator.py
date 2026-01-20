@@ -377,6 +377,9 @@ class SpecialOperator(Operator, ABC):
         
         # Buffers for instruction function to avoid reallocation
         self._instr_buffers         : Any                   = None
+
+        # Cache for matvec function
+        self._cached_matvec_fun     : Optional[Callable]    = None
     
     # -------------------------------------------------------------------------
     
@@ -461,6 +464,9 @@ class SpecialOperator(Operator, ABC):
         Pre-calculates all necessary contexts and uses sequential kernels to avoid 
         overhead from multithreading and buffer allocations.
         """
+        if self._cached_matvec_fun is not None:
+            return self._cached_matvec_fun
+
         from QES.general_python.common.memory import log_memory_status
         hilbert_in                      = self._hilbert_space
         if hilbert_in is None:
@@ -481,6 +487,9 @@ class SpecialOperator(Operator, ABC):
         compact_data                    = getattr(hilbert_in, 'compact_symmetry_data', None)
         use_fast                        = has_sym and (compact_data is not None)
         self._iterator                  = 0
+
+        matvec_func = None
+
         if not has_sym:
             # Path 1: No symmetry (Full Hilbert space)
             from QES.Algebra.Hilbert.matrix_builder import _apply_op_batch_seq_jit
@@ -496,7 +505,7 @@ class SpecialOperator(Operator, ABC):
                 # print(f"Matvec iteration {self._iterator} completed.")
                 return v_out.ravel() if is_1d else v_out
             
-            return _matvec_seq
+            matvec_func = _matvec_seq
                 
         elif use_fast:
             # Path 2: Fast path (CompactSymmetryData lookups)
@@ -512,7 +521,7 @@ class SpecialOperator(Operator, ABC):
                 self._iterator += 1
                 # log_memory_status("After _apply_op_batch_compact_seq_jit", logger=self._logger)
                 return v_out.ravel() if is_1d else v_out
-            return _matvec_compact_seq
+            matvec_func = _matvec_compact_seq
             
         else:
             # Path 3: Fallback (Projected compact basis)
@@ -535,7 +544,10 @@ class SpecialOperator(Operator, ABC):
                 _apply_op_batch_projected_compact_seq_jit(v_in, v_out, op_func, op_args, basis_in_args, basis_out_args, cg_args, tb_args, ns_val)
                 # log_memory_status("After _apply_op_batch_projected_compact_seq_jit", logger=self._logger)
                 return v_out.ravel() if is_1d else v_out
-            return _matvec_projected_seq
+            matvec_func = _matvec_projected_seq
+
+        self._cached_matvec_fun = matvec_func
+        return matvec_func
     
     # ----------------------------------------------------------------------------------------------
     #! ACCESS TO OTHER MODULES RELATED TO HAMILTONIAN
@@ -1285,6 +1297,8 @@ class SpecialOperator(Operator, ABC):
         self._custom_op_counter     = CUSTOM_OP_BASE
         self._custom_op_arity       = {}
         self._has_custom_ops        = False
+
+        self._cached_matvec_fun     = None
     
     def reset_operator_terms(self) -> None:
         """
