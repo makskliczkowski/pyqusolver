@@ -537,7 +537,8 @@ def _fill_dense_kernel(matrix, operator_func, nh):
     if nh <= _NUMBA_OVERHEAD_SIZE:
         for row in range(nh):
             # Call the operator directly inside the loop
-            out_states, out_vals    = operator_func(row)
+            state                   = np.int64(row)
+            out_states, out_vals    = operator_func(state)
             n_items                 = len(out_states)
             for k in range(n_items):
                 col                 = out_states[k]
@@ -549,7 +550,8 @@ def _fill_dense_kernel(matrix, operator_func, nh):
     else:
         for row in numba.prange(nh):
             # Call the operator directly inside the loop
-            out_states, out_vals    = operator_func(row)
+            state                   = np.int64(row)
+            out_states, out_vals    = operator_func(state)
             n_items                 = len(out_states)
             for k in range(n_items):
                 col                 = out_states[k]
