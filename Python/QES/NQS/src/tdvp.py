@@ -93,6 +93,18 @@ class TDVPStepInfo:
     theta0_dot      : Optional[Array] = None  # Time derivative of global phase θ̇₀
     theta0          : Optional[Array] = None  # Global phase parameter θ₀
 
+if JAX_AVAILABLE:
+    jax.tree_util.register_pytree_node(
+        TDVPTimes,
+        lambda n        : ((), (n.prepare, n.gradient, n.covariance, n.x0, n.solve, n.phase)),
+        lambda aux, _   : TDVPTimes(*aux)
+    )
+    jax.tree_util.register_pytree_node(
+        TDVPStepInfo,
+        lambda n        : ((n.mean_energy, n.std_energy, n.failed, n.sr_converged, n.sr_executed, n.sr_iterations, n.timings, n.theta0_dot, n.theta0), None),
+        lambda _, c     : TDVPStepInfo(*c)
+    )
+
 #################################################################
 
 @dataclass
@@ -116,6 +128,7 @@ class TDVPLowerPenalty:
     r_el                    : np.array = None  # (n_j,) complex; ratios E_loc^{W}(\sigma )Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs
     # backend
     backend_np              : Any = jnp if JAX_AVAILABLE else np
+    dtype                   : Any = None
     
     def compute_ratios(self):
         '''
@@ -139,8 +152,25 @@ class TDVPLowerPenalty:
         self.r_el = self.backend_np.exp(self.excited_on_lower - self.lower_on_lower)
 
     def __post_init__(self):
-        self.r_le = jnp.zeros_like(self.configs_j, dtype=jnp.complex64)
-        self.r_el = jnp.zeros_like(self.configs_j, dtype=jnp.complex64)
+        backend = self.backend_np
+        if backend is None:
+            backend = jnp if JAX_AVAILABLE else np
+            self.backend_np = backend
+        dtype = self.dtype
+        if dtype is None:
+            try:
+                dtype = backend.result_type(
+                    self.excited_on_lower,
+                    self.lower_on_lower,
+                    self.lower_on_excited,
+                    self.excited_on_excited,
+                )
+            except Exception:
+                dtype = getattr(self.excited_on_lower, "dtype", None)
+        if dtype is None:
+            dtype = jnp.complex64 if backend is jnp else np.complex64
+        self.r_le = backend.zeros_like(self.excited_on_lower, dtype=dtype)
+        self.r_el = backend.zeros_like(self.excited_on_lower, dtype=dtype)
         self.compute_ratios()
 
 #################################################################
@@ -1147,17 +1177,18 @@ class TDVP:
         
         # Compute global phase evolution $\dot{\theta}_0$
         # $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
+        theta0_dot                      = None
         if solution is not None and self.rhs_prefactor:
             param_derivatives           = solution.x if hasattr(solution, 'x') else solution
             log_derivatives_mean        = vd_m
-            self._theta0_dot            = self.compute_global_phase_evolution(self._e_local_mean, param_derivatives, log_derivatives_mean)
+            theta0_dot                  = self.compute_global_phase_evolution(self._e_local_mean, param_derivatives, log_derivatives_mean)
         
         if self.use_timing and self.logger:
             self.logger.info(f"TDVP Solve Timings: {self.timings}", lvl=2, color='cyan')
         
         #! save the solution
         self._solution = solution
-        return solution
+        return solution, theta0_dot
     
     #########################
     #! Representation
@@ -1191,34 +1222,22 @@ class TDVP:
         #? (MonteCarlo return -> (loss, mean_loss, std_loss), log_deriv, (meta))
         (loss, mean_loss, std_loss), log_deriv, (shapes, sizes, iscpx) = est_fn(net_params, t, configs, configs_ansatze, probabilities)
         
-        #! set the meta information
-        self.meta       = TDVPStepInfo(
-            mean_energy     = mean_loss,
-            std_energy      = std_loss,
-            failed          = False,
-            sr_converged    = False,
-            sr_executed     = False,
-            sr_iterations   = 0,
-            timings         = self.timings
-        )
-        
         #! obtain the solution
 
-        solution: solvers.SolverResult = self.solve(loss, log_deriv, **kwargs)
+        solution, theta0_dot    = self.solve(loss, log_deriv, **kwargs)
+        meta                    = TDVPStepInfo(
+                                    mean_energy     = self._e_local_mean,
+                                    std_energy      = self._e_local_std,
+                                    failed          = False,
+                                    sr_converged    = solution.converged,
+                                    sr_executed     = True,
+                                    sr_iterations   = solution.iterations,
+                                    timings         = self.timings,
+                                    theta0_dot      = theta0_dot,        # Global phase time derivative
+                                    theta0          = self._theta0       # Current global phase
+                                )
         
-        self.meta = TDVPStepInfo(
-            mean_energy     = self._e_local_mean,
-            std_energy      = self._e_local_std,
-            failed          = False,
-            sr_converged    = solution.converged,
-            sr_executed     = True,
-            sr_iterations   = solution.iterations,
-            timings         = self.timings,
-            theta0_dot      = self._theta0_dot,  # Global phase time derivative
-            theta0          = self._theta0       # Current global phase
-        )
-        
-        return solution.x, self.meta, (shapes, sizes, iscpx)
+        return solution.x, meta, (shapes, sizes, iscpx)
     
     def __repr__(self):
         return f'TDVP(backend={self.backend_str},use_sr={self.use_sr},use_minsr={self.use_minsr},rhs_prefactor={self.rhs_prefactor},sr_snr_tol={self.sr_snr_tol},sr_pinv_tol={self.sr_pinv_tol},sr_diag_shift={self.sr_diag_shift},sr_maxiter={self.sr_maxiter},sr_form_matrix={self.form_matrix},sr_solver={self.sr_solve_lin},sr_solver_type={self.sr_solve_lin_t},sr_preconditioner={self.sr_precond})'

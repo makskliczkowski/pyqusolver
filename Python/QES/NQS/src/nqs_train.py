@@ -49,6 +49,7 @@ except ImportError:
 try:
     from QES.NQS.nqs                            import NQS, VMCSampler
     from QES.NQS.src.tdvp                       import TDVP, TDVPLowerPenalty
+    from QES.NQS.src.auto_tuner                 import TDVPAutoTuner, AutoTunerConfig
     # solvers
     from QES.general_python.algebra.ode         import choose_ode, IVP
     from QES.general_python.algebra.solvers     import SolverType, SolverForm, choose_solver, choose_precond
@@ -305,6 +306,11 @@ class NQSTrainer:
                 lin_is_gram     : bool                  = True,                     # Is Gram matrix solver [(S^dagger S) x = b]
                 lin_type        : SolverForm           = SolverForm.GRAM,           # Solver form (gram, matvec, matrix)
                 # --------------------------------------------------------------
+                # Auto-Tuner
+                # --------------------------------------------------------------
+                auto_tune       : bool                  = False,                    # Enable adaptive auto-tuner
+                auto_tuner      : Optional[Any]         = None,                     # Custom auto-tuner instance
+                # --------------------------------------------------------------
                 # TDVP arguments, if TDVP is created internally
                 # --------------------------------------------------------------
                 use_sr          : bool                  = True,                     # Whether to use SR
@@ -470,6 +476,11 @@ class NQSTrainer:
         self.n_batch            = n_batch
         self.verbose            = nqs.verbose
         self.dtype              = dtype if dtype is not None else nqs.dtype
+        if dtype is None and hasattr(nqs, "_precision_policy"):
+            if getattr(nqs, "_iscpx", False):
+                self.dtype      = nqs._precision_policy.accum_complex_dtype
+            else:
+                self.dtype      = nqs._precision_policy.accum_real_dtype
         
         # Validate lower states
         if lower_states is not None:
@@ -486,7 +497,7 @@ class NQSTrainer:
                 self._log(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color='green')
             except KeyError:
                 raise ValueError(self._ERR_INVALID_TIMING_MODE)
-            self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
+        self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
 
         # Setup Schedulers (The Integrated Part)
         self._init_reg, self._init_lr, self._init_diag = reg, lr, diag_shift
@@ -544,8 +555,7 @@ class NQSTrainer:
         
         # JIT Compile Critical Paths
         # We pre-compile the sampling and step functions to avoid runtime overhead
-        # self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
-        self._single_step_jit   = jax.jit(nqs.wrap_single_step_jax(batch_size = n_batch))
+        self._single_step_jit   = nqs.wrap_single_step_jax(batch_size = n_batch)
         
         # Define a function that runs the WHOLE step (ODE + TDVP + Energy)
         def train_step_logic(f, est_fn, y, t, configs, configs_ansatze, probabilities, lower_states):
@@ -561,17 +571,39 @@ class NQSTrainer:
                 probabilities   =   probabilities,
                 lower_states    =   lower_states
             )
-            loss_info = (info.mean_energy, info.std_energy)
-            return new_params, new_t, (loss_info, meta)
+            # info is TDVPStepInfo, meta is (shapes, sizes, iscpx)
+            return new_params, new_t, (info, meta)
         
-        # NOTE: Do NOT JIT train_step_logic because TDVP has side effects (stores global phase).
-        # TODO: Investigate if there's a way to JIT this without side effects.
-        # JIT compilation would cause tracer leaks from compute_global_phase_evolution.
-        self._step_jit          = train_step_logic
-        # self._step_jit          = jax.jit(train_step_logic, static_argnames=['f', 'est_fn', 'lower_states'])
+        self._step_nojit        = train_step_logic
+
+        def train_step_logic_no_lower(f, est_fn, y, t, configs, configs_ansatze, probabilities):
+            return train_step_logic(
+                f,
+                est_fn,
+                y,
+                t,
+                configs,
+                configs_ansatze,
+                probabilities,
+                lower_states=None,
+            )
+
+        # JIT compile the training step for maximum performance (no excited-state penalties).
+        # Mark 'f' (TDVP) and 'est_fn' (estimation function) as static.
+        # The lower_states path stays non-jitted because it carries Python objects.
+        if self.lower_states:
+            self._step_jit      = self._step_nojit
+        else:
+            self._step_jit      = jax.jit(train_step_logic_no_lower, static_argnames=['f', 'est_fn'])
                     
         # State
         self.stats              = NQSTrainStats()
+
+        # Setup Auto-Tuner
+        self.auto_tuner = auto_tuner
+        if auto_tune and self.auto_tuner is None:
+            self.auto_tuner = TDVPAutoTuner(logger=self.logger)
+            self._log("TDVP Auto-Tuner enabled.", lvl=1, color='cyan', verbose=self.verbose)
 
     # ------------------------------------------------------
     #! Private Helpers
@@ -816,7 +848,8 @@ class NQSTrainer:
                 params_j            = nqs_lower.get_params(),
                 configs_j           = cfgs_lower,
                 beta_j              = nqs_lower.beta_penalty,
-                backend_np          = self.nqs.backend
+                backend_np          = self.nqs.backend,
+                dtype               = self.tdvp.dtype
             )
             lower_contr.append(penalty)
         return lower_contr
@@ -975,7 +1008,12 @@ class NQSTrainer:
                 # Sampling (Timed)
                 # Returns: ((keys), (configs, ansatz_vals), probs)
                 # Note: reset=(epoch==0) resets sampler only at start of this train() call
-                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(global_epoch==0), epoch=global_epoch, num_samples=num_samples, num_chains=num_chains)
+                # If auto-tuner active, it might request more samples
+                current_num_samples = num_samples
+                if self.auto_tuner:
+                    current_num_samples = self.auto_tuner.n_samples
+
+                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(global_epoch==0), epoch=global_epoch, num_samples=current_num_samples, num_chains=num_chains)
                 (_, _), (cfgs, cfgs_psi), probs = sample_out
                 if epoch == 0:                  self._log(f"Sampled {cfgs.shape[0]} configurations with batch size {self.n_batch}", lvl=1, color='green', verbose=self.verbose)
                 
@@ -984,27 +1022,62 @@ class NQSTrainer:
                 if epoch == 0:                  self._log(f"Prepared lower states for excited state handling", lvl=1, color='green', verbose=self.verbose)
                 # Physics Step (TDVP / ODE) (Timed)
                 params_flat                     = self.nqs.get_params(unravel=True)
+                step_kwargs                     = {
+                                                    "f"                 : self.tdvp,
+                                                    "y"                 : params_flat,
+                                                    "t"                 : 0.0,
+                                                    "est_fn"            : self._single_step_jit,
+                                                    "configs"           : cfgs,
+                                                    "configs_ansatze"   : cfgs_psi,
+                                                    "probabilities"     : probs,
+                                                }
+                step_fn                         = self._step_jit
+                if lower_contr is not None:
+                    step_fn                     = self._step_nojit
+                    step_kwargs["lower_states"] = lower_contr
+                    
                 step_out                        = self._timed_execute(
-                                                    "step", 
-                                                    self._step_jit,
-                                                    f               = self.tdvp,
-                                                    y               = params_flat,
-                                                    t               = 0.0,
-                                                    est_fn          = self._single_step_jit,
-                                                    configs         = cfgs,
-                                                    configs_ansatze = cfgs_psi,
-                                                    probabilities   = probs,
-                                                    lower_states    = lower_contr,
-                                                    epoch           = global_epoch
+                                                    "step",
+                                                    step_fn,
+                                                    epoch   =   global_epoch,
+                                                    **step_kwargs,
                                                 )
-                dparams, _, ((mean_loss, std_loss), meta) = step_out
+                dparams, _, (tdvp_info, shapes_info)    = step_out
+                mean_loss                               = tdvp_info.mean_energy
+                std_loss                                = tdvp_info.std_energy
 
-                # Update Weights (Timed)
-                self._timed_execute("update", self.nqs.set_params, dparams, shapes=meta[0], sizes=meta[1], iscpx=meta[2], epoch=global_epoch)
+                # Auto-Tuner: Update Logic
+                accepted = True
+                if self.auto_tuner:
+                    diagnostics = self.nqs.sampler.diagnose(cfgs_psi)
+                    new_params, accepted, warnings = self.auto_tuner.update(tdvp_info, diagnostics, np.real(mean_loss))
+
+                    if warnings:
+                        for w in warnings:
+                            self._log(f"AutoTuner: {w}", lvl=2, color='yellow', verbose=self.verbose)
+
+                    # Apply new parameters
+                    # 1. LR -> ODE dt
+                    self.ode_solver.set_dt(new_params['lr'])
+                    # 2. Diag Shift -> TDVP
+                    self.tdvp.set_diag_shift(new_params['diag_shift'])
+                    # 3. N Samples -> Next iteration
+                    # (Handled at start of loop)
+
+                    if not accepted:
+                        self._log("AutoTuner rejected step. Skipping parameter update.", lvl=1, color='red', verbose=self.verbose)
+
+                # Update Weights (Timed) - Only if accepted
+                if accepted:
+                    self._timed_execute("update", self.nqs.set_params, dparams, shapes=shapes_info[0], sizes=shapes_info[1], iscpx=shapes_info[2], epoch=global_epoch)
 
                 # Global Phase Integration
-                # No heavy computation here, simple scalar update
-                self.tdvp.update_global_phase(dt=lr)
+                # Extract theta0_dot from JIT output and update TDVP state
+                if tdvp_info.theta0_dot is not None:
+                    self.tdvp._theta0_dot = tdvp_info.theta0_dot
+                    self.tdvp.update_global_phase(dt=lr)
+                
+                # Record global phase
                 self.stats.global_phase.append(self.tdvp.global_phase)
 
                 # Logging & Storage

@@ -126,18 +126,19 @@ class AnsatzModifier:
         
         # Apply Operator
         # st: (Batch, 1, ...), w: (Batch, 1)
-        st, w   = self.op_func(x)
+        st, w       = self.op_func(x)
         
         # Squeeze singleton dimension
-        st      = jnp.squeeze(st, axis=1)
-        w       = jnp.squeeze(w, axis=1)
+        st          = jnp.squeeze(st, axis=1)
+        w           = jnp.squeeze(w, axis=1)
         
         # Evaluate Base Ansatz
-        log_psi = self.net_apply(params, st)
+        log_psi     = self.net_apply(params, st)
         
         # Combine: log(w * psi) = log(w) + log_psi
-        # Ensure complex type for log to handle negative weights
-        log_w   = jnp.log(w.astype(jnp.complex128))
+        # Ensure complex type for log to handle negative weights while preserving precision
+        log_w_dtype = jnp.result_type(log_psi, jnp.complex64)
+        log_w       = jnp.log(w.astype(log_w_dtype))
         
         return log_psi + log_w
 
@@ -173,7 +174,8 @@ class AnsatzModifier:
         
         # Handle zero weights safely (padding)
         # jnp.log(0) is -inf, which logsumexp handles correctly (term vanishes)
-        log_w               = jnp.log(w.astype(jnp.complex128))
+        log_w_dtype         = jnp.result_type(log_psi_connected, jnp.complex64)
+        log_w               = jnp.log(w.astype(log_w_dtype))
         terms               = log_w + log_psi_connected
         
         return logsumexp(terms, axis=1)
