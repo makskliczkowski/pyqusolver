@@ -930,72 +930,15 @@ class TDVP:
         is_batched = hasattr(mat_O, "compute_weighted_sum")
 
         if is_batched:
-            # Batched / Matrix-Free Implementation
-            # mat_O is the Jacobian J. We need centered J_c = J - 1 * mean^T
-            mean_val = getattr(mat_O, "mean_val", None)
+            # Delegate Matrix-Free Construction to Solver Module
+            # This keeps algebraic details (centering, complex conjugates) encapsulated
+            n = self._n_samples
+            if n is None:
+                n = getattr(mat_O, '_n_samples', 1.0)
 
-            # Fallback if mean_val is None (should not happen if coming from solve_jax_prepare)
-            if mean_val is None:
-                mean_val = mat_O.mean(axis=0)
-
-            if mode == 'minsr':
-                # T = O_c @ O_c^dag.
-                # v is in Sample space (N_samples)
-                # O_c^dag v = (J - 1 m^T)^dag v = J^dag v - m^* (1^T v)
-                # J^dag v is rmv(v). 1^T v is sum(v).
-
-                # u = O_c u' = (J - 1 m^T) u' = J u' - 1 (m^T u')
-                # J u' is mv(u'). m^T u' is dot(m, u').
-
-                def _matvec_batched(v, sigma):
-                    # 1. Apply O_c^dag
-                    sum_v = self.backend.sum(v)
-                    J_dag_v = mat_O.rmv(v)
-                    # m is mean_val. m^* is conj(m).
-                    # O_c^dag v = J^dag v - m.conj() * sum_v
-                    inter = J_dag_v - self.backend.conj(mean_val) * sum_v
-
-                    # 2. Apply O_c
-                    # O_c inter = J inter - 1 * (m . inter)
-                    J_inter = mat_O.mv(inter)
-                    m_dot_inter = self.backend.sum(mean_val * inter)
-                    res = J_inter - m_dot_inter # Broadcasting scalar subtraction
-
-                    if self._n_samples is None:
-                        # Should have been set in get_tdvp_standard
-                        # But if running standalone _solve_prepare_matvec without get_tdvp_standard,
-                        # we rely on mat_O._n_samples if available.
-                        n = getattr(mat_O, '_n_samples', 1.0)
-                        return res / n + sigma * v
-
-                    return res / self._n_samples + sigma * v
-
-            else:
-                # S = O_c^dag @ O_c.
-                # v is in Parameter space (N_params)
-
-                # 1. Apply O_c
-                # O_c v = J v - 1 * (m . v)
-
-                def _matvec_batched(v, sigma):
-                    m_dot_v = self.backend.sum(mean_val * v)
-                    J_v = mat_O.mv(v)
-                    inter = J_v - m_dot_v
-
-                    # 2. Apply O_c^dag
-                    # O_c^dag inter = J^dag inter - m^* * sum(inter)
-                    sum_inter = self.backend.sum(inter)
-                    J_dag_inter = mat_O.rmv(inter)
-                    res = J_dag_inter - self.backend.conj(mean_val) * sum_inter
-
-                    if self._n_samples is None:
-                        n = getattr(mat_O, '_n_samples', 1.0)
-                        return res / n + sigma * v
-
-                    return res / self._n_samples + sigma * v
+            _matvec_batched = sr.get_matvec_batched(mat_O, mode, n)
             
-            # Since BatchedJacobian uses JAX internally, we don't strictly need to JIT this
-            # wrapper if the internal calls are efficient, but JITing the whole thing is good.
+            # JIT the returned function
             return jax.jit(_matvec_batched) if self.is_jax else _matvec_batched
 
         if mode == 'minsr':
