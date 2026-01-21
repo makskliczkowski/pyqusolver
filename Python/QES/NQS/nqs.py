@@ -114,10 +114,12 @@ class NQSSingleStepResult:
     params_cpx          : List[bool]                # Whether each parameter is complex
 
 if _JAX_AVAILABLE_FOR_SYMMETRY:
+    
+    # Register NQSSingleStepResult as a JAX pytree
     jax.tree_util.register_pytree_node(
         NQSSingleStepResult,
-        lambda n: ((n.loss, n.loss_mean, n.loss_std, n.grad_flat), (n.params_shapes, n.params_sizes, n.params_cpx)),
-        lambda aux, children: NQSSingleStepResult(*children, *aux)
+        lambda n                : ((n.loss, n.loss_mean, n.loss_std, n.grad_flat), (n.params_shapes, n.params_sizes, n.params_cpx)),
+        lambda aux, children    : NQSSingleStepResult(*children, *aux)
     )
 
 #########################################
