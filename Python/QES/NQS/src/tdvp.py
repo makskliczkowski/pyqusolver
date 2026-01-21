@@ -682,6 +682,10 @@ class TDVP:
         Array
             Array promoted to float64/complex128 for SR stability
         '''
+        if hasattr(array, "compute_weighted_sum"):
+            # BatchedJacobian: pass through
+            return array
+
         import numpy as _np
         if self.is_jax and JAX_AVAILABLE:
             if _np.iscomplexobj(array):
@@ -836,7 +840,11 @@ class TDVP:
         # Compute var_deriv_c_h (Hermitian conjugate of centered variational derivatives)
         # This is O^dag = conj(O^T) for use in MinSR transformation
         if self.use_minsr:
-            var_deriv_c_h = self.backend.conj(self.backend.transpose(var_deriv_c))
+            if hasattr(var_deriv_c, "compute_weighted_sum"):
+                # BatchedJacobian: handled lazily
+                var_deriv_c_h = var_deriv_c
+            else:
+                var_deriv_c_h = self.backend.conj(self.backend.transpose(var_deriv_c))
         else:
             var_deriv_c_h = None
             
@@ -864,46 +872,6 @@ class TDVP:
         self._e_local_mean  = self.backend.mean(loss, axis=0)
         self._e_local_std   = self.backend.std(loss, axis=0)
 
-        # Check for BatchedJacobian
-        is_batched = hasattr(log_deriv, "compute_weighted_sum")
-
-        if is_batched:
-             # Calculate centered loss
-             loss_c = self.get_loss_centered(loss, self._e_local_mean)
-             # Calculate mean of Jacobian
-             var_deriv_m = log_deriv.mean(axis=0)
-             # Store mean in object for later use in matvec
-             log_deriv.mean_val = var_deriv_m
-
-             # Calculate Force Vector F = <O_c^* E_c> = 1/N * sum(O^* * loss_c)
-             # compute_weighted_sum(w) = sum(w * O).
-             # We want sum(loss_c * O^*).
-             # sum(loss_c * O^*) = (sum(loss_c.conj() * O))^*
-             # loss_c is typically real (Energy), but if complex:
-             self._n_samples = log_deriv._n_samples
-             f_vec = log_deriv.compute_weighted_sum(loss_c.conj()).conj() / self._n_samples
-
-             # Add penalty terms if any
-             excited_penalty = kwargs.get('lower_states', None)
-             if excited_penalty:
-                 for penalty in excited_penalty:
-                      # F += beta * < (psi_j/psi)_c * O^dag >
-                      # < R_c O^dag > = 1/N sum( R_c * O^* )
-                      # = 1/N ( sum( R_c^* * O ) )^*
-                      r_el = penalty.r_el
-                      r_mean = self.backend.mean(r_el, axis=0)
-                      r_c = r_el - r_mean
-                      term = log_deriv.compute_weighted_sum(r_c.conj()).conj() / self._n_samples
-                      f_vec = f_vec + penalty.beta_j * term
-
-             self._f0 = f_vec
-             self._s0 = None # Matrix not formed
-             # self._n_samples already set above
-             self._full_size = log_deriv._n_params
-
-             # Pass log_deriv as var_deriv_c
-             return self._f0, self._s0, (loss_c, log_deriv, None, var_deriv_m)
-
         with self._time('prepare', self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
             loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m = prepare
         
@@ -918,6 +886,7 @@ class TDVP:
         # So F is not used in the solve process of MinSR.
         if not self.use_minsr:
             # Optimized gradient calculation: pass O (vd_c) directly, transpose handled internally
+            # This now supports BatchedJacobian via sr.gradient_jax
             with self._time('gradient', self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
                 self._f0 = gradient
         else:
@@ -925,6 +894,7 @@ class TDVP:
         self._s0 = None
         
         # MinSR uses T (N_s x N_s)
+        # If BatchedJacobian is used, we generally don't form the matrix, but if requested:
         if self.form_matrix:             
             with self._time('covariance', self._covariance_fn_j, var_deriv_c, self._n_samples) as covariance:
                 self._s0 = covariance
@@ -963,6 +933,10 @@ class TDVP:
             # Batched / Matrix-Free Implementation
             # mat_O is the Jacobian J. We need centered J_c = J - 1 * mean^T
             mean_val = getattr(mat_O, "mean_val", None)
+
+            # Fallback if mean_val is None (should not happen if coming from solve_jax_prepare)
+            if mean_val is None:
+                mean_val = mat_O.mean(axis=0)
 
             if mode == 'minsr':
                 # T = O_c @ O_c^dag.
