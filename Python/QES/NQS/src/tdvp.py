@@ -832,7 +832,15 @@ class TDVP:
             r_el            = self.backend.array([x.r_el for x in excited_penalty],     dtype=self.dtype)
             r_le            = self.backend.array([x.r_le for x in excited_penalty],     dtype=self.dtype)
             (loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)        
-        return loss_c, var_deriv_c, None, var_deriv_m
+        
+        # Compute var_deriv_c_h (Hermitian conjugate of centered variational derivatives)
+        # This is O^dag = conj(O^T) for use in MinSR transformation
+        if self.use_minsr:
+            var_deriv_c_h = self.backend.conj(self.backend.transpose(var_deriv_c))
+        else:
+            var_deriv_c_h = None
+            
+        return loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m
     
     def get_tdvp_standard(self, loss, log_deriv, **kwargs):
         '''
@@ -1037,11 +1045,14 @@ class TDVP:
         Array
             The initial guess for the linear solver.
         """
+        x0 = self._x0
+
         if use_old_result:
-            self._x0 = self._solution
-        if self._x0 is None or self._x0.shape != vec_b.shape:
-            self._x0 = self.backend.zeros_like(vec_b)
-        return self._x0
+            x0 = self._solution
+
+        if x0 is None or x0.shape != vec_b.shape:
+            x0 = self.backend.zeros_like(vec_b)
+        return x0
 
     ###############
     #! GLOBAL PHASE
@@ -1137,7 +1148,7 @@ class TDVP:
         
         #! handle the initial guess - use the previous solution
         with self._time('x0', self._solve_handle_x0, vec_b, kwargs.get('use_old_result', False)) as x0:
-            self._x0 = x0
+            pass
 
         #! prepare the rhs
         if self.rhs_prefactor != 1.0:
@@ -1186,8 +1197,7 @@ class TDVP:
         if self.use_timing and self.logger:
             self.logger.info(f"TDVP Solve Timings: {self.timings}", lvl=2, color='cyan')
         
-        #! save the solution
-        self._solution = solution
+        #! return the solution (do not save to self during JIT to avoid tracer leaks)
         return solution, theta0_dot
     
     #########################
@@ -1225,6 +1235,9 @@ class TDVP:
         #! obtain the solution
 
         solution, theta0_dot    = self.solve(loss, log_deriv, **kwargs)
+        
+        #! save solution outside JIT boundary to avoid tracer leaks
+        self._solution          = solution
         meta                    = TDVPStepInfo(
                                     mean_energy     = self._e_local_mean,
                                     std_energy      = self._e_local_std,
