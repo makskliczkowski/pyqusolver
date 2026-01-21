@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, Any, List
 
 try:
-    JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
+    JAX_AVAILABLE                                               = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
     
     # Common utilities
     from QES.general_python.common.timer                        import timeit

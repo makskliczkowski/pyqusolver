@@ -412,6 +412,7 @@ class NQS(MonteCarloSolver):
                         seed        =   seed,
                         **kwargs
                     )
+            print(self._net)
             
         except Exception as e:
             raise ValueError(f"Failed to initialize network. Check the network type and parameters.\nOriginal error: {e}")
@@ -441,7 +442,7 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         #! Handle gradients
         # --------------------------------------------------
-        self._grad_info             = self._nqsbackend.prepare_gradients(self._net)    
+        self._grad_info             = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)    
         self._flat_grad_func        = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
         self._analytic_grad_func    = self._grad_info["analytic_grad_func"]     # Function to compute analytic gradients
         self._dict_grad_type        = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
@@ -1852,27 +1853,28 @@ class NQS(MonteCarloSolver):
              try:
                  self._sampler.set_numchains(1)
                  self._sampler.set_numsamples(1)
-                 params = self.get_params()
-                 (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(params)
-                 result = NQS._single_step(params, configs, configs_ansatze, probabilities, 
-                     ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
-                     flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
-                     batch_size=batch_size, t=t,
-                     use_jax=False
-                 )
+                 
+                 params                                             = self.get_params()
+                 (_, _), (configs, configs_ansatze), probabilities  = self._sampler.sample(params)
+                 result                                             = NQS._single_step(params, configs, configs_ansatze, probabilities, 
+                                                                        ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
+                                                                        flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
+                                                                        batch_size=batch_size, t=t,
+                                                                        use_jax=False
+                                                                    )
                  return result.params_shapes, result.params_sizes, result.params_cpx
              finally:
                  self._sampler.set_numchains(old_chains)
                  self._sampler.set_numsamples(old_samples)
 
         # JAX Optimization: Abstract Evaluation
-        params = self.get_params()
+        params              = self.get_params()
         
         # Construct abstract inputs
         # Configs shape: (num_samples, n_particles) or similar depending on sampler
         # We assume 1 sample for shape inference is enough
         # We need to respect the dtype of sampler states
-        sample_dtype = self._sampler._statetype
+        sample_dtype        = self._sampler._statetype
         
         # Abstract arrays
         abstract_configs    = jax.ShapeDtypeStruct((1, self._nvisible), sample_dtype)
@@ -1882,19 +1884,19 @@ class NQS(MonteCarloSolver):
         
         # Use eval_shape on the static single_step function
         # We need to partial the static args first
-        accum_real_dtype   = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
+        accum_real_dtype    = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
         accum_complex_dtype = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
 
         single_step_partial = partial(NQS._single_step,
-            ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
-            flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
-            batch_size=batch_size, t=t,
-            accum_real_dtype=accum_real_dtype,
-            accum_complex_dtype=accum_complex_dtype,
-            use_jax=self._isjax,
-        )
+                                ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
+                                flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
+                                batch_size=batch_size, t=t,
+                                accum_real_dtype=accum_real_dtype,
+                                accum_complex_dtype=accum_complex_dtype,
+                                use_jax=self._isjax,
+                            )
         
-        result_abstract = jax.eval_shape(single_step_partial, params, abstract_configs, abstract_ansatze, abstract_probs)
+        result_abstract     = jax.eval_shape(single_step_partial, params, abstract_configs, abstract_ansatze, abstract_probs)
         
         return result_abstract.params_shapes, result_abstract.params_sizes, result_abstract.params_cpx
 
@@ -2563,6 +2565,7 @@ class NQS(MonteCarloSolver):
             update_kwargs       : Optional[dict]            = None,
             # Symmetries
             symmetrize          : Optional[bool]            = None,
+            force_numerical     : Optional[bool]            = True,
             **kwargs
         ) -> "NQSTrainStats":
         r"""
@@ -2595,6 +2598,10 @@ class NQS(MonteCarloSolver):
 
         ode_solver : str, default='Euler'
             ODE integrator for parameter updates. Options: 'Euler', 'RK4', etc.
+        
+        force_numerical : bool, optional
+            If True, forces the use of numerical gradients (AD) for this training run.
+            Overrides the initialization setting.
 
         tdvp : Any, optional
             TDVP configuration or callable.
@@ -2718,7 +2725,21 @@ class NQS(MonteCarloSolver):
             Interactive help and usage tips.
         """
 
-        # Import here to avoid circular imports
+        # --------------------------------------------------
+        #! Handle force_numerical override
+        # --------------------------------------------------
+        if force_numerical is not None:
+            self.force_numerical    = force_numerical
+            if self.force_numerical:
+                self._analytic      = False
+                self.log("Forcing numerical gradients (train override).", lvl=1, color='yellow')
+            else:
+                self._analytic      = self._net.has_analytic_grad
+            
+            # Re-prepare gradients based on new setting
+            self._grad_info             = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)    
+            self._flat_grad_func        = self._grad_info["flat_grad_func"]
+            self._analytic_grad_func    = self._grad_info["analytic_grad_func"]
 
         if reset_weights:
             self.reset()
