@@ -96,7 +96,8 @@ class HeisenbergKitaev(Hamiltonian):
                 use_forward         : bool                                  = True,
                 **kwargs):
         r'''
-        Constructor for the QSM Hamiltonian.
+        Constructor for the Heisenberg-Kitaev-Gamma Hamiltonian with optional magnetic fields
+        and classical impurities. Works on general lattices but is primarily designed for honeycomb/hexagonal lattices.
         
         ---
         Parameters:
@@ -426,6 +427,7 @@ class HeisenbergKitaev(Hamiltonian):
                 self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl = 2, log = log)
             
             #? impurities - now supports arbitrary spin directions via spherical coordinates
+            
             # Format: (site, phi, theta, amplitude) where all are stored in this 4-tuple format
             # Components: sin(theta)*cos(phi)*ampl * sig^x + sin(theta)*sin(phi)*ampl * sig^y + cos(theta)*ampl * sig^z
             for (imp_site, phi, theta, ampl) in self._impurities:
