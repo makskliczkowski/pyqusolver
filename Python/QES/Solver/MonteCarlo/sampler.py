@@ -265,6 +265,14 @@ class Sampler(ABC):
         """ Tries to sample the state from the Hilbert space. """
         pass
     
+    def diagnose(self, *args, **kwargs) -> dict:
+        """
+        Compute diagnostic metrics for the sampler.
+        Returns:
+            dict: Dictionary of diagnostic metrics (e.g., 'ess', 'r_hat', 'autocorr_time').
+        """
+        return {}
+
     ###################################################################
     #! BACKEND
     ###################################################################
