@@ -2514,6 +2514,7 @@ class NQS(MonteCarloSolver):
             checkpoint_step     : Union[int, str]           = None,
             reset_weights       : bool                      = False,
             override            : bool                      = True,
+            background          : bool                      = True,
             # Solvers
             lin_solver          : Union[str, Callable]      = 'minres_qlp',
             pre_solver          : Union[str, Callable]      = 'jacobi',
@@ -2802,6 +2803,7 @@ class NQS(MonteCarloSolver):
                 rhs_prefactor   = rhs_prefactor,
                 grad_clip       = grad_clip,
                 dtype           = self._dtype,
+                background      = background,
                 **kwargs
             )
             
@@ -2833,8 +2835,7 @@ class NQS(MonteCarloSolver):
             except Exception as e:
                 self.log(f"Requested checkpoint load failed: {e}", lvl=0, color='red', log='warning')
                 raise e
-
-            
+        
         stats = self._trainer.train(
             n_epochs            = n_epochs,
             checkpoint_every    = checkpoint_every,

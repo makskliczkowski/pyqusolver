@@ -16,6 +16,7 @@ Copyright           : (c) 2024-2026 Maksymilian Kliczkowski
 ------------------------------------------------------------------------
 '''
 
+import os
 import jax
 import time
 import numpy as np
@@ -267,9 +268,20 @@ class NQSTrainer:
     _ERR_INVALID_LOWER_STATES   = "Lower states must be a list of NQS instances."
     
     def _log(self, message: str, lvl: int = 1, log: str = 'info', color: str = 'white', verbose: bool = True):
-        """Helper for logging messages."""
+        """Helper for logging messages. In background mode, logs sparsely."""
         if not verbose:
             return
+        
+        # In background mode, check if we should log this step
+        if self.background and hasattr(self, '_current_epoch'):
+            # Log first epoch, every Nth epoch, and last epoch
+            epoch       = self._current_epoch
+            n_epochs    = getattr(self, '_total_epochs', 1)
+            interval    = getattr(self, 'background_log_interval', 20)
+            should_log  = (epoch == 1) or (epoch % interval == 0) or (epoch == n_epochs)
+            if not should_log:
+                return
+        
         if self.logger:
             self.logger.say(message, lvl=lvl, log=log, color=color)
     
@@ -290,6 +302,7 @@ class NQSTrainer:
                 early_stopper   : Any                   = None,                     # Callable or EarlyStopping
                 logger          : Optional[Logger]      = None,                     # Logger instance
                 lower_states    : List[NQS]             = None,                     # For excited states - list of lower NQS
+                background      : bool                  = False,                    # Quiet/background mode (no pbar/log spam)
                 # --------------------------------------------------------------
                 lr_scheduler    : Optional[Callable]    = None,                     # Direct LR scheduler injection
                 reg_scheduler   : Optional[Callable]    = None,                     # Direct Reg scheduler injection (for future L2 reg)
@@ -471,16 +484,18 @@ class NQSTrainer:
         '''
         
         if nqs is None:         raise ValueError(self._ERR_NO_NQS)
-        self.nqs                = nqs                                               # Most important component
-        self.logger             = logger
-        self.n_batch            = n_batch
-        self.verbose            = nqs.verbose
-        self.dtype              = dtype if dtype is not None else nqs.dtype
+        self.nqs                        = nqs                                               # Most important component
+        self.logger                     = logger
+        self.n_batch                    = n_batch
+        self.background                 = background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0"))
+        self.background_log_interval    = kwargs.pop('background_log_interval', 20)    # Log every Nth epoch in background mode
+        self.verbose                    = nqs.verbose and not self.background
+        self.dtype                      = dtype if dtype is not None else nqs.dtype
         if dtype is None and hasattr(nqs, "_precision_policy"):
             if getattr(nqs, "_iscpx", False):
-                self.dtype      = nqs._precision_policy.accum_complex_dtype
+                self.dtype              = nqs._precision_policy.accum_complex_dtype
             else:
-                self.dtype      = nqs._precision_policy.accum_real_dtype
+                self.dtype              = nqs._precision_policy.accum_real_dtype
         
         # Validate lower states
         if lower_states is not None:
@@ -915,7 +930,7 @@ class NQSTrainer:
                     
         else:
             if exact_loss is not None:
-                self._log(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f} (exact={exact_loss:.4f}, Δ={mean_loss - exact_loss:.4f}), lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
+                self._log(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f} (exact={exact_loss:.4f}, d={mean_loss - exact_loss:.4f}), lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
             else:
                 self._log(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f}, lr={lr:.1e}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
 
@@ -971,12 +986,16 @@ class NQSTrainer:
         
         # Timer for the WHOLE epoch (BASIC mode)
         checkpoint_every = max(1, checkpoint_every)
+        background_flag  = self.background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0")) or bool(kwargs.pop("background", False))
+        use_pbar         = use_pbar and not background_flag
         
         # Auto-detect epochs from scheduler if not provided
         if n_epochs is None and isinstance(self.lr_scheduler, PhaseScheduler):
             n_epochs = sum(p.epochs for p in self.lr_scheduler.phases)
             self._log(f"Auto-detected total epochs from phases: {n_epochs}", lvl=1, color='green', verbose=self.verbose)
         
+        # Set total epochs for sparse logging in background mode
+        self._total_epochs  = n_epochs or 100
         # Set exact info if provided
         num_samples         = kwargs.get('num_samples', None)
         num_chains          = kwargs.get('num_chains', None)
@@ -1000,6 +1019,7 @@ class NQSTrainer:
             for epoch in pbar:
                 # Global epoch accounts for previous training when continuing
                 global_epoch                    = start_epoch + epoch
+                self._current_epoch             = global_epoch  # Track for sparse logging in background mode
                 
                 # Scheduling (use global_epoch so schedulers continue properly)
                 last_E                          = self.stats.history[-1] if len(self.stats.history) > 0 else 0.0
