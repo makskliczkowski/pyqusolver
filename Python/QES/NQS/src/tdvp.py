@@ -864,6 +864,46 @@ class TDVP:
         self._e_local_mean  = self.backend.mean(loss, axis=0)
         self._e_local_std   = self.backend.std(loss, axis=0)
 
+        # Check for BatchedJacobian
+        is_batched = hasattr(log_deriv, "compute_weighted_sum")
+
+        if is_batched:
+             # Calculate centered loss
+             loss_c = self.get_loss_centered(loss, self._e_local_mean)
+             # Calculate mean of Jacobian
+             var_deriv_m = log_deriv.mean(axis=0)
+             # Store mean in object for later use in matvec
+             log_deriv.mean_val = var_deriv_m
+
+             # Calculate Force Vector F = <O_c^* E_c> = 1/N * sum(O^* * loss_c)
+             # compute_weighted_sum(w) = sum(w * O).
+             # We want sum(loss_c * O^*).
+             # sum(loss_c * O^*) = (sum(loss_c.conj() * O))^*
+             # loss_c is typically real (Energy), but if complex:
+             self._n_samples = log_deriv._n_samples
+             f_vec = log_deriv.compute_weighted_sum(loss_c.conj()).conj() / self._n_samples
+
+             # Add penalty terms if any
+             excited_penalty = kwargs.get('lower_states', None)
+             if excited_penalty:
+                 for penalty in excited_penalty:
+                      # F += beta * < (psi_j/psi)_c * O^dag >
+                      # < R_c O^dag > = 1/N sum( R_c * O^* )
+                      # = 1/N ( sum( R_c^* * O ) )^*
+                      r_el = penalty.r_el
+                      r_mean = self.backend.mean(r_el, axis=0)
+                      r_c = r_el - r_mean
+                      term = log_deriv.compute_weighted_sum(r_c.conj()).conj() / self._n_samples
+                      f_vec = f_vec + penalty.beta_j * term
+
+             self._f0 = f_vec
+             self._s0 = None # Matrix not formed
+             # self._n_samples already set above
+             self._full_size = log_deriv._n_params
+
+             # Pass log_deriv as var_deriv_c
+             return self._f0, self._s0, (loss_c, log_deriv, None, var_deriv_m)
+
         with self._time('prepare', self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
             loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m = prepare
         
@@ -915,7 +955,75 @@ class TDVP:
         # Determine mode if not provided
         if mode is None:
             mode = 'minsr' if self.use_minsr else 'standard'
+
+        # Check for BatchedJacobian
+        is_batched = hasattr(mat_O, "compute_weighted_sum")
+
+        if is_batched:
+            # Batched / Matrix-Free Implementation
+            # mat_O is the Jacobian J. We need centered J_c = J - 1 * mean^T
+            mean_val = getattr(mat_O, "mean_val", None)
+
+            if mode == 'minsr':
+                # T = O_c @ O_c^dag.
+                # v is in Sample space (N_samples)
+                # O_c^dag v = (J - 1 m^T)^dag v = J^dag v - m^* (1^T v)
+                # J^dag v is rmv(v). 1^T v is sum(v).
+
+                # u = O_c u' = (J - 1 m^T) u' = J u' - 1 (m^T u')
+                # J u' is mv(u'). m^T u' is dot(m, u').
+
+                def _matvec_batched(v, sigma):
+                    # 1. Apply O_c^dag
+                    sum_v = self.backend.sum(v)
+                    J_dag_v = mat_O.rmv(v)
+                    # m is mean_val. m^* is conj(m).
+                    # O_c^dag v = J^dag v - m.conj() * sum_v
+                    inter = J_dag_v - self.backend.conj(mean_val) * sum_v
+
+                    # 2. Apply O_c
+                    # O_c inter = J inter - 1 * (m . inter)
+                    J_inter = mat_O.mv(inter)
+                    m_dot_inter = self.backend.sum(mean_val * inter)
+                    res = J_inter - m_dot_inter # Broadcasting scalar subtraction
+
+                    if self._n_samples is None:
+                        # Should have been set in get_tdvp_standard
+                        # But if running standalone _solve_prepare_matvec without get_tdvp_standard,
+                        # we rely on mat_O._n_samples if available.
+                        n = getattr(mat_O, '_n_samples', 1.0)
+                        return res / n + sigma * v
+
+                    return res / self._n_samples + sigma * v
+
+            else:
+                # S = O_c^dag @ O_c.
+                # v is in Parameter space (N_params)
+
+                # 1. Apply O_c
+                # O_c v = J v - 1 * (m . v)
+
+                def _matvec_batched(v, sigma):
+                    m_dot_v = self.backend.sum(mean_val * v)
+                    J_v = mat_O.mv(v)
+                    inter = J_v - m_dot_v
+
+                    # 2. Apply O_c^dag
+                    # O_c^dag inter = J^dag inter - m^* * sum(inter)
+                    sum_inter = self.backend.sum(inter)
+                    J_dag_inter = mat_O.rmv(inter)
+                    res = J_dag_inter - self.backend.conj(mean_val) * sum_inter
+
+                    if self._n_samples is None:
+                        n = getattr(mat_O, '_n_samples', 1.0)
+                        return res / n + sigma * v
+
+                    return res / self._n_samples + sigma * v
             
+            # Since BatchedJacobian uses JAX internally, we don't strictly need to JIT this
+            # wrapper if the internal calls are efficient, but JITing the whole thing is good.
+            return jax.jit(_matvec_batched) if self.is_jax else _matvec_batched
+
         if mode == 'minsr':
              # T = O @ O^dag.  v -> O^dag v -> O (O^dag v)
              # op1 = mat_O.T.conj()
