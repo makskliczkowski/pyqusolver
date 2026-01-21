@@ -1197,7 +1197,8 @@ class VMCSampler(Sampler):
         int_dtype = DEFAULT_JP_INT_TYPE
         n_replicas = self._n_replicas
         
-        @partial(jax.jit, donate_argnums=(0, 1))
+        # @partial(jax.jit, donate_argnums=(0, 1))
+        @jax.jit
         def wrapped_pt_sampler(states_init          : jax.Array,
                                rng_k_init           : jax.Array,
                                params               : Any,
@@ -1243,7 +1244,8 @@ class VMCSampler(Sampler):
         partial_sampler                 = partial(VMCSampler._static_sample_jax, **baked_args)
         int_dtype                       = DEFAULT_JP_INT_TYPE
 
-        @partial(jax.jit, donate_argnums=(0, 1))
+        # @partial(jax.jit, donate_argnums=(0, 1))
+        @jax.jit
         def wrapped_sampler(states_init         : jax.Array,
                             rng_k_init          : jax.Array,
                             params              : Any,
