@@ -29,3 +29,16 @@ To fix this, we applied a series of "Physics Stabilizers" inspired by the stabil
     $$ \text{weight} = \frac{\psi(s')}{\psi(s) + \epsilon} \approx \exp(\ln \psi(s') - \text{logaddexp}(\ln \psi(s), \ln \epsilon)) $$
 
 These changes restore the variational principle and ensure numerical stability for deep architectures.
+
+## Secondary Hypothesis & Exploration
+
+While the architectural fixes above address the primary "Energy Collapse" issue, other factors could contribute to spurious results:
+
+### 1. Sampling Bias / Non-Ergodicity
+If the MCMC sampler gets stuck in a region of phase space with spuriously low local energies (due to the original instability), it will bias the estimator. The collapse suggests the network found a "hole" in the probability landscape where $\psi(s) \approx 0$ relative to neighbors, causing $E_{loc} \to -\infty$ (or unstable high variance interpreted as low). The epsilon fix prevents this specific divergence. However, ensuring the sampler is ergodic (e.g., using Parallel Tempering or global updates) is crucial for deep networks which may have rougher landscapes than RBMs.
+
+### 2. Complex Phase Instability
+Deep networks with complex weights can induce rapid phase winding. If the phase changes rapidly between $s$ and $s'$, the local energy term $H_{s,s'} \frac{|\psi(s')|}{|\psi(s)|} e^{i(\phi(s')-\phi(s))}$ oscillates wildly. If the optimization does not handle complex gradients correctly (non-holomorphic updates), the phase structure can become pathological. Enforcing `log_cosh` ensures the function remains holomorphic, linking phase and magnitude gradients via Cauchy-Riemann equations, which generally stabilizes the phase behavior compared to arbitrary complex parametrizations.
+
+### 3. Precision Loss
+Deep architectures involve many matrix multiplications. In `float32`, accumulating sum-products can lead to precision loss, especially for the small probability amplitudes involved in many-body physics. The switch to `complex128` (or `float64` backbone) where possible is recommended.
