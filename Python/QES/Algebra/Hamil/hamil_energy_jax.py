@@ -443,13 +443,27 @@ def local_energy_jax_wrap(
                 # indices shape: (N_terms, Arity) or (N_terms,) if Arity=1
                 # mults shape: (N_terms,)
 
+                # DEBUG PRINT (Should see this only during compilation)
+                # jax.debug.print("Processing group for {}: indices shape {}", f, indices.shape)
+
                 # Helper to apply f to state and sites
                 def apply_op(s, idxs):
                     # Unpack indices if it's an array
                     # If Arity=1, idxs might be scalar or 0-d array
                     if idxs.ndim == 0:
-                        return f(s, idxs)
-                    return f(s, *idxs)
+                        new_states, coeffs = f(s, idxs)
+                    else:
+                        new_states, coeffs = f(s, *idxs)
+
+                    # Ensure shapes are (K, ns) and (K,) to support broadcasting in vmap
+                    new_states = jnp.asarray(new_states, dtype=state.dtype)
+                    coeffs     = jnp.asarray(coeffs,     dtype=dtype)
+
+                    if new_states.ndim == 1:
+                        new_states = new_states.reshape((1, new_states.shape[0]))
+                    coeffs = jnp.atleast_1d(coeffs)
+
+                    return new_states, coeffs
 
                 # vmap over indices (axis 0)
                 # state is broadcasted (None)
