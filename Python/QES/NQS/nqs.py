@@ -227,6 +227,110 @@ class NQS(MonteCarloSolver):
                 **kwargs):
         r'''
         Initialize the NQS solver.
+
+        Parameters:
+            logansatz [Union[Callable, str, GeneralNet]]:
+                The neural network or callable to be used. This can be specified in several ways:
+                - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
+                - As a pre-initialized network object (must be a subclass of `GeneralNet`).
+                - As a raw Flax module class for custom networks. The factory will wrap it automatically.
+                See the documentation of `QES.general_python.ml.networks.choose_network` for details
+                on custom module requirements.
+                - As a callable that returns an ansatz. For example, a function that takes input shape and returns
+                    a network instance or it can be some custom logic to create the wavefunction ansatz:
+                    - PEPS ansatz function
+                    - Custom variational ansatz
+            sampler [Union[Callable, str, VMCSampler]]:
+                The sampler to be used. If None, a default `VMCSampler` will be created.
+                This can be specified in several ways:
+                - As a string (e.g., 'vmc') to use a built-in sampler.
+                - As a pre-initialized sampler object (must be a subclass of `VMCSampler`).
+                - As a callable that returns a sampler instance.
+                - If None, a default `VMCSampler` will be created using the provided network:
+                    - The sampler will be initialized with the network, shape, random number generators, and other parameters.
+            model [Hamiltonian or Operator]:
+                The physical model (e.g., Hamiltonian) for the NQS.
+                - If physics is 'wavefunction', this must provide a `local_energy_fn`.
+                - For other physics types, refer to the specific requirements.
+            batch_size [Optional[int]]:
+                The batch size for training.
+            nthstate [Optional[int]]:
+                The nth excited state to target (0 for ground state). Informative
+            nparticles [Optional[int]]:
+                The number of particles in the system. If not provided, defaults to system size.
+            seed [Optional[int]]:
+                Random seed for initialization.
+            beta [float]:
+                Inverse temperature for Monte Carlo sampling.
+            mu [float]:
+                Mu parameter for the NQS. This is used for collecting different sampling distribution.
+                By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
+            replica [int]:
+                Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
+                When replica > 1:
+                - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
+                to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
+                - MCMC runs in parallel across all temperature replicas.
+                - Periodic replica exchanges improve mixing and help escape local minima.
+                - Only samples from the physical replica (beta=1.0) are used for training.
+                - The return signature of `sample()` and `train()` remains unchanged.
+            shape [Union[list, tuple]]:
+                Shape of the input data, e.g., `(n_spins,)`.
+            modes:
+                Number of local modes per site (e.g., 2 for spin-1/2).
+            directory:
+                Directory for saving results.
+            backend:
+                Computational backend ('jax' or 'numpy').
+            dtype:
+                Data type for network parameters (e.g., 'float32', 'complex128').
+            problem:
+                The physics problem to solve (e.g., 'wavefunction').
+            symmetrize [bool]:
+                Whether to automatically symmetrize the ansatz if symmetries are present in the Hilbert space.
+                If True (default), and `hilbert` has symmetries, the network output will be projected onto the
+                specified symmetry sector:
+                :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
+                where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
+                This allows training symmetry-protected states.
+            verbose [bool]:
+                Whether to print verbose output. Default is True.
+            **kwargs:
+                Additional keyword arguments passed to the network constructor.
+                Including:
+                - seed:
+                    Seed for network initialization (overrides global seed if provided).
+                - param_dtype:
+                    Data type for network parameters (e.g., 'float32', 'complex128').
+                - beta_penalty:
+                    Penalty term for particle number conservation (default: 0.0).
+                - use_orbax:
+                    Whether to use Orbax for checkpointing (default: True).
+                - orbax_max_to_keep:
+                    Maximum number of Orbax checkpoints to keep (default: 3).
+                - Sampler-specific parameters:
+                    - s_numchains       : Number of Markov chains (default: 16).
+                    - s_numsamples      : Number of samples per chain (default: 1000).
+                    - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
+                    - s_sweep_steps     : Number of sweep steps between samples (default: 10).
+                    - s_therm_steps     : Number of thermalization steps (burnin) (default: 100).
+                    - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
+                                        Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
+                                        See `NQS.help('sampling')` for details.
+                    - s_patterns        : List of patterns for "GLOBAL" update rule (required if upd_fun="GLOBAL").
+                    - s_n_flip          : Number of sites for "MULTI_FLIP" rule (default: 1).
+                    - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
+                    - s_logprob_fact    : Log probability factor (default: 0.5).
+                    - s_makediffer      : Whether to make the sampler differentiable (default: True).
+                    - Other sampler-specific parameters as needed.
+                - Parallel Tempering parameters (when replica > 1):
+                    - pt_betas          : Custom array of inverse temperatures (optional).
+                                        If not provided, a geometric ladder from 1.0 to 0.1 is generated.
+                    - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
+                                        Sampler-specific parameters (e.g., `global_p`, `global_fraction`) are
+                                        also passed through to the `VMCSampler` constructor via `**kwargs`.
+                    - global_p          : Probability of proposing a global update (default: 0.0).
+                    - global_update     : Custom global update function (optional).
         '''
         
         if shape is None and hilbert is None:
@@ -501,6 +605,18 @@ class NQS(MonteCarloSolver):
         '''
         Initialize the network truly. This means that the weights are initialized correctly 
         and the dtypes are checked. In addition, the network is checked if it is holomorphic or not.
+        Parameters:
+            s: The state vector, can be any, but it is used to initialize the network.
+
+        Note:
+            1. Check if the network is already initialized.
+            2. If not, initialize the weights using the network's init method.
+            3. Check the dtypes of the weights and ensure they are consistent.
+            4. Check if the network is complex and holomorphic.
+            5. Check the shape of the weights and store them.
+            6. Calculate the number of parameters in the network.
+            7. Set the initialized flag to True.
+            8. If the network is not initialized, raise a ValueError.
         '''
 
         if not self._initialized or forced:
@@ -1406,6 +1522,20 @@ class NQS(MonteCarloSolver):
     def set_modifier(self, modifier: Union[Operator, Callable], **kwargs):
         r"""
         Apply a linear operator $\hat{O}$ to the ansatz state: $|\tilde{\Psi}\rangle = \hat{O} |\Psi_\theta\rangle.
+
+        This transforms the NQS evaluation into a modified state evaluation using the
+        robust `AnsatzModifier` wrapper. It handles both diagonal (M=1) and
+        sparse/branching (M>1) operators automatically.
+
+        .. math::
+            \log \tilde{\Psi}(s) = \log \left( \sum_{k=1}^M w_k \cdot \exp(\log \Psi_\theta(s'_k)) \right)
+
+        Parameters
+        ----------
+        modifier : Union[Operator, Callable]
+            An operator or function that takes a state $s$ and returns:
+            - `connected_states` (batch, M, N)
+            - `weights` (batch, M)
         """
         
         # Ensure we are using JAX (Modifiers rely on JIT/PyTrees)
@@ -1436,6 +1566,29 @@ class NQS(MonteCarloSolver):
     def save_weights(self, step: int = 0, filename: Optional[str] = None, metadata: Optional[dict] = None):
         """
         Delegates saving to the CheckpointManager.
+
+        Parameters
+        ----------
+        step : int
+            The current training step or epoch. Used for versioning the saved weights.
+        filename : Optional[str]
+            The filename to save the weights to. Can be:
+            - Absolute path: used directly
+            - Relative path: resolved relative to self.defdir
+            - None: uses default naming scheme (checkpoint_{step}.h5 or Orbax step-based)
+        metadata : Optional[dict]
+            Additional metadata to save with the weights.
+            Seed, backend, and network type are automatically added.
+
+        Returns
+        -------
+        Path : The path where the checkpoint was saved.
+
+        Example:
+        --------
+            >>> nqs = NQS(model, net, sampler)
+            >>> nqs.save_weights(step=10, filename="best_model.h5")
+            >>> nqs.save_weights(step=100) # Uses default naming
         """
         params = self.get_params()
         
@@ -1475,6 +1628,28 @@ class NQS(MonteCarloSolver):
     def load_weights(self, step: Optional[int] = None, filename: Optional[str] = None):
         """
         Delegates loading to the CheckpointManager.
+
+        Parameters
+        ----------
+        step : Optional[int]
+            The training step to load. If None:
+            - Orbax: loads the latest checkpoint
+            - HDF5: requires filename or finds latest checkpoint_*.h5
+        filename : Optional[str]
+            Custom filename to load. Can be:
+            - Absolute path: used directly
+            - Relative path: resolved relative to self.defdir
+            - None: uses step-based naming
+
+        Returns
+        -------
+        None
+
+        Example:
+        --------
+            >>> nqs.load_weights(step=100)
+            >>> nqs.load_weights(filename='best_model.h5')
+            >>> nqs.load_weights()  # Latest checkpoint
         """
         try:
             params = self.ckpt_manager.load(
@@ -1508,6 +1683,15 @@ class NQS(MonteCarloSolver):
     def set_params(self, new_params: Any, shapes: list = None, sizes: list = None, iscpx: bool = False):
         """
         Sets new parameters in the network object.
+        Parameters
+        ----------
+        new_params : Any
+            The new parameters to set. Can be:
+                1.  A PyTree (dict, list, custom) matching the exact structure of
+                    the model's parameters.
+                2.  A 1D JAX array (`jnp.ndarray`) containing the update in the
+                    flattened **real representation** format (matching the structure
+                    defined by the model's parameters, including [Re, Im] for complex leaves).
         """
         params = new_params
         
@@ -1580,6 +1764,12 @@ class NQS(MonteCarloSolver):
     def model(self, new_model):
         '''
         Set a new physical model and reconfigure the physics/loss functions.
+
+        This is useful for impurity studies where you want to reuse the same
+        trained network with a modified Hamiltonian (e.g., adding impurities).
+
+        Parameters:
+            new_model: The new Hamiltonian/model to use.
         '''
         self._model = new_model
         self._nqsproblem.setup(self._model, self._net)
@@ -1785,6 +1975,155 @@ class NQS(MonteCarloSolver):
         ) -> "NQSTrainStats":
         r"""
         Train the NQS using the NQSTrainer.
+
+        It creates (or reuses) an NQSTrainer instance and runs the training loop, supporting
+        advanced features such as learning rate scheduling, regularization, Stochastic Reconfiguration (SR),
+        MinSR, TDVP, checkpointing, and exact solution comparison.
+
+        Parameters
+        ----------
+        n_epochs : int, default=300
+            Number of training epochs.
+
+        checkpoint_every : int, default=50
+            Save checkpoint every N epochs.
+
+        reset_weights : bool, default=False
+            If True, reinitialize network parameters before training.
+
+        override : bool, default=True
+            If True, always create a new trainer with the provided arguments.
+            If False, reuse existing trainer if one exists (ignores other config args).
+
+        lin_solver : str or Callable, default='scipy_cg'
+            Linear solver for SR equations. Options: 'scipy_cg', 'jax_cg', custom callable.
+
+        pre_solver : str or Callable, optional
+            Preconditioner for linear solver.
+
+        ode_solver : str, default='Euler'
+            ODE integrator for parameter updates. Options: 'Euler', 'RK4', etc.
+
+        tdvp : Any, optional
+            TDVP configuration or callable.
+
+        n_batch : int, default=128
+            Batch size for VMC sampling.
+
+        phases : str or tuple, default='default'
+            Phase scheduling preset or custom phases.
+
+        timing_mode : str, default='detailed'
+            Timing mode for profiling ('detailed', 'minimal').
+
+        early_stopper : Any, optional
+            Early stopping callback or configuration.
+
+        lower_states : List[NQS], optional
+            List of lower-energy NQS states for orthogonalization (excited states).
+
+        lr_scheduler : str or Callable, optional
+            Learning rate scheduler type or instance.
+            Options: 'constant', 'exponential', 'cosine', 'linear', 'adaptive', 'step'.
+            Scheduler kwargs can be passed via **kwargs:
+                - lr_init, lr_final, lr_decay_rate, lr_patience, lr_min_delta, lr_cooldown, lr_step_size
+
+        reg : float, optional
+            Regularization strength.
+
+        reg_scheduler : str or Callable, optional
+            Regularization scheduler for SR matrix.
+
+        diag_shift : float, default=1e-5
+            Diagonal regularization for SR matrix.
+
+        diag_scheduler : str or Callable, optional
+            Diagonal shift scheduler for SR matrix.
+
+        use_sr : bool, default=True
+            Use Stochastic Reconfiguration (SR) for optimization.
+
+        use_minsr : bool, default=False
+            Use MinSR (memory efficient SR).
+
+        rhs_prefactor : float, default=-1.0
+            Prefactor for the TDVP right-hand side.
+
+        save_path : str, optional
+            Directory or filename for saving checkpoints.
+
+        reset_stats : bool, default=True
+            If True, reset training statistics before starting.
+
+        use_pbar : bool, default=True
+            Show progress bar during training.
+
+        exact_predictions : array-like, optional
+            Exact reference values (e.g., from ED) for comparison.
+
+        exact_method : str, optional
+            Method used to compute exact predictions (e.g., 'lanczos').
+
+        lin_force_mat : bool, default=False
+            Force forming full matrix in linear solver.
+
+        lin_is_gram : bool, default=True
+            Treat linear system as Gram matrix (S) if True, else covariance.
+
+        p_global : float, optional
+            Probability (0.0 to 1.0) of proposing a global update in the sampler (default: 0.0).
+            See `VMCSampler` documentation for details.
+        global_fraction : float, optional
+            Fraction of spins to flip during a global update (default: 0.5).
+            See `VMCSampler` documentation for details.
+
+        upd_fun : str or Enum, optional
+            Update rule for the sampler (e.g., "LOCAL", "EXCHANGE").
+            If provided, reconfigures the sampler's update function before training.
+
+        update_kwargs : dict, optional
+            Additional arguments for the update rule (e.g., {'patterns': [...]}).
+
+        symmetrize : Optional[bool], default=None
+            Enable or disable symmetry projection for the ansatz.
+            If None, the current setting is preserved.
+
+        **kwargs
+            Additional arguments passed to NQSTrainer and schedulers.
+
+        Returns
+        -------
+        NQSTrainStats
+            Training statistics including loss history, timing, checkpoints, etc.
+
+        Examples
+        --------
+        >>> # Basic training with default settings
+        >>> stats = psi.train(n_epochs=200)
+
+        >>> # Training with cosine annealing learning rate scheduler
+        >>> stats = psi.train(n_epochs=500, lr=1e-3, lr_scheduler='cosine', min_lr=1e-5)
+
+        >>> # Training with exact diagonalization comparison
+        >>> hamil.diagonalize()
+        >>> stats = psi.train(n_epochs=300, exact_predictions=hamil.eigenvalues, exact_method='lanczos')
+
+        >>> # Continue training with same optimizer state
+        >>> stats = psi.train(n_epochs=100)
+        >>> stats = psi.train(n_epochs=100, override=False)
+
+        >>> # Advanced: MinSR, custom batch size, checkpointing
+        >>> stats = psi.train(n_epochs=1000, use_minsr=True, n_batch=2048, checkpoint_every=100, save_path='./checkpoints')
+
+        >>> # Change update rule for training
+        >>> stats = psi.train(n_epochs=100, upd_fun="EXCHANGE")
+
+        See Also
+        --------
+        NQSTrainer :
+            Full trainer class with more configuration options.
+        NQS.help('train') :
+            Interactive help and usage tips.
         """
 
         # Import here to avoid circular imports
@@ -1942,6 +2281,19 @@ class NQS(MonteCarloSolver):
         """
         Computes the normalized transition matrix element:
         M_12 = <Psi_bra | O | Psi_ket> / sqrt(<bra|bra> * <ket|ket>)
+
+        Uses bidirectional importance sampling to handle normalization constants correctly.
+
+        Args:
+            nqs_bra: The state on the left <Psi_1|
+            nqs_ket: The state on the right |Psi_2>
+            operator: The operator O (must be applicable to nqs_ket)
+            num_samples: MC samples
+            num_chains: Number of Markov chains
+            operator_args: Additional arguments for the operator
+
+        Returns:
+            The normalized expectation value.
         """
         
         # ------------------------------------------------------------------
@@ -2015,7 +2367,26 @@ class NQS(MonteCarloSolver):
     @staticmethod
     def compute_overlap(nqs_a: 'NQS', nqs_b: 'NQS', *, num_samples: int = 4096, num_chains: Optional[int] = None, operator: Optional[Any] = None, operator_args: Optional[Any] = None) -> float:
         r"""
-        Computes the squared overlap (Fidelity) between two NQS instances.
+        Computes the squared overlap (Fidelity) between two NQS instances:
+        F = |<Psi_A | Psi_B>|^2 / (<Psi_A|Psi_A> <Psi_B|Psi_B>)
+        This is done via Monte Carlo estimation using samples from both distributions.
+
+        Mathematically:
+        F = ( E_{s ~ |Psi_A|^2} [ Psi_B(s) / Psi_A(s) ] ) *
+            ( E_{s ~ |Psi_B|^2} [ Psi_A(s) / Psi_B(s) ] )
+
+        where E denotes the expectation value over the sampled configurations.
+
+        Args:
+            nqs_a: First NQS instance (e.g., current training step).
+            nqs_b: Second NQS instance (e.g., target state or previous step).
+            num_samples: Number of MC samples to use for estimation.
+            num_chains: Number of independent Markov chains for sampling.
+            operator: Optional operator to insert between states (not implemented).
+            operator_args: Additional arguments for the operator (if any).
+
+        Returns:
+            float: The squared overlap (between 0.0 and 1.0).
         """
         
         if nqs_a.nvisible != nqs_b.nvisible:
@@ -2115,6 +2486,22 @@ class NQS(MonteCarloSolver):
     def compute_topological_entropy(self, radius: Optional[float] = None, **renyi_kwargs) -> dict:
         """
         Compute the Topological Entanglement Entropy (gamma) using the Kitaev-Preskill construction.
+
+        Uses the lattice geometry to define regions A, B, C.
+        Formula: gamma = S_A + S_B + S_C - S_AB - S_BC - S_AC + S_ABC
+
+        Parameters
+        ----------
+        radius : float, optional
+            Radius for region definition (passed to region_kitaev_preskill).
+            Defaults to avoiding system wrapping if None.
+        **renyi_kwargs : dict
+            Arguments passed to compute_renyi2 (e.g., num_samples, num_chains).
+
+        Returns
+        -------
+        dict
+            Dictionary containing 'gamma' and individual entropies.
         """
         if not hasattr(self._model, 'lattice') or self._model.lattice is None:
             raise ValueError("Lattice is required for topological entropy calculation.")
@@ -2190,6 +2577,14 @@ class NQS(MonteCarloSolver):
     def get_auto_config(system_size, target_total_samples=4096, dtype=jnp.complex64, logger: Logger = None, *, net_depth_estimate: int = 64, num_therm: Optional[int] = None, num_sweep: Optional[int] = None) -> dict:
         """
         Automatically detects hardware and returns optimal VMC parameters.
+
+        Args:
+            system_size (int): Number of spins/sites (N).
+            target_total_samples (int): Total samples desired for the gradient batch.
+            dtype (jax.dtype): The data type used for the network.
+
+        Returns:
+            dict: A dictionary of parameters ready to pass to NQS/VMCSampler.
         """
         if not JAX_AVAILABLE:
             raise ImportError("JAX is required for automatic configuration. Please install JAX to use this feature.")
