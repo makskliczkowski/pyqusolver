@@ -1899,7 +1899,7 @@ def sigma_composition_integer(is_complex: bool, only_apply: bool = False, spin_v
         ''' Applies a single operator based on the code. '''
         
         current_s   = state
-        current_c   = dtype(1.0 + 0.0j)
+        current_c   = dtype(1.0)
         is_diagonal = False
         sites_1     = (site1,)
         sites_2     = (site1, site2)

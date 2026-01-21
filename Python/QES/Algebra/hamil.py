@@ -39,7 +39,8 @@ try:
     from    QES.Algebra.Hamil.hamil_energy                  import local_energy_np_wrap
     from    QES.Algebra.hamil_config                        import HamiltonianConfig, HAMILTONIAN_REGISTRY, register_hamiltonian    
     from    QES.Algebra.Hamil.hamil_diag_engine             import DiagonalizationEngine
-    import  QES.Algebra.Hamil.hamil_jit_methods     as hjm    
+    import  QES.Algebra.Hamil.hamil_jit_methods     as hjm
+    from    QES.Algebra.hamil_cache                         import get_matrix_from_cache, store_matrix_in_cache, generate_cache_key
 
 except ImportError as exc:
     raise ImportError("QES.Algebra.hilbert or QES.Algebra.Operator.operator could not be imported. Ensure QES is properly installed.") from exc
@@ -169,13 +170,15 @@ class Hamiltonian(BasisAwareOperator):
             hilbert_space           = HilbertSpace.from_config(hilbert_space)
         self._use_forward           = use_forward
         
+        name = kwargs.pop('name', 'Hamiltonian')
+
         # Initialize BasisAwareOperator base class (which inherits from SpecialOperator -> Operator -> GeneralMatrix)
         # This sets up backend, sparse, dtype, matrix storage, diagonalization infrastructure,
         # the instruction code system, custom operator registry, AND basis tracking/transformation dispatch
         BasisAwareOperator.__init__(self, 
                         ns              =   ns,
                         lattice         =   lattice,
-                        name            =   self.name if hasattr(self, 'name') else 'Hamiltonian',
+                        name            =   name,
                         backend         =   backend,
                         is_sparse       =   is_sparse,
                         is_manybody     =   is_manybody,
@@ -261,7 +264,28 @@ class Hamiltonian(BasisAwareOperator):
         )
     
     # ----------------------------------------------------------------------------------------------
-    
+
+    @property
+    def signature(self):
+        """Unique signature for the Hamiltonian configuration."""
+        # Use instructions if available
+        if hasattr(self, '_instr_codes') and self._instr_codes:
+            terms = []
+            for code, coeff, sites in zip(self._instr_codes, self._instr_coeffs, self._instr_sites):
+                # Filter -1 from sites
+                real_sites = tuple(s for s in sites if s != -1)
+                terms.append((code, complex(coeff), real_sites))
+
+            # Sort to ensure order independence
+            terms.sort(key=lambda x: (x[0], x[2], x[1].real, x[1].imag))
+            return str(tuple(terms))
+        return str(id(self))
+
+    def _check_build(self):
+        """Ensure the Hamiltonian is built before use."""
+        if not self._is_built:
+            self.build()
+
     def randomize(self, **kwargs):
         ''' Randomize the Hamiltonian matrix.'''
         raise NotImplementedError("Randomization is not implemented for this Hamiltonian class.")
@@ -948,14 +972,38 @@ class Hamiltonian(BasisAwareOperator):
         
         if self._is_manybody:
             # Ensure operators/local energy functions are defined
+            # This MUST be done before caching check to have correct signature
             if self._loc_energy_int_fun is None and self._loc_energy_np_fun is None and self._loc_energy_jax_fun is None:
-                self._log("Local energy functions not set, attempting to set them via _set_local_energy_operators...", lvl=2, log="debug")
+                self._log("Local energy functions not set, attempting to set them...", lvl=2, log="debug")
                 try:
-                    self.reset_operators()
+                    # Only reset/re-add if we don't have instructions yet
+                    if not self._instr_codes:
+                        self._log("No instructions found, calling _set_local_energy_operators...", lvl=2, log="debug")
+                        self._set_local_energy_operators()
+
+                    # Ensure instruction codes are setup (lookup tables etc)
+                    if hasattr(self, 'setup_instruction_codes'):
+                        self.setup_instruction_codes()
+
+                    # Build the functions
                     self._set_local_energy_functions()  
                 except Exception as e:
                     raise RuntimeError(f"Failed to set up operators/local energy functions: {e}")
+
+            # Setup instruction codes if not already done (critical for signature)
+            if hasattr(self, 'setup_instruction_codes') and not getattr(self, '_lookup_codes', None):
+                 self.setup_instruction_codes()
         
+        # Check Cache
+        if not force and self._is_manybody:
+            cache_key = generate_cache_key(self)
+            cached_matrix = get_matrix_from_cache(cache_key)
+            if cached_matrix is not None:
+                self._log("Hamiltonian matrix found in cache. Using cached version.", lvl=1, color="green")
+                self.hamil = cached_matrix
+                self._is_built = True
+                return
+
         ################################
         #! Initialize the Hamiltonian
         ################################
@@ -987,6 +1035,11 @@ class Hamiltonian(BasisAwareOperator):
         try:
             if self._is_manybody:
                 self._hamiltonian(use_numpy)
+                # Store in cache
+                if not force: # Only cache if not forced? Or always?
+                    # Recalculate key just in case signature changed? No, it shouldn't.
+                    cache_key = generate_cache_key(self)
+                    store_matrix_in_cache(cache_key, self._hamil)
             else:
                 self._hamiltonian_quadratic(use_numpy)
         except Exception as e:
@@ -1346,6 +1399,8 @@ class Hamiltonian(BasisAwareOperator):
         diag_start      = time.perf_counter()
         if build:
             self.build(verbose=verbose, use_numpy=kwargs.get("use_numpy", True), force=kwargs.get('force', False))
+        else:
+            self._check_build() # Ensure built if needed (lazy check)
         
         # Extract parameters
         if True:

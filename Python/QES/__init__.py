@@ -82,6 +82,10 @@ def qes_seed_scope(seed: int, *, touch_numpy_global: bool = False, touch_python_
 # Mapping of attribute names to (module_relative_path, attribute_name_in_module)
 # If attribute_name_in_module is None, the module itself is imported.
 _LAZY_IMPORTS = {
+    # Session Management
+    'QESSession'        : ('.session',          'QESSession'),
+    'run'               : ('.session',          'run'),
+
     # Top-level packages
     'Algebra'           : ('.Algebra',          None),
     'NQS'               : ('.NQS',              None),
@@ -130,6 +134,8 @@ _LAZY_IMPORTS = {
 _LAZY_CACHE = {}
 
 if TYPE_CHECKING:
+    from .session import QESSession, run
+
     from . import Algebra
     from . import NQS
     from . import Solver
@@ -202,6 +208,9 @@ def __dir__():
 
 
 __all__ = [
+    # Session
+    "QESSession",
+    "run",
     # RNG / backend helpers (public stable API surface)
     "qes_reseed",
     "qes_next_key",
