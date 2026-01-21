@@ -110,7 +110,7 @@ class McsReturn:
 ###################################
 
 class MonteCarloSolver(Solver):
-    '''
+    r'''
     MonteCarloSolver: A base abstract class for Monte Carlo simulation solvers.
     This class defines the foundation for Monte Carlo solvers, providing common functionality
     for sampling, state management, training loops, and statistical tracking. Concrete
@@ -213,6 +213,7 @@ class MonteCarloSolver(Solver):
         
         # create the logger
         self._logger            = logger or self._hilbert.logger if self._hilbert is not None else logging.getLogger(__name__)
+        self._verbose           = kwargs.get("verbose", False)
         
         # initialize the solver #!TODO : check whether this is necessary
         self.init()
@@ -234,8 +235,6 @@ class MonteCarloSolver(Solver):
 
         return f"[{self._replica_idx}] I am a {self.__class__.__name__} object with {self._info} at \beta = {self._beta : .2f}."
     
-    # ----------------
-    
     def __str__(self):
         return self._info
     
@@ -251,8 +250,6 @@ class MonteCarloSolver(Solver):
         """
         return self._info
     
-    # ----------------
-    
     @info.setter
     def info(self, value : str):
         """
@@ -263,29 +260,25 @@ class MonteCarloSolver(Solver):
         """
         self._info = value   
 
-    # ----------------
-    
-    def log(self, msg : str, log : Union[int, str] = Logger.LEVELS_R['info'], lvl : int = 0, color : str = "white", append_msg = False):
-        """
-        Log the message.
-        
-        Args:
-            msg (str)               : The message to log.
-            log (Union[int, str])   : The flag to log the message (default is 'info').
-            lvl (int)               : The level of the message.
-            color (str)             : The color of the message.
-            append_msg (bool)       : Flag to append the message.
-        """
-        if isinstance(log, str):
-            log = Logger.LEVELS_R[log]
-        if append_msg:
-            msg = f"[{self.__str__}] {msg}"
-        msg = self._logger.colorize(msg, color)
-        self._logger.say(msg, log=log, lvl=lvl)
-
     # ----------------------------------------------------------------------
     #! INITIALIZATION
     # ----------------------------------------------------------------------
+    
+    def log(self, msg: str, log: Union[int, str] = Logger.LEVELS_R['info'], lvl: int = 0, color: str = "white", append_msg: bool = False):
+        '''
+        Log the message.
+        '''
+        if isinstance(log, str):
+            log = Logger.LEVELS_R[log]
+        
+        if self._verbose is False and log in [Logger.LEVELS_R['info'], Logger.LEVELS_R['debug']]:
+            return
+            
+        if append_msg:
+            msg = f"[{self.__str__}] {msg}"
+            
+        msg = self._logger.colorize(msg, color)
+        self._logger.say(msg, log=log, lvl=lvl)
     
     def reset(self):
         '''

@@ -843,11 +843,16 @@ class VMCSampler(Sampler):
         r"""
         Performs Parallel Tempering swaps by swapping BETAS (indices) instead of states.
         
-        Args:
-            log_psi: (n_replicas, n_chains) - log probability (real part used)
-            betas: (n_replicas,) - Current inverse temperatures for each replica slot.
-            key: JAX RNG key
-            mu: Distribution power
+        Parameters:
+        -----------
+        log_psi: (n_replicas, n_chains) 
+            log probability (real part used)
+        betas: (n_replicas,) 
+            Current inverse temperatures for each replica slot.
+        key: 
+            JAX RNG key
+        mu: 
+            Distribution power
             
         Returns:
             swapped_betas: (n_replicas,)
@@ -869,10 +874,10 @@ class VMCSampler(Sampler):
         lpsi_j                  = log_psi_real[1:]
         
         # 3. Acceptance Probability (Log Space)
-        # Standard PT: Swap accepted if exp( (beta_i - beta_j)(E_j - E_i) ) > rand
-        # Here E ~ -log_psi
-        # A = min(1, exp( (beta_i - beta_j) * mu * (log_psi_j - log_psi_i) ))
-        # Note: beta_i is temp of replica in slot i.
+        # Standard PT:          Swap accepted if exp( (beta_i - beta_j)(E_j - E_i) ) > rand
+        # Here                  E ~ -log_psi
+        # A                     = min(1, exp( (beta_i - beta_j) * mu * (log_psi_j - log_psi_i) ))
+        # Note:                 beta_i is temp of replica in slot i.
         log_acc                 = (beta_i - beta_j) * mu * (lpsi_j - lpsi_i)
         
         # 4. Metropolis Check
@@ -886,28 +891,14 @@ class VMCSampler(Sampler):
         do_swap                 = accept_raw & phase_mask  # (n_replicas-1, n_chains)
         
         # 6. Global Decision?
-        # Usually PT swaps whole replicas. Since we have n_chains, do we swap chain-wise?
-        # If we swap betas, we must swap for ALL chains in that replica slot OR treat each chain as having its own beta?
-        # Standard PT: 1 chain per replica.
-        # Here: n_chains per replica.
-        # If we swap betas for slot i and i+1, we assume ALL chains in slot i swap with ALL in i+1?
-        # But acceptance depends on energy of specific chains.
-        # If we swap per-chain, then different chains in the same "replica slot" end up with different betas.
-        # Then `betas` becomes (n_replicas, n_chains).
-        # Let's support per-chain beta swapping.
+        beta_i_mat              = betas[:-1]
+        beta_j_mat              = betas[1:]
         
-        # If betas input is (n_replicas,), we broadcast to (n_replicas, n_chains) first?
-        # Or we assume betas are synchronized.
-        # If we want efficient SIMD, per-chain betas is best.
+        new_beta_down           = jnp.where(do_swap, beta_j_mat, beta_i_mat)
+        new_beta_up             = jnp.where(do_swap, beta_i_mat, beta_j_mat)
         
-        beta_i_mat = betas[:-1]
-        beta_j_mat = betas[1:]
-        
-        new_beta_down = jnp.where(do_swap, beta_j_mat, beta_i_mat)
-        new_beta_up   = jnp.where(do_swap, beta_i_mat, beta_j_mat)
-        
-        betas_out = betas.at[:-1].set(new_beta_down)
-        betas_out = betas_out.at[1:].set(new_beta_up)
+        betas_out               = betas.at[:-1].set(new_beta_down.astype(betas.dtype))
+        betas_out               = betas_out.at[1:].set(new_beta_up.astype(betas.dtype))
         
         return betas_out
 

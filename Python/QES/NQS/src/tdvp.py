@@ -20,14 +20,22 @@ Date    : 2025-11-01
 
 import os
 import warnings
-import numpy as np
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from typing import Callable, Optional, Union, Any, List
+import numpy        as np
+from contextlib     import contextmanager
+from dataclasses    import dataclass, field
+from typing         import Callable, Optional, Union, Any, List, Tuple
 
 try:
-    JAX_AVAILABLE                                               = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
+    import jax
+    import jax.numpy    as jnp
+    JAX_AVAILABLE       = True
+except ImportError:
+    jax                 = None
+    jnp                 = np
+    JAX_AVAILABLE       = False
     
+
+try:
     # Common utilities
     from QES.general_python.common.timer                        import timeit
     from QES.general_python.algebra.utils                       import get_backend, Array
@@ -41,15 +49,6 @@ try:
     
 except ImportError:
     raise ImportError("Please install the 'general_python' package...")
-
-#################################################################
-
-if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-else:
-    jax = None
-    jnp = np
 
 #################################################################
 
@@ -984,6 +983,49 @@ class TDVP:
         # RHS is the force vector F
         return vd_c, forces
 
+    def _get_solver_for_state(self, mat_O: Array) -> Tuple[Callable, bool]:
+        """
+        Retrieves the appropriate solver function based on the input operator type.
+        
+        Handles the logic for selecting between standard solvers (GRAM/MATRIX) and
+        specialized solvers for BatchedJacobian (forcing MATVEC mode).
+        
+        Parameters
+        ----------
+        mat_O : Array
+            The operator matrix (or BatchedJacobian object).
+            
+        Returns
+        -------
+        solver_fn : Callable
+            The callable solver function.
+        is_batched_mode : bool
+            True if using specialized BatchedJacobian MATVEC mode.
+        """
+        is_batched = hasattr(mat_O, "compute_weighted_sum")
+        
+        # Case 1: Standard Array (or compatible) -> Use the pre-configured solver
+        if not is_batched:
+            return self.sr_solve_lin_fn, False 
+
+        # Case 2: BatchedJacobian -> Must use MATVEC mode
+        
+        # If already configured for MATVEC, use the standard function
+        if self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
+            return self.sr_solve_lin_fn, True
+
+        # Case 3: BatchedJacobian but configured for GRAM/MATRIX -> Need override
+        # We cache this specialized solver to avoid recompilation overhead
+        if not hasattr(self, '_cached_batched_solver_fn'):
+             self._cached_batched_solver_fn = self.sr_solve_lin.get_solver_func(
+                backend_module  = self.backend,
+                use_matvec      = True,
+                use_fisher      = False,
+                use_matrix      = False,
+                sigma           = self.sr_diag_shift
+            )
+        return self._cached_batched_solver_fn, True
+
     def _solve_choice(  self, 
                         vec_b           : Array,
                         solve_func      : Callable,
@@ -1008,13 +1050,33 @@ class TDVP:
                                 tol             =   self.sr_pinv_tol,
                                 sigma           =   self.sr_diag_shift,
                                 snr_tol         =   self.sr_snr_tol)
-                                
-        elif self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
-            # GRAM mode: Helper constructs linear operator from s and s_p.
-            # Solver typically expects: A = s_p @ s (or similar, depending on solver impl)
-            # Standard: S = O^dag @ O.  s = O (mat_O), s_p = O^dag (mat_O.T.conj())
-            # MinSR:    T = O @ O^dag.  s = O^dag (mat_O.T.conj()), s_p = O (mat_O)
+            return solution
+
+        # Helper determines correct solver and mode based on input type (Standard vs BatchedJacobian)
+        # Note: 'solve_func' arg is ignored if override is needed for BatchedJacobian
+        actual_solve_func, is_batched_mode      = self._get_solver_for_state(mat_O)
+
+        # === Specialized Mode: BatchedJacobian (Force MATVEC) ===
+        if is_batched_mode:
+            mode                = 'minsr' if self.use_minsr else 'standard'
+            matvec_fn           = self._solve_prepare_matvec(mat_O, mode=mode)
+            matvec_with_sigma   = lambda v, mv=matvec_fn, sig=self.sr_diag_shift: mv(v, sig)
             
+            solution            = actual_solve_func(
+                                    matvec          =   matvec_with_sigma,
+                                    b               =   vec_b,
+                                    x0              =   self._x0,
+                                    precond_apply   =   self.sr_precond_fn,
+                                    maxiter         =   self.sr_maxiter,
+                                    tol             =   self.sr_pinv_tol,
+                                    snr_tol         =   self.sr_snr_tol
+                                )
+            return solution
+                                
+        # === Standard Mode: Dense Arrays ===
+        
+        if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
+            # GRAM mode: Standard Logic for Dense Arrays
             if self.use_minsr:
                 s   = mat_O.T.conj()
                 s_p = mat_O
@@ -1032,7 +1094,7 @@ class TDVP:
                 'tol'           :   self.sr_pinv_tol,
                 'sigma'         :   self.sr_diag_shift,
             }
-            solution            = solve_func(**solver_kwargs)
+            solution            = actual_solve_func(**solver_kwargs)
                                 
         elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
             # MATVEC mode: We provide the full matrix-vector product function
@@ -1040,7 +1102,7 @@ class TDVP:
             matvec_fn           = self._solve_prepare_matvec(mat_O, mode=mode)
             matvec_with_sigma   = lambda v, mv=matvec_fn, sig=self.sr_diag_shift: mv(v, sig)
             
-            solution            = solve_func(matvec         =   matvec_with_sigma,
+            solution            = actual_solve_func(matvec      =   matvec_with_sigma,
                                             b               =   vec_b,
                                             x0              =   self._x0,
                                             precond_apply   =   self.sr_precond_fn,

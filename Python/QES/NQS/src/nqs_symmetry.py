@@ -17,9 +17,9 @@ from dataclasses    import dataclass
 from typing         import Optional, Callable, TYPE_CHECKING
 
 try:
-    import  jax
-    import  jax.numpy as jnp
-    from    jax.scipy.special import logsumexp
+    import          jax
+    import          jax.numpy as jnp
+    from            jax.scipy.special import logsumexp
     JAX_AVAILABLE   = True
 except ImportError:
     JAX_AVAILABLE   = False

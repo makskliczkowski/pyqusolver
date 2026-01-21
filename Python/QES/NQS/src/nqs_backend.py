@@ -110,7 +110,7 @@ class BackendInterface(ABC):
         pass
 
     @abstractmethod
-    def prepare_gradients(self, net):
+    def prepare_gradients(self, net, analytic: bool = None):
         """
         Returns a dict with:
         - analytic_grad_fun             -> function to compute analytical gradients in pytree form (if available)

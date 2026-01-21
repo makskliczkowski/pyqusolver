@@ -23,7 +23,6 @@ Description     : Neural Quantum State (NQS) Solver implementation.
 ----------------------------------------------------------
 """
 
-import os
 import time
 import warnings
 import numpy as np
@@ -48,7 +47,7 @@ try:
     from .src.nqs_checkpoint_manager            import NQSCheckpointManager
     from .src.nqs_symmetry                      import NQSSymmetricAnsatz
     from .src.nqs_engine                        import NQSEvalEngine, NQSObservable, NQSLoss
-    from .src.nqs_precision                     import NQSPrecisionPolicy, resolve_precision_policy, cast_for_precision
+    from .src.nqs_precision                     import resolve_precision_policy, cast_for_precision
 
     # New kernel import
     from .src                                   import nqs_kernels
@@ -60,7 +59,8 @@ except ImportError as e:
 
 if TYPE_CHECKING:
     from QES.Algebra.Operator.operator_loader   import OperatorModule
-    from QES.NQS.src.nqs_train                  import NQSTrainer, NQSTrainStats
+    from .src.nqs_train                         import NQSTrainer, NQSTrainStats
+    from .src.nqs_precision                     import NQSPrecisionPolicy
 
 # from QES.general_python imports
 try:
@@ -183,6 +183,7 @@ class NQS(MonteCarloSolver):
     _ERROR_NO_HAMILTONIAN       = "Hamiltonian must be provided for wavefunction physics."
     _ERROR_INVALID_HAMILTONIAN  = "Invalid Hamiltonian type provided."
     _ERROR_INVALID_NETWORK      = "Invalid network type provided."
+    _ERROR_INVALID_NET_FAILED   = "Failed to initialize network. Check the network type and parameters."
     _ERROR_INVALID_SAMPLER      = "Invalid sampler type provided."
     _ERROR_INVALID_BATCH_SIZE   = "Batch size must be a positive integer."
     _ERROR_STATES_PSI           = "If providing states and psi, both must be provided as a tuple (states, psi)."
@@ -348,6 +349,7 @@ class NQS(MonteCarloSolver):
                         backend     =   backend,
                         logger      =   logger,
                         dtype       =   dtype,
+                        verbose     =   verbose,
                         **kwargs)
                 
         # --------------------------------------------------
@@ -355,10 +357,9 @@ class NQS(MonteCarloSolver):
         self._initialized           = False
         self._seed                  = seed
         self._nthstate              = nthstate
-        self._verbose               = verbose
         
-        self._modifier_wrapper      = None   # type: Optional[AnsatzModifier]
-        self._modifier_source       = None   # type: Optional[Union[Operator, Callable]]
+        self._modifier_wrapper      : Optional[AnsatzModifier]              = None
+        self._modifier_source       : Optional[Union[Operator, Callable]]   = None
 
         #######################################
         #! collect the Hilbert space information
@@ -387,10 +388,11 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         
         try:
-            if logansatz is None:
+            if logansatz is None:   # We must have a network or some ansatz - it is by definition of NQS
                 raise ValueError(self._ERROR_INVALID_NETWORK)
             
-            if self._verbose: self._logger.info(f"Initializing NQS network with ansatz: {logansatz}", lvl=1, color='blue')
+            self.log(f"Initializing NQS network backend: {self._nqsbackend.name.upper()}", lvl=1, color='blue')
+                            
             self._net = nqs_choose_network(logansatz, 
                         input_shape =   self._shape, 
                         backend     =   self._backend_str, 
@@ -401,7 +403,7 @@ class NQS(MonteCarloSolver):
                     )
             
         except Exception as e:
-            raise ValueError(f"Failed to initialize network. Check the network type and parameters.\nOriginal error: {e}")
+            raise ValueError(f"{self._ERROR_INVALID_NET_FAILED}. Original error: {e}")
         
         if not self._initialized:
             self.init_network()
@@ -409,11 +411,11 @@ class NQS(MonteCarloSolver):
         self._isjax                 = getattr(self._net, 'is_jax', (self._nqsbackend.name == "jax"))
         self._iscpx                 = self._net.is_complex
         self._holomorphic           = self._net.is_holomorphic
-        self._analytic              = self._net.has_analytic_grad
+        self._analytic              = self._net.has_analytic_grad               # Whether analytic gradients are supported - expected for JAX backends
         self._dtype                 = self._net.dtype
 
         # Precision policy (mixed precision for stable paths)
-        self._precision_policy      = resolve_precision_policy(self._dtype, is_jax=self._isjax, **kwargs)
+        self._precision_policy      : NQSPrecisionPolicy = resolve_precision_policy(self._dtype, is_jax=self._isjax, **kwargs)
         
         # Initialize SymmetryHandler
         self.symmetry_handler       = NQSSymmetricAnsatz(self)
@@ -447,23 +449,17 @@ class NQS(MonteCarloSolver):
         self._ansatz_func, self._eval_func, self._apply_func    = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         self._ansatz_base_func                                  = self._ansatz_func # Keep a reference to the pure ansatz function
         
-        # Rebuild the full ansatz pipeline (modifier + symmetrizer)
+        # Rebuild the full ansatz pipeline (modifier + symmetrizer) - JIT compiled if JAX backend
         self._rebuild_ansatz_function()
 
-        # Call symmetry handler to set initial symmetrization state
+        # Call symmetry handler to set initial symmetrization state - this will wrap the ansatz function if needed
         self.symmetry_handler.set(symmetrize)
 
         # --------------------------------------------------
         #! Model and physics setup
         # --------------------------------------------------
 
-        self._nqsproblem.setup(self._model, self._net)
-        # For wavefunction problem we keep the same attribute name you used:
-        if self._nqsproblem.typ == 'wavefunction':
-            self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
-            self._loss_func     = self._local_en_func
-        else:
-            raise ValueError(self._ERROR_INVALID_PHYSICS)
+        self._reset_problem()
 
         # --------------------------------------------------
         #! Initialize unified evaluation engine
@@ -488,6 +484,27 @@ class NQS(MonteCarloSolver):
     #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
     #####################################
     
+    def _reset_problem(self):
+        """
+        Resets the physical problem setup.
+        This method reinitializes the physics problem by calling its `setup` method
+        with the current model and network.
+        """
+        try:
+            self._nqsproblem.setup(self._model, self._net)
+        except Exception as e:
+            raise ValueError(f"Failed to reset the physics problem. Original error: {e}")
+        
+        if self._nqsproblem.typ == 'wavefunction':
+            self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
+            self._loss_func     = self._local_en_func
+        elif self._nqsproblem.typ == 'densitymatrix':
+            self._loss_func     = getattr(self._nqsproblem, "loss_fn", None)
+        elif self._nqsproblem.typ == 'unitary':
+            self._loss_func     = getattr(self._nqsproblem, "loss_fn", None)
+        else:
+            raise ValueError(self._ERROR_INVALID_PHYSICS)
+    
     def _rebuild_ansatz_function(self) -> None:
         """
         Reconstructs the NQS ansatz function (`self._ansatz_func`) by applying
@@ -500,23 +517,26 @@ class NQS(MonteCarloSolver):
 
         # Apply Modifier if active
         if self._modifier_wrapper is not None:
+            
             # Recreate the modifier to ensure it wraps the correct `_ansatz_base_func`
             self._modifier_wrapper = AnsatzModifier(
-                                        net_apply       =   self._ansatz_base_func,
-                                        operator        =   self._modifier_source,
+                                        net_apply       =   self._ansatz_base_func, # Base network apply function
+                                        operator        =   self._modifier_source,  # Could be Operator or Callable
                                         input_shape     =   self._shape if self._shape else (self._nvisible,),
-                                        dtype           =   self._dtype
+                                        dtype           =   self._dtype             # Data type
                                     )
-            current_ansatz          = self._modifier_wrapper
+            current_ansatz          = self._modifier_wrapper                        # Get the modified ansatz function
 
         # Apply Symmetrization if active
-        current_ansatz              = self.symmetry_handler.wrap(current_ansatz)
+        current_ansatz              = self.symmetry_handler.wrap(current_ansatz)    # Wrap with symmetrizer if needed
             
         # JIT compile the final ansatz function
         if self._isjax:
             self._ansatz_func       = jax.jit(current_ansatz)
         else:
             self._ansatz_func       = current_ansatz
+
+    # ---
 
     def reset(self, **kwargs):
         """
@@ -525,19 +545,14 @@ class NQS(MonteCarloSolver):
         neural network by calling its `force_init` method.
         """
         
-        self._initialized       = False
+        self._initialized = False
         self._net.force_init()
         
         # Rebuild ansatz pipeline after network reset
         self._rebuild_ansatz_function()
-        self._nqsproblem.setup(self._model, self._net)
-        
+
         # For wavefunction problem we keep the same attribute name you used:
-        if self._nqsproblem.typ == 'wavefunction':
-            self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
-            self._loss_func     = self._local_en_func
-        else:
-            raise ValueError(self._ERROR_INVALID_PHYSICS)
+        self._reset_problem()
 
         # --------------------------------------------------
         #! Initialize unified evaluation engine
@@ -646,6 +661,8 @@ class NQS(MonteCarloSolver):
             self._initialized       = True
 
     #####################################
+    #! EXACT INFORMATION HANDLING
+    #####################################
     
     @property
     def exact(self):
@@ -659,91 +676,24 @@ class NQS(MonteCarloSolver):
         """
         Set the exact information (ground truth).
         """
-        if isinstance(info, dict):
-            self._exact_info = info
-            if info is not None:
-                self.log(f"Exact information set: {info.get('exact_predictions', [None] * (self._nthstate + 1))[self._nthstate]}", lvl=1)
-        elif isinstance(info, np.ndarray):
-            self._exact_info = {
-                'exact_predictions' : info,
-                'exact_method'      : 'provided_array',
-                'exact_energy'      : float(info) if np.ndim(info) == 0 else info[self._nthstate]
-            }
-            self.log(f"Exact information set from array: {self._exact_info['exact_energy']}", lvl=1)
-        else:
-            raise ValueError("Exact information must be provided as a dictionary or numpy array.")
+        from .src.nqs_exact import set_exact_impl
+        set_exact_impl(self, info)
 
     def get_exact(self, **kwargs) -> Optional['NQSTrainStats']:
         '''
         Get exact predictions, e.g., ground state energy, from the model.
+        Delegates to src.nqs_exact.get_exact_impl.
         '''
-        
-        if self._nqsproblem.typ == 'wavefunction':
-            from QES.NQS.src.nqs_train import NQSTrainStats
-            stats = self.trainer.stats if self.trainer is not None else NQSTrainStats()
-            
-            if not stats.has_exact:
-                if self.model.eig_val is None:
-                    self.model.diagonalize( method                      =   'lanczos', 
-                                            k                           =   kwargs.get('k', 6), 
-                                            store_basis                 =   False, 
-                                            verbose                     =   kwargs.get('verbose', True), 
-                                            use_scipy                   =   kwargs.get('use_scipy', True), 
-                                            tol                         =   kwargs.get('tol', 1e-7), 
-                                            maxiter                     =   kwargs.get('max_iter', 200))
-                pred                        =   self.model.eigenvalues
-                if stats is not None:
-                    stats.exact_predictions =   pred
-                    
-                nstate                      =   self._nthstate
-                self.exact                  =   { 
-                                                    'exact_predictions' : self.model.eigenvalues,
-                                                    'exact_method'      : 'scipy_lanczos',
-                                                    'exact_energy'      : float(pred) if np.ndim(pred) == 0 else pred[nstate]
-                                            }
-                if nstate == 0:
-                    self._logger.info(f"Exact ground state energy: {self.model.eig_val[0]:.6f}", lvl=1, color='green')
-                else:
-                    self._logger.info(f"Exact state[{nstate}] energy: {self.model.eig_val[nstate]:.6f}", lvl=1, color='green')
-                self._logger.info(f"Lowest energies: {self.model.eig_val[:max(nstate, 5)]}", lvl=2, color='green')
-            return stats
-        else:
-            raise NotImplementedError("Exact is not implemented for other physics types yet...")               
+        from .src.nqs_exact import get_exact_impl
+        return get_exact_impl(self, **kwargs)
         
     def load_exact(self, filepath: str, *, key: str = 'energy_values'):
         '''
         Load exact information from a file.
+        Delegates to src.nqs_exact.load_exact_impl.
         '''
-        
-        if not os.path.isfile(filepath):
-            self._logger.warning(f"Exact file {filepath} does not exist.", lvl=1, color='red')
-            return
-        
-        # determine file extension
-        extension = os.path.splitext(str(filepath))[1].lower()
-        
-        if extension == '.h5' or extension == '.hdf5':
-            import h5py
-            
-            exact_values = []
-            with h5py.File(filepath, 'r') as f:
-                if key in f:
-                    exact_values = f[key][:]
-                else:
-                    raise KeyError(f"Key '{key}' not found in HDF5 file '{filepath}'.")
-                
-        elif extension == '.npy':
-            exact_values = np.load(filepath)
-            
-        elif extension == '.txt' or extension == '.dat' or extension == '.csv':
-            exact_values = np.loadtxt(filepath)
-        
-        self.exact          = {
-                                'exact_predictions' : np.array(exact_values),
-                                'exact_method'      : f"loaded_from_{os.path.basename(filepath)}",
-                                'exact_energy'      : float(exact_values) if np.ndim(exact_values) == 0 else exact_values[self._nthstate]
-                            }
-        self._logger.info(f"Loaded exact information from {filepath}.", lvl=1, color='green')
+        from .src.nqs_exact import load_exact_impl
+        return load_exact_impl(self, filepath, key=key)
         
     #####################################
     #! SETTERS FOR HELP
@@ -774,9 +724,9 @@ class NQS(MonteCarloSolver):
     
             # DEFAULT FALLBACK
             if sampler is None: 
-                sampler_type = 'MCSampler' # Default to MCMC
+                sampler_type = 'MCSampler'  # Default to MCMC
             else:
-                sampler_type = sampler
+                sampler_type = sampler      # Could be 'vmc', 'mcmc', etc.
     
             if self._isjax:
                 import jax.numpy as jnp
@@ -895,7 +845,7 @@ class NQS(MonteCarloSolver):
         return self._eval_func    
     @property
     def eval_fun(self):      
-        'Alias for eval_func. We assume it returns log(psi(s))'
+        'Alias for eval_func. We assume it returns log(psi(s)) for given states s.'
         return self._eval_func
     
     @property
@@ -926,23 +876,12 @@ class NQS(MonteCarloSolver):
         return nqs_kernels._apply_fun_np(*args, **kwargs)
 
     @staticmethod
-    def _apply_fun(func     : Callable,
-            states          : np.ndarray,
-            probabilities   : np.ndarray,
-            logproba_in     : np.ndarray,
-            logproba_fun    : Callable,
-            parameters      : Union[dict, list, np.ndarray],
-            batch_size      : Optional[int] = None,
-            is_jax          : bool = True,
-            *op_args):
+    def _apply_fun(*args, **kwargs):
         """
         Evaluates a given function on a set of states and probabilities, with optional batching.
-        Delegates to nqs_kernels.
+        Delegates to nqs_kernels.apply_fun.
         """
-        if is_jax:
-            return nqs_kernels._apply_fun_jax(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
-        else:
-            return nqs_kernels._apply_fun_np(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size)
+        return nqs_kernels.apply_fun(*args, **kwargs)
     
     @staticmethod
     def _apply_fun_s(func   : list[Callable],
@@ -1349,20 +1288,19 @@ class NQS(MonteCarloSolver):
         
         # Use eval_shape on the static single_step function
         # We need to partial the static args first
-        accum_real_dtype   = getattr(self, "_precision_policy", None) and self._precision_policy.accum_real_dtype
+        accum_real_dtype    = getattr(self, "_precision_policy", None)   and self._precision_policy.accum_real_dtype
         accum_complex_dtype = getattr(self, "_precision_policy", None) and self._precision_policy.accum_complex_dtype
 
         single_step_partial = partial(nqs_kernels._single_step,
-            ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
-            flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
-            batch_size=batch_size, t=t,
-            accum_real_dtype=accum_real_dtype,
-            accum_complex_dtype=accum_complex_dtype,
-            use_jax=self._isjax,
-        )
+                                ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
+                                flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
+                                batch_size=batch_size, t=t,
+                                accum_real_dtype=accum_real_dtype,
+                                accum_complex_dtype=accum_complex_dtype,
+                                use_jax=self._isjax,
+                            )
         
         result_abstract     = jax.eval_shape(single_step_partial, params, abstract_configs, abstract_ansatze, abstract_probs)
-        
         return result_abstract.params_shapes, result_abstract.params_sizes, result_abstract.params_cpx
 
     def wrap_single_step_jax(self, batch_size: Optional[int] = None):
@@ -1390,8 +1328,8 @@ class NQS(MonteCarloSolver):
 
         # ! Bind the static arguments via partial
         # This helps JAX identify them as non-differentiable configuration
-        accum_real_dtype            = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
-        accum_complex_dtype         = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
+        accum_real_dtype            = self._precision_policy.accum_real_dtype       if hasattr(self, "_precision_policy") else None
+        accum_complex_dtype         = self._precision_policy.accum_complex_dtype    if hasattr(self, "_precision_policy") else None
 
         single_step_jax             = partial(nqs_kernels._single_step,
                                         ansatz_fn           =   ansatz_fn, 

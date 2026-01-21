@@ -2,12 +2,18 @@
 Kernels for NQS.
 Separated for modularity and JIT compilation cache stability.
 """
-import jax
-import jax.numpy as jnp
-import numpy as np
-from typing import Callable, Any, Optional, Tuple, List, Union
-from functools import partial
-from dataclasses import dataclass
+
+import  numpy       as np
+from    typing      import Callable, Any, Optional, Tuple, List, Union
+from    functools   import partial
+from    dataclasses import dataclass
+
+try:
+    import          jax
+    import          jax.numpy as jnp
+    JAX_AVAILABLE   = True
+except ImportError:
+    JAX_AVAILABLE   = False
 
 # Import net_utils
 try:
@@ -34,11 +40,34 @@ class NQSSingleStepResult:
     params_cpx          : List[bool]                # Whether each parameter is complex
 
 # Register as PyTree node for JIT compatibility
-jax.tree_util.register_pytree_node(
-    NQSSingleStepResult,
-    lambda n: ((n.loss, n.loss_mean, n.loss_std, n.grad_flat), (n.params_shapes, n.params_sizes, n.params_cpx)),
-    lambda aux, children: NQSSingleStepResult(*children, *aux)
-)
+if JAX_AVAILABLE:
+    jax.tree_util.register_pytree_node(
+        NQSSingleStepResult,
+        lambda n                : ((n.loss, n.loss_mean, n.loss_std, n.grad_flat), (n.params_shapes, n.params_sizes, n.params_cpx)),
+        lambda aux, children    : NQSSingleStepResult(*children, *aux)
+    )
+
+# ----------------------------------------------------------------------
+#! Unified Function Application Kernel
+# ----------------------------------------------------------------------
+
+def apply_fun(func   : Callable,
+            states        : Array,
+            probabilities : Array,
+            logproba_in   : Array,
+            logproba_fun  : Callable,
+            parameters    : Any,
+            batch_size    : Optional[int]   = None,
+            is_jax        : bool            = True,
+            *op_args):
+    """
+    Unified dispatcher for applying a function (e.g. Local Energy) to a batch of states.
+    Dispatches to JAX or NumPy implementation based on `is_jax`.
+    """
+    if is_jax and JAX_AVAILABLE:
+        return _apply_fun_jax(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
+    else:
+        return _apply_fun_np(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
 
 @partial(jax.jit, static_argnames=['func', 'logproba_fun', 'batch_size'])
 def _apply_fun_jax(func   : Callable,                           # function to be evaluated (e.g., local energy f: s -> E_loc(s))
@@ -49,7 +78,7 @@ def _apply_fun_jax(func   : Callable,                           # function to be
             parameters    : Any,                                # parameters to be passed to the function - for the Networks ansatze
             batch_size    : Optional[int] = None,               # batch size for evaluation
             *op_args):                                          # additional arguments to pass to func (broadcast across states)
-    """
+    r"""
     Evaluates a given function on a set of states and probabilities, with optional batching.
     Args:
         func (Callable):
@@ -86,7 +115,8 @@ def _apply_fun_np(func    : Callable,
             logproba_in   : np.ndarray,
             logproba_fun  : Callable,
             parameters    : Any,
-            batch_size    : Optional[int] = None):
+            batch_size    : Optional[int] = None,
+            *op_args):
     """
     Evaluates a given function on a set of states and probabilities, with optional batching.
 
@@ -106,13 +136,21 @@ def _apply_fun_np(func    : Callable,
         batch_size (Optional[int], optional):
             The size of batches for evaluation.
             If None, the function is evaluated without batching. Defaults to None.
+        *op_args:
+            Additional arguments to pass to the function.
+            Note: NumPy backend currently might not support op_args in all implementations.
+            They are passed to the underlying net_utils function if supported.
     Returns:
         The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
     """
 
+    # We assume net_utils.numpy.apply_callable_np/batched_np support *op_args. 
+    # If not, this might fail or we should ignore them.
+    # Given the JAX implementation supports it, it's safer to pass them.
+    
     if batch_size is None:
         funct_in = net_utils.numpy.apply_callable_np
-        return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters)
+        return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, *op_args)
 
     # otherwise, we shall use the batched version
     funct_in = net_utils.numpy.apply_callable_batched_np
@@ -122,7 +160,12 @@ def _apply_fun_np(func    : Callable,
                     logprobas_in    = logproba_in,
                     logproba_fun    = logproba_fun,
                     parameters      = parameters,
-                    batch_size      = batch_size)
+                    batch_size      = batch_size,
+                    *op_args)
+
+# ----------------------------------------------------------------------
+#! Log Derivative Kernels
+# ----------------------------------------------------------------------
 
 @partial(jax.jit, static_argnames=['net_apply', 'single_sample_flat_grad_fun', 'batch_size'])
 def log_derivative_jax(
@@ -131,7 +174,7 @@ def log_derivative_jax(
         states                      : jnp.ndarray,                                  # Input states s_i, shape (num_samples, ...)
         single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],  # JAX-traceable function computing the flattened gradient for one sample.
         batch_size                  : int = 1) -> Tuple[Array, List, List, List]:   # Batch size
-    '''
+    r'''
     Compute the batch of flattened gradients using JAX (JIT compiled).
 
     Returns the gradients (e.g., :math:`O_k = \\nabla \\ln \\psi(s)`)
@@ -170,57 +213,66 @@ def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
     if len(states) == 0:
         return np.array([])
 
-    g = None
+    g   = None
     idx = 0
+    
+    # Process each batch
     for b in sb:
         g_batch = flat_grad(net, params, b)
+        
         if g is None:
             # Pre-allocate based on first batch result for memory efficiency
             # g_batch shape is (batch_size, n_params)
             param_shape = g_batch.shape[1:]
-            g = np.zeros((len(states),) + param_shape, dtype=g_batch.dtype)
+            g           = np.zeros((len(states),) + param_shape, dtype=g_batch.dtype)
 
         # Copy batch into main array
-        n_in_batch = g_batch.shape[0]
-        g[idx : idx + n_in_batch] = g_batch
-        idx += n_in_batch
+        n_in_batch                  = g_batch.shape[0]
+        g[idx : idx + n_in_batch]   = g_batch
+        idx                        += n_in_batch
 
     return g
 
-@partial(jax.jit, static_argnames=['ansatz_fn', 'apply_fn', 'local_loss_fn', 'flat_grad_fn', 'compute_grad_f', 'accum_real_dtype', 'accum_complex_dtype', 'use_jax', 'batch_size'])
-def _single_step(params         : Any,
-                configs         : Array,
-                configs_ansatze : Any,
-                probabilities   : Any,
+# ----------------------------------------------------------------------
+#! NQS Single Step Kernel
+# ----------------------------------------------------------------------
+
+@partial(jax.jit, static_argnames=['ansatz_fn', 'apply_fn', 'local_loss_fn', 'flat_grad_fn', 'compute_grad_f', 
+                                   'accum_real_dtype', 'accum_complex_dtype', 
+                                   'use_jax', 'batch_size'])
+def _single_step(params             : Any,
+                configs             : Array,
+                configs_ansatze     : Any,
+                probabilities       : Any,
                 # functions (Static input for JIT)
-                ansatz_fn       : Callable  = None,
-                apply_fn        : Callable  = None,
-                local_loss_fn   : Callable  = None,
-                flat_grad_fn    : Callable  = None,
-                compute_grad_f  : Callable  = net_utils.jaxpy.compute_gradients_batched,
+                ansatz_fn           : Callable  = None,
+                apply_fn            : Callable  = None,
+                local_loss_fn       : Callable  = None,
+                flat_grad_fn        : Callable  = None,
+                compute_grad_f      : Callable  = net_utils.jaxpy.compute_gradients_batched,
                 # precision (Static input for JIT)
-                accum_real_dtype    : Any   = None,
-                accum_complex_dtype : Any   = None,
-                use_jax             : bool  = True,
+                accum_real_dtype    : Any       = None,
+                accum_complex_dtype : Any       = None,
+                use_jax             : bool      = True,
                 # Static for evaluation
-                batch_size      : int       = None,
-                t               : float     = None,
-                int_step        : int       = 0) -> NQSSingleStepResult:
+                batch_size          : int       = None,
+                t                   : float     = None,
+                int_step            : int       = 0) -> NQSSingleStepResult:
     '''
     Perform a single training step. Pure function.
     '''
 
     #! a) Compute Local Loss
-    # For example, E_loc = <s|H|psi> / <s|psi>
-    (v, means, stds) = apply_fn(
-                        func            = local_loss_fn,
-                        states          = configs,
-                        sample_probas   = probabilities,
-                        logprobas_in    = configs_ansatze,
-                        logproba_fun    = ansatz_fn,
-                        parameters      = params,
-                        batch_size      = batch_size
-                    )
+    # For example, E_loc = <s|H|psi> / <s|psi> or loss for density matrix
+    (v, means, stds)                = apply_fn(
+                                        func                        = local_loss_fn,
+                                        states                      = configs,
+                                        sample_probas               = probabilities,
+                                        logprobas_in                = configs_ansatze,
+                                        logproba_fun                = ansatz_fn,
+                                        parameters                  = params,
+                                        batch_size                  = batch_size
+                                    )
 
     #! b) Compute Gradients
     # O_k = nabla log psi
@@ -232,10 +284,14 @@ def _single_step(params         : Any,
                                         batch_size                  = batch_size
                                     )
 
-    # Promote numerically sensitive outputs
-    v          = cast_for_precision(v, accum_real_dtype, accum_complex_dtype, use_jax)
-    means      = cast_for_precision(means, accum_real_dtype, accum_complex_dtype, use_jax)
-    stds       = cast_for_precision(stds, accum_real_dtype, accum_complex_dtype, use_jax)
+    # Promote numerically sensitive outputs - e.g., loss mean/std and gradients if user wants to have fast ansatz and high-precision accumulation
+    v          = cast_for_precision(v,          accum_real_dtype, accum_complex_dtype, use_jax)              
+    means      = cast_for_precision(means,      accum_real_dtype, accum_complex_dtype, use_jax)
+    stds       = cast_for_precision(stds,       accum_real_dtype, accum_complex_dtype, use_jax)
     flat_grads = cast_for_precision(flat_grads, accum_real_dtype, accum_complex_dtype, use_jax)
 
     return NQSSingleStepResult(loss=v, loss_mean=means, loss_std=stds, grad_flat=flat_grads, params_shapes=shapes, params_sizes=sizes, params_cpx=iscpx)
+
+# ----------------------------------------------------------------------
+#! EOF
+# ----------------------------------------------------------------------
