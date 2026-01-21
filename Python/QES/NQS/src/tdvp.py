@@ -886,9 +886,14 @@ class TDVP:
         # So F is not used in the solve process of MinSR.
         if not self.use_minsr:
             # Optimized gradient calculation: pass O (vd_c) directly, transpose handled internally
-            # This now supports BatchedJacobian via sr.gradient_jax
-            with self._time('gradient', self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
-                self._f0 = gradient
+            # This now supports BatchedJacobian via sr.gradient_jax or sr.gradient_jax_batched
+            if hasattr(var_deriv_c, "compute_weighted_sum"):
+                # Use separate batched path
+                with self._time('gradient', sr.gradient_jax_batched, var_deriv_c, loss_c, self._n_samples) as gradient:
+                    self._f0 = gradient
+            else:
+                with self._time('gradient', self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
+                    self._f0 = gradient
         else:
             self._f0 = None
         self._s0 = None
@@ -926,39 +931,29 @@ class TDVP:
         if mode is None:
             mode = 'minsr' if self.use_minsr else 'standard'
 
+        n_samples = self._n_samples
+        if n_samples is None:
+             n_samples = getattr(mat_O, '_n_samples', 1.0)
+
         # Check for BatchedJacobian
         is_batched = hasattr(mat_O, "compute_weighted_sum")
 
         if is_batched:
             # Delegate Matrix-Free Construction to Solver Module
             # This keeps algebraic details (centering, complex conjugates) encapsulated
-            n = self._n_samples
-            if n is None:
-                n = getattr(mat_O, '_n_samples', 1.0)
-
-            _matvec_batched = sr.get_matvec_batched(mat_O, mode, n)
+            _matvec_batched = sr.get_matvec_batched(mat_O, mode, n_samples)
             
             # JIT the returned function
             return jax.jit(_matvec_batched) if self.is_jax else _matvec_batched
 
-        if mode == 'minsr':
-             # T = O @ O^dag.  v -> O^dag v -> O (O^dag v)
-             # op1 = mat_O.T.conj()
-             # op2 = mat_O
-             def _matvec(v, sigma):
-                 inter = self.backend.matmul(mat_O.T.conj(), v)
-                 res   = self.backend.matmul(mat_O, inter)
-                 return res / self._n_samples + sigma * v
-        else:
-             # S = O^dag @ O. v -> O v -> O^dag (O v)
-             # op1 = mat_O
-             # op2 = mat_O.T.conj()
-             def _matvec(v, sigma):
-                 inter = self.backend.matmul(mat_O, v)
-                 res   = self.backend.matmul(mat_O.T.conj(), inter)
-                 return res / self._n_samples + sigma * v
-                 
-        return jax.jit(_matvec) if self.is_jax else _matvec
+        # Dense Matrix path
+        if self.is_jax:
+             # Use sr.get_matvec_dense for JAX
+             _matvec = sr.get_matvec_dense(mat_O, mode, n_samples)
+             return jax.jit(_matvec)
+        
+        # Fallback / Numpy path
+        return sr.get_matvec_dense_np(mat_O, mode, n_samples)
     
     def _solve_prepare_s_and_loss(self, vd_c: Array, loss_c: Array, forces: Array):
         """
