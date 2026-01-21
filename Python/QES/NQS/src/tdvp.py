@@ -682,6 +682,10 @@ class TDVP:
         Array
             Array promoted to float64/complex128 for SR stability
         '''
+        if hasattr(array, "compute_weighted_sum"):
+            # BatchedJacobian: pass through
+            return array
+
         import numpy as _np
         if self.is_jax and JAX_AVAILABLE:
             if _np.iscomplexobj(array):
@@ -836,7 +840,11 @@ class TDVP:
         # Compute var_deriv_c_h (Hermitian conjugate of centered variational derivatives)
         # This is O^dag = conj(O^T) for use in MinSR transformation
         if self.use_minsr:
-            var_deriv_c_h = self.backend.conj(self.backend.transpose(var_deriv_c))
+            if hasattr(var_deriv_c, "compute_weighted_sum"):
+                # BatchedJacobian: handled lazily
+                var_deriv_c_h = var_deriv_c
+            else:
+                var_deriv_c_h = self.backend.conj(self.backend.transpose(var_deriv_c))
         else:
             var_deriv_c_h = None
             
@@ -878,6 +886,7 @@ class TDVP:
         # So F is not used in the solve process of MinSR.
         if not self.use_minsr:
             # Optimized gradient calculation: pass O (vd_c) directly, transpose handled internally
+            # This now supports BatchedJacobian via sr.gradient_jax
             with self._time('gradient', self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
                 self._f0 = gradient
         else:
@@ -885,6 +894,7 @@ class TDVP:
         self._s0 = None
         
         # MinSR uses T (N_s x N_s)
+        # If BatchedJacobian is used, we generally don't form the matrix, but if requested:
         if self.form_matrix:             
             with self._time('covariance', self._covariance_fn_j, var_deriv_c, self._n_samples) as covariance:
                 self._s0 = covariance
@@ -915,7 +925,22 @@ class TDVP:
         # Determine mode if not provided
         if mode is None:
             mode = 'minsr' if self.use_minsr else 'standard'
+
+        # Check for BatchedJacobian
+        is_batched = hasattr(mat_O, "compute_weighted_sum")
+
+        if is_batched:
+            # Delegate Matrix-Free Construction to Solver Module
+            # This keeps algebraic details (centering, complex conjugates) encapsulated
+            n = self._n_samples
+            if n is None:
+                n = getattr(mat_O, '_n_samples', 1.0)
+
+            _matvec_batched = sr.get_matvec_batched(mat_O, mode, n)
             
+            # JIT the returned function
+            return jax.jit(_matvec_batched) if self.is_jax else _matvec_batched
+
         if mode == 'minsr':
              # T = O @ O^dag.  v -> O^dag v -> O (O^dag v)
              # op1 = mat_O.T.conj()
