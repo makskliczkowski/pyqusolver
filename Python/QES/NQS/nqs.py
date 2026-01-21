@@ -2514,7 +2514,7 @@ class NQS(MonteCarloSolver):
             checkpoint_step     : Union[int, str]           = None,
             reset_weights       : bool                      = False,
             override            : bool                      = True,
-            background          : bool                      = True,
+            background          : bool                      = False,
             # Solvers
             lin_solver          : Union[str, Callable]      = 'minres_qlp',
             pre_solver          : Union[str, Callable]      = 'jacobi',

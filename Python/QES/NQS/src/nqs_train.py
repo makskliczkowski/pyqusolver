@@ -700,7 +700,6 @@ class NQSTrainer:
             elif isinstance(sched, str):
                 # String scheduler type -> create via factory
                 init = init_val if init_val is not None else (1e-2 if param_name == 'lr' else 1e-3)
-                self._log(f"Creating '{sched}' scheduler for {param_name} (init={init:.2e})", lvl=2, color='blue', verbose=self.verbose)
                 return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs)
             
             elif callable(sched) or isinstance(sched, PhaseScheduler):
