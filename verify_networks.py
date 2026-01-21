@@ -11,14 +11,14 @@ sys.path.append(os.getcwd())
 sys.path.append(os.path.join(os.getcwd(), 'Python'))
 
 try:
-    from Python.QES.NQS.src.networks.net_cnn import CNN
-    from Python.QES.NQS.src.networks.net_gcnn import GCNN
-    from Python.QES.NQS.src.networks.net_transformer import Transformer
+    from Python.QES.general_python.ml.net_impl.networks.net_cnn import CNN
+    from Python.QES.general_python.ml.net_impl.networks.net_gcnn import GCNN
+    from Python.QES.general_python.ml.net_impl.networks.net_transformer import Transformer
 except ImportError:
     # Try alternate path if running from root
-    from QES.NQS.src.networks.net_cnn import CNN
-    from QES.NQS.src.networks.net_gcnn import GCNN
-    from QES.NQS.src.networks.net_transformer import Transformer
+    from QES.general_python.ml.net_impl.networks.net_cnn import CNN
+    from QES.general_python.ml.net_impl.networks.net_gcnn import GCNN
+    from QES.general_python.ml.net_impl.networks.net_transformer import Transformer
 
 def test_cnn():
     print("\nTesting CNN...")
