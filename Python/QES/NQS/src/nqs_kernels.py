@@ -48,9 +48,30 @@ def _apply_fun_jax(func   : Callable,                           # function to be
             logproba_fun  : Callable,                           # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
             parameters    : Any,                                # parameters to be passed to the function - for the Networks ansatze
             batch_size    : Optional[int] = None,               # batch size for evaluation
-            *op_args):                                          # additional arguments to pass to func
+            *op_args):                                          # additional arguments to pass to func (broadcast across states)
     """
     Evaluates a given function on a set of states and probabilities, with optional batching.
+    Args:
+        func (Callable):
+            The function to be evaluated.
+        states (jnp.ndarray):
+            The input states for the function.
+        probabilities (jnp.ndarray):
+            The probabilities associated with the states.
+        logproba_in (jnp.ndarray):
+            The logarithm of the probabilities for the input states.
+        logproba_fun (Callable):
+            A function to compute the logarithm of probabilities.
+        parameters (Union[dict, list, jnp.ndarray]):
+            Parameters to be passed to the function.
+        batch_size (Optional[int], optional):
+            The size of batches for evaluation.
+            If None, the function is evaluated without batching. Defaults to None.
+        *op_args:
+            Additional arguments to pass to func. These are broadcast (not vmapped) across states.
+            Useful for operator indices (i, j) in correlation functions.
+    Returns:
+        The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
     """
     if batch_size is None or batch_size == 1:
         funct_in = net_utils.jaxpy.apply_callable_jax
@@ -68,6 +89,25 @@ def _apply_fun_np(func    : Callable,
             batch_size    : Optional[int] = None):
     """
     Evaluates a given function on a set of states and probabilities, with optional batching.
+
+    Args:
+        func (Callable):
+            The function to be evaluated.
+        states (np.ndarray):
+            The input states for the function.
+        probabilities (np.ndarray):
+            The probabilities associated with the states.
+        logproba_in (np.ndarray):
+            The logarithm of the probabilities for the input states.
+        logproba_fun (Callable):
+            A function to compute the logarithm of probabilities.
+        parameters (Union[dict, list, np.ndarray]):
+            Parameters to be passed to the function.
+        batch_size (Optional[int], optional):
+            The size of batches for evaluation.
+            If None, the function is evaluated without batching. Defaults to None.
+    Returns:
+        The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
     """
 
     if batch_size is None:
@@ -86,42 +126,66 @@ def _apply_fun_np(func    : Callable,
 
 @partial(jax.jit, static_argnames=['net_apply', 'single_sample_flat_grad_fun', 'batch_size'])
 def log_derivative_jax(
-        net_apply                   : Callable,
-        params                      : Any,
-        states                      : jnp.ndarray,
-        single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],
-        batch_size                  : int = 1) -> Tuple[Array, List, List, List]:
+        net_apply                   : Callable,                                     # The network's apply function f(p, x)
+        params                      : Any,                                          # Network parameters p
+        states                      : jnp.ndarray,                                  # Input states s_i, shape (num_samples, ...)
+        single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],  # JAX-traceable function computing the flattened gradient for one sample.
+        batch_size                  : int = 1) -> Tuple[Array, List, List, List]:   # Batch size
     '''
     Compute the batch of flattened gradients using JAX (JIT compiled).
+
+    Returns the gradients (e.g., :math:`O_k = \\nabla \\ln \\psi(s)`)
+    for each state in the batch. The output format (complex/real)
+    depends on the `single_sample_flat_grad_fun` used.
+
+    Parameters
+    ----------
+    net_apply : Callable
+        The network's apply function `f(p, x)`. Static argument for JIT.
+    params : Any
+        Network parameters `p`.
+    states : jnp.ndarray
+        Input states `s_i`, shape `(num_samples, ...)`.
+    single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray]
+        JAX-traceable function computing the flattened gradient for one sample.
+        Signature: `fun(net_apply, params, single_state) -> flat_gradient_vector`.
+        Static argument for JIT.
+    batch_size : int
+        Batch size. Static argument for JIT.
+
+    Returns
+    -------
+    jnp.ndarray
+        Array of flattened gradients, shape `(num_samples, num_flat_params)`.
+        Dtype matches the output of `single_sample_flat_grad_fun`.
     '''
     gradients_batch, shapes, sizes, is_cpx = net_utils.jaxpy.compute_gradients_batched(net_apply, params, states, single_sample_flat_grad_fun, batch_size)
     return gradients_batch, shapes, sizes, is_cpx
 
 def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
     r'''
-    Optimized numpy log derivative.
+    !TODO: Add the precomputed gradient vector - memory efficient
     '''
     sb = net_utils.numpy.create_batches_np(states, batch_size)
-
-    # Need to handle empty states?
     if len(states) == 0:
         return np.array([])
 
-    # Determine gradient shape from first sample/batch
-    # Probe with 1 sample
-    # Note: flat_grad usually returns 1D array for a single sample, or (Batch, ...) for batch
-    # But checking original code: flat_grad(net, params, b)
-    # If b is a batch, it should return (Batch, N_params).
-
-    grads_list = []
+    g = None
+    idx = 0
     for b in sb:
         g_batch = flat_grad(net, params, b)
-        grads_list.append(g_batch)
+        if g is None:
+            # Pre-allocate based on first batch result for memory efficiency
+            # g_batch shape is (batch_size, n_params)
+            param_shape = g_batch.shape[1:]
+            g = np.zeros((len(states),) + param_shape, dtype=g_batch.dtype)
 
-    if grads_list:
-        return np.concatenate(grads_list, axis=0)
-    else:
-        return np.array([])
+        # Copy batch into main array
+        n_in_batch = g_batch.shape[0]
+        g[idx : idx + n_in_batch] = g_batch
+        idx += n_in_batch
+
+    return g
 
 @partial(jax.jit, static_argnames=['ansatz_fn', 'apply_fn', 'local_loss_fn', 'flat_grad_fn', 'compute_grad_f', 'accum_real_dtype', 'accum_complex_dtype', 'use_jax', 'batch_size'])
 def _single_step(params         : Any,
@@ -147,6 +211,7 @@ def _single_step(params         : Any,
     '''
 
     #! a) Compute Local Loss
+    # For example, E_loc = <s|H|psi> / <s|psi>
     (v, means, stds) = apply_fn(
                         func            = local_loss_fn,
                         states          = configs,
@@ -158,6 +223,7 @@ def _single_step(params         : Any,
                     )
 
     #! b) Compute Gradients
+    # O_k = nabla log psi
     flat_grads, shapes, sizes, iscpx = compute_grad_f(
                                         net_apply                   = ansatz_fn,
                                         params                      = params,
