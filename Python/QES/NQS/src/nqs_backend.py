@@ -192,7 +192,7 @@ class NumpyBackend(BackendInterface):
         apply_func              = net_utils.numpy.apply_callable_batched_np
         return ansatz_func, eval_func, apply_func
 
-    def prepare_gradients(self, net: Networks.GeneralNet, analytic: bool = None):
+    def prepare_gradients(self, net: Networks.GeneralNet):
         flat_grad_func, dict_grad_type = net_utils.decide_grads(
             iscpx           =   net.is_complex, 
             isjax           =   False,
@@ -209,7 +209,6 @@ class NumpyBackend(BackendInterface):
             sizes               =   None,
             is_complex_per_leaf =   None,
             total_size          =   getattr(net, "nparams", None),
-            analytic_grad_func  =   None if analytic is None or not analytic else net.get_gradient(use_jax=False)[0],
         )
 
     @staticmethod
@@ -328,7 +327,7 @@ class JAXBackend(BackendInterface):
             analytical_pytree_fun, _ = net.get_gradient(use_jax=True)
             if analytical_pytree_fun is None:
                 raise ValueError("Analytical gradient function is not available.")
-            out["analytic_grad_func"] = analytical_pytree_fun
+            out["analytical_pytree_fun"] = analytical_pytree_fun
         return out
 
     # ----------------------------------------------------------

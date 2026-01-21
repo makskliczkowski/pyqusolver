@@ -241,56 +241,11 @@ def local_energy_jax_wrap(
 
         return op
 
-    # Grouping operators for vectorization
-    from collections import defaultdict
-    import numpy as np
-
-    def group_operators(funcs, indices, mults):
-        """Groups operators by function identity for vectorization."""
-        groups = defaultdict(list)
-        for f, idx, m in zip(funcs, indices, mults):
-            groups[f].append((idx, m))
-        return groups
-
-    # Group modifying operators with sites
-    mod_sites_groups = group_operators(f_mod_sites, i_mod_sites, m_mod_sites)
-
-    # Pre-process groups into arrays
-    # List of (func, indices_array, mults_array)
-    mod_sites_data = []
-    for f, items in mod_sites_groups.items():
-        # items is list of (indices_list, mult)
-        # Convert indices to array. Handle consistent shapes.
-        # Assuming f always takes same number of site args.
-        idxs = [it[0] for it in items]
-        ms   = [it[1] for it in items]
-
-        # Check if indices have consistent length
-        if not idxs: continue
-
-        try:
-            # Create numpy arrays first (host side)
-            idxs_arr = np.array(idxs, dtype=np.int32)
-            ms_arr   = np.array(ms, dtype=dtype) if not isinstance(dtype, jnp.dtype) else np.array(ms)
-
-            # If indices are jagged (list of lists of different lengths),
-            # this would fail or create object array.
-            # But operators grouped by 'f' should have same arity.
-            if idxs_arr.dtype == object:
-                 # Fallback or error? For now assume consistent arity for same f.
-                 # If inconsistent, we can't vectorize easily without padding.
-                 # But standard Pauli ops (sig_x, etc.) have fixed arity.
-                 pass
-
-            mod_sites_data.append((f, jnp.array(idxs_arr), jnp.array(ms_arr, dtype=dtype)))
-        except Exception:
-            # Fallback for complex cases?
-            pass
+    # Modifying operators (may return many states)
+    f_mod_sites_wrapped     = tuple(wrap_mod(f_mod_sites[i], i_mod_sites[i]) for i in range(len(f_mod_sites)))
+    f_mod_nos_wrapped       = tuple(wrap_nos(f_mod_nos[i]) for i in range(len(f_mod_nos)))
 
     # Non-modifying operators: wrap to match diagonal interface
-    # (Keeping original logic for non-modifying for now as they are usually diagonal/simpler,
-    # but could be vectorized too. However, main bottleneck is usually the modifying terms)
-
     def wrap_nmod_sites(f, sites):
         sites = tuple(int(s) for s in sites)
         def op(state: jnp.ndarray):
@@ -307,16 +262,6 @@ def local_energy_jax_wrap(
     f_nmod_sites_wrapped    = tuple(wrap_nmod_sites(f_nmod_sites[i], i_nmod_sites[i]) for i in range(len(f_nmod_sites)))
     f_nmod_nos_wrapped      = tuple(wrap_nmod_nos(f_nmod_nos[i]) for i in range(len(f_nmod_nos)))
 
-    # Modifying no-sites (usually global ops like global flip?)
-    # usually few of them, can keep loop or group.
-    # Grouping them:
-    mod_nos_groups = group_operators(f_mod_nos, i_mod_nos, m_mod_nos)
-    mod_nos_data = []
-    for f, items in mod_nos_groups.items():
-        ms = [it[1] for it in items]
-        ms_arr = np.array(ms, dtype=dtype) if not isinstance(dtype, jnp.dtype) else np.array(ms)
-        mod_nos_data.append((f, jnp.array(ms_arr, dtype=dtype)))
-
     ###########################################################################
     # 3. Build the inner JAX function
     ###########################################################################
@@ -324,15 +269,15 @@ def local_energy_jax_wrap(
     def init_wrapper():
 
         # Capture as tuples/arrays so JAX sees them as static.
+        f_mod_sites_t    = tuple(f_mod_sites_wrapped)
+        f_mod_nos_t      = tuple(f_mod_nos_wrapped)
         f_nmod_sites_t   = tuple(f_nmod_sites_wrapped)
         f_nmod_nos_t     = tuple(f_nmod_nos_wrapped)
 
+        m_mod_sites_arr  = jnp.asarray(m_mod_sites,   dtype=dtype)
+        m_mod_nos_arr    = jnp.asarray(m_mod_nos,     dtype=dtype)
         m_nmod_sites_arr = jnp.asarray(m_nmod_sites,  dtype=dtype)
         m_nmod_nos_arr   = jnp.asarray(m_nmod_nos,    dtype=dtype)
-
-        # Capture vectorized data
-        # We need to pass mod_sites_data and mod_nos_data into the closure
-        # They contain (f, indices_arr, mults_arr). f is static/hashable.
 
         @jax.jit
         def wrapper(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -355,66 +300,26 @@ def local_energy_jax_wrap(
             energies_list = [jnp.asarray(diag, dtype=dtype).reshape((1,))]
 
             # --------------------------------------------------------------
-            # 2) Modifying operators WITH sites (Vectorized)
+            # 2) Modifying operators WITH sites
             # --------------------------------------------------------------
-
-            for f, indices, mults in mod_sites_data:
-                # indices shape: (N_terms, Arity) or (N_terms,) if Arity=1
-                # mults shape: (N_terms,)
-
-                # Helper to apply f to state and sites
-                def apply_op(s, idxs):
-                    # Unpack indices if it's an array
-                    # If Arity=1, idxs might be scalar or 0-d array
-                    if idxs.ndim == 0:
-                        return f(s, idxs)
-                    return f(s, *idxs)
-
-                # vmap over indices (axis 0)
-                # state is broadcasted (None)
-                # apply_op returns (new_states, coeffs)
-                # new_states: (K_branch, ns), coeffs: (K_branch,)
-
-                vmapped_f = jax.vmap(apply_op, in_axes=(None, 0))
-
-                # Result shapes:
-                # new_states_batch: (N_terms, K_branch, ns)
-                # coeffs_batch:     (N_terms, K_branch)
-                new_states_batch, coeffs_batch = vmapped_f(state, indices)
-
-                # Apply multipliers
-                # mults: (N_terms,) -> broadcast to (N_terms, K_branch)
-                energies_batch = coeffs_batch * mults[:, None]
-
-                # Flatten batch dimension
-                # (N_terms * K_branch, ns)
-                states_list.append(new_states_batch.reshape(-1, ns))
-                energies_list.append(energies_batch.reshape(-1))
-
-            # --------------------------------------------------------------
-            # 3) Modifying operators WITHOUT sites (Vectorized)
-            # --------------------------------------------------------------
-            for f, mults in mod_nos_data:
-                # f(state) -> (new_states, coeffs)
-                # new_states: (K_branch, ns)
-                # coeffs: (K_branch,)
-
-                # Since no sites vary, we just call f once and scale by sum of multipliers?
-                # Or do we apply f N times?
-                # If f doesn't depend on sites, f(state) is constant for all terms in this group.
-                # The only difference is the multiplier.
-                # So we can just sum the multipliers and apply f once!
-
-                total_mult = jnp.sum(mults)
-                new_states, coeffs = f(state)
-
-                # Ensure shapes
-                if new_states.ndim == 1:
-                    new_states = new_states.reshape((1, ns))
-                coeffs = jnp.atleast_1d(coeffs)
-
+            # for op, mult in zip(f_mod_sites_t, m_mod_sites_arr):
+            for i in range(len(f_mod_sites_t)):
+                op                  = f_mod_sites_t[i]
+                mult                = m_mod_sites_arr[i]
+                new_states, coeffs  = op(state) # (K, ns), (K,)
                 states_list.append(new_states)
-                energies_list.append(coeffs * total_mult)
+                energies_list.append(coeffs * mult)
+
+            # --------------------------------------------------------------
+            # 3) Modifying operators WITHOUT sites
+            # --------------------------------------------------------------
+            # for op, mult in zip(f_mod_nos_t, m_mod_nos_arr):
+            for i in range(len(f_mod_nos_t)):
+                op                  = f_mod_nos_t[i]
+                mult                = m_mod_nos_arr[i]
+                new_states, coeffs  = op(state) # (K, ns), (K,)
+                states_list.append(new_states)
+                energies_list.append(coeffs * mult)
 
             # --------------------------------------------------------------
             # 4) Stack everything

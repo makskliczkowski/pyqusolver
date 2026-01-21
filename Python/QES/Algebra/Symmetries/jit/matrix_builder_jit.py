@@ -213,19 +213,9 @@ def _apply_op_batch_projected_compact_jit(
                             bufs[tid, idx, b] += factor * vecs_in[k, b_start + b]
 
         # Reduction
-        for row in numba.prange(nh_out):
+        for t in range(n_threads):
             for b in range(actual_w):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
-        # Reduction
-        for row in numba.prange(nh_out):
-            for b in range(actual_w):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
+                vecs_out[:, b_start + b] += bufs[t, :, b]
 
 @numba.njit(fastmath=True, inline='always')
 def _apply_fourier_batch_projected_compact_seq_jit(
@@ -419,13 +409,9 @@ def _apply_fourier_batch_projected_compact_jit(
                             for b in range(actual_w):
                                 bufs[tid, idx, b] += factor * vecs_in[k, b_start + b]
 
-        # Reduction
-        for row in numba.prange(nh_out):
+        for t in range(n_threads):
             for b in range(actual_w):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
+                vecs_out[:, b_start + b] += bufs[t, :, b]
 
 # ----------------------------------------------------------------------
 #! Sparse/Dense matrix builders for projected operators
@@ -508,7 +494,7 @@ def _build_sparse_projected_jit(
                     
     return data_idx
 
-@numba.njit(parallel=True)
+@numba.njit
 def _build_dense_projected_jit(
         matrix                  : np.ndarray,
         
@@ -536,88 +522,46 @@ def _build_dense_projected_jit(
     chi_in      = cg_args[5]
     chi_out     = cg_args[6]
     
-    if nh_in <= _NUMBA_OVERHEAD_SIZE:
-        for k in range(nh_in):
-            rep = np.int64(representative_list_in[k])
-            norm_k = normalization_in[k]
-            if norm_k == 0.0:
-                continue
+    for k in range(nh_in):
+        rep = np.int64(representative_list_in[k])
+        norm_k = normalization_in[k]
+        if norm_k == 0.0:
+            continue
+
+        for g in range(n_group):
+            s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
+
+            w_g = np.conj(chi_in[g]) * ph_g / norm_k
+
+            new_states, values = op_func(s)
+
+            for i in range(len(new_states)):
+                new_state = new_states[i]
+                val = values[i]
+                if np.abs(val) < 1e-15:
+                    continue
                 
-            for g in range(n_group):
-                s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
+                for h in range(n_group):
+                    s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
 
-                w_g = np.conj(chi_in[g]) * ph_g / norm_k
-
-                new_states, values = op_func(s)
-
-                for i in range(len(new_states)):
-                    new_state = new_states[i]
-                    val = values[i]
-                    if np.abs(val) < 1e-15:
+                    idx = repr_map_out[s_out]
+                    if idx == _INVALID_REPR_IDX_NB:
                         continue
                     
-                    for h in range(n_group):
-                        s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
-                        
-                        idx = repr_map_out[s_out]
-                        if idx == _INVALID_REPR_IDX_NB:
-                            continue
-                        
-                        if representative_list_out[idx] != s_out:
-                            continue
-
-                        norm_new = normalization_out[idx]
-                        if norm_new == 0.0:
-                            continue
-
-                        w_h = np.conj(chi_out[h]) * ph_h * inv_n_group / norm_new
-                        factor = val * w_g * w_h
-
-                        if np.abs(factor) < 1e-15:
-                            continue
-
-                        matrix[idx, k] += factor
-    else:
-        for k in numba.prange(nh_in):
-            rep = np.int64(representative_list_in[k])
-            norm_k = normalization_in[k]
-            if norm_k == 0.0:
-                continue
-
-            for g in range(n_group):
-                s, ph_g = apply_group_element_fast(rep, ns, np.int64(g), cg_args, tb_args)
-
-                w_g = np.conj(chi_in[g]) * ph_g / norm_k
-
-                new_states, values = op_func(s)
-
-                for i in range(len(new_states)):
-                    new_state = new_states[i]
-                    val = values[i]
-                    if np.abs(val) < 1e-15:
+                    if representative_list_out[idx] != s_out:
                         continue
-
-                    for h in range(n_group):
-                        s_out, ph_h = apply_group_element_fast(new_state, ns, np.int64(h), cg_args, tb_args)
-
-                        idx = repr_map_out[s_out]
-                        if idx == _INVALID_REPR_IDX_NB:
-                            continue
                         
-                        if representative_list_out[idx] != s_out:
-                            continue
+                    norm_new = normalization_out[idx]
+                    if norm_new == 0.0:
+                        continue
+                        
+                    w_h = np.conj(chi_out[h]) * ph_h * inv_n_group / norm_new
+                    factor = val * w_g * w_h
 
-                        norm_new = normalization_out[idx]
-                        if norm_new == 0.0:
-                            continue
-
-                        w_h = np.conj(chi_out[h]) * ph_h * inv_n_group / norm_new
-                        factor = val * w_g * w_h
-
-                        if np.abs(factor) < 1e-15:
-                            continue
-
-                        matrix[idx, k] += factor
+                    if np.abs(factor) < 1e-15:
+                        continue
+                        
+                    matrix[idx, k] += factor
 
 # ----------------------------------------------------------------------
 #! End of File

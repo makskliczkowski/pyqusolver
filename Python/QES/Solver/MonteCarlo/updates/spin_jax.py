@@ -20,57 +20,55 @@ from    typing      import Optional, Tuple
 try:
     from QES.general_python.common.binary import jaxpy, BACKEND_DEF_SPIN
 except ImportError:
-    # raise ImportError("QES.general_python.common.binary.jaxpy module is required for spin updates.")
-    # Fallback for testing/stubbing if module is missing in environment
-    BACKEND_DEF_SPIN = True
-    class jaxpy:
-        @staticmethod
-        def flip_array_jax_spin(state, idx):
-            # val = state[idx]
-            # return state.at[idx].set(-val)
-            return state.at[idx].multiply(-1)
+    raise ImportError("QES.general_python.common.binary.jaxpy module is required for spin updates.")
 
 # ----------------------------------------------------------------------
 # Local Updates
 # ----------------------------------------------------------------------
 
 @jax.jit
-def _propose_local_flip_kernel(state: jnp.ndarray, key: jax.Array) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """
-    Kernel for local flip. Returns new state and indices of flipped sites.
-    """
-    idx = jr.randint(key, shape=(), minval=0, maxval=state.size)
-    new_state = jaxpy.flip_array_jax_spin(state, idx)
-    return new_state, idx
-
-@jax.jit
 def propose_local_flip(state: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
     """
     Propose a single random spin flip.
+
+    Args:
+        state: Current state (Ns,).
+        key: JAX PRNGKey.
+
     Returns:
         New state with one spin flipped.
     """
-    new_state, _ = _propose_local_flip_kernel(state, key)
-    return new_state
+    # Select random site
+    idx = jr.randint(key, shape=(), minval=0, maxval=state.size)
+    return jaxpy.flip_array_jax_spin(state, idx)
 
-@jax.jit
-def propose_local_flip_with_info(state: jnp.ndarray, key: jax.Array) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """
-    Propose a single random spin flip.
-    Returns:
-        (new_state, flipped_index) where flipped_index has shape (1,)
-    """
-    new_state, idx = _propose_local_flip_kernel(state, key)
-    return new_state, jnp.expand_dims(idx, 0)
+    # else:
+        # Fallback for 0/1 or if nspin function has different name
+        # 0 -> 1, 1 -> 0 implies 1 - x
+        # val = state[idx]
+        # return state.at[idx].set(1 - val)
 
 # ----------------------------------------------------------------------
 # Exchange Updates
 # ----------------------------------------------------------------------
 
 @partial(jax.jit, static_argnames=("check_conserved",))
-def _propose_exchange_kernel(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, check_conserved: bool = True) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def propose_exchange(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, check_conserved: bool = True) -> jnp.ndarray:
     """
-    Kernel for exchange. Returns new state and tuple of flipped indices.
+    Propose an exchange between a random site and a random neighbor.
+
+    Parameters:
+        state:
+            Current state (Ns,).
+        key:
+            JAX PRNGKey.
+        neighbor_table:
+            (Ns, max_degree) array of neighbor indices (padded with -1).
+        check_conserved:
+            If True, ensures the move actually changes the state.
+
+    Returns:
+        New state with spins exchanged (or same state if invalid move).
     """
     key_site, key_neigh     = jr.split(key)
     ns                      = state.shape[0]
@@ -96,40 +94,36 @@ def _propose_exchange_kernel(state: jnp.ndarray, key: jax.Array, neighbor_table:
     if check_conserved:
         should_swap = should_swap & (si != sj)
         
-    # Optimized swap using scatter
-    idx_pair = jnp.stack([i, j_safe]) # (2,)
-    # Values to put: if swap, put [sj, si], else [si, sj]
-    vals = jnp.where(should_swap, jnp.stack([sj, si]), jnp.stack([si, sj]))
-    new_state = state.at[idx_pair].set(vals)
+    # Perform swap
+    # New state has sj at pos i, si at pos j_safe
+    new_state = state.at[i].set(jnp.where(should_swap, sj, si))
+    new_state = new_state.at[j_safe].set(jnp.where(should_swap, si, sj))
     
-    return new_state, idx_pair
-
-@partial(jax.jit, static_argnames=("check_conserved",))
-def propose_exchange(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, check_conserved: bool = True) -> jnp.ndarray:
-    """
-    Propose an exchange between a random site and a random neighbor.
-    Returns:
-        New state with spins exchanged (or same state if invalid move).
-    """
-    new_state, _ = _propose_exchange_kernel(state, key, neighbor_table, check_conserved)
     return new_state
-
-@partial(jax.jit, static_argnames=("check_conserved",))
-def propose_exchange_with_info(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, check_conserved: bool = True) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """
-    Propose an exchange.
-    Returns:
-        (new_state, indices) where indices has shape (2,)
-    """
-    new_state, idx_pair = _propose_exchange_kernel(state, key, neighbor_table, check_conserved)
-    return new_state, idx_pair
 
 # ----------------------------------------------------------------------
 # Bond Flip Updates (Flip site + random neighbor)
 # ----------------------------------------------------------------------
 
 @jax.jit
-def _propose_bond_flip_kernel(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def propose_bond_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray) -> jnp.ndarray:
+    """
+    Propose flipping a random site AND one of its random neighbors.
+    Useful for topological models where single flips create excitations
+    but bond flips might just move them or preserve sectors.
+
+    Parameters:
+    -----------
+    state:
+        Current state (Ns,).
+    key:
+        JAX PRNGKey.
+    neighbor_table:
+        Neighbor table.
+
+    Returns:
+        New state with two spins flipped.
+    """
     key_site, key_neigh     = jr.split(key)
     ns                      = state.shape[0]
     
@@ -155,69 +149,78 @@ def _propose_bond_flip_kernel(state: jnp.ndarray, key: jax.Array, neighbor_table
         val_i = 1 - state[i]
         val_j = 1 - state[j_safe]
     
-    # JAX way: optimized scatter
-    idx_pair = jnp.stack([i, j_safe])
-
-    vals_new = jnp.where(is_valid,
-                         jnp.stack([val_i, val_j]),
-                         jnp.stack([state[i], state[j_safe]])) # If not valid, keep same
+    # Safe update:
+    # new_state = state
+    # if is_valid:
+    #    state[i] = val_i
+    #    state[j] = val_j
     
-    new_state = state.at[idx_pair].set(vals_new)
+    # JAX way:
+    new_state = state.at[i].set(jnp.where(is_valid, val_i, state[i]))
+    new_state = new_state.at[j_safe].set(jnp.where(is_valid, val_j, state[j_safe]))
     
-    return new_state, idx_pair
-
-@jax.jit
-def propose_bond_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray) -> jnp.ndarray:
-    new_state, _ = _propose_bond_flip_kernel(state, key, neighbor_table)
     return new_state
-
-@jax.jit
-def propose_bond_flip_with_info(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_bond_flip_kernel(state, key, neighbor_table)
 
 # ----------------------------------------------------------------------
 # Multi-Flip Updates (N-random sites)
 # ----------------------------------------------------------------------
 
 @partial(jax.jit, static_argnames=("n_flip",))
-def _propose_multi_flip_kernel(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def propose_multi_flip(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> jnp.ndarray:
+    """
+    Propose flipping 'n_flip' distinct random sites.
+
+    Parameters:
+    -----------
+        state:
+            Current state (Ns,).
+        key:
+            JAX PRNGKey.
+        n_flip:
+            Number of sites to flip.
+
+    Returns:
+        New state.
+    """
     if n_flip == 1:
-        # Re-use local flip kernel logic to avoid choice overhead
-        new_state, idx = _propose_local_flip_kernel(state, key)
-        return new_state, jnp.expand_dims(idx, 0)
+        return propose_local_flip(state, key)
         
     # Choose n_flip distinct indices
+    # jr.choice with replace=False is suitable
     indices = jr.choice(key, state.size, shape=(n_flip,), replace=False)
     
     if BACKEND_DEF_SPIN:        
-        new_state = state.at[indices].multiply(-1)
+        return state.at[indices].multiply(-1)
     else:
         # 0 -> 1, 1 -> 0 => 1 - x
         val = state[indices]
-        new_state = state.at[indices].set(1 - val)
-
-    return new_state, indices
-
-@partial(jax.jit, static_argnames=("n_flip",))
-def propose_multi_flip(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> jnp.ndarray:
-    new_state, _ = _propose_multi_flip_kernel(state, key, n_flip)
-    return new_state
-
-@partial(jax.jit, static_argnames=("n_flip",))
-def propose_multi_flip_with_info(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_multi_flip_kernel(state, key, n_flip)
+        return state.at[indices].set(1 - val)
 
 # ----------------------------------------------------------------------
 # Global Updates (Pattern Flipping)
 # ----------------------------------------------------------------------
 
 @jax.jit
-def _propose_global_flip_kernel(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray) -> jnp.ndarray:
     """
-    Kernel for global flip.
-    Returns: (new_state, safe_indices)
-    Note: Multipliers are implied by the update type (flip).
-    For delta_log_psi, we need indices.
+    Propose a global update by flipping a predefined pattern of spins.
+
+    Example:
+    >>> patterns    = lat.calculate_plaquettess()  # (NumPatterns, PatternSize)
+    >>> new_state   = propose_global_flip(state, key, patterns)
+
+    Parameters:
+    -----------
+    state:
+        Current state (Ns,).
+    key:
+        JAX PRNGKey.
+    patterns:
+        (NumPatterns, PatternSize) array of site indices to flip.
+        Padded with -1. We select one pattern at random and flip all valid sites.
+
+    Returns:
+        New state with pattern flipped.
     """
     # 1. Select random pattern
     n_patterns      = patterns.shape[0]
@@ -227,41 +230,72 @@ def _propose_global_flip_kernel(state: jnp.ndarray, key: jax.Array, patterns: jn
     # 2. Mask valid indices (ignore -1 padding)
     mask            = (target_indices != -1)
     
-    # 3. Safe indices: map -1 to 0
+    # 3. Safe indices: map -1 to 0 to avoid out-of-bounds access
+    # Note: Updates to site 0 from padding will be identity operations
     safe_indices    = jnp.where(mask, target_indices, 0)
     
     # 4. Apply Updates
     if BACKEND_DEF_SPIN:
-        # Optimized: Scatter Multiply
+        # Spin +/- 1: Flip corresponds to multiplication by -1
+        # Construct a flip mask of 1s (no flip)
+        flip_mult   = jnp.ones_like(state)
+
+        # Prepare multipliers: -1 for valid targets, 1 for padding
         multipliers = jnp.where(mask, -1, 1)
-        # Apply multipliers. Index 0 might be hit multiple times if it's padding,
-        # but 1*1*...*1 = 1, so no change.
-        new_state = state.at[safe_indices].multiply(multipliers)
+
+        # Apply multipliers to the mask
+        # If site 0 is both a target and padding, it gets (-1) * (1) = -1. Correct.
+        flip_mult   = flip_mult.at[safe_indices].multiply(multipliers)
+
+        return state * flip_mult
+
     else:
-        # Binary 0/1
+        # Binary 0/1: Flip corresponds to adding 1 (mod 2)
+        # Construct a flip count mask of 0s
         flip_counts = jnp.zeros_like(state, dtype=jnp.int32)
+
+        # Prepare adders: 1 for valid targets, 0 for padding
         adders      = jnp.where(mask, jnp.int32(1), jnp.int32(0))
+
+        # Accumulate flips
+        # If site 0 is both target and padding, it gets 1 + 0 = 1. Correct.
         flip_counts = flip_counts.at[safe_indices].add(adders)
+
+        # Determine sites to flip (odd number of flips)
         should_flip = (flip_counts % 2) == 1
-        new_state   = jnp.where(should_flip, 1 - state, state)
 
-    return new_state, safe_indices
-
-@jax.jit
-def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray) -> jnp.ndarray:
-    new_state, _ = _propose_global_flip_kernel(state, key, patterns)
-    return new_state
-
-@jax.jit
-def propose_global_flip_with_info(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_global_flip_kernel(state, key, patterns)
+        # Apply flip: 1 - x
+        # If state is float, 1 - x works for 0.0/1.0
+        return jnp.where(should_flip, 1 - state, state)
 
 # ----------------------------------------------------------------------
 # Worm Updates (Snake / Random String)
 # ----------------------------------------------------------------------
 
 @partial(jax.jit, static_argnames=("length",))
-def _propose_worm_flip_kernel(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def propose_worm_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4) -> jnp.ndarray:
+    """
+    Propose a 'worm' (or snake) update: flip a string of connected spins generated by a random walk.
+
+    This is useful for topological models (like Kitaev) to move excitations or
+    tunnel between sectors (if the worm forms a loop).
+
+    Parameters:
+    -----------
+    state:
+        Current state (Ns,).
+    key:
+        JAX PRNGKey.
+    neighbor_table:
+        Neighbor table (Ns, max_degree).
+    length:
+        Length of the random walk (number of bonds to traverse).
+        The number of flipped sites will be up to length + 1.
+
+    Returns:
+    --------
+    New state with the string of spins flipped.
+    """
     ns          = state.shape[0]
     max_degree  = neighbor_table.shape[1]
     
@@ -271,6 +305,15 @@ def _propose_worm_flip_kernel(state: jnp.ndarray, key: jax.Array, neighbor_table
     # 1. Pick start site
     start_node = jr.randint(key_start, shape=(), minval=0, maxval=ns)
     
+    # 2. Initialize indices container
+    # We will flip 'start_node' and the 'length' nodes visited.
+    # Total capacity: length + 1
+    # We initialize with start_node to ensure it is counted.
+    # We will fill the rest during the walk.
+    # Note: If we init the rest with start_node, they will flip start_node multiple times.
+    # We want indices[0] = start_node. indices[1:] = walk steps.
+    # Let's initialize all to start_node.
+    # If the walk is invalid, we might stay at start_node, effectively flipping it again (canceling).
     indices = jnp.full((length + 1,), start_node, dtype=jnp.int32)
     
     # 3. Define Random Walk Step
@@ -299,27 +342,22 @@ def _propose_worm_flip_kernel(state: jnp.ndarray, key: jax.Array, neighbor_table
     _, _, final_indices = final_carry
     
     # 5. Apply Flips
+    # Count occurrences of each index.
+    # Flipping a site N times is equivalent to flipping it (N % 2) times.
     flip_counts = jnp.zeros_like(state, dtype=jnp.int32)
     flip_counts = flip_counts.at[final_indices].add(jnp.int32(1))
     
     should_flip = (flip_counts % 2) == 1
     
     if BACKEND_DEF_SPIN:
+        # Spin +/- 1: Flip is multiplication by -1
+        # 1.0 where no flip, -1.0 where flip
         mult = jnp.where(should_flip, -1, 1)
-        new_state = state * mult
+        # Cast to state dtype to be safe (though JAX handles mixed usually)
+        return state * mult
     else:
-        new_state = jnp.where(should_flip, 1 - state, state)
-
-    return new_state, final_indices
-
-@partial(jax.jit, static_argnames=("length",))
-def propose_worm_flip(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4) -> jnp.ndarray:
-    new_state, _ = _propose_worm_flip_kernel(state, key, neighbor_table, length)
-    return new_state
-
-@partial(jax.jit, static_argnames=("length",))
-def propose_worm_flip_with_info(state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_worm_flip_kernel(state, key, neighbor_table, length)
+        # Binary 0/1: Flip is 1 - x
+        return jnp.where(should_flip, 1 - state, state)
 
 # ----------------------------------------
 #! EOF

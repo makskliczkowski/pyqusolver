@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Union, Any, List
 
 try:
-    JAX_AVAILABLE                                               = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
+    JAX_AVAILABLE = os.environ.get('PY_JAX_AVAILABLE', '1') == '1'
     
     # Common utilities
     from QES.general_python.common.timer                        import timeit
@@ -682,10 +682,6 @@ class TDVP:
         Array
             Array promoted to float64/complex128 for SR stability
         '''
-        if hasattr(array, "compute_weighted_sum"):
-            # BatchedJacobian: pass through
-            return array
-
         import numpy as _np
         if self.is_jax and JAX_AVAILABLE:
             if _np.iscomplexobj(array):
@@ -836,19 +832,7 @@ class TDVP:
             r_el            = self.backend.array([x.r_el for x in excited_penalty],     dtype=self.dtype)
             r_le            = self.backend.array([x.r_le for x in excited_penalty],     dtype=self.dtype)
             (loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size) = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)        
-        
-        # Compute var_deriv_c_h (Hermitian conjugate of centered variational derivatives)
-        # This is O^dag = conj(O^T) for use in MinSR transformation
-        if self.use_minsr:
-            if hasattr(var_deriv_c, "compute_weighted_sum"):
-                # BatchedJacobian: handled lazily
-                var_deriv_c_h = var_deriv_c
-            else:
-                var_deriv_c_h = self.backend.conj(self.backend.transpose(var_deriv_c))
-        else:
-            var_deriv_c_h = None
-            
-        return loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m
+        return loss_c, var_deriv_c, None, var_deriv_m
     
     def get_tdvp_standard(self, loss, log_deriv, **kwargs):
         '''
@@ -886,20 +870,13 @@ class TDVP:
         # So F is not used in the solve process of MinSR.
         if not self.use_minsr:
             # Optimized gradient calculation: pass O (vd_c) directly, transpose handled internally
-            # This now supports BatchedJacobian via sr.gradient_jax or sr.gradient_jax_batched
-            if hasattr(var_deriv_c, "compute_weighted_sum"):
-                # Use separate batched path
-                with self._time('gradient', sr.gradient_jax_batched, var_deriv_c, loss_c, self._n_samples) as gradient:
-                    self._f0 = gradient
-            else:
-                with self._time('gradient', self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
-                    self._f0 = gradient
+            with self._time('gradient', self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
+                self._f0 = gradient
         else:
             self._f0 = None
         self._s0 = None
         
         # MinSR uses T (N_s x N_s)
-        # If BatchedJacobian is used, we generally don't form the matrix, but if requested:
         if self.form_matrix:             
             with self._time('covariance', self._covariance_fn_j, var_deriv_c, self._n_samples) as covariance:
                 self._s0 = covariance
@@ -930,30 +907,25 @@ class TDVP:
         # Determine mode if not provided
         if mode is None:
             mode = 'minsr' if self.use_minsr else 'standard'
-
-        n_samples = self._n_samples
-        if n_samples is None:
-             n_samples = getattr(mat_O, '_n_samples', 1.0)
-
-        # Check for BatchedJacobian
-        is_batched = hasattr(mat_O, "compute_weighted_sum")
-
-        if is_batched:
-            # Delegate Matrix-Free Construction to Solver Module
-            # This keeps algebraic details (centering, complex conjugates) encapsulated
-            _matvec_batched = sr.get_matvec_batched(mat_O, mode, n_samples)
             
-            # JIT the returned function
-            return jax.jit(_matvec_batched) if self.is_jax else _matvec_batched
+        if mode == 'minsr':
+             # T = O @ O^dag.  v -> O^dag v -> O (O^dag v)
+             # op1 = mat_O.T.conj()
+             # op2 = mat_O
+             def _matvec(v, sigma):
+                 inter = self.backend.matmul(mat_O.T.conj(), v)
+                 res   = self.backend.matmul(mat_O, inter)
+                 return res / self._n_samples + sigma * v
+        else:
+             # S = O^dag @ O. v -> O v -> O^dag (O v)
+             # op1 = mat_O
+             # op2 = mat_O.T.conj()
+             def _matvec(v, sigma):
+                 inter = self.backend.matmul(mat_O, v)
+                 res   = self.backend.matmul(mat_O.T.conj(), inter)
+                 return res / self._n_samples + sigma * v
 
-        # Dense Matrix path
-        if self.is_jax:
-             # Use sr.get_matvec_dense for JAX
-             _matvec = sr.get_matvec_dense(mat_O, mode, n_samples)
-             return jax.jit(_matvec)
-        
-        # Fallback / Numpy path
-        return sr.get_matvec_dense_np(mat_O, mode, n_samples)
+        return jax.jit(_matvec) if self.is_jax else _matvec
     
     def _solve_prepare_s_and_loss(self, vd_c: Array, loss_c: Array, forces: Array):
         """
@@ -1065,14 +1037,11 @@ class TDVP:
         Array
             The initial guess for the linear solver.
         """
-        x0 = self._x0
-
         if use_old_result:
-            x0 = self._solution
-
-        if x0 is None or x0.shape != vec_b.shape:
-            x0 = self.backend.zeros_like(vec_b)
-        return x0
+            self._x0 = self._solution
+        if self._x0 is None or self._x0.shape != vec_b.shape:
+            self._x0 = self.backend.zeros_like(vec_b)
+        return self._x0
 
     ###############
     #! GLOBAL PHASE
@@ -1168,7 +1137,7 @@ class TDVP:
         
         #! handle the initial guess - use the previous solution
         with self._time('x0', self._solve_handle_x0, vec_b, kwargs.get('use_old_result', False)) as x0:
-            pass
+            self._x0 = x0
 
         #! prepare the rhs
         if self.rhs_prefactor != 1.0:
@@ -1217,7 +1186,8 @@ class TDVP:
         if self.use_timing and self.logger:
             self.logger.info(f"TDVP Solve Timings: {self.timings}", lvl=2, color='cyan')
         
-        #! return the solution (do not save to self during JIT to avoid tracer leaks)
+        #! save the solution
+        self._solution = solution
         return solution, theta0_dot
     
     #########################
@@ -1255,9 +1225,6 @@ class TDVP:
         #! obtain the solution
 
         solution, theta0_dot    = self.solve(loss, log_deriv, **kwargs)
-        
-        #! save solution outside JIT boundary to avoid tracer leaks
-        self._solution          = solution
         meta                    = TDVPStepInfo(
                                     mean_energy     = self._e_local_mean,
                                     std_energy      = self._e_local_std,

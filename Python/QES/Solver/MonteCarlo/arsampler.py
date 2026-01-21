@@ -214,19 +214,6 @@ class ARSampler(Sampler):
         """ Numpy implementation not supported for ARSampler. """
         raise NotImplementedError("Autoregressive sampling is JAX-only.")    
     
-    def diagnose(self, samples=None) -> dict:
-        """
-        AR sampling produces independent samples by construction.
-        Diagnostics are trivial.
-        """
-        metrics = {
-            'ess': self.numsamples * self.numchains,
-            'tau': 1.0,
-            'r_hat': 1.0,
-            'acceptance_rate': 1.0
-        }
-        return metrics
-
 # ---------------------------------------------------------
 # End of AR Sampler
 # ---------------------------------------------------------

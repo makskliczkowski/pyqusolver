@@ -1173,17 +1173,14 @@ class Operator(GeneralMatrix):
     def matvec(self, 
             vecs            : Array, 
             *args, 
-            hilbert_in      : HilbertSpace              = None, 
-            hilbert_out     : HilbertSpace              = None, 
-            symmetry_mode   : str                       = "auto",
-            multithreaded   : bool                      = False,
-            out             : Array                     = None,
-            thread_buffer   : Array                     = None,
-            chunk_size      : int                       = 1, 
-            dtype                                       = None,
-            # alias for hilbert_in
-            hilbert         : Optional[HilbertSpace]    = None,
-            ) -> Array:
+            hilbert_in      : HilbertSpace  = None,
+            hilbert_out     : HilbertSpace  = None,
+            symmetry_mode   : str           = "auto",
+            multithreaded   : bool          = False,
+            out             : Array         = None,
+            thread_buffer   : Array         = None,
+            chunk_size      : int           = 1,
+            dtype                           = None) -> Array:
         """
         Apply the operator matrix to a vector.
         
@@ -1234,7 +1231,6 @@ class Operator(GeneralMatrix):
         """
         logger          = hilbert_in._logger if hilbert_in is not None else None
         symmetry_mode   = symmetry_mode.lower() if symmetry_mode is not None else "auto"
-        hilbert_in      = hilbert_in if hilbert_in is not None else hilbert
         
         # No Hilbert space provided
         if hilbert_in is None:

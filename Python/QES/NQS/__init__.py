@@ -191,67 +191,36 @@ Date        : 2025-11-01
 ---------------------------------------------------------------------
 """
 
-import  importlib
-from    typing import Any, TYPE_CHECKING
+import sys
 
-# ----------------------------------------------------------------------------
-# Lazy Import Configuration
-# ----------------------------------------------------------------------------
+# Core Imports (Expose the API)
+# We use try-except blocks to handle partial installations or lazy loading issues
+try:
+    from .nqs import NQS, NQSEvalEngine, NQSSingleStepResult, NQSObservable, NQSLoss
+except ImportError as e:
+    raise ImportError(f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}")
 
-_LAZY_IMPORTS = {
-    'NQS'               : ('.nqs',                          'NQS'),
-    'VMCSampler'        : ('QES.Solver.MonteCarlo.vmc',     'VMCSampler'),
-    'NQSTrainer'        : ('.src.nqs_train',                'NQSTrainer'),
-    'NQSTrainStats'     : ('.src.nqs_train',                'NQSTrainStats'),
-    'NQSObservable'     : ('.src.nqs_engine',               'NQSObservable'),
-    'NQSLoss'           : ('.src.nqs_engine',               'NQSLoss'),
-    'NQSEvalEngine'     : ('.src.nqs_engine',               'NQSEvalEngine'),
-    'EvaluationResult'  : ('.src.nqs_engine',               'EvaluationResult'),
-    'NetworkFactory'    : ('.src.nqs_network_integration',  'NetworkFactory'),
-    'TDVP'              : ('.src.tdvp',                     'TDVP'),
-    'TDVPStepInfo'      : ('.src.tdvp',                     'TDVPStepInfo'),
-}
+try:
+    from QES.Solver.MonteCarlo.vmc import VMCSampler
+except ImportError:
+    pass
 
-_LAZY_CACHE = {}
+try:
+    # Direct access to the Trainer (The main entry point for users)
+    from .src.nqs_train import NQSTrainer, NQSTrainStats
+except ImportError:
+    pass
 
-if TYPE_CHECKING:
-    from QES.Solver.MonteCarlo.vmc      import VMCSampler
-    from .nqs                           import NQS
-    from .src.nqs_train                 import NQSTrainer, NQSTrainStats
-    from .src.nqs_engine                import NQSObservable, NQSLoss, NQSEvalEngine, EvaluationResult
-    from .src.nqs_network_integration   import NetworkFactory
-    from .src.tdvp                      import TDVP, TDVPStepInfo
+try:
+    from .src.nqs_network_integration import NetworkFactory
+except ImportError:
+    pass
 
-def __getattr__(name: str) -> Any:
-    """Module-level __getattr__ for lazy imports (PEP 562)."""
-    if name in _LAZY_CACHE:
-        return _LAZY_CACHE[name]
-    
-    if name in _LAZY_IMPORTS:
-        module_path, attr_name  = _LAZY_IMPORTS[name]
-        try:
-            if module_path.startswith('.'):
-                module          = importlib.import_module(module_path, package=__name__)
-            else:
-                module          = importlib.import_module(module_path)
-            
-            result              = getattr(module, attr_name)
-            _LAZY_CACHE[name]   = result
-            return result
-        except (ImportError, AttributeError) as e:
-            # Special handling for NQS as it's critical
-            if name == 'NQS':
-                 raise ImportError(f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}") from e
-            # VMCSampler might be optional or handle gracefully
-            if name == 'VMCSampler':
-                return None
-            raise ImportError(f"Failed to import lazy attribute '{name}' from '{module_path}': {e}") from e
-
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-def __dir__():
-    """Support for dir() and tab completion."""
-    return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
+try:
+    # Direct access to the Physics Engine
+    from .src.tdvp import TDVP, TDVPStepInfo
+except ImportError:
+    pass
 
 # Metadata
 MODULE_DESCRIPTION  = "Neural Quantum States (NQS) with TDVP and Adaptive Scheduling."
@@ -274,9 +243,9 @@ def quick_start(mode: str = 'ground'):
         'ground' for ground state optimization (default)
     """
     boilerplate = """
-# ========================================== 
+# ==========================================
 # QES NQS Quick Start Script
-# ========================================== 
+# ==========================================
 import jax
 import jax.numpy as jnp
 from QES.NQS import NQS, NQSTrainer, NetworkFactory
@@ -362,14 +331,9 @@ __all__ = [
     "NQS",
     "NQSTrainer",
     "NQSTrainStats",
-    "NQSObservable",
-    "NQSLoss",
-    "NQSEvalEngine",
-    "EvaluationResult",
     "TDVP",
     "TDVPStepInfo",
     "NetworkFactory",
-    "VMCSampler",
     "quick_start",
     "info"
 ]

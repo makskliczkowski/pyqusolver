@@ -396,11 +396,9 @@ class GeneralMatrix(spla.LinearOperator):
         self._iscpx = False
 
     def _log(self, msg: str, log: str = 'info', lvl: int = 0, color: str = "white") -> None:
-        # Get logger safely (if _logger is not available on self, use None)
-        logger = getattr(self, '_logger', None)
-        if logger is None:
+        if self._logger is None:
             return
-        logger.info(f"[{self.name}] {msg}", lvl=lvl, log=log, color=color)
+        self._logger.info(f"[{self.name}] {msg}", lvl=lvl, log=log, color=color)
 
     # -------------------------------------------------------
     # Matrix storage
@@ -768,15 +766,12 @@ class GeneralMatrix(spla.LinearOperator):
         if self._diag_engine is not None and self._diag_engine.method == method:
             return self._diag_engine
 
-        # Get logger safely (if _logger is not available on self, use global logger)
-        logger = getattr(self, '_logger', None)
-
         self._diag_engine = DiagonalizationEngine(
             method    = method,
             backend   = backend,
             use_scipy = use_scipy,
             verbose   = verbose,
-            logger    = logger,
+            logger    = self._logger,
         )
         return self._diag_engine
 

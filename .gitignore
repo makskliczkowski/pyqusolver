@@ -228,7 +228,3 @@ data/*
 *.tsv
 *.h5
 *checkpoint.*
-
-# MACOS
-*.DS_Store
-.DS_Store

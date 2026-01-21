@@ -186,8 +186,7 @@ class Sampler(ABC):
             self._backend   = get_backend(backend)
         else:
             # default fallback to obtain the backend and RNGs
-            # obtain_backend returns (_backend, _backend_sp, (_rng, _rng_k), backend_str)
-            self._backend, _, (self._rng, self._rng_k), _ = self.obtain_backend(backend, seed)
+            self._backend, _, (self._rng, self._rng_k) = self.obtain_backend(backend, seed)
         
         is_valid_rng_k = (
             self._rng_k is not None             and             
@@ -266,14 +265,6 @@ class Sampler(ABC):
         """ Tries to sample the state from the Hilbert space. """
         pass
     
-    def diagnose(self, *args, **kwargs) -> dict:
-        """
-        Compute diagnostic metrics for the sampler.
-        Returns:
-            dict: Dictionary of diagnostic metrics (e.g., 'ess', 'r_hat', 'autocorr_time').
-        """
-        return {}
-
     ###################################################################
     #! BACKEND
     ###################################################################

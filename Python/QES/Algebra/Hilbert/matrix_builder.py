@@ -185,7 +185,7 @@ def _build_sparse_same_sector_compact_jit(
     
     return data_idx
 
-@numba.njit(parallel=True, nogil=True)
+@numba.njit(nogil=True)
 def _build_dense_same_sector_compact_jit(
                 representative_list : np.ndarray,
                 normalization       : np.ndarray,
@@ -201,52 +201,28 @@ def _build_dense_same_sector_compact_jit(
     nh          = len(representative_list)
     invalid_idx = _INVALID_REPR_IDX_NB
     
-    if nh <= _NUMBA_OVERHEAD_SIZE:
-        for k in range(nh):
-            state               = representative_list[k]
-            norm_k              = normalization[k]
-            new_states, values  = operator_func(state)
+    for k in range(nh):
+        state               = representative_list[k]
+        norm_k              = normalization[k]
+        new_states, values  = operator_func(state)
 
-            for i in range(len(new_states)):
-                new_state = new_states[i]
-                value     = values[i]
+        for i in range(len(new_states)):
+            new_state = new_states[i]
+            value     = values[i]
 
-                if np.abs(value) < 1e-14:
-                    continue
+            if np.abs(value) < 1e-14:
+                continue
 
-                idx = repr_map[new_state]
-                if idx == invalid_idx:
-                    continue
+            idx = repr_map[new_state]
+            if idx == invalid_idx:
+                continue
 
-                pidx        = phase_idx[new_state]
-                phase       = phase_table[pidx]
-                norm_idx    = normalization[idx]
-                sym_factor  = np.conj(phase) * norm_idx / norm_k
+            pidx        = phase_idx[new_state]
+            phase       = phase_table[pidx]
+            norm_idx    = normalization[idx]
+            sym_factor  = np.conj(phase) * norm_idx / norm_k
 
-                matrix[idx, k] += value * sym_factor
-    else:
-        for k in numba.prange(nh):
-            state               = representative_list[k]
-            norm_k              = normalization[k]
-            new_states, values  = operator_func(state)
-
-            for i in range(len(new_states)):
-                new_state = new_states[i]
-                value     = values[i]
-
-                if np.abs(value) < 1e-14:
-                    continue
-
-                idx = repr_map[new_state]
-                if idx == invalid_idx:
-                    continue
-
-                pidx        = phase_idx[new_state]
-                phase       = phase_table[pidx]
-                norm_idx    = normalization[idx]
-                sym_factor  = np.conj(phase) * norm_idx / norm_k
-
-                matrix[idx, k] += value * sym_factor
+            matrix[idx, k] += value * sym_factor
 
 ############################################################################################
 #! SAME SECTOR MATRIX BUILDING
@@ -528,38 +504,23 @@ def _build_sector_change(hilbert_in         : object,
 #! WITHOUT HILBERT SPACE SUPPORT
 ############################################################################################
 
-@numba.njit(parallel=True, nogil=True) # nogil for thread safety -> allows multi-threading if needed, stands for "no global interpreter lock"
+@numba.njit(nogil=True) # nogil for thread safety -> allows multi-threading if needed, stands for "no global interpreter lock"
 def _fill_dense_kernel(matrix, operator_func, nh):
     """
     Fills a dense matrix entirely within Numba.
     """
     
-    if nh <= _NUMBA_OVERHEAD_SIZE:
-        for row in range(nh):
-            # Call the operator directly inside the loop
-            state                   = np.int64(row)
-            out_states, out_vals    = operator_func(state)
-            n_items                 = len(out_states)
-            for k in range(n_items):
-                col                 = out_states[k]
-                val                 = out_vals[k]
+    for row in range(nh):
+        # Call the operator directly inside the loop
+        out_states, out_vals    = operator_func(row)
+        n_items                 = len(out_states)
+        for k in range(n_items):
+            col                 = out_states[k]
+            val                 = out_vals[k]
 
-                # Bounds check and threshold check
-                if (0 <= col < nh) and (np.abs(val) >= 1e-14):
-                    matrix[row, col] += val
-    else:
-        for row in numba.prange(nh):
-            # Call the operator directly inside the loop
-            state                   = np.int64(row)
-            out_states, out_vals    = operator_func(state)
-            n_items                 = len(out_states)
-            for k in range(n_items):
-                col                 = out_states[k]
-                val                 = out_vals[k]
-
-                # Bounds check and threshold check
-                if (0 <= col < nh) and (np.abs(val) >= 1e-14):
-                    matrix[row, col] += val
+            # Bounds check and threshold check
+            if (0 <= col < nh) and (np.abs(val) >= 1e-14):
+                matrix[row, col] += val
 
 @numba.njit(nogil=True)
 def _fill_sparse_kernel(
@@ -902,12 +863,13 @@ def _apply_op_batch_jit(
         
         # [Reduction Step]
         # Sum thread buffers into the final output for this chunk
-        for row in numba.prange(nh):
+        for t in range(n_threads):
             for b_local in range(actual_width):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b_local]
-                vecs_out[row, b_start + b_local] += sum_val
+                # We can vectorize the sum over NH if memory bandwidth allows,
+                # but looping column-wise is cache-friendly for the reduction
+                # if vecs_out is column-major (F-contiguous) or row-major (C-contiguous).
+                # Assuming standard C-contiguous (row-major), strict loops are fine.
+                vecs_out[:, b_start + b_local] += bufs[t, :, b_local]
 
 # b) No symmetry with Fourier phases
 
@@ -1040,12 +1002,9 @@ def _apply_fourier_batch_jit(
 
         # Reduction Step
         # Sum all thread buffers into the final output for this chunk
-        for row in numba.prange(nh):
+        for t in range(n_threads):
             for b in range(actual_width):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
+                vecs_out[:, b_start + b] += bufs[t, :, b]
 
 # c) Symmetry support with CompactSymmetryData - fast path when matvec preserves sectors
 
@@ -1163,12 +1122,9 @@ def _apply_op_batch_compact_jit(
                     bufs[tid, idx, b] += val * sym_factor * vecs_in[k, b_start + b]
         
         # Reduction
-        for row in numba.prange(nh):
+        for t in range(n_threads):
             for b in range(actual_width):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
+                vecs_out[:, b_start + b] += bufs[t, :, b]
 
 # d) Symmetry support with Fourier phases and CompactSymmetryData - fast path when matvec preserves sectors
 
@@ -1294,12 +1250,9 @@ def _apply_fourier_batch_compact_jit(
                         bufs[tid, idx, b] += (factor * sym_factor) * vecs_in[k, b_start + b]
 
         # Reduction
-        for row in numba.prange(nh):
+        for t in range(n_threads):
             for b in range(actual_width):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
+                vecs_out[:, b_start + b] += bufs[t, :, b]
 
 # ------
 
