@@ -38,6 +38,8 @@ from typing         import Union, Tuple, Union, Callable, Optional, Any, List, C
 from functools      import partial
 from dataclasses    import dataclass
 
+Array = Any
+
 # import physical problems
 try:
     from .src.nqs_physics                       import *
@@ -47,6 +49,10 @@ try:
     from .src.nqs_symmetry                      import NQSSymmetricAnsatz
     from .src.nqs_engine                        import NQSEvalEngine, NQSObservable, NQSLoss
     from .src.nqs_precision                     import NQSPrecisionPolicy, resolve_precision_policy, cast_for_precision
+
+    # New kernel import
+    from .src                                   import nqs_kernels
+    from .src.nqs_kernels                       import NQSSingleStepResult
 except ImportError as e:
     raise ImportError("Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed.") from e
 
@@ -76,6 +82,9 @@ try:
     #! Choose network
     from QES.general_python.ml.networks         import choose_network as nqs_choose_network, GeneralNet
     
+    #! Utils
+    import QES.general_python.ml.net_impl.utils.net_utils as net_utils
+
 except ImportError as e:
     warnings.warn("Some QES.general_python modules could not be imported. Ensure QES.general_python is installed correctly.", ImportWarning)
     raise e
@@ -83,11 +92,15 @@ except ImportError as e:
 # Conditional JAX imports for SymmetryHandler
 try:
     import  jax
+    import  jax.tree_util as tree_util
+    from    jax.tree_util import tree_flatten
     import  jax.numpy as jnp
     from    jax.scipy.special import logsumexp
     _JAX_AVAILABLE_FOR_SYMMETRY = True
+    JAX_AVAILABLE = True
 except ImportError:
     _JAX_AVAILABLE_FOR_SYMMETRY = False
+    JAX_AVAILABLE = False
 
 # ----------------------------------------------------------
 AnsatzFunctionType      = Callable[[Callable, Array, int, Any], Array]                  # func, states, batch_size, params -> Array [log ansatz values]
@@ -95,30 +108,6 @@ ApplyFunctionType       = Callable[[Callable, Array, Array, Array, int, Any], Ar
 EvalFunctionType        = Callable[[Callable, Array, Any, int], Array]                  # func, states, params, batch_size -> Array [log ansatz values]
 CallableFunctionType    = Callable[[Array], Tuple[Array, Array]]                        # states -> (new_states, coeffs)
 LossFunctionType        = CallableFunctionType                                          # states -> (new_states, coeffs)
-
-#########################################
-#! Symmetry Handler
-#########################################
-
-@dataclass
-class NQSSingleStepResult:
-    '''
-    Data class to hold the results of a single optimization step in the NQS solver.
-    '''
-    loss                : float                     # Estimated energy or loss value
-    loss_mean           : float                     # Mean of the energy or loss
-    loss_std            : float                     # Standard deviation of the energy or loss
-    grad_flat           : Array                     # Flattened gradient vector
-    params_shapes       : List[Tuple]               # Shapes of the parameters
-    params_sizes        : List[int]                 # Sizes of the parameters
-    params_cpx          : List[bool]                # Whether each parameter is complex
-
-if _JAX_AVAILABLE_FOR_SYMMETRY:
-    jax.tree_util.register_pytree_node(
-        NQSSingleStepResult,
-        lambda n: ((n.loss, n.loss_mean, n.loss_std, n.grad_flat), (n.params_shapes, n.params_sizes, n.params_cpx)),
-        lambda aux, children: NQSSingleStepResult(*children, *aux)
-    )
 
 #########################################
 
@@ -238,110 +227,6 @@ class NQS(MonteCarloSolver):
                 **kwargs):
         r'''
         Initialize the NQS solver.
-        
-        Parameters:
-            logansatz [Union[Callable, str, GeneralNet]]:
-                The neural network or callable to be used. This can be specified in several ways:
-                - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
-                - As a pre-initialized network object (must be a subclass of `GeneralNet`).
-                - As a raw Flax module class for custom networks. The factory will wrap it automatically.
-                See the documentation of `QES.general_python.ml.networks.choose_network` for details
-                on custom module requirements.
-                - As a callable that returns an ansatz. For example, a function that takes input shape and returns
-                    a network instance or it can be some custom logic to create the wavefunction ansatz:
-                    - PEPS ansatz function
-                    - Custom variational ansatz
-            sampler [Union[Callable, str, VMCSampler]]:
-                The sampler to be used. If None, a default `VMCSampler` will be created.
-                This can be specified in several ways:
-                - As a string (e.g., 'vmc') to use a built-in sampler.
-                - As a pre-initialized sampler object (must be a subclass of `VMCSampler`).
-                - As a callable that returns a sampler instance.
-                - If None, a default `VMCSampler` will be created using the provided network:
-                    - The sampler will be initialized with the network, shape, random number generators, and other parameters.
-            model [Hamiltonian or Operator]:
-                The physical model (e.g., Hamiltonian) for the NQS.
-                - If physics is 'wavefunction', this must provide a `local_energy_fn`.
-                - For other physics types, refer to the specific requirements.
-            batch_size [Optional[int]]:
-                The batch size for training.
-            nthstate [Optional[int]]:
-                The nth excited state to target (0 for ground state). Informative
-            nparticles [Optional[int]]:
-                The number of particles in the system. If not provided, defaults to system size.
-            seed [Optional[int]]:
-                Random seed for initialization.
-            beta [float]:
-                Inverse temperature for Monte Carlo sampling.
-            mu [float]:
-                Mu parameter for the NQS. This is used for collecting different sampling distribution.
-                By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
-            replica [int]:
-                Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
-                When replica > 1:
-                - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
-                to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
-                - MCMC runs in parallel across all temperature replicas.
-                - Periodic replica exchanges improve mixing and help escape local minima.
-                - Only samples from the physical replica (beta=1.0) are used for training.
-                - The return signature of `sample()` and `train()` remains unchanged.
-            shape [Union[list, tuple]]:
-                Shape of the input data, e.g., `(n_spins,)`.
-            modes:
-                Number of local modes per site (e.g., 2 for spin-1/2).
-            directory:
-                Directory for saving results.
-            backend:
-                Computational backend ('jax' or 'numpy').
-            dtype:
-                Data type for network parameters (e.g., 'float32', 'complex128').
-            problem:
-                The physics problem to solve (e.g., 'wavefunction').
-            symmetrize [bool]:
-                Whether to automatically symmetrize the ansatz if symmetries are present in the Hilbert space.
-                If True (default), and `hilbert` has symmetries, the network output will be projected onto the 
-                specified symmetry sector: 
-                :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
-                where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
-                This allows training symmetry-protected states.
-            verbose [bool]:
-                Whether to print verbose output. Default is True.
-            **kwargs:
-                Additional keyword arguments passed to the network constructor.
-                Including:
-                - seed: 
-                    Seed for network initialization (overrides global seed if provided).
-                - param_dtype:
-                    Data type for network parameters (e.g., 'float32', 'complex128').
-                - beta_penalty: 
-                    Penalty term for particle number conservation (default: 0.0).
-                - use_orbax:
-                    Whether to use Orbax for checkpointing (default: True).
-                - orbax_max_to_keep:
-                    Maximum number of Orbax checkpoints to keep (default: 3).
-                - Sampler-specific parameters:
-                    - s_numchains       : Number of Markov chains (default: 16).
-                    - s_numsamples      : Number of samples per chain (default: 1000).
-                    - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
-                    - s_sweep_steps     : Number of sweep steps between samples (default: 10).
-                    - s_therm_steps     : Number of thermalization steps (burnin) (default: 100).
-                    - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
-                                        Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
-                                        See `NQS.help('sampling')` for details.
-                    - s_patterns        : List of patterns for "GLOBAL" update rule (required if upd_fun="GLOBAL").
-                    - s_n_flip          : Number of sites for "MULTI_FLIP" rule (default: 1).
-                    - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
-                    - s_logprob_fact    : Log probability factor (default: 0.5).
-                    - s_makediffer      : Whether to make the sampler differentiable (default: True).
-                    - Other sampler-specific parameters as needed.
-                - Parallel Tempering parameters (when replica > 1):
-                    - pt_betas          : Custom array of inverse temperatures (optional).
-                                        If not provided, a geometric ladder from 1.0 to 0.1 is generated.
-                    - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
-                                        Sampler-specific parameters (e.g., `global_p`, `global_fraction`) are
-                                        also passed through to the `VMCSampler` constructor via `**kwargs`.
-                    - global_p          : Probability of proposing a global update (default: 0.0).
-                    - global_update     : Custom global update function (optional).
         '''
         
         if shape is None and hilbert is None:
@@ -569,20 +454,6 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         self._exact_info    = None
     
-    #####################################
-    #! INITIALIZATION OF THE NETWORK AND FUNCTIONS
-    #####################################
-    
-    def reset(self):
-        """
-        Resets the initialization state of the object and reinitializes the underlying network.
-        This method marks the object as not initialized and forces a reinitialization of the associated
-        neural network by calling its `force_init` method.
-        """
-        
-        self._initialized = False
-        self._net.force_init()
-    
     # ---
     
     def _init_directory(self):
@@ -590,13 +461,6 @@ class NQS(MonteCarloSolver):
         Initializes the directory for saving results.
         This method creates a directory structure based on the problem model and network configuration.
         It ensures that the directory exists and is ready for use.
-        
-        Directory Structure:
-        --------------------
-        {base_dir}/{model}/{lattice_or_shape}/{network_summary}/
-        
-        Note: Seed is NOT included in directory name (stored in metadata instead).
-        This makes it easier to find and compare results across different seeds.
         """
         
         base                = Directories(self._dir)
@@ -637,18 +501,6 @@ class NQS(MonteCarloSolver):
         '''
         Initialize the network truly. This means that the weights are initialized correctly 
         and the dtypes are checked. In addition, the network is checked if it is holomorphic or not.
-        Parameters:
-            s: The state vector, can be any, but it is used to initialize the network.
-        
-        Note:
-            1. Check if the network is already initialized.
-            2. If not, initialize the weights using the network's init method.
-            3. Check the dtypes of the weights and ensure they are consistent.
-            4. Check if the network is complex and holomorphic.
-            5. Check the shape of the weights and store them.
-            6. Calculate the number of parameters in the network.
-            7. Set the initialized flag to True.
-            8. If the network is not initialized, raise a ValueError.
         '''
 
         if not self._initialized or forced:
@@ -665,9 +517,6 @@ class NQS(MonteCarloSolver):
             self._iscpx             = not (dtypes[0] == np.single or dtypes[0] == np.double)
             
             # check if the network is holomorphic
-            # if the value is set to None, we check if the network is holomorphic
-            # through calculating the gradients of the real and imaginary parts
-            # of the network. Otherwise, we use the value provided.
             self._holomorphic       = self._net.check_holomorphic()
             self.log(f"Network is holomorphic: {self._holomorphic}", log='info', lvl = 2, color = 'blue')
             self._analytic          = self._net.has_analytic_grad
@@ -679,8 +528,6 @@ class NQS(MonteCarloSolver):
             # number of parameters
             self._nparams           = self._net.nparams
             self._initialized       = True
-            # Rebuild ansatz pipeline after network initialization
-            # self._rebuild_ansatz_function()
 
     #####################################
     
@@ -688,20 +535,6 @@ class NQS(MonteCarloSolver):
     def exact(self):
         """
         Return the exact information (ground truth) if available.
-        This is a dictionary containing exact energy, method, etc.
-        
-        Keywords:
-        - exact_predictions : np.ndarray
-            Array of exact energy predictions for different states.
-        - exact_method      : str
-            Method used to obtain the exact values (e.g., 'scipy_lanczos').
-        - Other, depending on the physics problem.
-            - exact_energy  : float
-                Exact energy for the targeted state (nthstate).
-            - etc.
-        Returns:
-            dict or None
-                Exact information if available, otherwise None.
         """
         return self._exact_info
     
@@ -709,22 +542,6 @@ class NQS(MonteCarloSolver):
     def exact(self, info: dict):
         """
         Set the exact information (ground truth).
-        
-        Keywords:
-        - exact_predictions : np.ndarray
-            Array of exact energy predictions for different states.
-        - exact_method      : str
-            Method used to obtain the exact values (e.g., 'scipy_lanczos').
-        - Other, depending on the physics problem.
-            - exact_energy  : float
-                Exact energy for the targeted state (nthstate).
-            - etc.
-        Parameters:
-            info: dict or np.ndarray
-                Exact information to set. Can be a dictionary with keys as described above,
-                or a numpy array of exact energy values.
-        Raises:
-            ValueError: If the provided info is neither a dictionary nor a numpy array.
         """
         if isinstance(info, dict):
             self._exact_info = info
@@ -743,8 +560,6 @@ class NQS(MonteCarloSolver):
     def get_exact(self, **kwargs) -> Optional['NQSTrainStats']:
         '''
         Get exact predictions, e.g., ground state energy, from the model.
-        This method computes the exact ground state energy using the model's diagonalization method.
-        It updates the trainer's statistics with the exact values if available.
         '''
         
         if self._nqsproblem.typ == 'wavefunction':
@@ -782,10 +597,6 @@ class NQS(MonteCarloSolver):
     def load_exact(self, filepath: str, *, key: str = 'energy_values'):
         '''
         Load exact information from a file.
-        This method loads the exact information (ground truth) from a specified file.
-        Parameters:
-            filepath: The path to the file containing the exact information.
-            extension: The file extension (default is '.h5').
         '''
         
         if not os.path.isfile(filepath):
@@ -924,8 +735,6 @@ class NQS(MonteCarloSolver):
             # -----------------------------------------------------------------
             #! Parallel Tempering Setup
             # -----------------------------------------------------------------
-            # If replicas > 1 is requested but no explicit pt_betas provided,
-            # automatically generate a geometric temperature ladder
             n_replicas  = replica
             pt_betas    = kwargs.get('pt_betas', None)
             if n_replicas > 1 or pt_betas is not None:
@@ -949,16 +758,6 @@ class NQS(MonteCarloSolver):
     def evaluate(self, states, *, batch_size=None, params=None, num_samples=None, num_chains=None, return_stats=False, return_values=False, **kwargs):
         '''
         Evaluate the neural network (log ansatz) for the given quantum states.
-        
-        This uses the unified evaluation engine for efficient computation with both
-        JAX and NumPy backends, and automatic batching for memory efficiency.
-        
-        Parameters:
-            states      : The state configurations to evaluate.
-            batch_size  : The size of batches to use for the evaluation.
-            params      : The parameters (weights) to use for the network evaluation.
-        Returns:
-            The evaluated network output (log ansatz values).
         '''
         states = self._nqsbackend.asarray(states, dtype = self._sampler._statetype)
         result = self._eval_engine.ansatz(states=states, params=params, batch_size=batch_size, num_samples=num_samples, num_chains=num_chains, return_stats=return_stats, return_values=return_values, **kwargs)
@@ -970,29 +769,13 @@ class NQS(MonteCarloSolver):
     
     def __call__(self, states):
         '''
-        Evaluate the network using the provided state. This
-        will return the log ansatz of the state coefficient. Uses
-        the default backend for this class - using self._eval_func.
-        
-        Parameters:
-            states:
-                The state vector.
-        Returns:
-            The evaluated network output.
+        Evaluate the network using the provided state.
         '''
         states = self._nqsbackend.asarray(states, dtype = self._sampler._statetype)
         return self._eval_func(func=self._ansatz_func, data=states, batch_size=self._batch_size, params=self.get_params())
     
     @property
     def eval_func(self):
-        '''
-        Returns the evaluation function for the network.
-        This function is used to evaluate the network on a batch of states.
-        We assume it returns log(psi(s)).
-        
-        Returns:
-            Callable: The evaluation function.
-        '''
         return self._eval_func    
     @property
     def eval_fun(self):      
@@ -1017,90 +800,14 @@ class NQS(MonteCarloSolver):
     #####################################
     
     @staticmethod
-    @partial(jax.jit, static_argnames=['func', 'logproba_fun', 'batch_size'])
-    def _apply_fun_jax(func   : Callable,                           # function to be evaluated (e.g., local energy f: s -> E_loc(s))
-                states        : Array,                              # input states (shape: (N, ...))
-                probabilities : Array,                              # probabilities associated with the states (shape: (N,))
-                logproba_in   : Array,                              # logarithm of the probabilities for the input states (\log p(s))
-                logproba_fun  : Callable,                           # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
-                parameters    : Union[dict, list, jnp.ndarray],     # parameters to be passed to the function - for the Networks ansatze
-                batch_size    : Optional[int] = None,               # batch size for evaluation
-                *op_args):                                          # additional arguments to pass to func (broadcast across states)
-        """
-        Evaluates a given function on a set of states and probabilities, with optional batching.
-        Args:
-            func (Callable):
-                The function to be evaluated.
-            states (jnp.ndarray):
-                The input states for the function.
-            probabilities (jnp.ndarray):
-                The probabilities associated with the states.
-            logproba_in (jnp.ndarray):
-                The logarithm of the probabilities for the input states.
-            logproba_fun (Callable):
-                A function to compute the logarithm of probabilities.
-            parameters (Union[dict, list, jnp.ndarray]):
-                Parameters to be passed to the function.
-            batch_size (Optional[int], optional):
-                The size of batches for evaluation. 
-                If None, the function is evaluated without batching. Defaults to None.
-            *op_args:
-                Additional arguments to pass to func. These are broadcast (not vmapped) across states.
-                Useful for operator indices (i, j) in correlation functions.
-        Returns:
-            The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
-        """
-        if batch_size is None or batch_size == 1:
-            funct_in = net_utils.jaxpy.apply_callable_jax
-            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args)
-        else:
-            funct_in = net_utils.jaxpy.apply_callable_batched_jax
-            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
+    def _apply_fun_jax(*args, **kwargs):
+        """ Delegate to nqs_kernels """
+        return nqs_kernels._apply_fun_jax(*args, **kwargs)
     
     @staticmethod
-    def _apply_fun_np(func    : Callable,
-                states        : np.ndarray,
-                probabilities : np.ndarray,
-                logproba_in   : np.ndarray,
-                logproba_fun  : Callable,
-                parameters    : Union[dict, list, np.ndarray],
-                batch_size    : Optional[int] = None):
-        """
-        Evaluates a given function on a set of states and probabilities, with optional batching.
-        
-        Args:
-            func (Callable):
-                The function to be evaluated.
-            states (np.ndarray):
-                The input states for the function.
-            probabilities (np.ndarray):
-                The probabilities associated with the states.
-            logproba_in (np.ndarray):
-                The logarithm of the probabilities for the input states.
-            logproba_fun (Callable):
-                A function to compute the logarithm of probabilities.
-            parameters (Union[dict, list, np.ndarray]):
-                Parameters to be passed to the function.
-            batch_size (Optional[int], optional):
-                The size of batches for evaluation. 
-                If None, the function is evaluated without batching. Defaults to None.
-        Returns:
-            The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
-        """
-        
-        if batch_size is None:
-            funct_in = net_utils.numpy.apply_callable_np # (func, states, probabilities, logproba_in, logproba_fun, parameters)
-            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters)
-        
-        # otherwise, we shall use the batched version
-        funct_in = net_utils.numpy.apply_callable_batched_np # (func, states, sample_probas, logprobas_in, logproba_fun, parameters, batch_size)
-        return funct_in(func            = func,
-                        states          = states,
-                        sample_probas   = probabilities,
-                        logprobas_in    = logproba_in,
-                        logproba_fun    = logproba_fun,
-                        parameters      = parameters,
-                        batch_size      = batch_size)
+    def _apply_fun_np(*args, **kwargs):
+        """ Delegate to nqs_kernels """
+        return nqs_kernels._apply_fun_np(*args, **kwargs)
 
     @staticmethod
     def _apply_fun(func     : Callable,
@@ -1114,39 +821,12 @@ class NQS(MonteCarloSolver):
             *op_args):
         """
         Evaluates a given function on a set of states and probabilities, with optional batching.
-        
-        Args:
-            func (Callable):
-                The function to be evaluated.
-            states (Union[np.ndarray, jnp.ndarray]):
-                The input states for the function.
-            probabilities (Union[np.ndarray, jnp.ndarray]):
-                The probabilities associated with the states.
-            logproba_in (Union[np.ndarray, jnp.ndarray]):
-                The logarithm of the probabilities for the input states.
-            logproba_fun (Callable):
-                A function to compute the logarithm of probabilities.
-            parameters (Union[dict, list, np.ndarray]):
-                Parameters to be passed to the function.
-            batch_size (Optional[int], optional):
-                The size of batches for evaluation. 
-                If None, the function is evaluated without batching. Defaults to None.
-            is_jax (bool, optional):
-                Flag indicating if JAX is used for computation. Defaults to True.
-            *op_args:
-                Additional arguments to pass to func. These are broadcast (not vmapped) across states.
-                Useful for operator indices (i, j) in correlation functions.
-        Returns:
-            The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
+        Delegates to nqs_kernels.
         """
-                    
-        if batch_size is None:
-            funct_in = net_utils.jaxpy.apply_callable_jax if is_jax else net_utils.numpy.apply_callable_np
-            return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args)
-        
-        # otherwise, we shall use the batched version
-        funct_in = net_utils.jaxpy.apply_callable_batched_jax if is_jax else net_utils.numpy.apply_callable_batched_np
-        return funct_in(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
+        if is_jax:
+            return nqs_kernels._apply_fun_jax(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args)
+        else:
+            return nqs_kernels._apply_fun_np(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size)
     
     @staticmethod
     def _apply_fun_s(func   : list[Callable],
@@ -1159,31 +839,6 @@ class NQS(MonteCarloSolver):
                 is_jax      : bool = True):
         """
         Evaluates a given function using samples generated by a sampler.
-
-        This method utilizes a sampler to generate states, ansatze, and their 
-        associated probabilities, and then evaluates the provided function 
-        using these samples.
-
-        Args:
-            func (Callable)                 : The function to be evaluated. It should accept 
-                                            states, probabilities, ansatze, logproba_fun, and parameters 
-                                            as inputs.
-            sampler (Sampler)               : The sampler object used to generate samples.
-            num_samples (int)               : The total number of samples to generate.
-            num_chains (int)                : The number of independent Markov chains to use 
-                                            in the sampling process.
-            logproba_fun (Callable)         : A function that computes the logarithm 
-                                            of the probability for given states.
-            parameters (dict)               : A dictionary of parameters to be passed to 
-                                            the function being evaluated.
-            batch_size (Optional[int])      : The size of batches to process at a 
-                                            time. If None, the entire dataset is processed at once.
-                                            Defaults to None.
-            is_jax (bool, optional)         : Flag indicating if JAX is used for computation. 
-                                            Defaults to True.
-        Returns:    
-            Any: The result of evaluating the provided function `func` using 
-            the generated samples. 
         """
 
         _, (states, ansatze), probabilities = sampler.sample(parameters=parameters, num_samples=num_samples, num_chains=num_chains)
@@ -1205,68 +860,6 @@ class NQS(MonteCarloSolver):
             ):
         r"""
         Evaluate a set of functions based on the provided states, wavefunction, and probabilities.
-        This method computes the output of one or more functions using the provided states, 
-        wavefunction (ansatze), and probabilities. If states and wavefunction are not provided, 
-        it uses a sampler to generate the required data.
-        
-        Args:
-            functions (Optional[list]):
-                A list of functions to evaluate. If not provided, 
-                defaults to using the local energy function (`self._local_en_func`).
-            states_and_psi (Optional[Tuple[Union[np.ndarray, jnp.ndarray], Union[np.ndarray, jnp.ndarray]]]):
-                A tuple containing the states and the corresponding wavefunction (ansatze). 
-                If not provided, the sampler is used to generate these.
-            probabilities (Optional[Union[np.ndarray, jnp.ndarray]]):
-                Probabilities associated with the states. If not provided, defaults to an array of ones with the same 
-                shape as the wavefunction ansatze.
-            log_progress (bool):
-                Whether to log progress during the evaluation. Defaults to False.
-            return_values (bool):
-                If True, only the output of the evaluated functions is returned. If False, 
-                returns a tuple containing the states, wavefunction, probabilities, and output. Defaults to False.
-            parameters (Optional[dict]):
-                The parameters (weights) to use for the network evaluation. If not provided, 
-                defaults to the current parameters of the network (`self.get_params()`).
-            batch_size (Optional[int]):
-                The batch size to use for evaluation. If not provided, defaults to `self._batch_size`.
-            num_samples (Optional[int]):
-                Number of samples to generate if using the sampler. If not provided, 
-                defaults to the sampler's `numsamples`.
-            num_chains (Optional[int]):
-                Number of chains to use if using the sampler. If not provided, 
-                defaults to the sampler's `numchains`.
-            args (Optional[tuple]):
-                Additional arguments to pass to the function(s). These are broadcast (not vmapped) 
-                across all sampled states. Useful for passing operator indices (i, j) in correlation 
-                functions like <Sz_i Sz_j> without triggering recompilation for each (i, j) pair.
-                Only 3 compilations needed: 0-arg, 1-arg, 2-arg versions, then reuse for all N² pairs.
-            **kwargs:
-                Additional keyword arguments:
-                    - batch_size (int)          : The batch size for evaluation. Defaults to self._batch_size.
-                    - num_samples (int)         : Number of samples to generate if using the sampler.
-                    - num_chains (int)          : Number of chains to use if using the sampler.
-        Returns:
-            Union[Any, list]:
-                The output of the evaluated functions. If a single function is 
-                provided, the result is returned directly. If multiple functions are provided, 
-                a list of results is returned.
-                - Returns (states, ansatze), probabilities, output
-                    - states: The sampled states from the sampler.
-                    - ansatze: The corresponding wavefunction values for the sampled states.
-                    - probabilities: The probabilities associated with the sampled states.
-                    - The output is generally a list of: estimates, mean(estimates), std(estimates)
-        Example:
-            >>> (states, ansatze), probabilities, output = psi.apply([f1, ...], ...)
-            where `f1` is a function that takes the required inputs and returns the desired output.
-            - f1 (x) = [{|s'>}], [<s'|f|s> for s' in {|s'>}]
-            and output is the O_loc(s) evaluated over the sampled states.
-            - O_loc(s) = \sum _{s \in {samples}} sum_{s'} <s'|O|s> * psi(s') / psi(s) / num_samples
-            
-            # For correlation functions with operator indices:
-            >>> def measure_corr(state, i, j):
-            ...     # compute <Sz_i Sz_j> on state
-            ...     return new_states, values
-            >>> result = psi.apply(measure_corr, args=(jnp.array(0), jnp.array(1)))
         """
         
         params          = parameters    if parameters   is not None else self.get_params()
@@ -1319,6 +912,7 @@ class NQS(MonteCarloSolver):
                 self._ansatz_func,
                 params,
                 batch_size,
+                self._isjax,
                 *op_args
             )
             
@@ -1338,16 +932,6 @@ class NQS(MonteCarloSolver):
     def __getitem__(self, funct: Union[Callable, List[Callable]]):
         """
         Allows the object to be indexed using square brackets with a callable or a list of callables.
-        When accessed, applies the given function(s) to the object using the `apply` method.
-
-        Args:
-            funct (Union[Callable, List[Callable]]): A single callable or a list of callables to be applied.
-
-        Returns:
-            The result of applying the given function(s) to the object.
-
-        Raises:
-            Any exception raised by the `apply` method.
         """
         return self.apply(funct)
     
@@ -1355,12 +939,8 @@ class NQS(MonteCarloSolver):
     def apply_func(self):
         '''
         Returns the apply function for the network.
-        This function is used to apply a function to a batch of states.
-        
-        Returns:
-            Callable: The apply function.
         '''
-        return self._apply_fun_jax if self._isjax else self._apply_fun_np
+        return nqs_kernels._apply_fun_jax if self._isjax else nqs_kernels._apply_fun_np
     @property
     def apply_fun(self):    
         'Alias for apply_func'    
@@ -1384,27 +964,6 @@ class NQS(MonteCarloSolver):
     def loss(self, states=None, ansatze=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSLoss, Array]:
         '''
         Compute loss using the evaluation engine.
-        
-        Parameters:
-        -----------
-            states: 
-                Array of state configurations
-            ansatze: 
-                Array of log ansatz values for the states
-            params: 
-                Optional network parameters
-            probabilities: 
-                Optional probability weights
-            batch_size: 
-                Optional batch size override
-            num_samples: 
-                Number of samples to generate if using the sampler
-            num_chains: 
-                Number of chains to use if using the sampler
-            return_stats: 
-                Whether to return statistics
-            return_values: 
-                Whether to return values only
         '''
         loss_funct                  = self.loss_function
         if params is None:          params = self._net.get_params()
@@ -1423,22 +982,6 @@ class NQS(MonteCarloSolver):
     def compute_energy(self, states=None, ansatze=None, *, params=None, probabilities=None, batch_size=None, num_samples=None, num_chains=None, return_stats=True, return_values=False, **kwargs) -> Union[NQSLoss, Array]:
         """
         Compute local energies using the evaluation engine.
-        
-        Parameters:
-        -----------
-            states: 
-                Array of state configurations
-            ham_action_func: 
-                Function computing local energy
-            params: 
-                Optional network parameters
-            probabilities: 
-                Optional probability weights
-            batch_size: 
-                Optional batch size override
-
-        Returns:
-            EnergyStatistics object with energy values and statistics
         """
         if self._nqsproblem.typ != 'wavefunction':
             raise ValueError(self._ERROR_ENERGY_WAVEFUNCTION)
@@ -1458,29 +1001,6 @@ class NQS(MonteCarloSolver):
             args=None, **kwargs) -> Union[NQSObservable, Array]:
         """
         Evaluate an observable using the evaluation engine.
-        
-        Parameters:
-        -----------
-            observable_func: 
-                Function computing observable values
-            states: 
-                Array of state configurations
-            observable_name: 
-                Name of the observable
-            params: 
-                Optional network parameters. If not provided, uses current network parameters.
-            compute_expectation: 
-                Whether to compute expectation value
-            batch_size: 
-                Optional batch size override
-            args:
-                Optional tuple of additional arguments to pass to the observable function.
-                These are broadcast (not vmapped) across all sampled states.
-                Useful for computing correlation functions <O_i O_j> where (i, j) are
-                passed as runtime arguments, avoiding N² recompilations.
-
-        Returns:
-            ObservableResult with local values and statistics
         """
         return self._eval_engine.observable(states=states, ansatze=ansatze, functions=functions, names=names,
             params=params, probabilities=probabilities, batch_size=batch_size, num_samples=num_samples, 
@@ -1498,35 +1018,7 @@ class NQS(MonteCarloSolver):
     
     def sample(self, num_samples = None, num_chains = None, reset: bool = False, *, params = None, **kwargs):
         '''
-        Sample the NQS using the provided sampler. This will return
-        the sampled states and the corresponding probabilities.
-        Parameters:
-            num_samples (int):
-                The number of samples to generate.
-            num_chains (int):
-                The number of chains to use for sampling.
-            reset (bool):
-                Whether to reset the sampler before sampling. This 
-                corresponds to reinitializing the state before sampling the new ones.
-            params (dict):
-                The parameters (weights) to use for the network evaluation.
-                If None, uses the current parameters stored in network._params.
-            kwargs:
-                Additional arguments for the sampler.
-        Returns:
-            The sampled states and the corresponding probabilities.
-            (last configs, last ansatze), (all configs, all ansatze), (all probabilities)
-            
-        Example:
-        ----------
-            >>> nqs = NQS(model, net, sampler)
-            >>> (last configs, last ansatze), (all configs, all ansatze), (all probabilities) = nqs.sample(num_samples=1000, num_chains=10)
-            >>> print("Sampled states:", last configs)
-            >>> # Sampled states: [[...], [...], ...]
-            >>> print("Sampled ansatze:", last ansatze)
-            >>> # Sampled ansatze: [[...], [...], ...]
-            >>> print("Sampled probabilities:", all probabilities)
-            >>> # Sampled probabilities: [[...], [...], ...]        
+        Sample the NQS using the provided sampler.
         '''
         if reset and hasattr(self._sampler, 'reset'):
             self._sampler.reset()
@@ -1564,110 +1056,18 @@ class NQS(MonteCarloSolver):
     #####################################
     
     @staticmethod
-    @partial(jax.jit, static_argnames=['net_apply', 'single_sample_flat_grad_fun', 'batch_size'])
-    def log_derivative_jax(
-            net_apply                   : Callable,                                     # The network's apply function f(p, x)
-            params                      : Any,                                          # Network parameters p
-            states                      : jnp.ndarray,                                  # Input states s_i, shape (num_samples, ...)
-            single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],  # JAX-traceable function computing the flattened gradient for one sample.
-            batch_size                  : int = 1) -> Array:                            # Batch size   
-        '''
-        Compute the batch of flattened gradients using JAX (JIT compiled).
-
-        Returns the gradients (e.g., :math:`O_k = \\nabla \\ln \\psi(s)`)
-        for each state in the batch. The output format (complex/real)
-        depends on the `single_sample_flat_grad_fun` used.
-
-        Parameters
-        ----------
-        net_apply : Callable
-            The network's apply function `f(p, x)`. Static argument for JIT.
-        params : Any
-            Network parameters `p`.
-        states : jnp.ndarray
-            Input states `s_i`, shape `(num_samples, ...)`.
-        single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray]
-            JAX-traceable function computing the flattened gradient for one sample.
-            Signature: `fun(net_apply, params, single_state) -> flat_gradient_vector`.
-            Static argument for JIT.
-        batch_size : int
-            Batch size. Static argument for JIT.
-
-        Returns
-        -------
-        jnp.ndarray
-            Array of flattened gradients, shape `(num_samples, num_flat_params)`.
-            Dtype matches the output of `single_sample_flat_grad_fun`.
-        
-        Example:
-            >>> nqs = NQS(model, net, sampler)
-            >>> (states, ansatze), probabilities = nqs.sample(num_samples=1000, num_chains=10)
-            >>> print("Sampled states:", states)
-            >>> print("Sampled ansatze:", ansatze)
-            >>> print("Sampled probabilities:", probabilities)
-            >>> gradients, shapes, sizes, is_cpx = nqs.log_derivative_jax(
-            ...     net_apply=nqs._ansatz_func,
-            ...     params=nqs._net.get_params(),
-            ...     states=states,
-            ...     single_sample_flat_grad_fun=nqs._flat_grad_func,
-            ...     batch_size=64
-            ... )
-            >>> print("Computed gradients:", gradients)
-            >>> # Computed gradients: [[...], [...], ...]
-        '''
-        
-        # The dtype (complex/real) depends on single_sample_flat_grad_fun
-        gradients_batch, shapes, sizes, is_cpx = net_utils.jaxpy.compute_gradients_batched(net_apply, params, states, single_sample_flat_grad_fun, batch_size)
-        return gradients_batch, shapes, sizes, is_cpx
+    def log_derivative_jax(*args, **kwargs):
+        """ Delegate to nqs_kernels """
+        return nqs_kernels.log_derivative_jax(*args, **kwargs)
     
     @staticmethod
-    def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
-        r'''
-        !TODO: Add the precomputed gradient vector - memory efficient
-        '''
-        sb = net_utils.numpy.create_batches_np(states, batch_size)
-        
-        # compute the gradients using NumPy's loop
-        g = np.zeros((len(sb),) + params.shape[1:], dtype=np.float64)
-        for i, b in enumerate(sb):
-            g[i] = flat_grad(net, params, b)
-        return g
+    def log_derivative_np(*args, **kwargs):
+        """ Delegate to nqs_kernels """
+        return nqs_kernels.log_derivative_np(*args, **kwargs)
     
     def log_derivative(self, states, batch_size = None, params = None, *args, **kwargs) -> Array:
         r'''
         Compute the gradients of the ansatz logarithmic wave-function using JAX or NumPy.
-        We assume that the log ansatz function is used here and therefore it 
-        computes :math:`O_k = \\partial_{W_k} \\log \\psi(s) = \\partial_{W_k} \\psi(s) / \\psi(s)`.
-        
-        Parameters
-        ----------
-            states: 
-                The state vector.
-            batch_size: 
-                The size of batches to use for the evaluation.
-            params: 
-                The parameters (weights) to use for the network evaluation.
-        Returns
-        -------
-            The computed gradients.
-            
-        Example:
-        ----------
-            >>> nqs = NQS(model, net, sampler)
-            >>> (states, ansatze), probabilities = nqs.sample(num_samples=1000, num_chains=10)
-            >>> print("Sampled states:", states)
-            >>> # Sampled states: [[...], [...], ...]
-            >>> print("Sampled ansatze:", ansatze)
-            >>> # Sampled ansatze: [[...], [...], ...]
-            >>> print("Sampled probabilities:", probabilities)
-            >>> # Sampled probabilities: [[...], [...], ...]
-            >>> gradients, shapes, sizes, is_cpx = nqs.log_derivative(
-            ...     states=states,
-            ...     batch_size=64,
-            ...     params=nqs._net.get_params()
-            ... )
-            >>> print("Computed gradients:", gradients)
-            >>> # Computed gradients: [[...], [...], ...]
         '''
         
         # check if the batch size is provided
@@ -1680,18 +1080,18 @@ class NQS(MonteCarloSolver):
         
         if self._isjax:
             if not self._analytic:
-                grads, shapes, sizes, is_cpx = self.log_derivative_jax(self._ansatz_func, params, states, self._flat_grad_func, batch_size)
+                grads, shapes, sizes, is_cpx = nqs_kernels.log_derivative_jax(self._ansatz_func, params, states, self._flat_grad_func, batch_size)
             else:
-                grads, shapes, sizes, is_cpx = self.log_derivative_jax(self._grad_func, params, states, self._flat_grad_func, batch_size)
+                grads, shapes, sizes, is_cpx = nqs_kernels.log_derivative_jax(self._grad_func, params, states, self._flat_grad_func, batch_size)
             accum_real_dtype    = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
             accum_complex_dtype = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
             grads = cast_for_precision(grads, accum_real_dtype, accum_complex_dtype, self._isjax)
             return grads, shapes, sizes, is_cpx
         
         if not self._analytic:
-            grads = self.log_derivative_np(self._ansatz_func, params, batch_size, states, self._flat_grad_func)
+            grads = nqs_kernels.log_derivative_np(self._ansatz_func, params, batch_size, states, self._flat_grad_func)
         else:
-            grads = self.log_derivative_np(self._grad_func, params, batch_size, states, self._flat_grad_func)
+            grads = nqs_kernels.log_derivative_np(self._grad_func, params, batch_size, states, self._flat_grad_func)
         accum_real_dtype    = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
         accum_complex_dtype = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
         grads = cast_for_precision(grads, accum_real_dtype, accum_complex_dtype, self._isjax)
@@ -1709,14 +1109,7 @@ class NQS(MonteCarloSolver):
     
     @property
     def log_derivative_func(self):
-        '''
-        Returns the gradient function for the network.
-        This function is used to compute the gradients of the network.
-        
-        Returns:
-            Callable: The gradient function.
-        '''
-        return self.log_derivative_jax if self._isjax else self.log_derivative_np
+        return nqs_kernels.log_derivative_jax if self._isjax else nqs_kernels.log_derivative_np
 
     @property
     def log_deriv_func(self):                       return self.log_derivative_func
@@ -1749,27 +1142,6 @@ class NQS(MonteCarloSolver):
                             is_cpx      : bool) -> Any:
         """
         Transform a flat parameter vector into a PyTree structure.
-        This is important function as it allows to convert the flat
-        parameter vector used in optimization routines back to the
-        original PyTree structure used by the network. Otherwise,
-        the network would not be able to use the parameters as it just 
-        expects a PyTree structure (dict, list, custom).
-
-        Parameters
-        ----------
-        flat_params : jnp.ndarray
-            The flat parameter vector to transform.
-        shapes : list
-            The shapes of the original parameters.
-        sizes : list
-            The sizes of the original parameters.
-        is_cpx : bool
-            Whether the parameters are complex.
-
-        Returns
-        -------
-        Any
-            The transformed PyTree structure.
         """
         if not self._isjax:
             raise NotImplementedError("Only JAX backend supported.")
@@ -1782,26 +1154,6 @@ class NQS(MonteCarloSolver):
     def update_parameters(self, d_par: Any, mult: Any, shapes, sizes, iscpx):
         """
         Update model parameters using a flat vector (in real representation) or a PyTree.
-        
-        This function allows to provide a parameter change 'd_par' either as a flat
-        JAX array or as a PyTree matching the model's parameter structure. The update
-        is scaled by 'mult' before being applied to the current parameters.
-        
-        For example: 
-            - when mult = -learning_rate, this function performs a gradient descent step.
-            - when mult = +learning_rate, this function performs a gradient ascent step.
-            - when mult = -i*dt, this function performs a real-time evolution step.
-            - when mult = -dt, this function performs an imaginary-time evolution step.
-        
-        Parameters
-        ----------
-        d_par : Any
-            The parameter update. Can be:
-                1.  A 1D JAX array (`jnp.ndarray`) containing the update in the
-                    flattened **real representation** format (matching the structure
-                    defined by the model's parameters, including [Re, Im] for complex leaves).
-                2.  A PyTree (dict, list, custom) matching the exact structure of
-                    the model's parameters.
         """
         if not self._isjax:
             self._logger.warning("Only JAX backend supported for parameter updates.")
@@ -1852,7 +1204,7 @@ class NQS(MonteCarloSolver):
                  self._sampler.set_numsamples(1)
                  params = self.get_params()
                  (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(params)
-                 result = NQS._single_step(params, configs, configs_ansatze, probabilities, 
+                 result = nqs_kernels._single_step(params, configs, configs_ansatze, probabilities,
                      ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
                      flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
                      batch_size=batch_size, t=t,
@@ -1880,10 +1232,10 @@ class NQS(MonteCarloSolver):
         
         # Use eval_shape on the static single_step function
         # We need to partial the static args first
-        accum_real_dtype   = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
-        accum_complex_dtype = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
+        accum_real_dtype   = getattr(self, "_precision_policy", None) and self._precision_policy.accum_real_dtype
+        accum_complex_dtype = getattr(self, "_precision_policy", None) and self._precision_policy.accum_complex_dtype
 
-        single_step_partial = partial(NQS._single_step,
+        single_step_partial = partial(nqs_kernels._single_step,
             ansatz_fn=ansatz_fn, apply_fn=apply_fn, local_loss_fn=loss_fn,
             flat_grad_fn=flat_grad_fn, compute_grad_f=compute_grad_f,
             batch_size=batch_size, t=t,
@@ -1924,7 +1276,7 @@ class NQS(MonteCarloSolver):
         accum_real_dtype            = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
         accum_complex_dtype         = self._precision_policy.accum_complex_dtype if hasattr(self, "_precision_policy") else None
 
-        single_step_jax             = partial(NQS._single_step, 
+        single_step_jax             = partial(nqs_kernels._single_step,
                                         ansatz_fn           =   ansatz_fn, 
                                         local_loss_fn       =   local_loss_fn,
                                         flat_grad_fn        =   flat_grad_fn, 
@@ -1951,58 +1303,11 @@ class NQS(MonteCarloSolver):
         return wrapped
 
     @staticmethod
-    def _single_step(params         : Any, 
-                    configs         : Array, 
-                    configs_ansatze : Any, 
-                    probabilities   : Any, 
-                    # functions (Static input for JIT)
-                    ansatz_fn       : Callable  = None,
-                    apply_fn        : Callable  = None,
-                    local_loss_fn   : Callable  = None,
-                    flat_grad_fn    : Callable  = None,
-                    compute_grad_f  : Callable  = net_utils.jaxpy.compute_gradients_batched,
-                    # precision (Static input for JIT)
-                    accum_real_dtype    : Any   = None,
-                    accum_complex_dtype : Any   = None,
-                    use_jax             : bool  = True,
-                    # Static for evaluation
-                    batch_size      : int       = None,
-                    t               : float     = None,
-                    int_step        : int       = 0) -> NQSSingleStepResult:
+    def _single_step(*args, **kwargs):
         '''
-        Perform a single training step. Pure function (no self access) for JAX compatibility.
+        Perform a single training step. Delegates to nqs_kernels.
         '''
-
-        #! a) Compute Local Loss
-        # For example, E_loc = <s|H|psi> / <s|psi>
-        (v, means, stds) = apply_fn(
-                            func            = local_loss_fn,
-                            states          = configs,
-                            sample_probas   = probabilities,
-                            logprobas_in    = configs_ansatze,
-                            logproba_fun    = ansatz_fn,
-                            parameters      = params,
-                            batch_size      = batch_size
-                        )
-        
-        #! b) Compute Gradients
-        # O_k = nabla log psi
-        # The dtype of flat_grads depends on the network (Complex for Quantum)
-        flat_grads, shapes, sizes, iscpx = compute_grad_f(
-                                            net_apply                   = ansatz_fn,
-                                            params                      = params,
-                                            states                      = configs,
-                                            single_sample_flat_grad_fun = flat_grad_fn,
-                                            batch_size                  = batch_size
-                                        )
-
-        # Promote numerically sensitive outputs if requested
-        v          = cast_for_precision(v, accum_real_dtype, accum_complex_dtype, use_jax)
-        means      = cast_for_precision(means, accum_real_dtype, accum_complex_dtype, use_jax)
-        stds       = cast_for_precision(stds, accum_real_dtype, accum_complex_dtype, use_jax)
-        flat_grads = cast_for_precision(flat_grads, accum_real_dtype, accum_complex_dtype, use_jax)
-
-        return NQSSingleStepResult(loss=v, loss_mean=means, loss_std=stds, grad_flat=flat_grads, params_shapes=shapes, params_sizes=sizes, params_cpx=iscpx)
+        return nqs_kernels._single_step(*args, **kwargs)
 
     def step(self, 
             configs             : Array = None, 
@@ -2011,15 +1316,6 @@ class NQS(MonteCarloSolver):
             params              : Any = None, **kwargs) -> NQSSingleStepResult:
         '''
         Perform a single step of the specified problem type.
-        This method determines the type of problem (ground state, excited state, or time evolution)
-        and calls the appropriate single-step function to perform the computation.
-        
-        Parameters:
-            problem: The type of problem to solve ('ground', 'excited', 'time').
-            **kwargs: Additional keyword arguments to pass to the single-step function.
-        Returns:
-            The result of the single-step computation, which may include energies, gradients, and other metrics
-            depending on the problem type.        
         '''
         
         # try to reset batch size
@@ -2109,21 +1405,7 @@ class NQS(MonteCarloSolver):
     
     def set_modifier(self, modifier: Union[Operator, Callable], **kwargs):
         r"""
-        Apply a linear operator $\hat{O}$ to the ansatz state: $|\tilde{\Psi}\rangle = \hat{O} |\Psi_\theta\rangle$.
-
-        This transforms the NQS evaluation into a modified state evaluation using the 
-        robust `AnsatzModifier` wrapper. It handles both diagonal (M=1) and 
-        sparse/branching (M>1) operators automatically.
-
-        .. math::
-            \log \tilde{\Psi}(s) = \log \left( \sum_{k=1}^M w_k \cdot \exp(\log \Psi_\theta(s'_k)) \right)
-
-        Parameters
-        ----------
-        modifier : Union[Operator, Callable]
-            An operator or function that takes a state $s$ and returns:
-            - `connected_states` (batch, M, N)
-            - `weights` (batch, M)
+        Apply a linear operator $\hat{O}$ to the ansatz state: $|\tilde{\Psi}\rangle = \hat{O} |\Psi_\theta\rangle.
         """
         
         # Ensure we are using JAX (Modifiers rely on JIT/PyTrees)
@@ -2154,29 +1436,6 @@ class NQS(MonteCarloSolver):
     def save_weights(self, step: int = 0, filename: Optional[str] = None, metadata: Optional[dict] = None):
         """
         Delegates saving to the CheckpointManager.
-        
-        Parameters
-        ----------
-        step : int
-            The current training step or epoch. Used for versioning the saved weights.
-        filename : Optional[str]
-            The filename to save the weights to. Can be:
-            - Absolute path: used directly
-            - Relative path: resolved relative to self.defdir
-            - None: uses default naming scheme (checkpoint_{step}.h5 or Orbax step-based)
-        metadata : Optional[dict]
-            Additional metadata to save with the weights.
-            Seed, backend, and network type are automatically added.
-            
-        Returns
-        -------
-        Path : The path where the checkpoint was saved.
-        
-        Example:
-        --------
-            >>> nqs = NQS(model, net, sampler)
-            >>> nqs.save_weights(step=10, filename="best_model.h5")
-            >>> nqs.save_weights(step=100) # Uses default naming
         """
         params = self.get_params()
         
@@ -2216,28 +1475,6 @@ class NQS(MonteCarloSolver):
     def load_weights(self, step: Optional[int] = None, filename: Optional[str] = None):
         """
         Delegates loading to the CheckpointManager.
-        
-        Parameters
-        ----------
-        step : Optional[int]
-            The training step to load. If None:
-            - Orbax: loads the latest checkpoint
-            - HDF5: requires filename or finds latest checkpoint_*.h5
-        filename : Optional[str]
-            Custom filename to load. Can be:
-            - Absolute path: used directly
-            - Relative path: resolved relative to self.defdir
-            - None: uses step-based naming
-            
-        Returns
-        -------
-        None
-        
-        Example:
-        --------
-            >>> nqs.load_weights(step=100)
-            >>> nqs.load_weights(filename='best_model.h5')
-            >>> nqs.load_weights()  # Latest checkpoint
         """
         try:
             params = self.ckpt_manager.load(
@@ -2271,15 +1508,6 @@ class NQS(MonteCarloSolver):
     def set_params(self, new_params: Any, shapes: list = None, sizes: list = None, iscpx: bool = False):
         """
         Sets new parameters in the network object.
-        Parameters
-        ----------
-        new_params : Any
-            The new parameters to set. Can be:
-                1.  A PyTree (dict, list, custom) matching the exact structure of
-                    the model's parameters.
-                2.  A 1D JAX array (`jnp.ndarray`) containing the update in the
-                    flattened **real representation** format (matching the structure
-                    defined by the model's parameters, including [Re, Im] for complex leaves).
         """
         params = new_params
         
@@ -2325,7 +1553,6 @@ class NQS(MonteCarloSolver):
             # ARSampler might need to re-jit if the static apply fn changed
             if hasattr(self._sampler, '_sample_jit'):
                 # Force re-creation of JIT kernel on next sample call
-                # (Assuming you implement a check or just re-init the sampler)
                 pass 
                 
         self.log("Network updated. Sampler reference updated.", lvl=1)
@@ -2353,12 +1580,6 @@ class NQS(MonteCarloSolver):
     def model(self, new_model):
         '''
         Set a new physical model and reconfigure the physics/loss functions.
-        
-        This is useful for impurity studies where you want to reuse the same
-        trained network with a modified Hamiltonian (e.g., adding impurities).
-        
-        Parameters:
-            new_model: The new Hamiltonian/model to use.
         '''
         self._model = new_model
         self._nqsproblem.setup(self._model, self._net)
@@ -2564,155 +1785,6 @@ class NQS(MonteCarloSolver):
         ) -> "NQSTrainStats":
         r"""
         Train the NQS using the NQSTrainer.
-
-        It creates (or reuses) an NQSTrainer instance and runs the training loop, supporting
-        advanced features such as learning rate scheduling, regularization, Stochastic Reconfiguration (SR),
-        MinSR, TDVP, checkpointing, and exact solution comparison.
-
-        Parameters
-        ----------
-        n_epochs : int, default=300
-            Number of training epochs.
-
-        checkpoint_every : int, default=50
-            Save checkpoint every N epochs.
-
-        reset_weights : bool, default=False
-            If True, reinitialize network parameters before training.
-
-        override : bool, default=True
-            If True, always create a new trainer with the provided arguments.
-            If False, reuse existing trainer if one exists (ignores other config args).
-
-        lin_solver : str or Callable, default='scipy_cg'
-            Linear solver for SR equations. Options: 'scipy_cg', 'jax_cg', custom callable.
-
-        pre_solver : str or Callable, optional
-            Preconditioner for linear solver.
-
-        ode_solver : str, default='Euler'
-            ODE integrator for parameter updates. Options: 'Euler', 'RK4', etc.
-
-        tdvp : Any, optional
-            TDVP configuration or callable.
-
-        n_batch : int, default=128
-            Batch size for VMC sampling.
-
-        phases : str or tuple, default='default'
-            Phase scheduling preset or custom phases.
-
-        timing_mode : str, default='detailed'
-            Timing mode for profiling ('detailed', 'minimal').
-
-        early_stopper : Any, optional
-            Early stopping callback or configuration.
-
-        lower_states : List[NQS], optional
-            List of lower-energy NQS states for orthogonalization (excited states).
-
-        lr_scheduler : str or Callable, optional
-            Learning rate scheduler type or instance.
-            Options: 'constant', 'exponential', 'cosine', 'linear', 'adaptive', 'step'.
-            Scheduler kwargs can be passed via **kwargs:
-                - lr_init, lr_final, lr_decay_rate, lr_patience, lr_min_delta, lr_cooldown, lr_step_size
-
-        reg : float, optional
-            Regularization strength.
-
-        reg_scheduler : str or Callable, optional
-            Regularization scheduler for SR matrix.
-
-        diag_shift : float, default=1e-5
-            Diagonal regularization for SR matrix.
-
-        diag_scheduler : str or Callable, optional
-            Diagonal shift scheduler for SR matrix.
-
-        use_sr : bool, default=True
-            Use Stochastic Reconfiguration (SR) for optimization.
-
-        use_minsr : bool, default=False
-            Use MinSR (memory efficient SR).
-
-        rhs_prefactor : float, default=-1.0
-            Prefactor for the TDVP right-hand side.
-
-        save_path : str, optional
-            Directory or filename for saving checkpoints.
-
-        reset_stats : bool, default=True
-            If True, reset training statistics before starting.
-
-        use_pbar : bool, default=True
-            Show progress bar during training.
-
-        exact_predictions : array-like, optional
-            Exact reference values (e.g., from ED) for comparison.
-
-        exact_method : str, optional
-            Method used to compute exact predictions (e.g., 'lanczos').
-
-        lin_force_mat : bool, default=False
-            Force forming full matrix in linear solver.
-
-        lin_is_gram : bool, default=True
-            Treat linear system as Gram matrix (S) if True, else covariance.
-
-        p_global : float, optional
-            Probability (0.0 to 1.0) of proposing a global update in the sampler (default: 0.0).
-            See `VMCSampler` documentation for details.
-        global_fraction : float, optional
-            Fraction of spins to flip during a global update (default: 0.5).
-            See `VMCSampler` documentation for details.
-            
-        upd_fun : str or Enum, optional
-            Update rule for the sampler (e.g., "LOCAL", "EXCHANGE").
-            If provided, reconfigures the sampler's update function before training.
-            
-        update_kwargs : dict, optional
-            Additional arguments for the update rule (e.g., {'patterns': [...]}).
-            
-        symmetrize : Optional[bool], default=None
-            Enable or disable symmetry projection for the ansatz.
-            If None, the current setting is preserved.
-
-        **kwargs
-            Additional arguments passed to NQSTrainer and schedulers.
-
-        Returns
-        -------
-        NQSTrainStats
-            Training statistics including loss history, timing, checkpoints, etc.
-
-        Examples
-        --------
-        >>> # Basic training with default settings
-        >>> stats = psi.train(n_epochs=200)
-
-        >>> # Training with cosine annealing learning rate scheduler
-        >>> stats = psi.train(n_epochs=500, lr=1e-3, lr_scheduler='cosine', min_lr=1e-5)
-
-        >>> # Training with exact diagonalization comparison
-        >>> hamil.diagonalize()
-        >>> stats = psi.train(n_epochs=300, exact_predictions=hamil.eigenvalues, exact_method='lanczos')
-
-        >>> # Continue training with same optimizer state
-        >>> stats = psi.train(n_epochs=100)
-        >>> stats = psi.train(n_epochs=100, override=False)
-
-        >>> # Advanced: MinSR, custom batch size, checkpointing
-        >>> stats = psi.train(n_epochs=1000, use_minsr=True, n_batch=2048, checkpoint_every=100, save_path='./checkpoints')
-        
-        >>> # Change update rule for training
-        >>> stats = psi.train(n_epochs=100, upd_fun="EXCHANGE")
-
-        See Also
-        --------
-        NQSTrainer : 
-            Full trainer class with more configuration options.
-        NQS.help('train') : 
-            Interactive help and usage tips.
         """
 
         # Import here to avoid circular imports
@@ -2857,291 +1929,9 @@ class NQS(MonteCarloSolver):
     def help(self, topic: str = "general"):
         """
         Prints usage information and physics background for NQS features.
-        
-        Parameters
-        ----------
-        topic : str
-            The topic to query. Options:
-            - 'general': 
-                Overview of the NQS object.
-            - 'modifier':
-                Details on state modifiers (Projectors, Symmetries).
-            - 'sampling': 
-                Info on VMC vs Autoregressive sampling.
-            - 'network': 
-                Details about the loaded ansatz.
-            - 'networks':
-                Overview of available ansatz architectures.
-            - 'usage': 
-                Example workflows and common operations.
-            - 'train':
-                Training with the train() method (LR scheduling, SR, etc.).
-            - 'checkpoints':
-                Saving and loading model weights and checkpoints.
         """
-        topic   = topic.lower().strip()
-        msg     = ""
-        border  = "-" * 60
-        
-        if topic == "general":
-            msg = f"""
-                {border}
-                NQS Solver Help: General
-                {border}
-                This object represents a variational quantum state |Psi_theta>.
-                
-                Current Configuration:
-                - Backend: {self._backend_str}
-                - Ansatz: {type(self._net).__name__}
-                - Params: {self.num_params}
-                - Sampler: {type(self._sampler).__name__} (Batch: {self._batch_size}, mu: {self._sampler._mu})
-                
-                Key Methods:
-                - train(...): Optimize parameters via VMC/TDVP.
-                - sample(...): Generate configurations s ~ |Psi(s)|^{self._sampler._mu} (default mu=2 - squared amplitude).
-                - evaluate(s): Compute log(Psi(s)).
-                - set_modifier(O): Transform ansatz to O|Psi>.
-                """
-        
-        elif topic == "modifier":
-            msg = f"""
-                {border}
-                NQS Solver Help: State Modifiers
-                {border}
-                Modifiers allow you to apply an operator O to the ansatz:
-                |Psi_new> = O |Psi_old>
-                
-                This is done on-the-fly during evaluation. The NQS computes:
-                log <s|Psi_new> = log ( sum_k <s|O|s'_k> * <s'_k|Psi_old> )
-                
-                Usage:
-                    op = Operator(...) # e.g., Symmetry projector or S^z
-                    nqs.set_modifier(op)
-                
-                Performance Modes (Auto-Detected):
-                1. Single-Branch (M=1):
-                Operator maps s -> s'. Very fast. 
-                Used for: 
-                    Quantum Numbers (S^z, N), Basis Rotations. Depends on operator.
-                
-                2. Multi-Branch (M>1):
-                Operator maps s -> sum_k w_k |s'_k>. Slower (evaluates net M times).
-                Used for: 
-                    Symmetries (Sum over group), Hamiltonian action.
-                
-                Current Status:
-                - Modified: {self.modified}
-                - Modifier: {self._modifier}
-                """
-            
-        elif topic == "sampling":
-            msg = f"""
-                {border}
-                NQS Solver Help: Sampling
-                {border}
-                Current Sampler: {type(self._sampler).__name__}
-                
-                1. MCMC (VMCSampler):
-                - Uses Metropolis-Hastings.
-                - Good for general RBMs/CNNs.
-                - Suffers from autocorrelation time (tau).
-                
-                2. Autoregressive (ARSampler):
-                - Generates samples sequentially (s1 -> s2 -> ...).
-                - Zero autocorrelation (iid samples).
-                - Requires 'ar' or 'made' network architecture.
-                - Exact likelihoods P(s) available.
-                
-                Update Rules (VMC):
-                - "LOCAL" (default): 
-                    - Single spin flips.
-                - "EXCHANGE": 
-                    - Neighbor swaps (conserves N, Sz).
-                - "GLOBAL": 
-                    - Pattern/Plaquette flips (reduces autocorrelation).
-                - "MULTI_FLIP": 
-                    - Flips N random sites.
-                - "SUBPLAQUETTE":
-                    - Flips sub-sequences of a pattern (e.g. edges of a plaquette).
-                
-                Change rule: 
-                    psi = NQS(..., upd_fun="EXCHANGE", hilbert=h)
-                    # or during training
-                    psi.train(..., upd_fun="GLOBAL", update_kwargs={'patterns': [...]})
-                """
-        
-        elif topic == "usage":
-            msg = f"""
-                {border}
-                NQS Solver Help: General usage
-                {border}
-                Current Ansatz: {type(self._net).__name__}
-
-                1. Initialization
-                psi     = NQS(logansatz='ar', model=hamil, sampler='ARSampler')
-                # or 
-                psi     = NQS(logansatz=custom_net, sampler=custom_sampler)
-                # or VMC
-                psi     = NQS(logansatz='rbm', model=hamil, sampler='MCSampler', backend='jax', s_numsamples=5000)
-
-                2. Training (via NQSTrainer)
-                trainer = NQSTrainer(psi, lin_solver='jax_cg', ...)
-                stats   = trainer.train(n_epochs=100)
-
-                3. Sampling & Observables
-                # Get raw samples and log-amplitudes
-                (_, _), (configs, log_psi), weights = psi.sample(num_samples=1000)
-                
-                # Compute Expectation Values (e.g. Energy)
-                E_stats = psi.compute_energy(configs)
-                print(f"Energy: {{E_stats.mean:.4f}} +/- {{E_stats.error:.4f}}")
-
-                4. I/O Operations
-                psi.save_weights("checkpoint.h5")
-                psi.load_weights("checkpoint.h5")
-
-                5. Dynamic Settings (What you can change)
-                psi.batch_size = 2048  # Adjust batch size for evaluation
-                psi.net = new_net      # Swap architecture (resets optimizer)
-                psi.sampler = 'vmc'    # Switch sampling strategy
-                
-                6. Compute observables, for example for Hamiltonian for spin-1/2
-                lat = Lattice(...)
-                mod = Hamiltonian(...)
-                sig_x = mod.operators.sig_x(lattice=lat, sites=[0])
-                obs_x = psi.compute_observable(sig_x, num_samples=1000)
-                print(f"<Sx_0> = {{obs_x.mean:.4f}} +/- {{obs_x.error:.4f}}")
-                """
-        
-        elif topic == "train":
-            msg = f"""
-                {border}
-                NQS Solver Help: Training with train()
-                {border}
-                The train() method provides a convenient way to train the NQS
-                without manually creating an NQSTrainer instance.
-                
-                Basic Usage:
-                    stats = psi.train(n_epochs=300)
-                
-                Key Parameters:
-                - n_epochs: Number of training epochs (default: 300)
-                - checkpoint_every: Save checkpoint every N epochs (default: 50)
-                - override: If True (default), create new trainer; if False, reuse existing
-                
-                Learning Rate Scheduling:
-                    # Constant LR
-                    stats = psi.train(lr=1e-3)
-                    
-                    # Cosine annealing (recommended)
-                    stats = psi.train(lr=1e-2, lr_scheduler='cosine', min_lr=1e-5)
-                    
-                    # Exponential decay (gamma^epoch)
-                    stats = psi.train(lr=1e-2, lr_scheduler='exponential', lr_decay=0.99)
-                
-                Stochastic Reconfiguration:
-                    # Standard SR
-                    stats = psi.train(use_sr=True, diag_shift=1e-4)
-                    
-                    # MinSR (memory efficient for large networks)
-                    stats = psi.train(use_minsr=True)
-                    
-                    # Plain gradient descent
-                    stats = psi.train(use_sr=False)
-                
-                Comparison with Exact Diagonalization:
-                    hamil.diagonalize()
-                    stats = psi.train(exact_predictions=hamil.eigenvalues, exact_method='lanczos')
-                
-                Continuing Training (reuse optimizer state):
-                    stats = psi.train(n_epochs=100)         # First run
-                    stats = psi.train(n_epochs=100, override=False)  # Continue
-                
-                Accessing the Trainer:
-                    psi.train(n_epochs=100)
-                    trainer = psi.trainer  # Access underlying NQSTrainer
-                    
-                Current Status:
-                - Trainer exists: {self._trainer is not None}
-                - Trainer type: {type(self._trainer).__name__ if self._trainer else 'None'}
-                """
-        
-        elif topic == "network":
-            info = NetworkFactory.net_help()
-            if self._net is not None:
-                net_type    = self._net.name if hasattr(self._net, 'name') else type(self._net).__name__
-                msg         = f"""
-                            {border}
-                            NQS Solver Help: Network Details
-                            {border}
-                            Current Network Type: {net_type}
-                            
-                            {info.get(net_type, "No additional info available for this network type.")}
-                            """
-        elif topic == "networks":
-            info = NetworkFactory.net_help()
-            msg  = f"""
-                {border}
-                NQS Solver Help: Available Networks
-                {border}
-                The following ansatz architectures are available:
-                
-                {chr(10).join([f"- {k}: {v.splitlines()[0]}" for k,v in info.items()])}
-                
-                For detailed information on each architecture, use:
-                    psi.help(topic='network')
-                """
-                
-        elif topic == "checkpoints":
-            msg = f"""
-                {border}
-                NQS Solver Help: Checkpoints & I/O
-                {border}
-                Save and load model weights for resuming training or inference.
-                
-                Manual Save/Load (Weights Only):
-                    # Save current network parameters
-                    psi.save_weights("my_model.h5")
-                    
-                    # Load weights (network architecture must match)
-                    psi.load_weights("my_model.h5")
-                    
-                    # With custom path
-                    psi.save_weights("/path/to/checkpoints/epoch_100.h5")
-                
-                Automatic Checkpoints During Training:
-                    stats = psi.train(
-                        n_epochs=300,
-                        checkpoint_every=50,       # Save every 50 epochs
-                        save_path="./checkpoints"  # Directory for auto-saves
-                    )
-                    # Creates: ./checkpoints/epoch_50.h5, epoch_100.h5, ...
-                
-                Resume Training from Checkpoint:
-                    # Load weights from previous run
-                    psi.load_weights("./checkpoints/epoch_200.h5")
-                    
-                    # Continue training (new trainer)
-                    stats = psi.train(n_epochs=100)
-                    
-                    # Or continue with same optimizer state
-                    stats = psi.train(n_epochs=100, override=False)
-                
-                File Format:
-                    - HDF5 (.h5) format for weights
-                    - Contains: network parameters, metadata
-                    - Compatible with JAX/Flax serialization
-                
-                Tips:
-                    - Always save after successful training
-                    - Use descriptive filenames (e.g., 'gs_N16_E-5.234.h5')
-                    - Keep checkpoint_every reasonable (50-100 epochs)
-                """
-        
-        else:
-            msg = f"Unknown topic '{topic}'. Try: 'general', 'modifier', 'sampling', 'usage', 'train', 'checkpoints'."
-            
-        print(msg)
+        from .src.nqs_help import nqs_help
+        return nqs_help(self, topic)
 
     #####################################
     #! STATIC
@@ -3152,19 +1942,6 @@ class NQS(MonteCarloSolver):
         """
         Computes the normalized transition matrix element:
         M_12 = <Psi_bra | O | Psi_ket> / sqrt(<bra|bra> * <ket|ket>)
-        
-        Uses bidirectional importance sampling to handle normalization constants correctly.
-        
-        Args:
-            nqs_bra: The state on the left <Psi_1|
-            nqs_ket: The state on the right |Psi_2>
-            operator: The operator O (must be applicable to nqs_ket)
-            num_samples: MC samples
-            num_chains: Number of Markov chains
-            operator_args: Additional arguments for the operator
-            
-        Returns:
-            The normalized expectation value.
         """
         
         # ------------------------------------------------------------------
@@ -3238,26 +2015,7 @@ class NQS(MonteCarloSolver):
     @staticmethod
     def compute_overlap(nqs_a: 'NQS', nqs_b: 'NQS', *, num_samples: int = 4096, num_chains: Optional[int] = None, operator: Optional[Any] = None, operator_args: Optional[Any] = None) -> float:
         r"""
-        Computes the squared overlap (Fidelity) between two NQS instances:
-        F = |<Psi_A | Psi_B>|^2 / (<Psi_A|Psi_A> <Psi_B|Psi_B>)
-        This is done via Monte Carlo estimation using samples from both distributions.
-        
-        Mathematically:
-        F = ( E_{s ~ |Psi_A|^2} [ Psi_B(s) / Psi_A(s) ] ) *
-            ( E_{s ~ |Psi_B|^2} [ Psi_A(s) / Psi_B(s) ] )
-        
-        where E denotes the expectation value over the sampled configurations.
-        
-        Args:
-            nqs_a: First NQS instance (e.g., current training step).
-            nqs_b: Second NQS instance (e.g., target state or previous step).
-            num_samples: Number of MC samples to use for estimation.
-            num_chains: Number of independent Markov chains for sampling.
-            operator: Optional operator to insert between states (not implemented).
-            operator_args: Additional arguments for the operator (if any).
-        
-        Returns:
-            float: The squared overlap (between 0.0 and 1.0).
+        Computes the squared overlap (Fidelity) between two NQS instances.
         """
         
         if nqs_a.nvisible != nqs_b.nvisible:
@@ -3357,22 +2115,6 @@ class NQS(MonteCarloSolver):
     def compute_topological_entropy(self, radius: Optional[float] = None, **renyi_kwargs) -> dict:
         """
         Compute the Topological Entanglement Entropy (gamma) using the Kitaev-Preskill construction.
-        
-        Uses the lattice geometry to define regions A, B, C.
-        Formula: gamma = S_A + S_B + S_C - S_AB - S_BC - S_AC + S_ABC
-        
-        Parameters
-        ----------
-        radius : float, optional
-            Radius for region definition (passed to region_kitaev_preskill).
-            Defaults to avoiding system wrapping if None.
-        **renyi_kwargs : dict
-            Arguments passed to compute_renyi2 (e.g., num_samples, num_chains).
-            
-        Returns
-        -------
-        dict
-            Dictionary containing 'gamma' and individual entropies.
         """
         if not hasattr(self._model, 'lattice') or self._model.lattice is None:
             raise ValueError("Lattice is required for topological entropy calculation.")
@@ -3448,14 +2190,6 @@ class NQS(MonteCarloSolver):
     def get_auto_config(system_size, target_total_samples=4096, dtype=jnp.complex64, logger: Logger = None, *, net_depth_estimate: int = 64, num_therm: Optional[int] = None, num_sweep: Optional[int] = None) -> dict:
         """
         Automatically detects hardware and returns optimal VMC parameters.
-        
-        Args:
-            system_size (int): Number of spins/sites (N).
-            target_total_samples (int): Total samples desired for the gradient batch.
-            dtype (jax.dtype): The data type used for the network.
-
-        Returns:
-            dict: A dictionary of parameters ready to pass to NQS/VMCSampler.
         """
         if not JAX_AVAILABLE:
             raise ImportError("JAX is required for automatic configuration. Please install JAX to use this feature.")
