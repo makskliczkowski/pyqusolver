@@ -29,8 +29,10 @@ Email   : maksymilian.kliczkowski@pwr.edu.pl
 """
 
 # A short, user-facing description used by QES.registry
-MODULE_DESCRIPTION  = "Physical properties: statistical mechanics, thermodynamics, and time evolution."
-__all__             = ['statistical', 'time_evo']
+MODULE_DESCRIPTION = (
+    "Physical properties: statistical mechanics, thermodynamics, and time evolution."
+)
+__all__ = ["statistical", "time_evo"]
 
 # ----------------------------------------------------------------------------
 #! EOF

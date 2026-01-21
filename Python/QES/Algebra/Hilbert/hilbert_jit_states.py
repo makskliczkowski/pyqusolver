@@ -1,4 +1,4 @@
-'''
+"""
 Support for JIT-compiled Hilbert space state amplitude calculations.
 
 This module provides efficient routines for computing amplitudes of
@@ -11,13 +11,13 @@ Author  : Maksymilian Kliczkowski
 Email   : maksymilian.kliczkowski@pwr.edu.pl
 Version : 1.0.0
 ----------------------------------------------------
-'''
+"""
+
+from typing import Callable, Optional, Tuple, Union
 
 import numba
 import numpy as np
 from numba import njit, prange
-from numba.typed import List
-from typing import Union, Optional, Callable, Tuple
 
 #! jax (optional)
 try:
@@ -32,26 +32,27 @@ except Exception:
 # Defer importing some potentially circular modules until needed. If they
 # are unavailable at import time due to package init ordering, we'll attempt
 # to import them lazily inside the functions that need them.
-pfaffian            = None
-hafnian             = None
-int2binstr          = None
-check_int_l         = None
-Array               = None
+pfaffian = None
+hafnian = None
+int2binstr = None
+check_int_l = None
+Array = None
 
 # Signature: pfaff(A, n)    (antisymmetric, even n) -> float/complex
-PfFunc              = Callable[[Array, int], Union[float, complex]]
+PfFunc = Callable[[Array, int], Union[float, complex]]
 # Signature: hafnian(A)     (symmetric,     even n) -> float/complex
-HfFunc              = Callable[[Array], Union[float, complex]]
+HfFunc = Callable[[Array], Union[float, complex]]
 # Signature: callable for $\Psi$
 CallableCoefficient = Callable[[Array, Array, Union[int, np.ndarray], int], Union[float, complex]]
 
-_TOLERANCE          = 1e-10
-_USE_EIGEN          = False
+_TOLERANCE = 1e-10
+_USE_EIGEN = False
 ####################################################################################################
 #! NUMBA METHODS
 ####################################################################################################
 
-@njit(cache=True, inline='always')
+
+@njit(cache=True, inline="always")
 def _popcount(x: int) -> int:
     """
     Returns the number of set bits (1-bits) in the binary representation of an integer.
@@ -68,13 +69,13 @@ def _popcount(x: int) -> int:
     """
     cnt = 0
     while x:
-        x   &= x - 1
+        x &= x - 1
         cnt += 1
     return cnt
 
+
 @njit(cache=True)
-def _extract_occupied(ns    : int,
-                    basis   : Union[int, np.ndarray]) -> Array:
+def _extract_occupied(ns: int, basis: Union[int, np.ndarray]) -> Array:
     """
     Extracts the indices of occupied sites from a basis state representation.
     When the basis is given as an integer, its binary representation is used
@@ -102,9 +103,9 @@ def _extract_occupied(ns    : int,
     """
 
     if isinstance(basis, (int, np.integer)):
-        x   = int(basis)
+        x = int(basis)
         occ = np.empty(_popcount(x), dtype=np.int64)
-        k   = 0
+        k = 0
         while x:
             lsb = x & -x
             # Find position of least significant bit
@@ -112,22 +113,25 @@ def _extract_occupied(ns    : int,
             while lsb > 1:
                 lsb >>= 1
                 pos += 1
-            occ[k]   = pos
-            k       += 1
-            x       ^= (1 << pos)
+            occ[k] = pos
+            k += 1
+            x ^= 1 << pos
         return occ
     else:
         return np.where(basis > 0)[0].astype(np.int64)
+
 
 #############################################################################
 #! Slater determinants
 #############################################################################
 
-@njit(cache=True, inline='always')
+
+@njit(cache=True, inline="always")
 def _bit_check(mask, bit):
     return (mask >> bit) & 1
 
-@njit(cache=True, inline='always')
+
+@njit(cache=True, inline="always")
 def _slater_from_mask(U, occ, mask, ns, use_eigen=False):
     r"""
     Compute the Slater determinant for a given occupation mask.
@@ -144,14 +148,14 @@ def _slater_from_mask(U, occ, mask, ns, use_eigen=False):
 
     The occ represents the indices of the occupied orbitals in the eigenbasis,
     while the mask represents the occupied sites in the original basis.
-    
+
     It simply represents the overlap between the two bases:
     .. math::
         D = \det\left(M_{jk}\right),\qquad
         M_{jk} = U_{x_j\,\alpha_k},
 
     where :math:`x_j` are the occupied sites in the original basis (from `mask`)
-    
+
     Parameters
     ----------
     U : ndarray (ns, ns)
@@ -174,8 +178,8 @@ def _slater_from_mask(U, occ, mask, ns, use_eigen=False):
     det : complex or float
         Value of the Slater determinant for given configuration
     """
-    N       = occ.shape[0]
-    n_fock  = 0
+    N = occ.shape[0]
+    n_fock = 0
     for i in range(ns):
         n_fock += _bit_check(mask, i)
     if n_fock != N:
@@ -192,20 +196,21 @@ def _slater_from_mask(U, occ, mask, ns, use_eigen=False):
     # Use determinant directly
     if use_eigen:
         eigvals = np.linalg.eigvals(M)
-        prod    = eigvals[0]
+        prod = eigvals[0]
         for k in range(1, eigvals.shape[0]):
             prod *= eigvals[k]
         return prod
 
     return np.linalg.det(M)
 
-@njit(cache=True, inline='always')
+
+@njit(cache=True, inline="always")
 def _slater_from_vec(U, occ, vec, ns, use_eigen=_USE_EIGEN):
     r"""
     Compute the amplitude of an $N$-fermion Slater determinant that
     connects a Fock basis state expressed in *site* operators with a
     product state expressed in *eigen-orbital* operators.
-    
+
     Parameters
     ----------
     U : ndarray (ns, ns)
@@ -228,15 +233,15 @@ def _slater_from_vec(U, occ, vec, ns, use_eigen=_USE_EIGEN):
         ``org_basis_state`` differs from ``len(occupied_orbitals)``;
         returns ``1.0`` for the vacuum state.
     """
-        
-    n_fock  = vec.sum()
-    N       = occ.shape[0]
-    
+
+    n_fock = vec.sum()
+    N = occ.shape[0]
+
     if n_fock != N:
         return 0.0
-    
-    M       = np.empty((N, N), dtype=U.dtype)
-    row     = 0
+
+    M = np.empty((N, N), dtype=U.dtype)
+    row = 0
     for site in range(ns):
         if vec[site] == 0:
             continue
@@ -245,7 +250,7 @@ def _slater_from_vec(U, occ, vec, ns, use_eigen=_USE_EIGEN):
         row += 1
         if row == N:
             break
-        
+
     #! eiggen
     if use_eigen:
         eigvals = np.linalg.eigvals(M)
@@ -253,12 +258,15 @@ def _slater_from_vec(U, occ, vec, ns, use_eigen=_USE_EIGEN):
     #! determinant
     return np.linalg.det(M)
 
-@njit(cache=True, inline='always')
-def calculate_slater_det(sp_eigvecs         : np.ndarray,
-                        occupied_orbitals   : np.ndarray,
-                        org_basis_state     : Union[int, np.ndarray],
-                        ns                  : int,
-                        use_eigen           : bool = False):
+
+@njit(cache=True, inline="always")
+def calculate_slater_det(
+    sp_eigvecs: np.ndarray,
+    occupied_orbitals: np.ndarray,
+    org_basis_state: Union[int, np.ndarray],
+    ns: int,
+    use_eigen: bool = False,
+):
     r"""
     Compute the amplitude of an $N$-fermion Slater determinant that
     connects a Fock basis state expressed in *site* operators with a
@@ -305,12 +313,12 @@ def calculate_slater_det(sp_eigvecs         : np.ndarray,
         give you the true indices of the occupied orbitals.
 
         Example:
-        
+
         >>> occupied_orbitals   = np.array([0, 1, 2]) # 3 particles
         >>> org_basis_state     = np.array([1, 0, 0, 1, 1, 0, 0, 0]) # 8 sites
         >>> ns                  = 8
         >>> psi_x               = calculate_slater_det(sp_eigvecs, occupied_orbitals, org_basis_state, ns)
-    
+
     org_basis_state : int or ndarray
         Site-basis Fock state with ``ns`` modes; either an integer bitmask
         or a length-``ns`` 0/1 array.
@@ -336,6 +344,7 @@ def calculate_slater_det(sp_eigvecs         : np.ndarray,
         return _slater_from_vec(sp_eigvecs, occupied_orbitals, org_basis_state, ns, use_eigen)
     return 0.0
 
+
 #############################################################################
 #! Bogolubov - de'Gennes - no particle number conservation
 #############################################################################
@@ -344,17 +353,18 @@ def calculate_slater_det(sp_eigvecs         : np.ndarray,
 # a) Pairing matrices  F = V\cdot U^{-1}   (fermions)   /   G = V\cdot U^{-1} (bosons)
 # ---------------------------------------------------------------------------
 
+
 @njit(cache=True)
-def bogolubov_decompose(eig_val, eig_vec, tol = _TOLERANCE) -> Tuple[Array, Array, Array]:
+def bogolubov_decompose(eig_val, eig_vec, tol=_TOLERANCE) -> Tuple[Array, Array, Array]:
     r"""
     Decomposes eigenvalues and eigenvectors into Bogoliubov (u, v) components.
-    
+
     Given the eigenvalues and eigenvectors of a Bogoliubov-de Gennes (BdG) Hamiltonian,
     this function selects the positive eigenvalues (above a given tolerance), extracts
     the corresponding eigenvectors, and splits them into their (u, v) components.
     Each column of the resulting U and V matrices is normalized such that
     U\dagU + V\dagV = I.
-    
+
     Parameters:
     -----------
         eig_val (Array):
@@ -366,9 +376,9 @@ def bogolubov_decompose(eig_val, eig_vec, tol = _TOLERANCE) -> Tuple[Array, Arra
     Returns:
     -----------
         Tuple[Array, Array, Array]: Tuple containing:
-            - U (Array): 
+            - U (Array):
                 Matrix of u components, shape (N, N).
-            - V (Array): 
+            - V (Array):
                 Matrix of v components, shape (N, N).
             - eig_val_pos (Array): Array of positive eigenvalues, shape (N,).
     Raises:
@@ -381,10 +391,10 @@ def bogolubov_decompose(eig_val, eig_vec, tol = _TOLERANCE) -> Tuple[Array, Arra
     keep = eig_val > tol
     if keep.sum() != eig_val.shape[0] // 2:
         raise ValueError("degeneracy or sign problem; adjust tol")
-    
-    eig_val_pos = eig_val[keep]         # shape (N,)
-    eig_vec_pos = eig_vec[:, keep]      # shape (2N, N)
-    N           = eig_val_pos.shape[0]
+
+    eig_val_pos = eig_val[keep]  # shape (N,)
+    eig_vec_pos = eig_vec[:, keep]  # shape (2N, N)
+    N = eig_val_pos.shape[0]
 
     # split into (u,v) components
     U = eig_vec_pos[:N, :].copy()
@@ -392,35 +402,37 @@ def bogolubov_decompose(eig_val, eig_vec, tol = _TOLERANCE) -> Tuple[Array, Arra
 
     # column-wise normalisation (guarantees U^\dagU + V^\dag V = I)
     for k in range(N):
-        s = np.sqrt(np.linalg.norm(U[:, k])**2 + np.linalg.norm(V[:, k])**2)
+        s = np.sqrt(np.linalg.norm(U[:, k]) ** 2 + np.linalg.norm(V[:, k]) ** 2)
         U[:, k] /= s
         V[:, k] /= s
 
     return U, V, eig_val_pos
+
 
 @njit(cache=True)
 def pairing_matrix(u_mat: Array, v_mat: Array) -> Array:
     r"""
     Solve V = F\cdot U  ->  F = V\cdot U^{-1}
     without forming U^{-1} explicitly.
-    
+
     Valid for both fermionic (antisymmetric F) and bosonic (symmetric G)
     Bogoliubov transformations.
-    
+
     Params:
-    
+
     """
     # Equivalent to v_mat @ np.linalg.inv(u_mat)
     return np.linalg.solve(u_mat.T, v_mat.T).T
+
 
 # ---------------------------------------------------------------------------
 # b) Fermions :  Psi(x) = Pf[ F_{ij} ] (x has an *even* length)
 # ---------------------------------------------------------------------------
 
-def calculate_bogoliubov_amp(F          : Array, # pairing  (ns, ns)
-                            basis       : Union[int, np.ndarray],
-                            ns          : int,
-                            enforce     = True):
+
+def calculate_bogoliubov_amp(
+    F: Array, basis: Union[int, np.ndarray], ns: int, enforce=True  # pairing  (ns, ns)
+):
     """
     Calculate the amplitude of a Bogoliubov vacuum state for a given basis configuration.
 
@@ -447,8 +459,8 @@ def calculate_bogoliubov_amp(F          : Array, # pairing  (ns, ns)
     float
         The amplitude of the Bogoliubov vacuum state for the given basis configuration.
     """
-    occ     = _extract_occupied(ns, basis)
-    m       = occ.size
+    occ = _extract_occupied(ns, basis)
+    m = occ.size
     if m == 0:
         return 1.0
     if m & 1:
@@ -463,14 +475,17 @@ def calculate_bogoliubov_amp(F          : Array, # pairing  (ns, ns)
         for q in range(m):
             sub[p, q] = F[ip, occ[q]]
     if enforce:
-        sub[:] = 0.5*(sub - sub.T)
+        sub[:] = 0.5 * (sub - sub.T)
     return pfaffian.Pfaffian._pfaffian_parlett_reid(sub, m)
 
-def calculate_bogoliubov_amp_exc(F      : Array,     # (ns, ns)
-                                U       : Array,     # (ns, Nqp)
-                                qp_inds : Array,     # [m1,…,mk]
-                                basis   : Union[int,Array],
-                                ns      : int) -> complex:
+
+def calculate_bogoliubov_amp_exc(
+    F: Array,  # (ns, ns)
+    U: Array,  # (ns, Nqp)
+    qp_inds: Array,  # [m1,…,mk]
+    basis: Union[int, Array],
+    ns: int,
+) -> complex:
     """
     Calculate the Bogoliubov amplitude for an excited state.
 
@@ -499,16 +514,16 @@ def calculate_bogoliubov_amp_exc(F      : Array,     # (ns, ns)
         - If the total number of occupied states and excitations is odd, the amplitude is zero.
         - If there are no occupied states and no excitations, the amplitude is one.
     """
-    occ     = _extract_occupied(ns, basis)
-    n       = occ.size
-    k       = qp_inds.size
+    occ = _extract_occupied(ns, basis)
+    n = occ.size
+    k = qp_inds.size
     if (n + k) & 1:
         return 0.0
     if n == k == 0:
         return 1.0
 
     dim = n + k
-    M   = np.empty((dim, dim), dtype=F.dtype)
+    M = np.empty((dim, dim), dtype=F.dtype)
 
     # F block
     for p in range(n):
@@ -521,18 +536,18 @@ def calculate_bogoliubov_amp_exc(F      : Array,     # (ns, ns)
         ip = occ[p]
         for j in range(k):
             m = qp_inds[j]
-            M[p, n+j]   =  U[ip, m]
-            M[n+j, p]   = -U[ip, m]
+            M[p, n + j] = U[ip, m]
+            M[n + j, p] = -U[ip, m]
     # lower-right k \times k = 0
     return pfaffian.Pfaffian._pfaffian_parlett_reid(M, dim)
+
 
 # ---------------------------------------------------------------------------
 # c)  Bosons :  Psi(x) = Hf[ G_{ij} ] (x has an *even* length)
 # ---------------------------------------------------------------------------
 
-def calculate_bosonic_gaussian_amp(G        : Array,    # (ns, ns)
-                                basis       : Union[int,Array],
-                                ns          : int):
+
+def calculate_bosonic_gaussian_amp(G: Array, basis: Union[int, Array], ns: int):  # (ns, ns)
     """
     Calculate the amplitude of a bosonic Gaussian state in a given Fock basis.
 
@@ -551,7 +566,7 @@ def calculate_bosonic_gaussian_amp(G        : Array,    # (ns, ns)
             Function to compute the Hafnian of a matrix. If None, a default Hafnian function is used.
 
     Returns:
-        complex: 
+        complex:
             The amplitude of the bosonic Gaussian state in the specified Fock basis.
 
     Notes:
@@ -560,10 +575,10 @@ def calculate_bosonic_gaussian_amp(G        : Array,    # (ns, ns)
         - Otherwise, computes the Hafnian of the submatrix of `G` corresponding to the occupied modes.
     """
     occ = _extract_occupied(ns, basis)
-    m   = occ.size
+    m = occ.size
     if m == 0:
         return 1.0
-    if m & 1:                              # odd # bosons -> 0
+    if m & 1:  # odd # bosons -> 0
         return 0.0
 
     sub = np.empty((m, m), dtype=G.dtype)
@@ -573,30 +588,32 @@ def calculate_bosonic_gaussian_amp(G        : Array,    # (ns, ns)
             sub[p, q] = G[ip, occ[q]]
     return hafnian.Hafnian._hafnian_recursive(sub)
 
+
 #############################################################################
 #! Permanents
 #############################################################################
 
+
 @njit(cache=True)
 def _calculate_permanent_core_np(M: np.ndarray):
-    """ 
-    Core Ryser's formula calculation (Numba). 
+    """
+    Core Ryser's formula calculation (Numba).
     """
     n = M.shape[0]
     if n == 0:
         return 1.0 + 0.0j
-    
-    total_sum           = 0.0 + 0.0j
+
+    total_sum = 0.0 + 0.0j
     for k in range(1, 1 << n):
-        sum_prod        = 1
-        popcount_k      = 0
+        sum_prod = 1
+        popcount_k = 0
         # Calculate product over rows of sum over columns in S
-        for i in range(n): # Rows
-            row_sum     = 0.0 + 0.0j
+        for i in range(n):  # Rows
+            row_sum = 0.0 + 0.0j
             temp_k_cols = k
-            col_idx     = 0
+            col_idx = 0
             while temp_k_cols > 0:
-                if temp_k_cols & 1: # Check if col_idx is in subset S
+                if temp_k_cols & 1:  # Check if col_idx is in subset S
                     row_sum += M[i, col_idx]
                 temp_k_cols >>= 1
                 col_idx += 1
@@ -605,20 +622,22 @@ def _calculate_permanent_core_np(M: np.ndarray):
         # Calculate popcount |S|
         temp_k_pop = k
         while temp_k_pop > 0:
-            temp_k_pop &= (temp_k_pop - 1)
+            temp_k_pop &= temp_k_pop - 1
             popcount_k += 1
 
         # Sign (-1)^(n - |S|)
-        sign        =   -1.0 if (n - popcount_k) % 2 else 1.0
-        total_sum   +=  sign * sum_prod
+        sign = -1.0 if (n - popcount_k) % 2 else 1.0
+        total_sum += sign * sum_prod
     return total_sum
 
+
 @njit(cache=True)
-def calculate_permanent(sp_eigvecs          : np.ndarray,   # U matrix (Ns x Norb)
-                        occupied_orbitals   : np.ndarray,   # Indices {\alpha_k}, shape (N,)
-                        org_basis_state     : Union[int, np.ndarray],
-                        ns                  : int
-                        ) -> np.complex128:
+def calculate_permanent(
+    sp_eigvecs: np.ndarray,  # U matrix (Ns x Norb)
+    occupied_orbitals: np.ndarray,  # Indices {\alpha_k}, shape (N,)
+    org_basis_state: Union[int, np.ndarray],
+    ns: int,
+) -> np.complex128:
     """
     Calculates the permanent using NumPy/Numba (via Ryser's formula).
 
@@ -638,13 +657,13 @@ def calculate_permanent(sp_eigvecs          : np.ndarray,   # U matrix (Ns x Nor
         np.complex128: The value of the permanent perm(M).
     """
     # --- Input processing and particle number check (Identical to Slater) ---
-    n_particles     = occupied_orbitals.shape[0]
+    n_particles = occupied_orbitals.shape[0]
     if isinstance(org_basis_state, (int, np.integer)):
-        occupied_modes      = np.empty(n_particles, dtype=np.int64)
-        n_particles_fock    = 0
-        idx_count           = 0
-        temp_basis          = int(org_basis_state)
-        
+        occupied_modes = np.empty(n_particles, dtype=np.int64)
+        n_particles_fock = 0
+        idx_count = 0
+        temp_basis = int(org_basis_state)
+
         for i in range(ns):
             if (temp_basis >> i) & 1:
                 n_particles_fock += 1
@@ -653,11 +672,15 @@ def calculate_permanent(sp_eigvecs          : np.ndarray,   # U matrix (Ns x Nor
                 idx_count += 1
     elif isinstance(org_basis_state, np.ndarray):
         if org_basis_state.ndim == 1 and org_basis_state.size == ns:
-            basis_state         = org_basis_state.astype(np.bool_) if org_basis_state.dtype != np.bool_ else org_basis_state
-            n_particles_fock    = np.sum(basis_state)
+            basis_state = (
+                org_basis_state.astype(np.bool_)
+                if org_basis_state.dtype != np.bool_
+                else org_basis_state
+            )
+            n_particles_fock = np.sum(basis_state)
             if n_particles_fock == n_particles:
                 occupied_modes = np.nonzero(basis_state)[0]
-        else: 
+        else:
             n_particles_fock = -1
     else:
         n_particles_fock = -1
@@ -672,26 +695,29 @@ def calculate_permanent(sp_eigvecs          : np.ndarray,   # U matrix (Ns x Nor
     for j in range(n_particles):
         site_j = occupied_modes[j]
         for k in range(n_particles):
-            orbital_k   = occupied_orbitals[k]
-            M[j, k]     = sp_eigvecs[site_j, orbital_k]
+            orbital_k = occupied_orbitals[k]
+            M[j, k] = sp_eigvecs[site_j, orbital_k]
 
     #! Calculate Permanent using Ryser's formula
     perm_val = _calculate_permanent_core_np(M)
     return perm_val
 
+
 #############################################################################
 #! Many body state through summation
 #############################################################################
 
+
 # @njit(cache=True, parallel=True)
-def _fill_batched_space(matrix_arg              : np.ndarray,            
-                        occupied_orbitals       : Optional[np.ndarray],
-                        calculator_func         : CallableCoefficient,   
-                        target_basis_states     : Array,
-                        target_basis_states_idx : Array,
-                        result_vector_slice     : Array,
-                        ns                      : int,                  
-                        ):
+def _fill_batched_space(
+    matrix_arg: np.ndarray,
+    occupied_orbitals: Optional[np.ndarray],
+    calculator_func: CallableCoefficient,
+    target_basis_states: Array,
+    target_basis_states_idx: Array,
+    result_vector_slice: Array,
+    ns: int,
+):
     """
     Numba-jitted loop to compute amplitudes for many-body state construction.
 
@@ -719,30 +745,33 @@ def _fill_batched_space(matrix_arg              : np.ndarray,
 
     if target_basis_states_idx and len(target_basis_states_idx) == len(target_basis_states):
         for i in prange(n_target_states):
-            basis_state_int                             = target_basis_states[i]
-            basis_state_int_idx                         = target_basis_states_idx[i]
+            basis_state_int = target_basis_states[i]
+            basis_state_int_idx = target_basis_states_idx[i]
             # Call the appropriate calculator function
             if occupied_orbitals is not None:
-                amplitude                               = calculator_func(matrix_arg, occupied_orbitals, basis_state_int, ns)
+                amplitude = calculator_func(matrix_arg, occupied_orbitals, basis_state_int, ns)
             else:
-                amplitude                               = calculator_func(matrix_arg, basis_state_int, ns)
-            result_vector_slice[basis_state_int_idx]    = amplitude
+                amplitude = calculator_func(matrix_arg, basis_state_int, ns)
+            result_vector_slice[basis_state_int_idx] = amplitude
     else:
         for i in prange(n_target_states):
-            basis_state_int                             = target_basis_states[i]
-            basis_state_int_idx                         = i
+            basis_state_int = target_basis_states[i]
+            basis_state_int_idx = i
             # Call the appropriate calculator function
             if occupied_orbitals is not None:
-                amplitude                               = calculator_func(matrix_arg, occupied_orbitals, basis_state_int, ns)
+                amplitude = calculator_func(matrix_arg, occupied_orbitals, basis_state_int, ns)
             else:
-                amplitude                               = calculator_func(matrix_arg, basis_state_int, ns)
-            result_vector_slice[basis_state_int_idx]    = amplitude
-        
-def many_body_state_mapping(matrix_arg          : Array,
-                            calculator_func     : CallableCoefficient,
-                            mapping_array       : Array,
-                            ns                  : int,
-                            dtype               = np.complex128) -> Array:
+                amplitude = calculator_func(matrix_arg, basis_state_int, ns)
+            result_vector_slice[basis_state_int_idx] = amplitude
+
+
+def many_body_state_mapping(
+    matrix_arg: Array,
+    calculator_func: CallableCoefficient,
+    mapping_array: Array,
+    ns: int,
+    dtype=np.complex128,
+) -> Array:
     r"""
     Given ``mapping_array[j] = bitstring of Hilbert basis state j``,
     return the coefficient vector ``\psi _j`` **in the same order** as
@@ -751,28 +780,31 @@ def many_body_state_mapping(matrix_arg          : Array,
     Suitable when a high-level Hilbert-space class already stores an
     enumeration different from lexicographic bit order.
     """
-    n_states     = mapping_array.shape[0]
-    result_vec   = np.empty(n_states, dtype=dtype)
+    n_states = mapping_array.shape[0]
+    result_vec = np.empty(n_states, dtype=dtype)
 
     # indices are 0…n_states-1, so we can reuse many_body_state_loop
-    _fill_batched_space(matrix_arg,
-                        None,  # occupied_orbitals
-                        calculator_func,
-                        mapping_array, # target_states
-                        None,
-                        result_vec, # slice = whole output
-                        ns)
+    _fill_batched_space(
+        matrix_arg,
+        None,  # occupied_orbitals
+        calculator_func,
+        mapping_array,  # target_states
+        None,
+        result_vec,  # slice = whole output
+        ns,
+    )
     return result_vec
+
 
 # ###########################################################################
 #! Full Hilbert-space version (loops over all integers)
 # ###########################################################################
 
+
 # @njit(cache=True, fastmath=True)
-def _fill_full_space(matrix_arg : Array,
-                    calculator  : Callable[[Array, int, int], complex],
-                    ns          : int,
-                    result      : Array) -> None:
+def _fill_full_space(
+    matrix_arg: Array, calculator: Callable[[Array, int, int], complex], ns: int, result: Array
+) -> None:
     """
     Fills the `result` array with values computed by the provided `calculator` function for each state in the Hilbert space.
 
@@ -787,14 +819,17 @@ def _fill_full_space(matrix_arg : Array,
     """
     nh = result.size
     for st in range(nh):
-        st          = np.int64(st)
-        result[st]  = calculator(matrix_arg, st, ns)
+        st = np.int64(st)
+        result[st] = calculator(matrix_arg, st, ns)
 
-def many_body_state_full(matrix_arg     : Array,
-                        calculator      : Callable[[Array, int, int], complex],
-                        ns              : int,
-                        resulting_s     : Optional[Array] = None,
-                        dtype           = np.complex128) -> Array:
+
+def many_body_state_full(
+    matrix_arg: Array,
+    calculator: Callable[[Array, int, int], complex],
+    ns: int,
+    resulting_s: Optional[Array] = None,
+    dtype=np.complex128,
+) -> Array:
     """
     Generates the full many-body quantum state vector for a system with `ns` sites.
 
@@ -821,19 +856,22 @@ def many_body_state_full(matrix_arg     : Array,
         The full many-body state vector as a 1D array of length 2**ns, with each entry representing
         the amplitude of a basis state in the computational basis.
     """
-    nh              = 1 << ns
+    nh = 1 << ns
     if resulting_s is not None:
         if resulting_s.size != nh:
             raise ValueError(f"resulting_s must be of size {nh}, but got {resulting_s.size}")
-        out         = resulting_s.astype(dtype, copy=False)
+        out = resulting_s.astype(dtype, copy=False)
     else:
-        out         = np.empty(nh, dtype=dtype)
-    
+        out = np.empty(nh, dtype=dtype)
+
     _fill_full_space(matrix_arg, calculator, ns, out)
     return out
 
-def many_body_state_closure(calculator_func: Callable[[Array, int, int], Union[float, complex]],
-                            matrix_arg: Optional[Array] = None) -> Callable[[int], Union[float, complex]]:
+
+def many_body_state_closure(
+    calculator_func: Callable[[Array, int, int], Union[float, complex]],
+    matrix_arg: Optional[Array] = None,
+) -> Callable[[int], Union[float, complex]]:
     """
     Creates a closure function that computes the amplitude for a given basis state.
 
@@ -846,23 +884,28 @@ def many_body_state_closure(calculator_func: Callable[[Array, int, int], Union[f
         Callable[[int], Union[float, complex]]:
             A function that takes a single integer argument (the state index) and returns the computed amplitude.
     """
-    
+
     if matrix_arg is not None:
         const = matrix_arg
+
         # @njit(inline='always')
         def closure(U: Array, state: int, ns: int):
             return calculator_func(U, const, state, ns)
+
         return closure
 
     # no extra constant
-    @njit(inline='always', cache=True)
+    @njit(inline="always", cache=True)
     def closure(U: Array, state: int, ns: int):
         return calculator_func(U, state, ns)
+
     return closure
+
 
 ############################################################################
 
-@numba.njit(cache=True, inline='always')
+
+@numba.njit(cache=True, inline="always")
 def nrg_particle_conserving(eigvals: np.ndarray, occ: np.ndarray) -> float:
     """
     Calculates the total energy for a particle-conserving system given eigenvalues and occupied states.
@@ -881,7 +924,8 @@ def nrg_particle_conserving(eigvals: np.ndarray, occ: np.ndarray) -> float:
         tot += eigvals[k]
     return tot
 
-@numba.njit(cache=True, inline='always')
+
+@numba.njit(cache=True, inline="always")
 def nrg_bdg(eigvals: np.ndarray, Ns: int, occ: np.ndarray) -> float:
     """
     Calculates the total energy contribution from selected Bogoliubov-de Gennes (BdG) eigenvalues.
@@ -901,38 +945,41 @@ def nrg_bdg(eigvals: np.ndarray, Ns: int, occ: np.ndarray) -> float:
     Returns:
         float: The total energy contribution from the specified occupied states.
     """
-    tot     = 0.0
-    mid     = Ns - 1           # last negative index
-    for i in occ:              # i = 0 … Ns-1   (positive branch)
+    tot = 0.0
+    mid = Ns - 1  # last negative index
+    for i in occ:  # i = 0 … Ns-1   (positive branch)
         tot += eigvals[mid + i + 1] - eigvals[mid - i]
     return tot
+
 
 ############################################################################
 #! Test function
 ############################################################################
 
+
 def test_many_body_states(seed: int = 12345) -> None:
     """
     Generates tiny (ns=4) random unitaries and verifies that
     our accelerated amplitudes match slow NumPy references.
-    
+
     The test includes:
     - Slater determinant amplitudes (core many-body amplitude routine)
     - Full many-body state generation (Hilbert space enumeration)
     - Amplitude normalization (particle number conservation)
     """
     np.random.seed(seed)
-    ns      = 4
-    nh      = 1 << ns
-        
+    ns = 4
+    nh = 1 << ns
+
     # --- Test 1: Slater Determinant Amplitudes with Random Unitary ---
-    X       = np.random.randn(ns, ns) + 1j*np.random.randn(ns, ns)
-    U, _    = np.linalg.qr(X)
-    occ_orb = np.array([0, 1]) # 2 particles, |1, 1, 0, 0> state
-    
+    X = np.random.randn(ns, ns) + 1j * np.random.randn(ns, ns)
+    U, _ = np.linalg.qr(X)
+    occ_orb = np.array([0, 1])  # 2 particles, |1, 1, 0, 0> state
+
     # 1) full state (Slater) using accelerated routine
-    psi_sd  = many_body_state_full(U,
-                lambda Um, st, ns_: calculate_slater_det(Um, occ_orb, st, ns_), ns)
+    psi_sd = many_body_state_full(
+        U, lambda Um, st, ns_: calculate_slater_det(Um, occ_orb, st, ns_), ns
+    )
     # 2) brute reference
     psi_ref = np.empty(nh, dtype=complex)
     for st in range(nh):
@@ -948,15 +995,19 @@ def test_many_body_states(seed: int = 12345) -> None:
     # Test 2: Full Hilbert space many-body state with different particle numbers
     for n_particles in [0, 1, 2, 3, 4]:
         occ_test = np.arange(n_particles)
-        psi_test = many_body_state_full(U,
-                    lambda Um, st, ns_: calculate_slater_det(Um, occ_test, st, ns_), ns)
+        psi_test = many_body_state_full(
+            U, lambda Um, st, ns_: calculate_slater_det(Um, occ_test, st, ns_), ns
+        )
         # Compute norm and check if non-zero (correct state generation)
-        norm_squared = np.sum(np.abs(psi_test)**2)
+        norm_squared = np.sum(np.abs(psi_test) ** 2)
         if n_particles <= ns:
             assert norm_squared > 0.0, f"State norm should be positive for n={n_particles}"
-        print(f"  (ok) Slater state for {n_particles} particles: norm = {np.sqrt(norm_squared):.4f}")
-    
+        print(
+            f"  (ok) Slater state for {n_particles} particles: norm = {np.sqrt(norm_squared):.4f}"
+        )
+
     print("(ok) All many-body state tests passed (Slater determinant core functionality)")
+
 
 if __name__ == "__main__":
     test_many_body_states()

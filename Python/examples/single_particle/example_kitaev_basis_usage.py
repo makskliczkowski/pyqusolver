@@ -17,22 +17,25 @@ Date: 2025-11-06
 """
 
 import numpy as np
-from QES.general_python.lattices import HoneycombLattice
-from QES.Algebra.Model.Noninteracting.Conserving.Majorana.kitaev_gamma_majorana import KitaevGammaMajorana
+
 from QES.Algebra.hilbert import HilbertSpace
+from QES.Algebra.Model.Noninteracting.Conserving.Majorana.kitaev_gamma_majorana import (
+    KitaevGammaMajorana,
+)
 from QES.general_python.common.flog import get_global_logger
+from QES.general_python.lattices import HoneycombLattice
 
 # ============================================================================
 # EXAMPLE 1: Basic usage (automatic basis inference)
 # ============================================================================
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("EXAMPLE 1: Basic usage with automatic basis inference")
-print("="*70)
+print("=" * 70)
 
 logger = get_global_logger()
 
 # Create lattice
-lat = HoneycombLattice(dim=2, lx=2, ly=2, bc='pbc')
+lat = HoneycombLattice(dim=2, lx=2, ly=2, bc="pbc")
 
 # Model parameters
 Kx, Ky, Kz = 1.0, 1.0, 1.0
@@ -43,9 +46,15 @@ hx, hy, hz = None, None, None  # No magnetic field
 # For quadratic systems with lattice: basis will be REAL (position space)
 model = KitaevGammaMajorana(
     lat,
-    k_x=Kx, k_y=Ky, k_z=Kz,
-    gamma_x=Gx, gamma_y=Gy, gamma_z=Gz,
-    h_x=hx, h_y=hy, h_z=hz,
+    k_x=Kx,
+    k_y=Ky,
+    k_z=Kz,
+    gamma_x=Gx,
+    gamma_y=Gy,
+    gamma_z=Gz,
+    h_x=hx,
+    h_y=hy,
+    h_z=hz,
     p_flip=0.0,
     p_zero=None,
     p_plus=None,
@@ -64,9 +73,9 @@ print(f"Diagonalization complete. Ground state energy: {model.eig_val[0]:.6f}")
 # ============================================================================
 # EXAMPLE 2: Explicit basis specification via HilbertSpace
 # ============================================================================
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("EXAMPLE 2: Explicit basis specification via HilbertSpace")
-print("="*70)
+print("=" * 70)
 
 # Create HilbertSpace with explicit basis (even though it will be overridden
 # for quadratic + lattice systems, you can do this)
@@ -74,7 +83,7 @@ hilbert_space = HilbertSpace(
     ns=lat.ns,
     lattice=lat,
     is_manybody=False,  # Quadratic system
-    basis="real",       # Explicit basis specification
+    basis="real",  # Explicit basis specification
 )
 
 print(f"HilbertSpace created with basis: {hilbert_space.get_basis()}")
@@ -83,14 +92,20 @@ print(f"HilbertSpace created with basis: {hilbert_space.get_basis()}")
 model2 = KitaevGammaMajorana(
     lat,
     hilbert_space=hilbert_space,  # Pass explicit HilbertSpace
-    k_x=Kx, k_y=Ky, k_z=Kz,
-    gamma_x=Gx, gamma_y=Gy, gamma_z=Gz,
-    h_x=hx, h_y=hy, h_z=hz,
+    k_x=Kx,
+    k_y=Ky,
+    k_z=Kz,
+    gamma_x=Gx,
+    gamma_y=Gy,
+    gamma_z=Gz,
+    h_x=hx,
+    h_y=hy,
+    h_z=hz,
     p_flip=0.0,
     logger=logger,
 )
 
-print(f"Model created with explicit HilbertSpace")
+print("Model created with explicit HilbertSpace")
 print(f"Hamiltonian inherited basis: {model2._current_basis}")
 
 # Build and diagonalize
@@ -101,14 +116,18 @@ print(f"Diagonalization complete. Ground state energy: {model2.eig_val[0]:.6f}")
 # ============================================================================
 # EXAMPLE 3: Real-space to k-space transformation
 # ============================================================================
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("EXAMPLE 3: Transform from real-space to k-space")
-print("="*70)
+print("=" * 70)
 
 model3 = KitaevGammaMajorana(
     lat,
-    k_x=Kx, k_y=Ky, k_z=Kz,
-    gamma_x=Gx, gamma_y=Gy, gamma_z=Gz,
+    k_x=Kx,
+    k_y=Ky,
+    k_z=Kz,
+    gamma_x=Gx,
+    gamma_y=Gy,
+    gamma_z=Gz,
     logger=logger,
 )
 
@@ -132,69 +151,75 @@ except Exception as e:
 # Diagonalize in k-space representation
 print("\nDiagonalizing in k-space representation...")
 model3.diagonalize()
-print(f"Diagonalization complete.")
+print("Diagonalization complete.")
 
 # ============================================================================
 # EXAMPLE 3B: Understanding k-space points
 # ============================================================================
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("EXAMPLE 3B: Understanding k-space grid points")
-print("="*70)
+print("=" * 70)
 
 if model3._transformed_grid is not None:
     k_grid = model3._transformed_grid
     print(f"K-space grid shape: {k_grid.shape}")
-    print(f"  Interpretation: ({k_grid.shape[0]}, {k_grid.shape[1]}, {k_grid.shape[2]}) lattice momentum points")
+    print(
+        f"  Interpretation: ({k_grid.shape[0]}, {k_grid.shape[1]}, {k_grid.shape[2]}) lattice momentum points"
+    )
     print(f"  Each point has 3D coordinates: {k_grid.shape[3]}")
-    
-    print(f"\nFirst few k-points:")
+
+    print("\nFirst few k-points:")
     for i in range(min(3, k_grid.shape[0])):
         for j in range(min(3, k_grid.shape[1])):
             k_vec = k_grid[i, j, 0]
             k_mag = np.linalg.norm(k_vec)
             print(f"  k[{i},{j}] = {k_vec} (|k| = {k_mag:.4f})")
-    
-    print(f"\nUnderstanding k-space points:")
-    print(f"  - Each point k represents a Bloch state in momentum space")
-    print(f"  - Computed from reciprocal lattice vectors (b1, b2, b3)")
-    print(f"  - For Lxtimes Lytimes Lz real-space cells: Lxtimes Lytimes Lz k-points in BZ")
-    print(f"  - H(k) is Nbtimes Nb matrix at each k-point (Nb = sublattices)")
-    print(f"  - Diagonalizing H(k) gives single-particle band structure")
+
+    print("\nUnderstanding k-space points:")
+    print("  - Each point k represents a Bloch state in momentum space")
+    print("  - Computed from reciprocal lattice vectors (b1, b2, b3)")
+    print("  - For Lxtimes Lytimes Lz real-space cells: Lxtimes Lytimes Lz k-points in BZ")
+    print("  - H(k) is Nbtimes Nb matrix at each k-point (Nb = sublattices)")
+    print("  - Diagonalizing H(k) gives single-particle band structure")
 
 # ============================================================================
 # EXAMPLE 4: Custom configuration (no random field)
 # ============================================================================
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("EXAMPLE 4: Custom configuration without random disorder")
-print("="*70)
+print("=" * 70)
 
 model4 = KitaevGammaMajorana(
     lat,
-    k_x=Kx, k_y=Ky, k_z=Kz,
-    gamma_x=Gx, gamma_y=Gy, gamma_z=Gz,
+    k_x=Kx,
+    k_y=Ky,
+    k_z=Kz,
+    gamma_x=Gx,
+    gamma_y=Gy,
+    gamma_z=Gz,
     h_x=None,  # No magnetic field
     h_y=None,
     h_z=None,
-    p_flip=0.0,      # No disorder in u field
-    p_zero=None,     # No random g field
+    p_flip=0.0,  # No disorder in u field
+    p_zero=None,  # No random g field
     p_plus=None,
     logger=logger,
 )
 
 model4.build()
 model4.diagonalize()
-print(f"Model built and diagonalized")
+print("Model built and diagonalized")
 print(f"Ground state energy: {model4.eig_val[0]:.6f}")
-print(f"First 5 energy levels:")
+print("First 5 energy levels:")
 for i in range(min(5, len(model4.eig_val))):
     print(f"  E[{i}] = {model4.eig_val[i]:.6f}")
 
 # ============================================================================
 # SUMMARY
 # ============================================================================
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("SUMMARY")
-print("="*70)
+print("=" * 70)
 print("""
 Key points about basis handling:
 

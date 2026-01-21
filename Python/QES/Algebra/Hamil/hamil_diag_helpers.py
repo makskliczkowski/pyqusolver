@@ -13,8 +13,8 @@ Date        : 2025-10-26
 -----------------------------------------------------------------------------------------
 """
 
-import numpy as np
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
@@ -24,17 +24,20 @@ if TYPE_CHECKING:
 #! Basis Transformation Utilities
 # ----------------------------------------------------------------------------------------
 
-def has_krylov_basis(diag_engine: Optional['DiagonalizationEngine'], krylov_stored: Optional[NDArray]) -> bool:
+
+def has_krylov_basis(
+    diag_engine: Optional["DiagonalizationEngine"], krylov_stored: Optional[NDArray]
+) -> bool:
     """
     Check if a Krylov basis is available.
-    
+
     Parameters:
     -----------
         diag_engine : DiagonalizationEngine or None
             The diagonalization engine instance
         krylov_stored : ndarray or None
             Stored Krylov basis matrix
-    
+
     Returns:
     --------
         bool : True if Krylov basis is available, False otherwise
@@ -43,17 +46,20 @@ def has_krylov_basis(diag_engine: Optional['DiagonalizationEngine'], krylov_stor
         return diag_engine.has_krylov_basis()
     return krylov_stored is not None
 
-def get_krylov_basis(diag_engine: Optional['DiagonalizationEngine'], krylov_stored: Optional[NDArray]) -> Optional[NDArray]:
+
+def get_krylov_basis(
+    diag_engine: Optional["DiagonalizationEngine"], krylov_stored: Optional[NDArray]
+) -> Optional[NDArray]:
     """
     Get the Krylov basis.
-    
+
     Parameters:
     -----------
         diag_engine : DiagonalizationEngine or None
             The diagonalization engine instance
         krylov_stored : ndarray or None
             Stored Krylov basis matrix
-    
+
     Returns:
     --------
         ndarray or None : Krylov basis matrix V (shape n x k)
@@ -62,12 +68,13 @@ def get_krylov_basis(diag_engine: Optional['DiagonalizationEngine'], krylov_stor
         return diag_engine.get_krylov_basis()
     return krylov_stored
 
-def to_original_basis(vec           : NDArray,
-                     diag_engine    : Optional['DiagonalizationEngine'],
-                     method_used    : Optional[str]) -> NDArray:
+
+def to_original_basis(
+    vec: NDArray, diag_engine: Optional["DiagonalizationEngine"], method_used: Optional[str]
+) -> NDArray:
     """
     Transform a vector from Krylov/computational basis to original basis.
-    
+
     Parameters:
     -----------
         vec : ndarray
@@ -76,7 +83,7 @@ def to_original_basis(vec           : NDArray,
             The diagonalization engine instance
         method_used : str or None
             Method that was used for diagonalization
-    
+
     Returns:
     --------
         ndarray : Vector(s) in original basis
@@ -86,40 +93,46 @@ def to_original_basis(vec           : NDArray,
         return vec
     return diag_engine.to_original_basis(vec)
 
-def to_krylov_basis(vec: NDArray, diag_engine: Optional['DiagonalizationEngine']) -> NDArray:
+
+def to_krylov_basis(vec: NDArray, diag_engine: Optional["DiagonalizationEngine"]) -> NDArray:
     """
     Transform a vector from original basis to Krylov/computational basis.
-    
+
     Parameters:
     -----------
         vec : ndarray
             Vector(s) in original basis
         diag_engine : DiagonalizationEngine or None
             The diagonalization engine instance
-    
+
     Returns:
     --------
         ndarray : Vector(s) in Krylov basis
-    
+
     Raises:
     -------
         ValueError : If no engine or Krylov basis available
     """
     if diag_engine is None:
-        raise ValueError("No diagonalization engine available. Run diagonalize() with an iterative method first.")
+        raise ValueError(
+            "No diagonalization engine available. Run diagonalize() with an iterative method first."
+        )
     return diag_engine.to_krylov_basis(vec)
 
-def get_basis_transform(diag_engine: Optional['DiagonalizationEngine'], krylov_stored: Optional[NDArray]) -> Optional[NDArray]:
+
+def get_basis_transform(
+    diag_engine: Optional["DiagonalizationEngine"], krylov_stored: Optional[NDArray]
+) -> Optional[NDArray]:
     """
     Get the transformation matrix from Krylov to original basis.
-    
+
     Parameters:
     -----------
         diag_engine : DiagonalizationEngine or None
             The diagonalization engine instance
         krylov_stored : ndarray or None
             Stored Krylov basis matrix
-    
+
     Returns:
     --------
         ndarray or None : Transformation matrix V (shape n x k)
@@ -128,19 +141,21 @@ def get_basis_transform(diag_engine: Optional['DiagonalizationEngine'], krylov_s
         return diag_engine.get_basis_transform()
     return krylov_stored
 
+
 # ----------------------------------------------------------------------------------------
 #! Diagnostic Information
 # ----------------------------------------------------------------------------------------
 
-def get_diagonalization_method(diag_engine: Optional['DiagonalizationEngine']) -> Optional[str]:
+
+def get_diagonalization_method(diag_engine: Optional["DiagonalizationEngine"]) -> Optional[str]:
     """
     Get the diagonalization method used.
-    
+
     Parameters:
     -----------
         diag_engine : DiagonalizationEngine or None
             The diagonalization engine instance
-    
+
     Returns:
     --------
         str or None : Method name or None if not yet diagonalized
@@ -149,12 +164,15 @@ def get_diagonalization_method(diag_engine: Optional['DiagonalizationEngine']) -
         return diag_engine.get_method_used()
     return None
 
-def get_diagonalization_info(diag_engine    : Optional['DiagonalizationEngine'],
-                            eig_val         : Optional[NDArray],
-                            krylov_stored   : Optional[NDArray]) -> Dict[str, Any]:
+
+def get_diagonalization_info(
+    diag_engine: Optional["DiagonalizationEngine"],
+    eig_val: Optional[NDArray],
+    krylov_stored: Optional[NDArray],
+) -> Dict[str, Any]:
     """
     Get detailed information about the last diagonalization.
-    
+
     Parameters:
     -----------
         diag_engine : DiagonalizationEngine or None
@@ -163,40 +181,42 @@ def get_diagonalization_info(diag_engine    : Optional['DiagonalizationEngine'],
             Stored eigenvalues
         krylov_stored : ndarray or None
             Stored Krylov basis
-    
+
     Returns:
     --------
         dict : Dictionary with diagnostic information
     """
     info = {
-        'method'            : None,
-        'converged'         : True,
-        'iterations'       : None,
-        'residual_norms'   : None,
-        'has_krylov_basis' : has_krylov_basis(diag_engine, krylov_stored),
-        'num_eigenvalues'  : len(eig_val) if eig_val is not None else 0
+        "method": None,
+        "converged": True,
+        "iterations": None,
+        "residual_norms": None,
+        "has_krylov_basis": has_krylov_basis(diag_engine, krylov_stored),
+        "num_eigenvalues": len(eig_val) if eig_val is not None else 0,
     }
-    
+
     if diag_engine is not None:
-        info['method'] = diag_engine.get_method_used()
-        info['converged'] = diag_engine.converged()
+        info["method"] = diag_engine.get_method_used()
+        info["converged"] = diag_engine.converged()
         result = diag_engine.get_result()
         if result is not None:
-            if hasattr(result, 'iterations'):
-                info['iterations'] = result.iterations
-            if hasattr(result, 'residual_norms'):
-                info['residual_norms'] = result.residual_norms
-    
+            if hasattr(result, "iterations"):
+                info["iterations"] = result.iterations
+            if hasattr(result, "residual_norms"):
+                info["residual_norms"] = result.residual_norms
+
     return info
+
 
 # ----------------------------------------------------------------------------------------
 #! Validation and Utilities
 # ----------------------------------------------------------------------------------------
 
+
 def validate_diagonalization_params(method: str, k: Optional[int], n: int) -> None:
     """
     Validate diagonalization parameters.
-    
+
     Parameters:
     -----------
         method : str
@@ -205,12 +225,12 @@ def validate_diagonalization_params(method: str, k: Optional[int], n: int) -> No
             Number of eigenvalues to compute
         n : int
             Matrix dimension
-    
+
     Raises:
     -------
         ValueError : If parameters are invalid
     """
-    if method in ['lanczos', 'arnoldi', 'block_lanczos', 'shift-invert']:
+    if method in ["lanczos", "arnoldi", "block_lanczos", "shift-invert"]:
         if k is None:
             raise ValueError(f"Method '{method}' requires specifying k (number of eigenvalues)")
         if k >= n:
@@ -218,13 +238,13 @@ def validate_diagonalization_params(method: str, k: Optional[int], n: int) -> No
         if k < 1:
             raise ValueError(f"k must be at least 1, got {k}")
 
-def suggest_diagonalization_method(n        : int,
-                                  k         : Optional[int],
-                                  is_sparse : bool,
-                                  hermitian : bool) -> str:
+
+def suggest_diagonalization_method(
+    n: int, k: Optional[int], is_sparse: bool, hermitian: bool
+) -> str:
     """
     Suggest an appropriate diagonalization method based on problem characteristics.
-    
+
     Parameters:
     -----------
         n : int
@@ -235,34 +255,35 @@ def suggest_diagonalization_method(n        : int,
             Whether matrix is sparse
         hermitian : bool
             Whether matrix is symmetric/Hermitian
-    
+
     Returns:
     --------
         str : Suggested method name
     """
-    
+
     # Small matrices: exact
     if n <= 500:
-        return 'exact'
-    
+        return "exact"
+
     # Large non-symmetric: arnoldi
     if not hermitian:
-        return 'arnoldi'
-    
+        return "arnoldi"
+
     # Large sparse symmetric
     if k is None or k > n * 0.5:
         # Need most eigenvalues
         if is_sparse and n > 1000:
-            return 'block_lanczos'
-        return 'exact'
-    
+            return "block_lanczos"
+        return "exact"
+
     # Few eigenvalues
     if k == 1:
-        return 'lanczos'
+        return "lanczos"
     elif k >= 10 or n > 5000:
-        return 'block_lanczos'
+        return "block_lanczos"
     else:
-        return 'lanczos'
+        return "lanczos"
+
 
 # ----------------------------------------------------------------------------------------
 #! EOF

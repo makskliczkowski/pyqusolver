@@ -1,7 +1,9 @@
 """
 Help module for NQS.
 """
+
 from QES.general_python.ml.networks import NetworkFactory
+
 
 def nqs_help(self, topic: str = "general"):
     """
@@ -28,9 +30,9 @@ def nqs_help(self, topic: str = "general"):
         - 'checkpoints':
             Saving and loading model weights and checkpoints.
     """
-    topic   = topic.lower().strip()
-    msg     = ""
-    border  = "-" * 60
+    topic = topic.lower().strip()
+    msg = ""
+    border = "-" * 60
 
     if topic == "general":
         msg = f"""
@@ -218,8 +220,8 @@ def nqs_help(self, topic: str = "general"):
     elif topic == "network":
         info = NetworkFactory.net_help()
         if self._net is not None:
-            net_type    = self._net.name if hasattr(self._net, 'name') else type(self._net).__name__
-            msg         = f"""
+            net_type = self._net.name if hasattr(self._net, "name") else type(self._net).__name__
+            msg = f"""
                         {border}
                         NQS Solver Help: Network Details
                         {border}
@@ -229,7 +231,7 @@ def nqs_help(self, topic: str = "general"):
                         """
     elif topic == "networks":
         info = NetworkFactory.net_help()
-        msg  = f"""
+        msg = f"""
             {border}
             NQS Solver Help: Available Networks
             {border}

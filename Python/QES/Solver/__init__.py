@@ -20,7 +20,7 @@ Email   : maksymilian.kliczkowski@pwr.edu.pl
 
 from .solver import Solver
 
-__all__ = ['Solver']
+__all__ = ["Solver"]
 
 # A short, user-facing description used by QES.registry
 MODULE_DESCRIPTION = "Core solver interfaces and Monte Carlo-based solvers."
