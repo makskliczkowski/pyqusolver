@@ -412,7 +412,6 @@ class NQS(MonteCarloSolver):
                         seed        =   seed,
                         **kwargs
                     )
-            print(self._net)
             
         except Exception as e:
             raise ValueError(f"Failed to initialize network. Check the network type and parameters.\nOriginal error: {e}")

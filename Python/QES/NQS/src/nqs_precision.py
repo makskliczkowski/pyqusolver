@@ -137,6 +137,8 @@ def resolve_precision_policy(net_dtype, *, is_jax: bool, **kwargs) -> NQSPrecisi
 
 
 def cast_for_precision(array, real_dtype, complex_dtype, use_jax: bool):
+    if hasattr(array, "compute_weighted_sum"):
+        return array
     if real_dtype is None and complex_dtype is None:
         return array
     if use_jax:
