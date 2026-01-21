@@ -1510,7 +1510,7 @@ class Hamiltonian(BasisAwareOperator):
         
         if self._loc_energy_int_fun is None:
             self._log("Integer local energy function not available.", lvl=3, color="red", log='error')
-            return
+            # return
             
         # Set the NumPy functions
         try:

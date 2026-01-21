@@ -35,10 +35,11 @@ from    functools   import partial
 from    enum        import Enum
 
 try:
-    from .sampler   import (Sampler, SamplerErrors, SolverInitState)
-    from .updates   import (propose_local_flip, propose_local_flip_np, make_hybrid_proposer, propose_multi_flip)
+    from .sampler       import (Sampler, SamplerErrors, SolverInitState)
+    from .updates       import (propose_local_flip, propose_local_flip_np, make_hybrid_proposer, propose_multi_flip)
+    from .diagnostics   import (compute_autocorr_time, compute_ess, compute_rhat)
 except ImportError as e:
-    raise ImportError("Failed to import Sampler/Updates from MonteCarlo module.") from e
+    raise ImportError("Failed to import Sampler/Updates/Diagnostics from MonteCarlo module.") from e
 
 # flax for the network
 try:
@@ -363,6 +364,7 @@ class VMCSampler(Sampler):
         # -----------------------------------------------------------------
         # Static sampler function (standard or PT)
         # -----------------------------------------------------------------
+        self._jit_cache                         = {}    # Cache for JIT-compiled samplers
         self._static_sample_fun                 = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
         self._static_pt_sampler                 = None  # Lazily created on first PT sample call
         self._name                              = "VMC"
@@ -411,6 +413,7 @@ class VMCSampler(Sampler):
         # Invalidate cached static samplers to force recompilation with new chain count
         self._static_sample_fun = None
         self._static_pt_sampler = None
+        self._jit_cache         = {}
 
     def __repr__(self):
         """
@@ -663,6 +666,7 @@ class VMCSampler(Sampler):
         # Invalidate cache
         self._static_sample_fun = None
         self._static_pt_sampler = None
+        self._jit_cache         = {}
 
     def set_global_update(self, p_global: float, global_fraction: float = 0.5):
         """
@@ -1916,6 +1920,69 @@ class VMCSampler(Sampler):
         '''
         return self._sweep_steps
     
+    def diagnose(self, samples: Optional[Union[np.ndarray, Any]] = None) -> dict:
+        """
+        Compute diagnostic metrics for the sampler based on provided samples.
+
+        Parameters:
+            samples (Array):
+                Log-probabilities (or any scalar observable) of collected samples.
+                Can be 1D (flattened) or 2D (num_chains, num_samples).
+                If 1D, it is reshaped using self.numchains.
+
+        Returns:
+            dict: Dictionary containing 'ess', 'r_hat', 'tau', and 'acceptance_rate'.
+        """
+        metrics = {
+            'acceptance_rate': float(np.mean(np.array(self.accepted_ratio)))
+        }
+
+        if samples is None:
+            return metrics
+
+        # Ensure we have numpy array for diagnostics
+        if JAX_AVAILABLE and isinstance(samples, jax.Array):
+            samples_np = np.array(samples)
+        else:
+            samples_np = np.array(samples)
+
+        # Handle complex numbers (use real part of log-psi)
+        if np.iscomplexobj(samples_np):
+            samples_np = np.real(samples_np)
+
+        # Reshape to (n_chains, n_samples)
+        if samples_np.ndim == 1:
+            n_chains = self.numchains
+            n_total = samples_np.shape[0]
+            if n_total % n_chains != 0:
+                metrics['error'] = "Sample count not divisible by num_chains"
+                return metrics
+            n_samples = n_total // n_chains
+            chains = samples_np.reshape((n_chains, n_samples))
+        else:
+            chains = samples_np
+
+        # Compute diagnostics
+        # 1. R-hat
+        metrics['r_hat'] = float(compute_rhat(chains))
+
+        # 2. Autocorrelation time (average over chains)
+        # We compute tau for each chain and average
+        taus = []
+        for c in chains:
+            taus.append(compute_autocorr_time(c))
+        avg_tau = np.mean(taus)
+        metrics['tau'] = float(avg_tau)
+
+        # 3. ESS
+        # ESS = N_total / tau
+        # (Or sum of ESS per chain)
+        # ESS_total = sum(N / tau_i)
+        ess_total = np.sum([len(c) / t for c, t in zip(chains, taus)])
+        metrics['ess'] = float(ess_total)
+
+        return metrics
+
     def get_pt_betas(self):
         '''
         Get the Parallel Tempering betas.
@@ -2225,12 +2292,25 @@ class VMCSampler(Sampler):
             RuntimeError: If the backend is neither 'jax' nor 'numpy'.
         """
         
+        # Check cache
+        cache_key = (num_samples if num_samples is not None else self._numsamples,
+                     num_chains if num_chains is not None else self._numchains,
+                     self._isjax)
+
+        if hasattr(self, '_jit_cache') and cache_key in self._jit_cache:
+            return self._jit_cache[cache_key]
+
         if self._isjax:
-            return self._get_sampler_jax(num_samples, num_chains)
+            sampler = self._get_sampler_jax(num_samples, num_chains)
         elif not self._isjax:
-            return self._get_sampler_np(num_samples, num_chains)
+            sampler = self._get_sampler_np(num_samples, num_chains)
         else:
             raise RuntimeError("Sampler backend must be either 'jax' or 'numpy'.")
+
+        if hasattr(self, '_jit_cache'):
+            self._jit_cache[cache_key] = sampler
+
+        return sampler
 
         # Calculate actual batch size generated
         total_batch = config['s_numchains'] * config['s_numsamples']
@@ -2279,6 +2359,7 @@ class VMCSampler(Sampler):
         # Invalidate cache
         self._static_sample_fun = None
         self._static_pt_sampler = None
+        self._jit_cache         = {}
 
 #########################################
 #! EOF

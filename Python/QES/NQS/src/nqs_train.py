@@ -50,6 +50,7 @@ except ImportError:
 try:
     from QES.NQS.nqs                            import NQS, VMCSampler
     from QES.NQS.src.tdvp                       import TDVP, TDVPLowerPenalty
+    from QES.NQS.src.auto_tuner                 import TDVPAutoTuner, AutoTunerConfig
     # solvers
     from QES.general_python.algebra.ode         import choose_ode, IVP
     from QES.general_python.algebra.solvers     import SolverType, SolverForm, choose_solver, choose_precond
@@ -318,6 +319,11 @@ class NQSTrainer:
                 lin_is_gram     : bool                  = True,                     # Is Gram matrix solver [(S^dagger S) x = b]
                 lin_type        : SolverForm           = SolverForm.GRAM,           # Solver form (gram, matvec, matrix)
                 # --------------------------------------------------------------
+                # Auto-Tuner
+                # --------------------------------------------------------------
+                auto_tune       : bool                  = False,                    # Enable adaptive auto-tuner
+                auto_tuner      : Optional[Any]         = None,                     # Custom auto-tuner instance
+                # --------------------------------------------------------------
                 # TDVP arguments, if TDVP is created internally
                 # --------------------------------------------------------------
                 use_sr          : bool                  = True,                     # Whether to use SR
@@ -506,7 +512,7 @@ class NQSTrainer:
                 self._log(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color='green')
             except KeyError:
                 raise ValueError(self._ERR_INVALID_TIMING_MODE)
-            self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
+        self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
 
         # Setup Schedulers (The Integrated Part)
         self._init_reg, self._init_lr, self._init_diag = reg, lr, diag_shift
@@ -607,6 +613,12 @@ class NQSTrainer:
                     
         # State
         self.stats              = NQSTrainStats()
+
+        # Setup Auto-Tuner
+        self.auto_tuner = auto_tuner
+        if auto_tune and self.auto_tuner is None:
+            self.auto_tuner = TDVPAutoTuner(logger=self.logger)
+            self._log("TDVP Auto-Tuner enabled.", lvl=1, color='cyan', verbose=self.verbose)
 
     # ------------------------------------------------------
     #! Private Helpers
@@ -1016,7 +1028,12 @@ class NQSTrainer:
                 # Sampling (Timed)
                 # Returns: ((keys), (configs, ansatz_vals), probs)
                 # Note: reset=(epoch==0) resets sampler only at start of this train() call
-                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(global_epoch==0), epoch=global_epoch, num_samples=num_samples, num_chains=num_chains)
+                # If auto-tuner active, it might request more samples
+                current_num_samples = num_samples
+                if self.auto_tuner:
+                    current_num_samples = self.auto_tuner.n_samples
+
+                sample_out                      = self._timed_execute("sample", self.nqs.sample, reset=(global_epoch==0), epoch=global_epoch, num_samples=current_num_samples, num_chains=num_chains)
                 (_, _), (cfgs, cfgs_psi), probs = sample_out
                 if epoch == 0:                  self._log(f"Sampled {cfgs.shape[0]} configurations with batch size {self.n_batch}", lvl=1, color='green', verbose=self.verbose)
                 
@@ -1049,8 +1066,30 @@ class NQSTrainer:
                 mean_loss                               = tdvp_info.mean_energy
                 std_loss                                = tdvp_info.std_energy
 
-                # Update Weights (Timed)
-                self._timed_execute("update", self.nqs.set_params, dparams, shapes=shapes_info[0], sizes=shapes_info[1], iscpx=shapes_info[2], epoch=global_epoch)
+                # Auto-Tuner: Update Logic
+                accepted = True
+                if self.auto_tuner:
+                    diagnostics = self.nqs.sampler.diagnose(cfgs_psi)
+                    new_params, accepted, warnings = self.auto_tuner.update(tdvp_info, diagnostics, np.real(mean_loss))
+
+                    if warnings:
+                        for w in warnings:
+                            self._log(f"AutoTuner: {w}", lvl=2, color='yellow', verbose=self.verbose)
+
+                    # Apply new parameters
+                    # 1. LR -> ODE dt
+                    self.ode_solver.set_dt(new_params['lr'])
+                    # 2. Diag Shift -> TDVP
+                    self.tdvp.set_diag_shift(new_params['diag_shift'])
+                    # 3. N Samples -> Next iteration
+                    # (Handled at start of loop)
+
+                    if not accepted:
+                        self._log("AutoTuner rejected step. Skipping parameter update.", lvl=1, color='red', verbose=self.verbose)
+
+                # Update Weights (Timed) - Only if accepted
+                if accepted:
+                    self._timed_execute("update", self.nqs.set_params, dparams, shapes=shapes_info[0], sizes=shapes_info[1], iscpx=shapes_info[2], epoch=global_epoch)
 
                 # Global Phase Integration
                 # Extract theta0_dot from JIT output and update TDVP state
