@@ -12,24 +12,29 @@ Date        : 2025-10-26
 ---------------------------------------------------
 """
 
-import  numpy as np
-from    collections import defaultdict
-from    itertools   import product
-from    typing      import Tuple, Optional, Mapping, Dict, List, Union
-from    numba       import njit
+from collections import defaultdict
+from itertools import product
+from typing import Dict, List, Mapping, Optional, Tuple, Union
+
+import numpy as np
+from numba import njit
 
 # -------------------------------------------------
 
 try:
-    from QES.general_python.lattices.lattice import Lattice
-    from QES.general_python.lattices.lattice import LatticeDirection
+    from QES.general_python.lattices.lattice import Lattice, LatticeDirection
 except ImportError:
     LatticeDirection = None  # type: ignore
 
 # -------------------------------------------------
 
 try:
-    from QES.Algebra.Symmetries.base import SymmetryOperator, SymmetryClass, MomentumSector, SymmetryApplicationCodes
+    from QES.Algebra.Symmetries.base import (
+        MomentumSector,
+        SymmetryApplicationCodes,
+        SymmetryClass,
+        SymmetryOperator,
+    )
 except ImportError:
     raise ImportError("Could not import base symmetry classes from QES.Algebra.Symmetries.base")
 
@@ -37,11 +42,14 @@ except ImportError:
 # JIT-compiled translation application
 ####################################################################################################
 
+
 @njit(cache=True, fastmath=True)
-def _apply_translation_prim(state: np.int64, ns: np.int64, perm: np.ndarray, crossing_mask: np.ndarray) -> tuple[np.int64, np.int64]:
-    ''' 
-    Apply translation to integer state, return (new_state, occ_cross) 
-    
+def _apply_translation_prim(
+    state: np.int64, ns: np.int64, perm: np.ndarray, crossing_mask: np.ndarray
+) -> tuple[np.int64, np.int64]:
+    """
+    Apply translation to integer state, return (new_state, occ_cross)
+
     Parameters
     ----------
     state : np.int64
@@ -58,16 +66,16 @@ def _apply_translation_prim(state: np.int64, ns: np.int64, perm: np.ndarray, cro
         The integer representation of the translated basis state.
     occ_cross : np.int64
         Number of occupied sites crossing the boundary during translation.
-    '''
-    
+    """
+
     # Initialize new state
     new_state = np.int64(0)
 
     for src in range(ns):
         # Check if site `src` is occupied in `state`
         if (state >> src) & 1:
-            dest        = perm[src]
-            new_state  |= np.int64(1) << dest
+            dest = perm[src]
+            new_state |= np.int64(1) << dest
 
     occ_cross = np.int64(0)
     for src in range(ns):
@@ -76,30 +84,32 @@ def _apply_translation_prim(state: np.int64, ns: np.int64, perm: np.ndarray, cro
 
     return new_state, occ_cross
 
+
 ####################################################################################################
 # Translation symmetry operator class
 ####################################################################################################
 
+
 class TranslationSymmetry(SymmetryOperator):
     """
     Discrete translation symmetry for periodic lattice systems.
-    
+
     Physical Context
     ----------------
     Applies to periodic boundary condition systems with discrete lattice structure:
     - 1D: Spin chains etc.
     - 2D: Square/triangular/honeycomb lattices
     - 3D: Simple cubic
-    
+
     Quantum numbers: Crystal momentum k = 2*pi*n/L (Bloch theorem)
     - k=0                       : Gamma point, fully symmetric sector
     - k=pi                      : Zone boundary (L even), alternating sign
     - Generic k                 : Complex phases, reduced symmetry
-    
+
     Examples:
     - Heisenberg chain L=12     : k = 0, pi/6, pi/3, pi/2, ..., pi
     - 2D square lattice         : k_x, k_y independent quantum numbers
-    
+
     Commutation Rules
     -----------------
     Always commutes with:
@@ -107,20 +117,20 @@ class TranslationSymmetry(SymmetryOperator):
     - U1_PARTICLE, U1_SPIN      : Conserved quantities independent of momentum
     - PARITY                    : Global spin flips commute with spatial translations
     - INVERSION                 : [T, P] = 0 for discrete translations
-    
+
     Conditionally commutes with (momentum-dependent):
         - REFLECTION: Only at k=0, pi due to sigma * T * sigma^(-1) = T^(-1)
             - At k != 0, pi     : e^(ikr) != e^(-ikr)   -> symmetries incompatible
             - At k=0            : e^(i*0*r) = 1         -> compatible
             - At k=pi           : e^(i*pi*r) = (-1)^r   -> compatible for integer shifts
-    
+
     Does NOT commute with:
         - REFLECTION at generic k (broken inversion symmetry in k-space)
     """
-    
-    code                    = SymmetryApplicationCodes.OP_TRANSLATION
-    symmetry_class          = SymmetryClass.TRANSLATION
-    compatible_with         = {
+
+    code = SymmetryApplicationCodes.OP_TRANSLATION
+    symmetry_class = SymmetryClass.TRANSLATION
+    compatible_with = {
         SymmetryClass.TRANSLATION,
         SymmetryClass.U1_PARTICLE,
         SymmetryClass.U1_SPIN,
@@ -128,36 +138,36 @@ class TranslationSymmetry(SymmetryOperator):
         SymmetryClass.INVERSION,
         SymmetryClass.POINT_GROUP,
     }
-    momentum_dependent      = {
-        MomentumSector.ZERO : {SymmetryClass.REFLECTION},
-        MomentumSector.PI   : {SymmetryClass.REFLECTION},
+    momentum_dependent = {
+        MomentumSector.ZERO: {SymmetryClass.REFLECTION},
+        MomentumSector.PI: {SymmetryClass.REFLECTION},
     }
-    
+
     # Translation is universal - works for all local space types
-    supported_local_spaces  = set() # Empty = universal
-    
+    supported_local_spaces = set()  # Empty = universal
+
     ####################################################################################################
     # Sector enumeration
     ####################################################################################################
-    
+
     @staticmethod
-    def get_sectors(lattice: 'Lattice', direction: str = 'x') -> range:
+    def get_sectors(lattice: "Lattice", direction: str = "x") -> range:
         """
         Return the valid momentum sector indices for a given lattice and direction.
-        
+
         Parameters
         ----------
         lattice : Lattice
             Lattice structure with lx, ly, lz attributes.
         direction : str, default='x'
             Translation direction ('x', 'y', or 'z').
-            
+
         Returns
         -------
         range
             Valid momentum indices: range(0, L) where L is the extent in the given direction.
             Momentum k = 2*pi*n/L for each index n in the range.
-            
+
         Examples
         --------
         >>> lattice = SquareLattice(dim=1, lx=8, bc=LatticeBC.PBC)
@@ -165,31 +175,32 @@ class TranslationSymmetry(SymmetryOperator):
         range(0, 8)  # k = 0, pi/4, pi/2, 3pi/4, pi, 5pi/4, 3pi/2, 7pi/4
         """
         direction = direction.lower().strip()
-        if direction == 'x':
-            L = getattr(lattice, 'lx', None) or getattr(lattice, 'Lx', 1)
-        elif direction == 'y':
-            L = getattr(lattice, 'ly', None) or getattr(lattice, 'Ly', 1)
-        elif direction == 'z':
-            L = getattr(lattice, 'lz', None) or getattr(lattice, 'Lz', 1)
+        if direction == "x":
+            L = getattr(lattice, "lx", None) or getattr(lattice, "Lx", 1)
+        elif direction == "y":
+            L = getattr(lattice, "ly", None) or getattr(lattice, "Ly", 1)
+        elif direction == "z":
+            L = getattr(lattice, "lz", None) or getattr(lattice, "Lz", 1)
         else:
             raise ValueError(f"Unknown direction '{direction}'. Use 'x', 'y', or 'z'.")
         return range(max(1, L))
-    
+
     ####################################################################################################
     # INIT
     ####################################################################################################
-    
-    def __init__(self, 
-                lattice             : 'Lattice', 
-                sector              : int,
-                ns                  : int,
-                direction           : str           = 'x',
-                local_hspace_size   : Optional[int] = 2
-                ):
-        '''
+
+    def __init__(
+        self,
+        lattice: "Lattice",
+        sector: int,
+        ns: int,
+        direction: str = "x",
+        local_hspace_size: Optional[int] = 2,
+    ):
+        """
         Initialize the translation symmetry operator.
         Translates states along the specified lattice direction.
-        
+
         Parameters
         ----------
         lattice : Lattice
@@ -210,7 +221,7 @@ class TranslationSymmetry(SymmetryOperator):
             b) for spin-1 systems, local_hspace_size=3 (ternary representation):
                 - state T^1 b'1020' -> b'2010' (shift right by 1 in base 3)
                 - Here, we need to convert the integer state to base 3, perform the shift, and convert back.
-                - This requires more complex logic than binary shifts. 
+                - This requires more complex logic than binary shifts.
                 TODO: Implement base-N translation logic if needed.
             c) for fermionic systems, we can represent the state as |fermions_down|fermions_up> in binary,
                 - local_hspace_size=4 (4 states per site: empty, up, down, both)
@@ -220,56 +231,56 @@ class TranslationSymmetry(SymmetryOperator):
                 - Here, we need to convert the integer state to binary, perform the shift, and convert back.
                 TODO: Implement fermionic translation logic if needed.
 
-        '''
+        """
 
         if lattice is None:
             raise ValueError("TranslationSymmetry requires a lattice instance.")
-        
+
         # Map string direction to LatticeDirection enum. Support an optional
         # sign prefix on the string to indicate translation direction.
         # Examples: 'x' -> +1 shift along X, '-x' -> -1 shift along X.
-        direction_map   = {'x': LatticeDirection.X, 'y': LatticeDirection.Y, 'z': LatticeDirection.Z}
-        self.shift      = 1
-        
+        direction_map = {"x": LatticeDirection.X, "y": LatticeDirection.Y, "z": LatticeDirection.Z}
+        self.shift = 1
+
         if isinstance(direction, str):
             # allow an optional leading '+' or '-' to indicate direction
             dir_str = direction.strip()
-            
-            if dir_str.startswith(('+', '-')) and len(dir_str) > 1:
-                self.shift  = -1 if dir_str[0] == '-' else 1
-                dir_str     = dir_str[1:]
-                
+
+            if dir_str.startswith(("+", "-")) and len(dir_str) > 1:
+                self.shift = -1 if dir_str[0] == "-" else 1
+                dir_str = dir_str[1:]
+
             direction = direction_map.get(dir_str.lower(), LatticeDirection.X)
-        
-        self.lattice                    = lattice
-        self.dimension                  = lattice.dim
-        self.direction                  = direction
-        self.sector                     = sector
-        self.momentum_index             = sector  # Alias for backward compatibility
-        self.ns                         = ns
-        self.local_hspace_size          = local_hspace_size
-        self.perm, self.crossing_mask   = self._compute_translation_data()
-        
+
+        self.lattice = lattice
+        self.dimension = lattice.dim
+        self.direction = direction
+        self.sector = sector
+        self.momentum_index = sector  # Alias for backward compatibility
+        self.ns = ns
+        self.local_hspace_size = local_hspace_size
+        self.perm, self.crossing_mask = self._compute_translation_data()
+
     # -----------------------------------------------------
     #! Obtain momentum sector
     # -----------------------------------------------------
-    
+
     def get_momentum_sector(self) -> Optional[MomentumSector]:
         """Determine the momentum sector from the momentum index."""
-        
+
         if self.momentum_index is None:
             return None
-        
+
         extent_map = {
-            LatticeDirection.X: getattr(self.lattice, 'lx', getattr(self.lattice, 'Lx', None)),
-            LatticeDirection.Y: getattr(self.lattice, 'ly', getattr(self.lattice, 'Ly', None)),
-            LatticeDirection.Z: getattr(self.lattice, 'lz', getattr(self.lattice, 'Lz', None)),
+            LatticeDirection.X: getattr(self.lattice, "lx", getattr(self.lattice, "Lx", None)),
+            LatticeDirection.Y: getattr(self.lattice, "ly", getattr(self.lattice, "Ly", None)),
+            LatticeDirection.Z: getattr(self.lattice, "lz", getattr(self.lattice, "Lz", None)),
         }
-        
+
         extent = extent_map.get(self.direction)
         if extent is None or extent <= 0:
             return None
-        
+
         # k = 2\pi * momentum_index / extent
         # k=0 when momentum_index=0, k=\pi when momentum_index=extent//2
         # Example:
@@ -286,14 +297,14 @@ class TranslationSymmetry(SymmetryOperator):
         #   momentum_index_y=1 -> ky=2pi/3
         #   momentum_index_y=2 -> ky=4pi/3
         # regardless of the nodes per unit cell (this is handled in the lattice definition)
-        
+
         if self.momentum_index == 0:
             return MomentumSector.ZERO
         elif extent % 2 == 0 and self.momentum_index == extent // 2:
             return MomentumSector.PI
         else:
             return MomentumSector.GENERIC
-    
+
     # -----------------------------------------------------
     #! Translation data computation
     # -----------------------------------------------------
@@ -302,14 +313,14 @@ class TranslationSymmetry(SymmetryOperator):
         """
         Pre-compute permutation and crossing mask for translation in the given direction.
         Returns (perm, crossing_mask)
-        
+
         This helps optimize the application of the translation operator
         to integer states by precomputing how each site maps under translation.
-        
+
         -----------------------------------------
         CRITICAL: For non-Bravais lattices (multiple sites per unit cell), translation
         must act on UNIT CELLS, not individual sites. This preserves sublattice structure.
-        
+
         Example: Honeycomb lattice (2 sites per unit cell)
         - Sites: 0(A), 1(B), 2(A), 3(B), 4(A), 5(B) for Lx=3
         - Translation T^1 should map:
@@ -327,64 +338,66 @@ class TranslationSymmetry(SymmetryOperator):
         crossing_mask : np.ndarray
             Boolean array indicating which sites cross the boundary during translation.
         """
-        lat             = self.lattice
-        direction       = self.direction
-        axis_map        = {
-                            LatticeDirection.X: 0,
-                            LatticeDirection.Y: 1,
-                            LatticeDirection.Z: 2,
-                        }
+        lat = self.lattice
+        direction = self.direction
+        axis_map = {
+            LatticeDirection.X: 0,
+            LatticeDirection.Y: 1,
+            LatticeDirection.Z: 2,
+        }
         # Determine the axis index for the given direction
-        axis            = axis_map[direction]
-        dims            = (lat.lx, lat.ly if lat.dim > 1 else 1, lat.lz if lat.dim > 2 else 1)
-        size_axis       = dims[axis]
-        ns              = getattr(lat, 'Ns', None) or getattr(lat, 'ns', None) or getattr(lat, 'sites', None)
-        
+        axis = axis_map[direction]
+        dims = (lat.lx, lat.ly if lat.dim > 1 else 1, lat.lz if lat.dim > 2 else 1)
+        size_axis = dims[axis]
+        ns = getattr(lat, "Ns", None) or getattr(lat, "ns", None) or getattr(lat, "sites", None)
+
         # Detect if this is a non-Bravais lattice (multiple sites per unit cell)
-        n_basis         = len(getattr(lat, '_basis', [np.array([0., 0., 0.])]))
-        is_non_bravais  = n_basis > 1
-        
-        perm            = np.empty(ns, dtype=np.int64)      # permutation array
-        crossing_mask   = np.zeros(ns, dtype=bool)          # do we cross the boundary when translating this site?
-        
+        n_basis = len(getattr(lat, "_basis", [np.array([0.0, 0.0, 0.0])]))
+        is_non_bravais = n_basis > 1
+
+        perm = np.empty(ns, dtype=np.int64)  # permutation array
+        crossing_mask = np.zeros(
+            ns, dtype=bool
+        )  # do we cross the boundary when translating this site?
+
         if is_non_bravais:
             # NON-BRAVAIS LATTICE: Translate unit cells, preserve sublattice
             # Site indexing: site   = cell * n_basis + sublattice (this is how we map sites to unit cells)
             # where cell            = nx + ny*Lx + nz*Lx*Ly       (this is convention - we stick to it)
-            
+
             for site in range(ns):
                 # Decompose site into cell and sublattice
-                cell                = site // n_basis                       # Unit cell index
-                sublattice          = site % n_basis                        # Sublattice index within the unit cell
-                
+                cell = site // n_basis  # Unit cell index
+                sublattice = site % n_basis  # Sublattice index within the unit cell
+
                 # Get cell coordinates
-                nx                  =  cell            % lat.lx
-                ny                  = (cell // lat.lx) % lat.ly             if lat.dim >= 2 else 0
-                nz                  = (cell // (lat.lx * lat.ly)) % lat.lz  if lat.dim >= 3 else 0
-                
+                nx = cell % lat.lx
+                ny = (cell // lat.lx) % lat.ly if lat.dim >= 2 else 0
+                nz = (cell // (lat.lx * lat.ly)) % lat.lz if lat.dim >= 3 else 0
+
                 # Translate the UNIT CELL, not the site
-                shift               = int(getattr(self, 'shift', 1))        # Translation shift
-                new_coords          = [nx, ny, nz]                          # Current cell coordinates
-                new_coords[axis]   += shift                                 # Apply translation
-                wrap                = False                                 # Did we wrap around? - for the phase or sign (fermions)
-                
+                shift = int(getattr(self, "shift", 1))  # Translation shift
+                new_coords = [nx, ny, nz]  # Current cell coordinates
+                new_coords[axis] += shift  # Apply translation
+                wrap = False  # Did we wrap around? - for the phase or sign (fermions)
+
                 # Apply periodic boundary conditions
                 # Compute new coordinates with PBC - on the unit cell level
                 # Phase is handled later during application
                 if new_coords[axis] >= size_axis:
-                    new_coords[axis]   -= size_axis
-                    wrap                = True
+                    new_coords[axis] -= size_axis
+                    wrap = True
                 elif new_coords[axis] < 0:
-                    new_coords[axis]   += size_axis
-                    wrap                = True
-                
+                    new_coords[axis] += size_axis
+                    wrap = True
+
                 # Reconstruct new cell index
-                new_nx, new_ny, new_nz  = new_coords[0], new_coords[1], new_coords[2]
-                new_cell                = new_nx + new_ny * lat.lx + new_nz * lat.lx * lat.ly
-                
+                new_nx, new_ny, new_nz = new_coords[0], new_coords[1], new_coords[2]
+                new_cell = new_nx + new_ny * lat.lx + new_nz * lat.lx * lat.ly
+
                 # CRITICAL: Keep the SAME sublattice
-                new_site            = new_cell * n_basis + sublattice
-                perm[site]          = new_site
+                new_site = new_cell * n_basis + sublattice
+                perm[site] = new_site
 
                 # Mark crossing if we wrapped around
                 if wrap:
@@ -392,27 +405,27 @@ class TranslationSymmetry(SymmetryOperator):
         else:
             # BRAVAIS LATTICE: Easier path, site translation directly
             for site in range(ns):
-                coord       = list(lat.get_coordinates(site))
+                coord = list(lat.get_coordinates(site))
                 while len(coord) < 3:
                     coord.append(0)
-                    
+
                 # Compute new coordinates after translation using self.shift
-                new_coord           = coord.copy()
-                new_coord[axis]    += int(getattr(self, 'shift', 1))
-                wrap                = False
+                new_coord = coord.copy()
+                new_coord[axis] += int(getattr(self, "shift", 1))
+                wrap = False
 
                 # Apply periodic boundary conditions depending on shift sign
                 if new_coord[axis] >= size_axis:
                     new_coord[axis] -= size_axis
-                    wrap             = True
+                    wrap = True
                 elif new_coord[axis] < 0:
                     new_coord[axis] += size_axis
-                    wrap             = True
-                
+                    wrap = True
+
                 # Get the destination site index
-                dest                = lat.site_index(int(new_coord[0]), int(new_coord[1]), int(new_coord[2]))
-                perm[site]          = dest
-                
+                dest = lat.site_index(int(new_coord[0]), int(new_coord[1]), int(new_coord[2]))
+                perm[site] = dest
+
                 # Mark crossing if we wrapped around
                 if wrap:
                     crossing_mask[site] = True
@@ -430,15 +443,15 @@ class TranslationSymmetry(SymmetryOperator):
         return f"Translation direction={self.direction} k_idx={self.momentum_index}"
 
     def __str__(self) -> str:
-        return f'T({str(self.direction)};{self.momentum_index})'
-    
+        return f"T({str(self.direction)};{self.momentum_index})"
+
     @property
     def directory_name(self) -> str:
         """
         Return a clean string suitable for directory names.
-        
+
         Format: 'k{direction}_{sector}' e.g., 'kx_0', 'ky_3', 'kz_1'
-        
+
         Returns
         -------
         str
@@ -449,23 +462,23 @@ class TranslationSymmetry(SymmetryOperator):
     # -----------------------------------------------------
     #! Character computation
     # -----------------------------------------------------
-    
+
     def get_character(self, count: int, sector: Union[int, float, complex], **kwargs) -> complex:
         """
         Compute the character (representation eigenvalue) for translation raised to a power.
-        
+
         For translation T^n in momentum sector k:
             chi_k(T^n) = exp(2*pi*i * k * n / L)
-        
+
         where:
             k = sector (momentum index, e.g., 0, 1, 2, ...)
             n = count (how many times translation is applied)
             L = period (lattice size in this direction)
-        
+
         NOTE: For non-Bravais lattices, L = number of UNIT CELLS, not total sites.
         The character is still just the Bloch phase - the N_b degeneracy manifests
         as N_b bands at each k-point, not as a multiplicative factor in the character.
-        
+
         Parameters
         ----------
         count : int
@@ -474,12 +487,12 @@ class TranslationSymmetry(SymmetryOperator):
             Momentum index k (0, 1, 2, ..., L-1)
         **kwargs : dict
             Additional context (lattice provided via self.lattice)
-        
+
         Returns
         -------
         character : complex
             Phase factor exp(2*pi*i * k * n / L)
-        
+
         Examples
         --------
         1D chain L=4, k=0:   chi(T^1) = exp(0) = 1
@@ -489,53 +502,55 @@ class TranslationSymmetry(SymmetryOperator):
         """
         # Get the period (number of unit cells in this direction)
         period = self.ns  # Default fallback
-        
+
         if self.lattice is not None:
-            if self.direction == LatticeDirection.X or str(self.direction).lower() == 'x':
-                period = getattr(self.lattice, 'lx', self.ns)
-            elif self.direction == LatticeDirection.Y or str(self.direction).lower() == 'y':
-                period = getattr(self.lattice, 'ly', self.ns)
-            elif self.direction == LatticeDirection.Z or str(self.direction).lower() == 'z':
-                period = getattr(self.lattice, 'lz', self.ns)
-        
+            if self.direction == LatticeDirection.X or str(self.direction).lower() == "x":
+                period = getattr(self.lattice, "lx", self.ns)
+            elif self.direction == LatticeDirection.Y or str(self.direction).lower() == "y":
+                period = getattr(self.lattice, "ly", self.ns)
+            elif self.direction == LatticeDirection.Z or str(self.direction).lower() == "z":
+                period = getattr(self.lattice, "lz", self.ns)
+
         # Character for T^count in momentum sector k
         return np.exp(2j * np.pi * sector * count / period)
-        
+
     def get_site_permutation(self, ns: int) -> Optional[np.ndarray]:
         """
         Get the site permutation array for this translation operation.
-        
+
         Returns an array `perm` such that site `i` maps to site `perm[i]`.
-        
+
         Parameters
         ----------
         ns : int
             Number of sites.
-            
+
         Returns
         -------
         perm : np.ndarray
             Permutation array of shape (ns,).
         """
         return self.perm
-    
+
     # -----------------------------------------------------
     #! Override checks
     # -----------------------------------------------------
-    
-    def check_boundary_conditions(self, lattice: Optional['Lattice'] = None, **kwargs) -> Tuple[bool, str]:
+
+    def check_boundary_conditions(
+        self, lattice: Optional["Lattice"] = None, **kwargs
+    ) -> Tuple[bool, str]:
         """
         Check if lattice boundary conditions are compatible with translation symmetry.
-        
+
         Translation symmetry requires periodic boundary conditions (PBC).
-        
+
         Parameters
         ----------
         lattice : Optional[Lattice]
             Lattice structure with boundary conditions
         **kwargs : dict
             Additional context
-        
+
         Returns
         -------
         valid : bool
@@ -545,38 +560,41 @@ class TranslationSymmetry(SymmetryOperator):
         """
         # Use self.lattice if no lattice provided
         lat = lattice or self.lattice
-        
+
         if lat is not None:
             try:
                 from QES.general_python.lattices.lattice import LatticeBC
-                if hasattr(lat, 'bc') and lat.bc != LatticeBC.PBC:
+
+                if hasattr(lat, "bc") and lat.bc != LatticeBC.PBC:
                     return False, "Translation requires periodic boundary conditions"
             except ImportError:
                 # If LatticeBC not available, assume it's okay
                 pass
-        
+
         return True, "Valid"
-    
+
     # -----------------------------------------------------
-    
-    def commutes_with(self, other: 'SymmetryOperator', momentum_sector: Optional[MomentumSector] = None, **kwargs) -> bool:
+
+    def commutes_with(
+        self, other: "SymmetryOperator", momentum_sector: Optional[MomentumSector] = None, **kwargs
+    ) -> bool:
         """
         Determine if this translation symmetry commutes with another symmetry operator.
-        
+
         Parameters
         ----------
         other : SymmetryOperator
             The other symmetry operator to check compatibility with.
         momentum_sector : MomentumSector, optional
             The momentum sector to consider for momentum-dependent commutation.
-        
+
         Returns
         -------
         bool
             True if the symmetries commute, False otherwise.
         """
         base_check = super().commutes_with(other, momentum_sector=momentum_sector)
-        
+
         if base_check:
             return True
 
@@ -584,14 +602,14 @@ class TranslationSymmetry(SymmetryOperator):
         if momentum_sector is not None and momentum_sector in self.momentum_dependent:
             if other.symmetry_class in self.momentum_dependent[momentum_sector]:
                 return True
-        
+
         # Otherwise, they do not commute
         return False
-    
+
     # -----------------------------------------------------
     #! Apply translation
     # -----------------------------------------------------
-    
+
     def apply_int(self, state: int, ns: int, **kwargs) -> Tuple[int, complex]:
         """
         Apply translation to integer state, return (new_state, phase)
@@ -609,31 +627,32 @@ class TranslationSymmetry(SymmetryOperator):
             The phase factor acquired due to fermionic sign or boundary conditions.
         """
         # Use JIT-compiled core function
-        new_state, occ_cross    = _apply_translation_prim(state, ns, self.perm, self.crossing_mask)
-        
+        new_state, occ_cross = _apply_translation_prim(state, ns, self.perm, self.crossing_mask)
+
         # Compute boundary phase
-        phase                   = self.lattice.boundary_phase(self.direction, occ_cross)
+        phase = self.lattice.boundary_phase(self.direction, occ_cross)
         return new_state, phase
-    
+
     def apply_numpy(self, state, **kwargs):
         """Apply translation operator to numpy array state representation."""
         import numpy as np
+
         if not isinstance(state, np.ndarray):
             state = np.array(state)
-        #TODO: Handle multi-dimensional numpy arrays if needed
+        # TODO: Handle multi-dimensional numpy arrays if needed
         # For numpy arrays, delegate to integer operations
         new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
         return np.array(new_state), phase
-    
+
     def apply_jax(self, state, **kwargs):
         """
         Apply translation operator to JAX array state representation.
-        
+
         Parameters
         ----------
         state : jnp.ndarray
             State vector (batch, ns) or (ns,)
-            
+
         Returns
         -------
         new_state : jnp.ndarray
@@ -641,28 +660,28 @@ class TranslationSymmetry(SymmetryOperator):
         phase : jnp.ndarray
             Phase factor (currently 1.0 for spins)
         """
-        
+
         try:
             import jax.numpy as jnp
         except ImportError:
             raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
-            
+
         # Check if state is vector-encoded (last dim == ns)
         if state.ndim >= 1 and state.shape[-1] == self.ns:
             # Use precomputed permutation
             # We assume self.perm is available (numpy array)
             # JAX will capture this as a constant in JIT
-            perm_jax    = jnp.array(self.perm)
-            
+            perm_jax = jnp.array(self.perm)
+
             # Apply permutation along last axis
-            new_state   = jnp.take(state, perm_jax, axis=-1)
-            
+            new_state = jnp.take(state, perm_jax, axis=-1)
+
             # Phase: For spins (bosonic representation), phase is 1.0
             # TODO: Implement fermion sign / boundary phase for JAX
             # For now, return 1.0 (valid for spins)
-            phase       = jnp.ones(state.shape[:-1], dtype=complex)
+            phase = jnp.ones(state.shape[:-1], dtype=complex)
             return new_state, phase
-            
+
         else:
             # Fallback for integer encoding (not efficient for JIT if not implemented with bitwise)
             # This path handles scalar integers or batch of integers
@@ -671,8 +690,10 @@ class TranslationSymmetry(SymmetryOperator):
                 new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
                 return jnp.array(new_state), phase
             except Exception:
-                 # If tracing, this fails. Implement bitwise logic if needed.
-                 raise NotImplementedError("JAX bitwise translation not fully implemented for integer states. Use vector encoding.")
+                # If tracing, this fails. Implement bitwise logic if needed.
+                raise NotImplementedError(
+                    "JAX bitwise translation not fully implemented for integer states. Use vector encoding."
+                )
 
     # -----------------------------------------------------
     #! Additional translation utilities
@@ -686,7 +707,7 @@ class TranslationSymmetry(SymmetryOperator):
         """
         Return normalized amplitudes for the momentum-k projection of ``state``
         along this translation direction.
-        
+
         Parameters
         ----------
         state : int
@@ -703,15 +724,15 @@ class TranslationSymmetry(SymmetryOperator):
             if self.momentum_index is None:
                 raise ValueError("Momentum index not provided for momentum projector.")
             k = self.momentum_index
-            
-        orbit   = self.orbit(state)     # How many unique states in the orbit
-        m       = len(orbit)            # Number of states in the orbit
-        
+
+        orbit = self.orbit(state)  # How many unique states in the orbit
+        m = len(orbit)  # Number of states in the orbit
+
         if m == 0:
             return {int(state): 1.0 + 0j}
-        
+
         # Compute coefficients for the momentum superposition
-        coeffs  = np.exp(-1j * 2 * np.pi * k * np.arange(m) / m) / np.sqrt(m)
+        coeffs = np.exp(-1j * 2 * np.pi * k * np.arange(m) / m) / np.sqrt(m)
         return {int(orb_state): coeffs[idx] for idx, orb_state in enumerate(orbit)}
 
     def apply_superposition(self, amplitudes: Mapping[int, complex]) -> Dict[int, complex]:
@@ -720,7 +741,7 @@ class TranslationSymmetry(SymmetryOperator):
         """
         rotated = defaultdict(complex)
         for basis_state, amplitude in amplitudes.items():
-            new_state, phase         = self.apply(int(basis_state))
+            new_state, phase = self.apply(int(basis_state))
             rotated[int(new_state)] += amplitude * phase
         return dict(rotated)
 
@@ -730,7 +751,7 @@ class TranslationSymmetry(SymmetryOperator):
         """
         Generate the translation orbit of a basis state by repeatedly applying T
         until it cycles back. Returns the list of unique states in order.
-        
+
         Parameters
         ----------
         state : int
@@ -738,15 +759,15 @@ class TranslationSymmetry(SymmetryOperator):
         max_steps : int, optional
             Maximum number of translation steps to perform (to avoid infinite loops).
         """
-        seen    = {}
-        seq     = []
-        s       = int(state)
-        steps   = 0
+        seen = {}
+        seq = []
+        s = int(state)
+        steps = 0
         while s not in seen:
             seen[s] = steps
             seq.append(s)
-            s, _    = self.apply(s)
-            steps  += 1
+            s, _ = self.apply(s)
+            steps += 1
             if max_steps is not None and steps >= max_steps:
                 break
         return seq
@@ -764,7 +785,7 @@ class TranslationSymmetry(SymmetryOperator):
         Coefficients for the momentum-k projector acting on the orbit of `state`.
         Returns (orbit_states, coeffs) where coeffs[n] = exp(-i 2pi k n / m) / sqrt(m),
         with m = len(orbit). Useful for building momentum eigenstates in ED.
-        
+
         Parameters
         ----------
         k : int, optional
@@ -778,34 +799,37 @@ class TranslationSymmetry(SymmetryOperator):
         coeffs : np.ndarray
             Array of complex coefficients for the momentum-k projection.
         """
-        
+
         if k is None:
             if self.momentum_index is None:
                 raise ValueError("Momentum index not provided for coefficient generation.")
             k = self.momentum_index
-        orb     = self.orbit(state)
-        m       = len(orb)
+        orb = self.orbit(state)
+        m = len(orb)
         phases = np.exp(-1j * 2 * np.pi * k * np.arange(m) / m) / np.sqrt(m)
         return orb, phases
-    
+
+
 # -----------------------------------------------------
 #! Multi-dimensional momentum superposition builder
 # -----------------------------------------------------
 
+
 def build_momentum_superposition(
-    translations        : Mapping['LatticeDirection', TranslationSymmetry],
-    base_state          : int,
-    momenta             : Mapping['LatticeDirection', int],
-    normalize           : bool = True,
-    local_hspace_size   : Optional[int] = None) -> Dict[int, complex]:
+    translations: Mapping["LatticeDirection", TranslationSymmetry],
+    base_state: int,
+    momenta: Mapping["LatticeDirection", int],
+    normalize: bool = True,
+    local_hspace_size: Optional[int] = None,
+) -> Dict[int, complex]:
     """
     Build a (possibly multi-dimensional) momentum superposition generated by
     the provided translations. It allows to handle more than one translation symmetry
     simultaneously (e.g. in 2D/3D lattices).
-    
+
     ``translations`` and ``momenta`` must share the
     same keys mapping directions to symmetry operators and momentum indices.
-    
+
     Parameters
     ----------
     translations : Mapping[LatticeDirection, TranslationSymmetry]
@@ -828,18 +852,18 @@ def build_momentum_superposition(
     if not translations:
         return {int(base_state): 1.0 + 0j}
 
-    directions: List['LatticeDirection'] = sorted(
-        translations.keys(), key=lambda d: getattr(d, 'value', d)
+    directions: List["LatticeDirection"] = sorted(
+        translations.keys(), key=lambda d: getattr(d, "value", d)
     )
-    representative      = next(iter(translations.values()))
-    lat                 = representative.lattice
-    extent_lookup       = {
-        LatticeDirection.X: getattr(lat, 'Lx', None) or getattr(lat, 'lx', None) or 1,
-        LatticeDirection.Y: getattr(lat, 'Ly', None) or getattr(lat, 'ly', None) or 1,
-        LatticeDirection.Z: getattr(lat, 'Lz', None) or getattr(lat, 'lz', None) or 1,
+    representative = next(iter(translations.values()))
+    lat = representative.lattice
+    extent_lookup = {
+        LatticeDirection.X: getattr(lat, "Lx", None) or getattr(lat, "lx", None) or 1,
+        LatticeDirection.Y: getattr(lat, "Ly", None) or getattr(lat, "ly", None) or 1,
+        LatticeDirection.Z: getattr(lat, "Lz", None) or getattr(lat, "lz", None) or 1,
     }
 
-    extents: List[int]  = []
+    extents: List[int] = []
     for direction in directions:
         extent = extent_lookup.get(direction)
         if extent is None or extent <= 0:
@@ -847,22 +871,22 @@ def build_momentum_superposition(
         extents.append(int(extent))
 
     # Construct the momentum superposition
-    amplitudes  = defaultdict(complex)
+    amplitudes = defaultdict(complex)
     for step_tuple in product(*(range(extent) for extent in extents)):
         # Apply the translation steps to the base state
-        state   = int(base_state)
-        
+        state = int(base_state)
+
         for direction, steps in zip(directions, step_tuple):
-            translator      = translations[direction]
+            translator = translations[direction]
             for _ in range(steps):
-                state, _    = translator.apply(state)
-                
+                state, _ = translator.apply(state)
+
         # Compute the phase factor for this combination of steps
         exponent = sum(
             momenta[direction] * step / extent
             for direction, step, extent in zip(directions, step_tuple, extents)
         )
-        
+
         # Accumulate the amplitude exp(-i 2pi * exponent) - notice the negative sign in the exponent
         # this comes from the definition of momentum projector and we return to the original state
         amplitudes[state] += np.exp(-1j * 2 * np.pi * exponent)
@@ -880,6 +904,7 @@ def build_momentum_superposition(
             amplitudes[basis_state] /= norm
 
     return dict(amplitudes)
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #! EOF

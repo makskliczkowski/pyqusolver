@@ -1,4 +1,4 @@
-'''
+"""
 We move most of the definitions of matrices to this file. Operators will derive
 from it and be able to create matrices as needed.
 
@@ -11,44 +11,49 @@ License         : MIT
 Description     : Generic matrix class for operators and Hamiltonians.
                 It provides matrix storage, diagonalization, and logging.
 -------------------------------------------------------------------------------
-'''
+"""
 
 from __future__ import annotations
-import numpy as np
 
-import  time
-import  scipy.sparse as sp
-import  scipy.sparse.linalg as spla
-from    typing import Optional, Union, Callable, Any, Tuple, Dict, TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
+
+import numpy as np
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
 
 try:
     if TYPE_CHECKING:
-        from QES.general_python.common.flog     import  Logger
-        from QES.general_python.algebra.utils   import  Array
-        
-    import QES.Algebra.Hamil.hamil_diag_helpers as      diag_helpers
-    from QES.Algebra.Hamil.hamil_diag_engine    import  DiagonalizationEngine
+        from QES.general_python.algebra.utils import Array
+        from QES.general_python.common.flog import Logger
+
+    import QES.Algebra.Hamil.hamil_diag_helpers as diag_helpers
+    from QES.Algebra.Hamil.hamil_diag_engine import DiagonalizationEngine
 
 except ImportError as exc:
-    raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.") from exc
+    raise ImportError(
+        "QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed."
+    ) from exc
 
 # --------------------------------------------------------------------------------
 
 try:
-    import          jax
-    import          jax.lax as lax
-    import          jax.numpy as jnp
-    from            jax.experimental.sparse import BCOO, CSR
-    JAX_AVAILABLE   = True
+    import jax
+    import jax.lax as lax
+    import jax.numpy as jnp
+    from jax.experimental.sparse import BCOO, CSR
+
+    JAX_AVAILABLE = True
 except ImportError:
-    jax             = None
-    jnp             = None
-    lax             = None
-    BCOO            = None
-    CSR             = None
-    JAX_AVAILABLE   = False
+    jax = None
+    jnp = None
+    lax = None
+    BCOO = None
+    CSR = None
+    JAX_AVAILABLE = False
 
 # --------------------------------------------------------------------------------
+
 
 class DummyVector:
     """
@@ -68,13 +73,13 @@ class DummyVector:
             backend (optional):
                 The backend module to use. If not provided, defaults to 'numpy'.
         """
-        
-        self.val      = val
-        self.ns       = int(ns) if ns is not None else 1
+
+        self.val = val
+        self.ns = int(ns) if ns is not None else 1
         self._backend = backend or __import__("numpy")
 
     # ---------------------------------------------------------------------------
-    
+
     @property
     def dtype(self):
         return getattr(self.val, "dtype", type(self.val))
@@ -101,15 +106,17 @@ class DummyVector:
         try:
             from QES.general_python.algebra.utils import distinguish_type
         except ImportError:
-            raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.")
-        
-        backend = backend or self._backend
-        tgt_dt  = distinguish_type(dtype)
+            raise ImportError(
+                "QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed."
+            )
 
-        if (backend.iscomplexobj(self.val) and not backend.iscomplexobj(dtype)):
+        backend = backend or self._backend
+        tgt_dt = distinguish_type(dtype)
+
+        if backend.iscomplexobj(self.val) and not backend.iscomplexobj(dtype):
             # If we're casting from complex to real, take the real part
             self.val = backend.real(self.val)
-        elif (not backend.iscomplexobj(self.val) and backend.iscomplexobj(dtype)):
+        elif not backend.iscomplexobj(self.val) and backend.iscomplexobj(dtype):
             # If we're casting from real to complex, add a zero imaginary part
             self.val = backend.asarray(self.val, dtype=backend.complex128)
 
@@ -121,7 +128,7 @@ class DummyVector:
         return DummyVector(new_val, ns=self.ns, backend=backend)
 
     # ---------------------------------------------------------------------------
-    
+
     def __array__(self, dtype=None):
         return self._backend.full(self.ns, self.val, dtype=dtype)
 
@@ -129,7 +136,7 @@ class DummyVector:
         return 100.0
 
     # ---------------------------------------------------------------------------
-    
+
     def __repr__(self):
         return f"DummyVector(val={self.val!r}, ns={self.ns})"
 
@@ -137,7 +144,7 @@ class DummyVector:
         return f"[{self.val}] * {self.ns}"
 
     # ---------------------------------------------------------------------------
-    
+
     def __len__(self):
         return self.ns
 
@@ -154,7 +161,7 @@ class DummyVector:
         yield from (self.val for _ in range(self.ns))
 
     # ---------------------------------------------------------------------------
-    
+
     def _binary(self, other, op):
         if isinstance(other, DummyVector):
             if self.ns != other.ns:
@@ -164,45 +171,59 @@ class DummyVector:
             other_val = other
         return DummyVector(op(self.val, other_val), ns=self.ns, backend=self._backend)
 
-    def __add__(self, other):       return self._binary(other, lambda a, b: a + b)
-    def __radd__(self, other):      return self.__add__(other)
-    def __sub__(self, other):       return self._binary(other, lambda a, b: a - b)
-    def __rsub__(self, other):      return self._binary(other, lambda a, b: b - a)
-    def __mul__(self, other):       return self._binary(other, lambda a, b: a * b)
-    def __rmul__(self, other):      return self.__mul__(other)
-    def __truediv__(self, other):   return self._binary(other, lambda a, b: a / b)
-    def __rtruediv__(self, other):  return self._binary(other, lambda a, b: b / a)
+    def __add__(self, other):
+        return self._binary(other, lambda a, b: a + b)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __sub__(self, other):
+        return self._binary(other, lambda a, b: a - b)
+
+    def __rsub__(self, other):
+        return self._binary(other, lambda a, b: b - a)
+
+    def __mul__(self, other):
+        return self._binary(other, lambda a, b: a * b)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        return self._binary(other, lambda a, b: a / b)
+
+    def __rtruediv__(self, other):
+        return self._binary(other, lambda a, b: b / a)
+
     # (add more as needed)
 
     # ---------------------------------------------------------------------------
-    
+
     def __eq__(self, other):
-        return (
-            isinstance(other, DummyVector)
-            and self.ns == other.ns
-            and self.val == other.val
-        )
+        return isinstance(other, DummyVector) and self.ns == other.ns and self.val == other.val
 
     def __hash__(self):
         return hash((self.val, self.ns))
-    
+
     def to_array(self, dtype=None, backend=None):
         """
         Convert the DummyVector to a numpy array.
         """
-        backend = backend if backend is not None else __import__('numpy')
+        backend = backend if backend is not None else __import__("numpy")
         return backend.full(self.ns, self.val, dtype=dtype)
+
 
 ##################################################################################
 #! General Matrix Class
 ##################################################################################
 
+
 class GeneralMatrix(spla.LinearOperator):
     """
-    Generic linear-algebra helper providing matrix storage, diagonalization, 
-    and logging. This class serves as the foundation for operators and 
+    Generic linear-algebra helper providing matrix storage, diagonalization,
+    and logging. This class serves as the foundation for operators and
     Hamiltonians that need matrix representations.
-    
+
     Provides:
         - Backend handling (NumPy, JAX, SciPy)
         - Matrix storage (sparse/dense)
@@ -211,33 +232,34 @@ class GeneralMatrix(spla.LinearOperator):
         - Krylov basis management
         - Memory estimation
         - SciPy LinearOperator interface
-    
+
     Subclasses (Operator, Hamiltonian) can override specific methods while
     inheriting the common matrix infrastructure.
     """
 
-    _ERR_MATRIX_NOT_BUILT        = "Matrix representation has not been built. Call build() first."
-    _ERR_INVALID_BACKEND         = "Invalid backend specified."
-    _ERR_UNSUPPORTED_OPERATION   = "The requested operation is not supported for this matrix type."
+    _ERR_MATRIX_NOT_BUILT = "Matrix representation has not been built. Call build() first."
+    _ERR_INVALID_BACKEND = "Invalid backend specified."
+    _ERR_UNSUPPORTED_OPERATION = "The requested operation is not supported for this matrix type."
 
     # -------------------------------------------------------
 
-    def __init__(self,
-                shape              : Optional[tuple[int, int]]                         = None,
-                *,
-                ns                 : Optional[int]                                     = None,
-                matvec             : Optional[Callable[[np.ndarray], np.ndarray]]      = None,
-                is_sparse          : bool                                              = True,
-                backend            : str                                               = 'default',
-                backend_components : Optional[tuple[Any, Any, Any, tuple[Any, Any]]]   = None,
-                logger             : Optional['Logger']                                = None,
-                seed               : Optional[int]                                     = None,
-                dtype              : Optional[Union[str, np.dtype]]                    = None,
-                **kwargs,
-                ) -> None:
+    def __init__(
+        self,
+        shape: Optional[tuple[int, int]] = None,
+        *,
+        ns: Optional[int] = None,
+        matvec: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+        is_sparse: bool = True,
+        backend: str = "default",
+        backend_components: Optional[tuple[Any, Any, Any, tuple[Any, Any]]] = None,
+        logger: Optional["Logger"] = None,
+        seed: Optional[int] = None,
+        dtype: Optional[Union[str, np.dtype]] = None,
+        **kwargs,
+    ) -> None:
         """
         Initialize the GeneralMatrix.
-        
+
         Parameters
         ----------
         shape : tuple[int, int], optional
@@ -259,50 +281,54 @@ class GeneralMatrix(spla.LinearOperator):
         dtype : dtype, optional
             Data type for matrix elements.
         """
-        
-        logger              = GeneralMatrix._check_logger(logger)
-        self._shape         = tuple(shape) if shape is not None else (0, 0)
-        self._dim           = self._shape[0]
-        self._ns            = ns  # Number of sites/modes (optional, for physical systems)
+
+        logger = GeneralMatrix._check_logger(logger)
+        self._shape = tuple(shape) if shape is not None else (0, 0)
+        self._dim = self._shape[0]
+        self._ns = ns  # Number of sites/modes (optional, for physical systems)
 
         if backend_components is not None:
-            (self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k)) = backend_components
+            self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k) = (
+                backend_components
+            )
         else:
-            (self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k)) = GeneralMatrix._set_backend(backend, seed)
+            self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k) = (
+                GeneralMatrix._set_backend(backend, seed)
+            )
 
-        self._seed              = seed
-        self._is_jax            = JAX_AVAILABLE and self._backend is not np
-        self._is_numpy          = not self._is_jax
-        self._is_sparse         = is_sparse
-        self._dtypeint          = self._backend.int64
-        self._name              = "GeneralMatrix"
-        self._custom_matvec     = matvec
+        self._seed = seed
+        self._is_jax = JAX_AVAILABLE and self._backend is not np
+        self._is_numpy = not self._is_jax
+        self._is_sparse = is_sparse
+        self._dtypeint = self._backend.int64
+        self._name = "GeneralMatrix"
+        self._custom_matvec = matvec
 
-        self._matrix            : Optional[Union[np.ndarray, Any]]  = None
-        self._is_built                                              = False
-        self._eig_vec           : Optional[Union[np.ndarray, Any]]  = None
-        self._eig_val           : Optional[Union[np.ndarray, Any]]  = None
-        self._krylov            : Optional[Any]                     = None
-        self._max_local_ch      : int                               = 1
-        self._max_local_ch_o    : int                               = 1
+        self._matrix: Optional[Union[np.ndarray, Any]] = None
+        self._is_built = False
+        self._eig_vec: Optional[Union[np.ndarray, Any]] = None
+        self._eig_val: Optional[Union[np.ndarray, Any]] = None
+        self._krylov: Optional[Any] = None
+        self._max_local_ch: int = 1
+        self._max_local_ch_o: int = 1
 
-        self._diag_engine       : Optional[DiagonalizationEngine]   = None
-        self._diag_method       : str                               = 'exact'
+        self._diag_engine: Optional[DiagonalizationEngine] = None
+        self._diag_method: str = "exact"
 
-        self._original_basis    : Optional[Any]                     = None
-        self._current_basis     : Optional[Any]                     = None
-        self._basis_metadata    : dict                              = {}
-        self._is_transformed    : bool                              = False
-        self._transformed_grid  : Optional[Any]                     = None
-        self._symmetry_info     : dict                              = {}
+        self._original_basis: Optional[Any] = None
+        self._current_basis: Optional[Any] = None
+        self._basis_metadata: dict = {}
+        self._is_transformed: bool = False
+        self._transformed_grid: Optional[Any] = None
+        self._symmetry_info: dict = {}
 
         # -----------------------
-        
-        self._av_en_idx         = 0
-        self._av_en             = 0.0
-        self._std_en            = 0.0
-        self._min_en            = 0.0
-        self._max_en            = 0.0
+
+        self._av_en_idx = 0
+        self._av_en = 0.0
+        self._std_en = 0.0
+        self._min_en = 0.0
+        self._max_en = 0.0
 
         self._handle_dtype(dtype)
         super().__init__(dtype=self._dtype, shape=self._shape)
@@ -324,7 +350,9 @@ class GeneralMatrix(spla.LinearOperator):
 
         matvec_impl = getattr(self, "matvec", None)
         if matvec_impl is None:
-            raise NotImplementedError("Matrix-vector product not defined. Provide a matvec implementation.")
+            raise NotImplementedError(
+                "Matrix-vector product not defined. Provide a matvec implementation."
+            )
 
         args, kwargs = self._matvec_context()
         return matvec_impl(x, *args, **kwargs)
@@ -337,12 +365,13 @@ class GeneralMatrix(spla.LinearOperator):
     # -------------------------------------------------------
 
     @staticmethod
-    def _check_logger(logger: Optional['Logger']) -> Optional['Logger']:
-        ''' Ensure a valid logger is available. '''
-        
+    def _check_logger(logger: Optional["Logger"]) -> Optional["Logger"]:
+        """Ensure a valid logger is available."""
+
         if logger is None:
             try:
-                from general_python.common.flog import get_global_logger
+                from QES.qes_globals import get_logger as get_global_logger
+
                 logger = get_global_logger()
             except ImportError:
                 pass
@@ -350,21 +379,23 @@ class GeneralMatrix(spla.LinearOperator):
 
     @staticmethod
     def _set_backend(backend: str, seed: Optional[int] = None):
-        '''
+        """
         Set the computational backend.
         - backend : str
             Backend to use ('default', 'np', 'numpy', 'jax').
         - seed : Optional[int]
             Random seed for reproducibility.
-        '''
-        
+        """
+
         if isinstance(backend, str):
-            
+
             try:
                 from QES.general_python.algebra.utils import get_backend
             except ImportError:
-                raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.")
-            
+                raise ImportError(
+                    "QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed."
+                )
+
             bck = get_backend(backend, scipy=True, random=True, seed=seed)
             if isinstance(bck, tuple):
                 module, module_sp = bck[0], bck[1]
@@ -374,16 +405,20 @@ class GeneralMatrix(spla.LinearOperator):
                     _rng, _rng_k = bck[2], None
             else:
                 module, module_sp = bck, None
-                _rng, _rng_k      = None, None
+                _rng, _rng_k = None, None
             return backend, module, module_sp, (_rng, _rng_k)
         if isinstance(backend, str):
-            target = 'np' if backend.lower() in ['default', 'np', 'numpy'] or not JAX_AVAILABLE else 'jax'
+            target = (
+                "np"
+                if backend.lower() in ["default", "np", "numpy"] or not JAX_AVAILABLE
+                else "jax"
+            )
         else:
-            target = 'jax' if JAX_AVAILABLE else 'np'
+            target = "jax" if JAX_AVAILABLE else "np"
         return GeneralMatrix._set_backend(target)
 
     def _handle_dtype(self, dtype: Optional[Union[str, np.dtype]]) -> None:
-        ''' Handle the data type for the matrix elements. '''
+        """Handle the data type for the matrix elements."""
         if dtype is not None:
             self._dtype = dtype
             if self._is_jax:
@@ -395,9 +430,9 @@ class GeneralMatrix(spla.LinearOperator):
         self._dtype = self._backend.float64
         self._iscpx = False
 
-    def _log(self, msg: str, log: str = 'info', lvl: int = 0, color: str = "white") -> None:
+    def _log(self, msg: str, log: str = "info", lvl: int = 0, color: str = "white") -> None:
         # Get logger safely (if _logger is not available on self, use None)
-        logger = getattr(self, '_logger', None)
+        logger = getattr(self, "_logger", None)
         if logger is None:
             return
         logger.info(f"[{self.name}] {msg}", lvl=lvl, log=log, color=color)
@@ -407,16 +442,16 @@ class GeneralMatrix(spla.LinearOperator):
     # -------------------------------------------------------
 
     def set_matrix_shape(self, shape: tuple[int, int]) -> None:
-        self._shape     = tuple(shape)
-        self._dim       = self._shape[0]
-        self.shape      = self._shape
+        self._shape = tuple(shape)
+        self._dim = self._shape[0]
+        self.shape = self._shape
 
     def _get_matrix_reference(self):
         return self._matrix
 
     def _set_matrix_reference(self, matrix: Optional[Any]) -> None:
-        self._matrix    = matrix
-        self._is_built  = matrix is not None
+        self._matrix = matrix
+        self._is_built = matrix is not None
 
     @property
     def matrix_data(self) -> Union[np.ndarray, Any]:
@@ -433,19 +468,19 @@ class GeneralMatrix(spla.LinearOperator):
         raise NotImplementedError("Subclasses must implement build().")
 
     def clear(self) -> None:
-        self._log("Clearing cached matrix and eigen-decomposition...", lvl=2, log='debug')
-        self._is_built    = False
-        self._matrix      = None
-        self._eig_vec     = None
-        self._eig_val     = None
-        self._krylov      = None
+        self._log("Clearing cached matrix and eigen-decomposition...", lvl=2, log="debug")
+        self._is_built = False
+        self._matrix = None
+        self._eig_vec = None
+        self._eig_val = None
+        self._krylov = None
         self._diag_engine = None
-        self._av_en_idx   = 0
-        self._av_en       = 0.0
-        self._std_en      = 0.0
-        self._min_en      = 0.0
-        self._max_en      = 0.0
-        self._diag_method = 'exact'
+        self._av_en_idx = 0
+        self._av_en = 0.0
+        self._std_en = 0.0
+        self._min_en = 0.0
+        self._max_en = 0.0
+        self._diag_method = "exact"
 
     # -------------------------------------------------------
     # Properties
@@ -462,7 +497,7 @@ class GeneralMatrix(spla.LinearOperator):
     @property
     def dtype(self):
         return self._dtype
-    
+
     @dtype.setter
     def dtype(self, value) -> None:
         self._dtype = value
@@ -493,62 +528,86 @@ class GeneralMatrix(spla.LinearOperator):
     # -------------------------------------------------------
 
     @property
-    def energies(self):             return self._eig_val
+    def energies(self):
+        return self._eig_val
+
     @property
-    def eigenvalues(self):          return self._eig_val
+    def eigenvalues(self):
+        return self._eig_val
+
     @property
-    def eig_val(self):              return self._eig_val
+    def eig_val(self):
+        return self._eig_val
+
     @property
-    def eigenvals(self):            return self._eig_val
+    def eigenvals(self):
+        return self._eig_val
+
     @property
-    def eig_vals(self):             return self._eig_val
+    def eig_vals(self):
+        return self._eig_val
+
     @property
-    def eigen_vals(self):           return self._eig_val
+    def eigen_vals(self):
+        return self._eig_val
 
     # -------------------------------------------------------
 
     @property
     def av_en_idx(self):
-        '''
+        """
         Returns the index of the average energy/eigenvalue of the matrix.
         This is used to track the average energy during calculations.
-        '''
+        """
         if self._av_en_idx is not None or self._av_en_idx == 0:
             self._av_en_idx = int(np.argmin(np.abs(self.eig_val - self.av_en)))
         return self._av_en_idx
 
     @property
     def av_en_idx_and_value(self):
-        '''
+        """
         Returns the index and value of the average energy of the Hamiltonian.
         This is used to track the average energy during calculations.
-        
+
         Returns:
             tuple : (index, value) of the average energy.
-        '''
+        """
         return self.av_en_idx, self.av
 
     # energy properties
     @property
-    def av_en(self):                return self._av_en
+    def av_en(self):
+        return self._av_en
+
     @property
-    def std_en(self):               return self._std_en
+    def std_en(self):
+        return self._std_en
+
     @property
-    def min_en(self):               return self._min_en
+    def min_en(self):
+        return self._min_en
+
     @property
-    def max_en(self):               return self._max_en
+    def max_en(self):
+        return self._max_en
 
     # -------------------------------------------------------
 
     @property
-    def eig_vec(self):              return self._eig_vec
-    @property
-    def eigenvectors(self):         return self._eig_vec
-    @property
-    def eigenvecs(self):            return self._eig_vec
+    def eig_vec(self):
+        return self._eig_vec
 
     @property
-    def krylov(self):               return self._krylov
+    def eigenvectors(self):
+        return self._eig_vec
+
+    @property
+    def eigenvecs(self):
+        return self._eig_vec
+
+    @property
+    def krylov(self):
+        return self._krylov
 
     # -------------------------------------------------------
     # Eigenvalue/Eigenvector Getters
@@ -557,21 +616,21 @@ class GeneralMatrix(spla.LinearOperator):
     def get_eigvec(self, *args):
         """
         Returns the eigenvectors of the matrix.
-        
+
         - No arguments: return all eigenvectors (matrix Nh x Nh, each column is an eigenvector)
         - One argument: return the eigenvector at that index
         - Two arguments: return a specific element
-        
+
         Parameters
         ----------
         *args : int
             Optional indices for selecting specific eigenvectors or elements.
-            
+
         Returns
         -------
         ndarray
             The requested eigenvector(s) or element.
-            
+
         Raises
         ------
         ValueError
@@ -587,24 +646,24 @@ class GeneralMatrix(spla.LinearOperator):
             return self._eig_vec[args[0], args[1]]
         else:
             raise ValueError("Invalid arguments provided for eigenvector retrieval.")
-    
+
     def get_eigval(self, *args):
         """
         Returns the eigenvalues of the matrix.
-        
+
         - No arguments: return all eigenvalues (a vector in ascending order)
         - One argument: return a single eigenvalue at that index
-        
+
         Parameters
         ----------
         *args : int
             Optional index for selecting a specific eigenvalue.
-            
+
         Returns
         -------
         ndarray or scalar
             The requested eigenvalue(s).
-            
+
         Raises
         ------
         ValueError
@@ -627,12 +686,12 @@ class GeneralMatrix(spla.LinearOperator):
     def ground_state(self) -> np.ndarray:
         """
         Return the ground state (first eigenvector corresponding to the lowest eigenvalue).
-        
+
         Returns
         -------
         ndarray
             The ground state eigenvector.
-            
+
         Raises
         ------
         ValueError
@@ -641,17 +700,17 @@ class GeneralMatrix(spla.LinearOperator):
         if self._eig_vec is None:
             raise ValueError("Ground state not available. Call diagonalize() first.")
         return self._eig_vec[:, 0]
-    
+
     @property
     def ground_energy(self) -> float:
         """
         Return the ground state energy (lowest eigenvalue).
-        
+
         Returns
         -------
         float
             The ground state energy.
-            
+
         Raises
         ------
         ValueError
@@ -664,17 +723,17 @@ class GeneralMatrix(spla.LinearOperator):
     def excited_state(self, n: int) -> np.ndarray:
         """
         Return the n-th excited state eigenvector.
-        
+
         Parameters
         ----------
         n : int
             The excitation index (0 = ground state, 1 = first excited, etc.).
-            
+
         Returns
         -------
         ndarray
             The n-th excited state eigenvector.
-            
+
         Raises
         ------
         ValueError
@@ -683,23 +742,25 @@ class GeneralMatrix(spla.LinearOperator):
         if self._eig_vec is None:
             raise ValueError("Excited states not available. Call diagonalize() first.")
         if n < 0 or n >= self._eig_vec.shape[1]:
-            raise IndexError(f"Excited state index {n} out of bounds (0 to {self._eig_vec.shape[1] - 1}).")
+            raise IndexError(
+                f"Excited state index {n} out of bounds (0 to {self._eig_vec.shape[1] - 1})."
+            )
         return self._eig_vec[:, n]
 
     def excited_energy(self, n: int) -> float:
         """
         Return the n-th excited state energy.
-        
+
         Parameters
         ----------
         n : int
             The excitation index (0 = ground energy, 1 = first excited energy, etc.).
-            
+
         Returns
         -------
         float
             The n-th excited state energy.
-            
+
         Raises
         ------
         ValueError
@@ -715,31 +776,33 @@ class GeneralMatrix(spla.LinearOperator):
     def spectral_gap(self) -> float:
         """
         Return the spectral gap (difference between first excited and ground state energies).
-        
+
         Returns
         -------
         float
             The spectral gap E_1 - E_0.
-            
+
         Raises
         ------
         ValueError
             If fewer than 2 eigenvalues are available.
         """
         if self._eig_val is None or len(self._eig_val) < 2:
-            raise ValueError("Spectral gap requires at least 2 eigenvalues. Call diagonalize() first.")
+            raise ValueError(
+                "Spectral gap requires at least 2 eigenvalues. Call diagonalize() first."
+            )
         return float(self._eig_val[1] - self._eig_val[0])
 
     @property
     def spectral_width(self) -> float:
         """
         Return the spectral width (difference between largest and smallest eigenvalues).
-        
+
         Returns
         -------
         float
             The spectral width E_max - E_min.
-            
+
         Raises
         ------
         ValueError
@@ -761,22 +824,24 @@ class GeneralMatrix(spla.LinearOperator):
 
     def _default_diagonalization_backend(self, use_scipy: bool = True) -> str:
         if self._is_jax:
-            return 'jax'
-        return 'scipy' if use_scipy else 'numpy'
+            return "jax"
+        return "scipy" if use_scipy else "numpy"
 
-    def _ensure_diag_engine(self, method: str, backend: str, use_scipy: bool, verbose: bool) -> DiagonalizationEngine:
+    def _ensure_diag_engine(
+        self, method: str, backend: str, use_scipy: bool, verbose: bool
+    ) -> DiagonalizationEngine:
         if self._diag_engine is not None and self._diag_engine.method == method:
             return self._diag_engine
 
         # Get logger safely (if _logger is not available on self, use global logger)
-        logger = getattr(self, '_logger', None)
+        logger = getattr(self, "_logger", None)
 
         self._diag_engine = DiagonalizationEngine(
-            method    = method,
-            backend   = backend,
-            use_scipy = use_scipy,
-            verbose   = verbose,
-            logger    = logger,
+            method=method,
+            backend=backend,
+            use_scipy=use_scipy,
+            verbose=verbose,
+            logger=logger,
         )
         return self._diag_engine
 
@@ -784,18 +849,22 @@ class GeneralMatrix(spla.LinearOperator):
         """Hook executed after diagonalization to allow subclasses to log extra info."""
         if verbose:
             method_used = self.get_diagonalization_method()
-            self._log(f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds.", lvl=2, color="green")
+            self._log(
+                f"Diagonalization ({method_used}) completed in {diag_duration:.6f} seconds.",
+                lvl=2,
+                color="green",
+            )
 
     def diagonalize(self, verbose: bool = False, **kwargs) -> None:
         diag_start = time.perf_counter()
 
-        method      = kwargs.pop("method", self._diag_method)
+        method = kwargs.pop("method", self._diag_method)
         backend_str = kwargs.pop("backend", None)
-        use_scipy   = kwargs.pop("use_scipy", True)
+        use_scipy = kwargs.pop("use_scipy", True)
         store_basis = kwargs.pop("store_basis", True)
-        k           = kwargs.pop("k", None)
-        which       = kwargs.pop("which", "smallest")
-        hermitian   = kwargs.pop("hermitian", True)
+        k = kwargs.pop("k", None)
+        which = kwargs.pop("which", "smallest")
+        hermitian = kwargs.pop("hermitian", True)
 
         if backend_str is None:
             backend_str = self._default_diagonalization_backend(use_scipy=use_scipy)
@@ -806,19 +875,33 @@ class GeneralMatrix(spla.LinearOperator):
         if matrix_to_diag is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
 
-        if method == 'exact':
+        if method == "exact":
             if JAX_AVAILABLE and BCOO is not None and isinstance(matrix_to_diag, BCOO):
                 if verbose:
-                    self._log("Converting JAX sparse matrix to dense for exact diagonalization.", lvl=2, color="yellow")
+                    self._log(
+                        "Converting JAX sparse matrix to dense for exact diagonalization.",
+                        lvl=2,
+                        color="yellow",
+                    )
                 matrix_to_diag = np.asarray(matrix_to_diag.todense())
             elif sp.sparse.issparse(matrix_to_diag):
                 if verbose:
-                    self._log("Converting SciPy sparse matrix to dense for exact diagonalization.", lvl=2, color="yellow")
+                    self._log(
+                        "Converting SciPy sparse matrix to dense for exact diagonalization.",
+                        lvl=2,
+                        color="yellow",
+                    )
                 matrix_to_diag = matrix_to_diag.toarray()
 
-        engine          = self._ensure_diag_engine(method=method, backend=backend_str, use_scipy=use_scipy, verbose=verbose)
-        solver_kwargs   = {key: val for key, val in kwargs.items()
-                        if key not in {'method', 'backend', 'use_scipy', 'store_basis', 'hermitian', 'k', 'which'}}
+        engine = self._ensure_diag_engine(
+            method=method, backend=backend_str, use_scipy=use_scipy, verbose=verbose
+        )
+        solver_kwargs = {
+            key: val
+            for key, val in kwargs.items()
+            if key
+            not in {"method", "backend", "use_scipy", "store_basis", "hermitian", "k", "which"}
+        }
 
         matvec_callable = None
         try:
@@ -826,31 +909,31 @@ class GeneralMatrix(spla.LinearOperator):
         except NotImplementedError:
             pass
 
-        size = getattr(matrix_to_diag, 'shape', (self._dim, self._dim))[0]
+        size = getattr(matrix_to_diag, "shape", (self._dim, self._dim))[0]
 
         try:
             result = engine.diagonalize(
-                A           = matrix_to_diag,
-                matvec      = matvec_callable,
-                n           = size,
-                k           = k,
-                hermitian   = hermitian,
-                which       = which,
-                store_basis = store_basis,
-                dtype       = self._dtype,
+                A=matrix_to_diag,
+                matvec=matvec_callable,
+                n=size,
+                k=k,
+                hermitian=hermitian,
+                which=which,
+                store_basis=store_basis,
+                dtype=self._dtype,
                 **solver_kwargs,
             )
         except Exception as exc:
             raise RuntimeError(f"Diagonalization failed with method '{method}': {exc}") from exc
 
-        self._diag_method   = method
-        self._eig_val       = result.eigenvalues
-        self._eig_vec       = result.eigenvectors
+        self._diag_method = method
+        self._eig_val = result.eigenvalues
+        self._eig_vec = result.eigenvectors
 
         if store_basis and engine.has_krylov_basis():
-            self._krylov    = engine.get_krylov_basis()
+            self._krylov = engine.get_krylov_basis()
         else:
-            self._krylov    = None
+            self._krylov = None
 
         if JAX_AVAILABLE:
             if hasattr(self._eig_val, "block_until_ready"):
@@ -880,9 +963,9 @@ class GeneralMatrix(spla.LinearOperator):
 
     @property
     def diag(self) -> Optional[Union[np.ndarray, Any]]:
-        
+
         target = self._get_matrix_reference()
-        
+
         if target is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
 
@@ -903,22 +986,24 @@ class GeneralMatrix(spla.LinearOperator):
     # Expectation Values and Matrix Operations
     # -------------------------------------------------------
 
-    def expectation_value(self, state: np.ndarray, other_state: Optional[np.ndarray] = None) -> complex:
+    def expectation_value(
+        self, state: np.ndarray, other_state: Optional[np.ndarray] = None
+    ) -> complex:
         """
         Compute the expectation value ⟨state|M|other_state⟩ or ⟨state|M|state⟩.
-        
+
         Parameters
         ----------
         state : ndarray
             The ket vector |ψ⟩.
         other_state : ndarray, optional
             The bra vector. If None, uses state (computes ⟨ψ|M|ψ⟩).
-            
+
         Returns
         -------
         complex
             The expectation value.
-            
+
         Raises
         ------
         ValueError
@@ -926,11 +1011,11 @@ class GeneralMatrix(spla.LinearOperator):
         """
         if other_state is None:
             other_state = state
-        
+
         matrix = self._get_matrix_reference()
         if matrix is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-        
+
         # Compute M|other_state⟩
         if sp.issparse(matrix):
             M_state = matrix @ other_state
@@ -938,19 +1023,19 @@ class GeneralMatrix(spla.LinearOperator):
             M_state = matrix @ other_state
         else:
             M_state = self._backend.dot(matrix, other_state)
-        
+
         # Compute <state|M|other_state>
         return self._backend.vdot(state, M_state)
 
     def trace_matrix(self) -> complex:
         r"""
         Compute the trace of the matrix.
-        
+
         Returns
         -------
         complex
             Tr(M) = \sum_i M_ii.
-            
+
         Raises
         ------
         ValueError
@@ -959,51 +1044,51 @@ class GeneralMatrix(spla.LinearOperator):
         matrix = self._get_matrix_reference()
         if matrix is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-        
+
         if sp.issparse(matrix):
             return matrix.diagonal().sum()
-        
+
         if JAX_AVAILABLE and BCOO is not None and isinstance(matrix, BCOO):
             return matrix.todense().trace()
-        
+
         return self._backend.trace(matrix)
 
     def frobenius_norm(self) -> float:
         r"""
         Compute the Frobenius norm of the matrix.
-        
+
         Returns
         -------
         float
             ||M||_F = \sqrt{\sum_{i,j} |M_{i,j}|^2} = \sqrt{\mathrm{Tr}(M^\dagger M)}.
-            
+
         Raises
         ------
         ValueError
             If matrix is not built.
         """
-        
+
         matrix = self._get_matrix_reference()
         if matrix is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-        
+
         if sp.issparse(matrix):
-            return np.sqrt(np.abs(matrix.data ** 2).sum())
-        
+            return np.sqrt(np.abs(matrix.data**2).sum())
+
         if JAX_AVAILABLE and BCOO is not None and isinstance(matrix, BCOO):
             return float(jnp.sqrt(jnp.sum(jnp.abs(matrix.data) ** 2)))
-        
-        return float(self._backend.linalg.norm(matrix, 'fro'))
+
+        return float(self._backend.linalg.norm(matrix, "fro"))
 
     def spectral_norm(self) -> float:
         """
         Compute the spectral norm of the matrix (largest singular value).
-        
+
         Returns
         -------
         float
             ||M||_2 = largest singular value.
-            
+
         Raises
         ------
         ValueError
@@ -1012,36 +1097,37 @@ class GeneralMatrix(spla.LinearOperator):
         matrix = self._get_matrix_reference()
         if matrix is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-        
+
         if sp.issparse(matrix):
             # Use sparse SVD for largest singular value
             try:
                 from scipy.sparse.linalg import svds
-                u, s, v = svds(matrix, k=1, which='LM')
+
+                u, s, v = svds(matrix, k=1, which="LM")
                 return float(s[0])
             except Exception:
                 # Fall back to dense computation
                 matrix = matrix.toarray()
-        
+
         if JAX_AVAILABLE and BCOO is not None and isinstance(matrix, BCOO):
             matrix = np.asarray(matrix.todense())
-        
+
         return float(np.linalg.norm(matrix, 2))
 
     def eigenvector_norm(self, n: int = 0) -> float:
         """
         Compute the norm of the n-th eigenvector.
-        
+
         Parameters
         ----------
         n : int, default 0
             Index of the eigenvector to compute norm for.
-            
+
         Returns
         -------
         float
             ||ψₙ||₂ = √(⟨ψₙ|ψₙ⟩).
-            
+
         Raises
         ------
         ValueError
@@ -1051,21 +1137,21 @@ class GeneralMatrix(spla.LinearOperator):
             raise ValueError("Eigenvector norm not available. Call diagonalize() first.")
         if n < 0 or n >= self._eig_vec.shape[1]:
             raise IndexError(f"Eigenvector index {n} out of bounds.")
-        
+
         vec = self._eig_vec[:, n]
         return float(self._backend.linalg.norm(vec))
 
     def overlap(self, vec1: np.ndarray, vec2: Optional[np.ndarray] = None) -> complex:
         """
         Compute the overlap ⟨vec1|vec2⟩.
-        
+
         Parameters
         ----------
         vec1 : ndarray
             First vector.
         vec2 : ndarray, optional
             Second vector. If None, computes ⟨vec1|vec1⟩ = ||vec1||².
-            
+
         Returns
         -------
         complex
@@ -1079,20 +1165,20 @@ class GeneralMatrix(spla.LinearOperator):
     # Commutators and Anticommutators
     # -------------------------------------------------------
 
-    def commutator(self, other: 'GeneralMatrix') -> np.ndarray:
+    def commutator(self, other: "GeneralMatrix") -> np.ndarray:
         """
         Compute the commutator [self, other] = self @ other - other @ self.
-        
+
         Parameters
         ----------
         other : GeneralMatrix
             The other matrix/operator.
-            
+
         Returns
         -------
         ndarray
             The commutator matrix [M, O].
-            
+
         Raises
         ------
         ValueError
@@ -1101,27 +1187,27 @@ class GeneralMatrix(spla.LinearOperator):
         M = self._get_matrix_reference()
         if M is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-        
-        O = other._get_matrix_reference() if hasattr(other, '_get_matrix_reference') else other
+
+        O = other._get_matrix_reference() if hasattr(other, "_get_matrix_reference") else other
         if O is None:
             raise ValueError("Other matrix representation has not been built.")
-        
+
         return M @ O - O @ M
 
-    def anticommutator(self, other: 'GeneralMatrix') -> np.ndarray:
+    def anticommutator(self, other: "GeneralMatrix") -> np.ndarray:
         """
         Compute the anticommutator {self, other} = self @ other + other @ self.
-        
+
         Parameters
         ----------
         other : GeneralMatrix
             The other matrix/operator.
-            
+
         Returns
         -------
         ndarray
             The anticommutator matrix {M, O}.
-            
+
         Raises
         ------
         ValueError
@@ -1130,29 +1216,29 @@ class GeneralMatrix(spla.LinearOperator):
         M = self._get_matrix_reference()
         if M is None:
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
-        
-        O = other._get_matrix_reference() if hasattr(other, '_get_matrix_reference') else other
+
+        O = other._get_matrix_reference() if hasattr(other, "_get_matrix_reference") else other
         if O is None:
             raise ValueError("Other matrix representation has not been built.")
-        
+
         return M @ O + O @ M
 
     def apply(self, state: np.ndarray) -> np.ndarray:
         """
         Apply the matrix to a state vector: M|ψ⟩.
-        
+
         This is equivalent to matrix-vector multiplication.
-        
+
         Parameters
         ----------
         state : ndarray
             The state vector to apply the matrix to.
-            
+
         Returns
         -------
         ndarray
             The resulting state M|ψ⟩.
-            
+
         Raises
         ------
         ValueError
@@ -1167,22 +1253,24 @@ class GeneralMatrix(spla.LinearOperator):
     # Spectral Analysis
     # -------------------------------------------------------
 
-    def density_of_states(self, bins: int = 50, range: Optional[Tuple[float, float]] = None) -> Tuple[np.ndarray, np.ndarray]:
+    def density_of_states(
+        self, bins: int = 50, range: Optional[Tuple[float, float]] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute the density of states (histogram of eigenvalues).
-        
+
         Parameters
         ----------
         bins : int, default 50
             Number of bins for the histogram.
         range : tuple of float, optional
             Range (min, max) for the histogram. If None, uses eigenvalue range.
-            
+
         Returns
         -------
         tuple of ndarray
             (counts, bin_edges) - the histogram counts and bin edges.
-            
+
         Raises
         ------
         ValueError
@@ -1190,29 +1278,29 @@ class GeneralMatrix(spla.LinearOperator):
         """
         if self._eig_val is None:
             raise ValueError("Density of states not available. Call diagonalize() first.")
-        
+
         return np.histogram(self._eig_val, bins=bins, range=range)
 
     def participation_ratio(self, n: int = 0) -> float:
         """
         Compute the inverse participation ratio (IPR) for the n-th eigenstate.
-        
+
         IPR = 1 / Σᵢ |ψᵢ|⁴
-        
+
         The IPR measures localization:
         - IPR ≈ 1: fully localized on one site
         - IPR ≈ N: fully delocalized (uniform distribution)
-        
+
         Parameters
         ----------
         n : int, default 0
             Index of the eigenvector (0 = ground state).
-            
+
         Returns
         -------
         float
             The inverse participation ratio.
-            
+
         Raises
         ------
         ValueError
@@ -1222,29 +1310,29 @@ class GeneralMatrix(spla.LinearOperator):
             raise ValueError("Participation ratio not available. Call diagonalize() first.")
         if n < 0 or n >= self._eig_vec.shape[1]:
             raise IndexError(f"Eigenvector index {n} out of bounds.")
-        
+
         vec = self._eig_vec[:, n]
         probs_sq = np.abs(vec) ** 4
         ipr_inv = np.sum(probs_sq)
-        
+
         if ipr_inv < 1e-15:
-            return float('inf')
+            return float("inf")
         return 1.0 / ipr_inv
 
     def degeneracy(self, tol: float = 1e-10) -> Dict[float, int]:
         """
         Find degenerate energy levels.
-        
+
         Parameters
         ----------
         tol : float, default 1e-10
             Tolerance for considering eigenvalues equal.
-            
+
         Returns
         -------
         dict
             Dictionary mapping unique energy levels to their degeneracy count.
-            
+
         Raises
         ------
         ValueError
@@ -1252,11 +1340,11 @@ class GeneralMatrix(spla.LinearOperator):
         """
         if self._eig_val is None:
             raise ValueError("Degeneracy analysis not available. Call diagonalize() first.")
-        
+
         energies = np.sort(self._eig_val)
         unique_energies = []
         degeneracies = []
-        
+
         i = 0
         while i < len(energies):
             current = energies[i]
@@ -1266,25 +1354,25 @@ class GeneralMatrix(spla.LinearOperator):
             unique_energies.append(float(current))
             degeneracies.append(count)
             i += count
-        
+
         return dict(zip(unique_energies, degeneracies))
 
     def degenerate_subspace(self, energy: float, tol: float = 1e-10) -> np.ndarray:
         """
         Get all eigenvectors corresponding to a degenerate energy level.
-        
+
         Parameters
         ----------
         energy : float
             The energy level to find eigenvectors for.
         tol : float, default 1e-10
             Tolerance for energy matching.
-            
+
         Returns
         -------
         ndarray
             Matrix of eigenvectors (columns) with the given energy.
-            
+
         Raises
         ------
         ValueError
@@ -1292,22 +1380,22 @@ class GeneralMatrix(spla.LinearOperator):
         """
         if self._eig_val is None or self._eig_vec is None:
             raise ValueError("Degenerate subspace not available. Call diagonalize() first.")
-        
+
         mask = np.abs(self._eig_val - energy) < tol
         if not np.any(mask):
             raise ValueError(f"No eigenvalue found within tolerance of {energy}.")
-        
+
         return self._eig_vec[:, mask]
 
     def level_spacing(self) -> np.ndarray:
         """
         Compute the level spacings (differences between consecutive eigenvalues).
-        
+
         Returns
         -------
         ndarray
             Array of level spacings Δₙ = Eₙ₊₁ - Eₙ.
-            
+
         Raises
         ------
         ValueError
@@ -1320,17 +1408,17 @@ class GeneralMatrix(spla.LinearOperator):
     def level_spacing_ratio(self) -> np.ndarray:
         """
         Compute the level spacing ratios rₙ = min(sₙ, sₙ₊₁) / max(sₙ, sₙ₊₁).
-        
+
         This is used to distinguish integrable (Poisson) from chaotic (GOE/GUE) systems.
         - Poisson (integrable): ⟨r⟩ ≈ 0.386
         - GOE (chaotic, real symmetric): ⟨r⟩ ≈ 0.530
         - GUE (chaotic, complex Hermitian): ⟨r⟩ ≈ 0.603
-        
+
         Returns
         -------
         ndarray
             Array of level spacing ratios.
-            
+
         Raises
         ------
         ValueError
@@ -1338,14 +1426,14 @@ class GeneralMatrix(spla.LinearOperator):
         """
         if self._eig_val is None or len(self._eig_val) < 3:
             raise ValueError("Level spacing ratio requires at least 3 eigenvalues.")
-        
+
         spacings = np.diff(self._eig_val)
         ratios = np.zeros(len(spacings) - 1)
-        
+
         for i in range(len(spacings) - 1):
             s1, s2 = spacings[i], spacings[i + 1]
             ratios[i] = min(s1, s2) / max(s1, s2) if max(s1, s2) > 1e-15 else 0.0
-        
+
         return ratios
 
     # -------------------------------------------------------
@@ -1357,26 +1445,34 @@ class GeneralMatrix(spla.LinearOperator):
             raise ValueError(self._ERR_MATRIX_NOT_BUILT)
 
         if not self._is_sparse:
-            if hasattr(matrix, 'nbytes'):
+            if hasattr(matrix, "nbytes"):
                 return matrix.nbytes
             return int(np.prod(matrix.shape)) * matrix.dtype.itemsize
 
         if self._is_numpy:
             memory = 0
-            for attr in ('data', 'indices', 'indptr'):
+            for attr in ("data", "indices", "indptr"):
                 if hasattr(matrix, attr):
                     arr = getattr(matrix, attr)
-                    if hasattr(arr, 'nbytes'):
+                    if hasattr(arr, "nbytes"):
                         memory += arr.nbytes
                     else:
                         memory += int(np.prod(arr.shape)) * arr.dtype.itemsize
             return memory
 
-        if self._is_jax and hasattr(matrix, 'data') and hasattr(matrix, 'indices'):
-            data_arr    = matrix.data
+        if self._is_jax and hasattr(matrix, "data") and hasattr(matrix, "indices"):
+            data_arr = matrix.data
             indices_arr = matrix.indices
-            data_bytes  = data_arr.nbytes if hasattr(data_arr, 'nbytes') else int(np.prod(data_arr.shape)) * data_arr.dtype.itemsize
-            ind_bytes   = indices_arr.nbytes if hasattr(indices_arr, 'nbytes') else int(np.prod(indices_arr.shape)) * indices_arr.dtype.itemsize
+            data_bytes = (
+                data_arr.nbytes
+                if hasattr(data_arr, "nbytes")
+                else int(np.prod(data_arr.shape)) * data_arr.dtype.itemsize
+            )
+            ind_bytes = (
+                indices_arr.nbytes
+                if hasattr(indices_arr, "nbytes")
+                else int(np.prod(indices_arr.shape)) * indices_arr.dtype.itemsize
+            )
             return data_bytes + ind_bytes
 
         return 0.0
@@ -1389,7 +1485,7 @@ class GeneralMatrix(spla.LinearOperator):
     def eigvec_memory(self) -> float:
         if self._eig_vec is None:
             return 0.0
-        if hasattr(self._eig_vec, 'nbytes'):
+        if hasattr(self._eig_vec, "nbytes"):
             return self._eig_vec.nbytes
         return int(np.prod(self._eig_vec.shape)) * self._eig_vec.dtype.itemsize
 
@@ -1397,33 +1493,33 @@ class GeneralMatrix(spla.LinearOperator):
     def eigval_memory(self) -> float:
         if self._eig_val is None:
             return 0.0
-        if hasattr(self._eig_val, 'nbytes'):
+        if hasattr(self._eig_val, "nbytes"):
             return self._eig_val.nbytes
         return int(np.prod(self._eig_val.shape)) * self._eig_val.dtype.itemsize
 
     @property
     def mat_memory_mb(self) -> float:
-        return self.mat_memory / (1024 ** 2)
+        return self.mat_memory / (1024**2)
 
     @property
     def eigvec_memory_mb(self) -> float:
-        return self.eigvec_memory / (1024 ** 2)
+        return self.eigvec_memory / (1024**2)
 
     @property
     def eigval_memory_mb(self) -> float:
-        return self.eigval_memory / (1024 ** 2)
+        return self.eigval_memory / (1024**2)
 
     @property
     def mat_memory_gb(self) -> float:
-        return self.mat_memory / (1024 ** 3)
+        return self.mat_memory / (1024**3)
 
     @property
     def eigvec_memory_gb(self) -> float:
-        return self.eigvec_memory / (1024 ** 3)
+        return self.eigvec_memory / (1024**3)
 
     @property
     def eigval_memory_gb(self) -> float:
-        return self.eigval_memory / (1024 ** 3)
+        return self.eigval_memory / (1024**3)
 
     @property
     def memory(self) -> float:
@@ -1431,11 +1527,11 @@ class GeneralMatrix(spla.LinearOperator):
 
     @property
     def memory_mb(self) -> float:
-        return self.memory / (1024 ** 2)
+        return self.memory / (1024**2)
 
     @property
     def memory_gb(self) -> float:
-        return self.memory / (1024 ** 3)
+        return self.memory / (1024**3)
 
     # -------------------------------------------------------
     # Krylov helpers
@@ -1448,7 +1544,9 @@ class GeneralMatrix(spla.LinearOperator):
         return diag_helpers.get_krylov_basis(self._diag_engine, self._krylov)
 
     def to_original_basis(self, vec: Array) -> Array:
-        return diag_helpers.to_original_basis(vec, self._diag_engine, self.get_diagonalization_method())
+        return diag_helpers.to_original_basis(
+            vec, self._diag_engine, self.get_diagonalization_method()
+        )
 
     def to_krylov_basis(self, vec: Array) -> Array:
         return diag_helpers.to_krylov_basis(vec, self._diag_engine)
@@ -1479,7 +1577,7 @@ class GeneralMatrix(spla.LinearOperator):
     # -------------------------------------------------------
     # Formatting helpers
     # -------------------------------------------------------
-    
+
     @staticmethod
     def _fmt_scalar(name, val, prec=1):
         """
@@ -1520,7 +1618,7 @@ class GeneralMatrix(spla.LinearOperator):
         """
         if isinstance(arr, DummyVector):
             return GeneralMatrix._fmt_scalar(name, arr[0])
-        
+
         arr = np.asarray(arr, dtype=float)
         if arr.size == 0:
             return f"{name}=[]"
@@ -1531,7 +1629,11 @@ class GeneralMatrix(spla.LinearOperator):
     @staticmethod
     def fmt(name, value, prec=1):
         """Choose scalar vs array formatter."""
-        return GeneralMatrix._fmt_scalar(name, value, prec=prec) if np.isscalar(value) else GeneralMatrix._fmt_array(name, value, prec=prec)
+        return (
+            GeneralMatrix._fmt_scalar(name, value, prec=prec)
+            if np.isscalar(value)
+            else GeneralMatrix._fmt_array(name, value, prec=prec)
+        )
 
     # -------------------------------------------------------
     # Help and Documentation
@@ -1541,36 +1643,36 @@ class GeneralMatrix(spla.LinearOperator):
     def help(cls, topic: Optional[str] = None) -> str:
         """
         Display help information about GeneralMatrix capabilities.
-        
+
         Parameters
         ----------
         topic : str, optional
             Specific topic to get help on. Options:
             - None or 'all':
                 Full overview
-            - 'properties': 
+            - 'properties':
                 Available properties
-            - 'diagonalization': 
+            - 'diagonalization':
                 Diagonalization methods
-            - 'spectral': 
+            - 'spectral':
                 Spectral analysis methods
-            - 'memory': 
+            - 'memory':
                 Memory estimation
-            - 'matrix': 
+            - 'matrix':
                 Matrix operations
-            
+
         Returns
         -------
         str
             Help text for the requested topic.
-            
+
         Examples
         --------
         >>> GeneralMatrix.help()            # Full overview
         >>> GeneralMatrix.help('spectral')  # Spectral analysis help
         """
         topics = {
-            'properties': r"""
+            "properties": r"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                         GeneralMatrix: Properties                            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -1593,7 +1695,7 @@ class GeneralMatrix(spla.LinearOperator):
 ║    .matrix_data              - Raw matrix data (raises if not built)         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """,
-            'diagonalization': r"""
+            "diagonalization": r"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                      GeneralMatrix: Diagonalization                          ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -1623,7 +1725,7 @@ class GeneralMatrix(spla.LinearOperator):
 ║    .get_diagonalization_info()   - Get full diagonalization info             ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """,
-            'spectral': r"""
+            "spectral": r"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                      GeneralMatrix: Spectral Analysis                        ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -1644,7 +1746,7 @@ class GeneralMatrix(spla.LinearOperator):
 ║    .density_of_states(bins)  - Histogram of eigenvalues                      ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """,
-            'matrix': r"""
+            "matrix": r"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                      GeneralMatrix: Matrix Operations                        ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -1667,7 +1769,7 @@ class GeneralMatrix(spla.LinearOperator):
 ║    .matvec_fun               - Get matvec function for LinearOperator        ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """,
-            'memory': r"""
+            "memory": r"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                      GeneralMatrix: Memory Estimation                        ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -1688,9 +1790,9 @@ class GeneralMatrix(spla.LinearOperator):
 ║    .to_dense()               - Switch to dense representation                ║
 ║    .clear()                  - Clear cached matrix and eigendecomposition    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-"""
+""",
         }
-        
+
         overview = r"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                              GeneralMatrix                                   ║
@@ -1713,20 +1815,21 @@ class GeneralMatrix(spla.LinearOperator):
 ║    'memory'          - Memory estimation and representation control          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
-        
-        if topic is None or topic == 'all':
+
+        if topic is None or topic == "all":
             result = overview
             for t in topics.values():
                 result += t
             print(result)
             return result
-        
+
         if topic in topics:
             print(topics[topic])
             return topics[topic]
-        
+
         print(f"Unknown topic '{topic}'. Available: {list(topics.keys())}")
         return f"Unknown topic '{topic}'. Available: {list(topics.keys())}"
+
 
 # --------------------------------------------------------------------------------
 #! EOF

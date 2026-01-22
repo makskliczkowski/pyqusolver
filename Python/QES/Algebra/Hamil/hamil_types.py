@@ -1,45 +1,51 @@
-'''
+"""
 file: Algebra/hamil_types.py
 This module contains the enumeration of Hamiltonian models and related functions.
 A Hamiltonian model is defined as a class of Hamiltonians that share a common structure.
 
 Date: 2025-02-01
-'''
-import numpy as np
+"""
+
+
 try:
     from QES.general_python.algebra.utils import distinguish_type
 except ImportError:
-    raise ImportError("Could not import 'distinguish_type' from 'QES.general_python.algebra.utils'. Please ensure the module is available.")
+    raise ImportError(
+        "Could not import 'distinguish_type' from 'QES.general_python.algebra.utils'. Please ensure the module is available."
+    )
 
 from enum import Enum, unique
-            
+
 ###########################################################################
 # ED limits (using hexadecimal where applicable)
-UI_LIMITS_MAXFULLED             = 0x40000
-UI_LIMITS_MAXPRINT              = 0x8
-UI_LIMITS_SI_STATENUM           = 100
-UI_LIMITS_MIDDLE_SPEC_STATENUM  = 200
+UI_LIMITS_MAXFULLED = 0x40000
+UI_LIMITS_MAXPRINT = 0x8
+UI_LIMITS_SI_STATENUM = 100
+UI_LIMITS_MIDDLE_SPEC_STATENUM = 200
+
 
 # ############################ EXISTING MODELS ############################
 @unique
 class Hamiltonians(Enum):
-    '''
+    """
     Enumeration for different Hamiltonian models.
-    '''
-    NONE            = 0
+    """
+
+    NONE = 0
     # interacting models:
-    ISING_M         = 1                     # Quantum Ising model
-    XYZ_M           = 2                     # XYZ model 
-    HEI_KIT_M       = 3                     # Heisenberg model with Kitaev interaction
-    QSM_M           = 4                     # Quantum Summer Model (QSM)
-    RP_M            = 5                     # Rosenzweig-Porter Model
-    ULTRAMETRIC_M   = 6                     # Ultrametric Model (UM)
+    ISING_M = 1  # Quantum Ising model
+    XYZ_M = 2  # XYZ model
+    HEI_KIT_M = 3  # Heisenberg model with Kitaev interaction
+    QSM_M = 4  # Quantum Summer Model (QSM)
+    RP_M = 5  # Rosenzweig-Porter Model
+    ULTRAMETRIC_M = 6  # Ultrametric Model (UM)
     # quadratic (or noninteracting) models:
-    FREE_FERMIONS_M = 100                   # Free Fermions Model
-    AUBRY_ANDRE_M   = 101                   # Aubry-André Model
-    SYK2_M          = 102                   # Sachdev-Ye-Kitaev (SYK) Model
-    ANDERSON_M      = 103                   # Anderson Model
-    POWER_LAW_RANDOM_BANDED_M = 104         # Power-law Random Banded Model
+    FREE_FERMIONS_M = 100  # Free Fermions Model
+    AUBRY_ANDRE_M = 101  # Aubry-André Model
+    SYK2_M = 102  # Sachdev-Ye-Kitaev (SYK) Model
+    ANDERSON_M = 103  # Anderson Model
+    POWER_LAW_RANDOM_BANDED_M = 104  # Power-law Random Banded Model
+
 
 MY_MODELS_LIST = [
     Hamiltonians.ISING_M,
@@ -63,27 +69,35 @@ MY_MODELS_MAX_INTERACTING = Hamiltonians.ULTRAMETRIC_M.value
 #! TODO: Check the implementation of the following functions.
 ################################################################################
 
+
 def check_noninteracting(model: Hamiltonians) -> bool:
     """
     Check if a model is noninteracting.
-    
+
     In this implementation, a model is considered noninteracting if its value is
     greater than or equal to FREE_FERMIONS_M or if it is equal to RP_M.
     """
     return (model.value >= Hamiltonians.FREE_FERMIONS_M.value) or (model == Hamiltonians.RP_M)
 
+
 def check_dense(model: Hamiltonians) -> bool:
     """
     Check if a model is dense.
-    
+
     Dense models are defined as those corresponding to:
         - POWER_LAW_RANDOM_BANDED_M,
         - ULTRAMETRIC_M, or
         - RP_M.
     """
-    return model in (Hamiltonians.POWER_LAW_RANDOM_BANDED_M, Hamiltonians.ULTRAMETRIC_M, Hamiltonians.RP_M)
+    return model in (
+        Hamiltonians.POWER_LAW_RANDOM_BANDED_M,
+        Hamiltonians.ULTRAMETRIC_M,
+        Hamiltonians.RP_M,
+    )
+
 
 ################################################################################
+
 
 # @numba.experimental.jitclass
 class DummyVector:
@@ -104,13 +118,13 @@ class DummyVector:
             backend (optional):
                 The backend module to use. If not provided, defaults to 'numpy'.
         """
-        
-        self.val      = val
-        self.ns       = int(ns) if ns is not None else 1
+
+        self.val = val
+        self.ns = int(ns) if ns is not None else 1
         self._backend = backend or __import__("numpy")
 
     # ---------------------------------------------------------------------------
-    
+
     @property
     def dtype(self):
         return getattr(self.val, "dtype", type(self.val))
@@ -135,12 +149,12 @@ class DummyVector:
         *The method never materialises a full array*, so it's O(1) in memory.
         """
         backend = backend or self._backend
-        tgt_dt  = distinguish_type(dtype)
+        tgt_dt = distinguish_type(dtype)
 
-        if (backend.iscomplexobj(self.val) and not backend.iscomplexobj(dtype)):
+        if backend.iscomplexobj(self.val) and not backend.iscomplexobj(dtype):
             # If we're casting from complex to real, take the real part
             self.val = backend.real(self.val)
-        elif (not backend.iscomplexobj(self.val) and backend.iscomplexobj(dtype)):
+        elif not backend.iscomplexobj(self.val) and backend.iscomplexobj(dtype):
             # If we're casting from real to complex, add a zero imaginary part
             self.val = backend.asarray(self.val, dtype=backend.complex128)
 
@@ -152,7 +166,7 @@ class DummyVector:
         return DummyVector(new_val, ns=self.ns, backend=backend)
 
     # ---------------------------------------------------------------------------
-    
+
     def __array__(self, dtype=None):
         return self._backend.full(self.ns, self.val, dtype=dtype)
 
@@ -160,7 +174,7 @@ class DummyVector:
         return 100.0
 
     # ---------------------------------------------------------------------------
-    
+
     def __repr__(self):
         return f"DummyVector(val={self.val!r}, ns={self.ns})"
 
@@ -168,7 +182,7 @@ class DummyVector:
         return f"[{self.val}] * {self.ns}"
 
     # ---------------------------------------------------------------------------
-    
+
     def __len__(self):
         return self.ns
 
@@ -185,7 +199,7 @@ class DummyVector:
         yield from (self.val for _ in range(self.ns))
 
     # ---------------------------------------------------------------------------
-    
+
     def _binary(self, other, op):
         if isinstance(other, DummyVector):
             if self.ns != other.ns:
@@ -195,34 +209,47 @@ class DummyVector:
             other_val = other
         return DummyVector(op(self.val, other_val), ns=self.ns, backend=self._backend)
 
-    def __add__(self, other):       return self._binary(other, lambda a, b: a + b)
-    def __radd__(self, other):      return self.__add__(other)
-    def __sub__(self, other):       return self._binary(other, lambda a, b: a - b)
-    def __rsub__(self, other):      return self._binary(other, lambda a, b: b - a)
-    def __mul__(self, other):       return self._binary(other, lambda a, b: a * b)
-    def __rmul__(self, other):      return self.__mul__(other)
-    def __truediv__(self, other):   return self._binary(other, lambda a, b: a / b)
-    def __rtruediv__(self, other):  return self._binary(other, lambda a, b: b / a)
+    def __add__(self, other):
+        return self._binary(other, lambda a, b: a + b)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __sub__(self, other):
+        return self._binary(other, lambda a, b: a - b)
+
+    def __rsub__(self, other):
+        return self._binary(other, lambda a, b: b - a)
+
+    def __mul__(self, other):
+        return self._binary(other, lambda a, b: a * b)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        return self._binary(other, lambda a, b: a / b)
+
+    def __rtruediv__(self, other):
+        return self._binary(other, lambda a, b: b / a)
+
     # (add more as needed)
 
     # ---------------------------------------------------------------------------
-    
+
     def __eq__(self, other):
-        return (
-            isinstance(other, DummyVector)
-            and self.ns == other.ns
-            and self.val == other.val
-        )
+        return isinstance(other, DummyVector) and self.ns == other.ns and self.val == other.val
 
     def __hash__(self):
         return hash((self.val, self.ns))
-    
+
     def to_array(self, dtype=None, backend=None):
         """
         Convert the DummyVector to a numpy array.
         """
-        backend = backend if backend is not None else __import__('numpy')
+        backend = backend if backend is not None else __import__("numpy")
         return backend.full(self.ns, self.val, dtype=dtype)
-    
+
+
 ##################################################################################
 #! END OF FILE

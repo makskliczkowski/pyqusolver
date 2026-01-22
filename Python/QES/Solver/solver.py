@@ -1,76 +1,80 @@
-import numpy as np
-import scipy as sp
-from typing import Union, Tuple, Union, Optional
-
 # for the abstract class
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Optional, Tuple, Union
+
+import numpy as np
 
 # from algebra
 try:
-    from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
     from QES.general_python.algebra.ran_wrapper import choice, randint, uniform
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, get_backend
     from QES.general_python.common.directories import Directories
 except ImportError as e:
-    raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
+    raise ImportError(
+        "Failed to import general_python modules. Ensure QES package is correctly installed."
+    ) from e
 
 # from hilbert
 try:
     from QES.Algebra.hilbert import HilbertSpace
 except ImportError as e:
-    raise ImportError("Failed to import HilbertSpace module. Ensure QES package is correctly installed.") from e
+    raise ImportError(
+        "Failed to import HilbertSpace module. Ensure QES package is correctly installed."
+    ) from e
 
 # JAX imports
 if JAX_AVAILABLE:
-    import jax
     import jax.numpy as jnp
-    import jax.random as random
-    from jax import vmap
 
 #######################################
+
 
 class Solver(ABC):
     """
     Abstract base class for the solvers in many body physics. This class is used to define the basic structure of the solvers.
     """
-    
+
     ###################################
     @dataclass
     class SolverLastLoss:
         """
         Class to store the last loss.
         """
-        last            : float = None
-        std             : float = None
-        mean            : float = None
-        max             : float = None
-        min             : float = None
-        current         : float = None
-        best            : float = None
-    
-    ###################################
-    defdir     = "./mcdata"     # default directory for saving the data
+
+        last: float = None
+        std: float = None
+        mean: float = None
+        max: float = None
+        min: float = None
+        current: float = None
+        best: float = None
 
     ###################################
-    NOT_IMPLEMENTED_ERROR       = "The state is not implemented for the given modes."
-    NOT_IMPLEMENTED_ERROR_SAVE  = "The saving is not implemented for the given modes."
-    NOT_GIVEN_SIZE_ERROR        = "The size or shape of the system is not defined."
-    NOT_A_VALID_STATE_STRING    = "The state is not a valid string, check SolverInitState."
-    NOT_A_VALID_STATE_DISTING   = "The state must be an integer, a jnp.ndarray, or a valid string representing an initial state."
+    defdir = "./mcdata"  # default directory for saving the data
+
     ###################################
-    
-    def __init__(self,
-                shape       : Union[int, Tuple[int, ...]]   = (1,),
-                modes       : int                           = 2,
-                seed        : Optional[int]                 = None,
-                hilbert     : Optional[HilbertSpace]        = None,
-                directory   : Union[str, Directories]       = defdir,
-                nthreads    : int                           = 1,
-                backend     : str                           = 'default',
-                **kwargs):
-        '''
+    NOT_IMPLEMENTED_ERROR = "The state is not implemented for the given modes."
+    NOT_IMPLEMENTED_ERROR_SAVE = "The saving is not implemented for the given modes."
+    NOT_GIVEN_SIZE_ERROR = "The size or shape of the system is not defined."
+    NOT_A_VALID_STATE_STRING = "The state is not a valid string, check SolverInitState."
+    NOT_A_VALID_STATE_DISTING = "The state must be an integer, a jnp.ndarray, or a valid string representing an initial state."
+    ###################################
+
+    def __init__(
+        self,
+        shape: Union[int, Tuple[int, ...]] = (1,),
+        modes: int = 2,
+        seed: Optional[int] = None,
+        hilbert: Optional[HilbertSpace] = None,
+        directory: Union[str, Directories] = defdir,
+        nthreads: int = 1,
+        backend: str = "default",
+        **kwargs,
+    ):
+        """
         Initialize the solver.
-        
+
         Parameters:
         - size          : size of the configuration (like lattice sites etc.)
         - modes         : number of modes for the binary representation
@@ -78,158 +82,164 @@ class Solver(ABC):
         - directory     : directory for saving the data (potentially)
         - seed          : seed for the random number generator
         - backend       : backend for the calculations (default is 'default')
-        '''
-        self._shape         = shape                                                         # size of the configuration (like lattice sites etc.)
-                                                                                            # This can be either 1D chain, 2D lattice, transformed
-                                                                                            # lattice, etc.
-        self._size          = np.prod(shape) if isinstance(shape, tuple) else shape         # size of the configuration (like lattice sites etc.)
-        self._modes         = modes                                                         # number of modes for the binary representation
-        
+        """
+        self._shape = shape  # size of the configuration (like lattice sites etc.)
+        # This can be either 1D chain, 2D lattice, transformed
+        # lattice, etc.
+        self._size = (
+            np.prod(shape) if isinstance(shape, tuple) else shape
+        )  # size of the configuration (like lattice sites etc.)
+        self._modes = modes  # number of modes for the binary representation
+
         # Handle the Hilbert space representation
-        self._hilbert       = hilbert                                                       # Hilbert space representation
+        self._hilbert = hilbert  # Hilbert space representation
         if self._hilbert is not None:
-            self._size      = hilbert.ns
-            self._modes     = hilbert.local_space.local_dim
+            self._size = hilbert.ns
+            self._modes = hilbert.local_space.local_dim
         elif hilbert is None and shape is not None:
-            self._hilbert   = HilbertSpace(ns=self._size, modes=self._modes)
+            self._hilbert = HilbertSpace(ns=self._size, modes=self._modes)
         elif hilbert is None and shape is None:
             raise ValueError(Solver.NOT_GIVEN_SIZE_ERROR)
-        
+
         # directory creation
-        self._dir           = directory                                                     # directory for saving the data (potentially)
+        self._dir = directory  # directory for saving the data (potentially)
         if not isinstance(directory, Directories):
-            self._dir       = Directories(directory).resolve()
+            self._dir = Directories(directory).resolve()
             self._dir.mkdir(parents=True, exist_ok=True)
-        
+
         # check the backend
-        self._backend, self._backend_sp, (self._rng, self._rng_k), self._backend_str = self.obtain_backend(backend, seed)
-        self._isjax         = JAX_AVAILABLE and self._backend != np
+        self._backend, self._backend_sp, (self._rng, self._rng_k), self._backend_str = (
+            self.obtain_backend(backend, seed)
+        )
+        self._isjax = JAX_AVAILABLE and self._backend != np
         # set the precision
         if not self._isjax:
-            self._eps   = np.finfo(np.float64).eps
-            self._prec  = np.float32
+            self._eps = np.finfo(np.float64).eps
+            self._prec = np.float32
         else:
-            self._eps   = jnp.finfo(jnp.float64).eps
-            self._prec  = jnp.float32
-        
+            self._eps = jnp.finfo(jnp.float64).eps
+            self._prec = jnp.float32
+
         # statistical
-        self._lastloss      = Solver.SolverLastLoss()
-        self._replica_idx   = 1
-        
+        self._lastloss = Solver.SolverLastLoss()
+        self._replica_idx = 1
+
         # initialize threads
-        self._nthreads      = nthreads
-        
+        self._nthreads = nthreads
+
         # allow for preconditioner and scheduler
-        self._precond       = kwargs.get('preconditioner', None)
-        self._scheduler     = kwargs.get('scheduler', None)
-        self._solver        = kwargs.get('solver', None)
-        self._optimizer     = kwargs.get('optimizer', None)
-        self._early_stop    = kwargs.get('early_stop', None)
-        self._arch_params   = kwargs.get('architecture_parameters', None)
+        self._precond = kwargs.get("preconditioner", None)
+        self._scheduler = kwargs.get("scheduler", None)
+        self._solver = kwargs.get("solver", None)
+        self._optimizer = kwargs.get("optimizer", None)
+        self._early_stop = kwargs.get("early_stop", None)
+        self._arch_params = kwargs.get("architecture_parameters", None)
 
     #####################################
     #! PROPERTIES AND GETTERS
     #####################################
-    
+
     @property
     def size(self):
-        '''Return the size of the configuration.'''
+        """Return the size of the configuration."""
         return self._size
-    
+
     @property
     def modes(self):
-        '''Return the number of modes for the binary representation.'''
+        """Return the number of modes for the binary representation."""
         return self._modes
-    
+
     @property
     def hilbert(self):
-        '''Return the Hilbert space representation.'''
+        """Return the Hilbert space representation."""
         return self._hilbert
-    
+
     @property
     def lastloss(self):
-        '''Return the last loss.'''
+        """Return the last loss."""
         return self._lastloss.last
-    
+
     @property
     def lastloss_std(self):
-        '''Return the last loss standard deviation.'''
+        """Return the last loss standard deviation."""
         return self._lastloss.std
-    
+
     @property
     def lastloss_mean(self):
-        '''Return the last loss mean.'''
+        """Return the last loss mean."""
         return self._lastloss.mean
-    
+
     @property
     def lastloss_max(self):
-        '''Return the last loss maximum.'''
+        """Return the last loss maximum."""
         return self._lastloss.max
-    
+
     @property
     def lastloss_min(self):
-        '''Return the last loss minimum.'''
+        """Return the last loss minimum."""
         return self._lastloss.min
-    
+
     @property
     def currentloss(self):
-        '''Return the current loss.'''
+        """Return the current loss."""
         return self._lastloss.current
-    
+
     @property
     def replica_idx(self):
-        '''Return the replica index.'''
+        """Return the replica index."""
         return self._replica_idx
-    
+
     #####################################
     #! BACKEND
     #####################################
-    
+
     @property
     def backend(self):
-        '''Return the backend used for calculations.'''
+        """Return the backend used for calculations."""
         return self._backend
-    
+
     @property
     def backend_sp(self):
-        '''Return the backend (SciPy) used for calculations.'''
+        """Return the backend (SciPy) used for calculations."""
         return self._backend_sp
-    
+
     @property
     def rng(self):
-        '''Return the random number generator.'''
+        """Return the random number generator."""
         return self._rng
-    
+
     @property
     def rng_k(self):
-        '''Return the random number generator key.'''
+        """Return the random number generator key."""
         return self._rng_k
-    
+
     @property
     def random(self):
-        '''Return random number'''
+        """Return random number"""
         return uniform(shape=(1,), backend=self._backend, rng=self._rng, rng_k=self._rng_k)[0]
-    
+
     # ----------------------------------
-    
-    def reset_backend(self, backend: str = 'default', seed: Optional[int] = None):
-        '''
+
+    def reset_backend(self, backend: str = "default", seed: Optional[int] = None):
+        """
         Reset the backend for the calculations.
         Parameters:
         - backend       : backend for the calculations (default is 'default')
         - seed          : seed for the random number generator
-        '''
-        self._backend, self._backend_sp, (self._rng, self._rng_k) = self.obtain_backend(backend, seed)
+        """
+        self._backend, self._backend_sp, (self._rng, self._rng_k) = self.obtain_backend(
+            backend, seed
+        )
         return self._backend, self._backend_sp, (self._rng, self._rng_k)
-    
+
     @staticmethod
     def obtain_backend(backend: str, seed: Optional[int]):
-        '''
+        """
         Set the backend for the calculations.
         Parameters:
         - backend       : backend for the calculations (default is 'default')
         - seed          : seed for the random number generator
-        '''
+        """
         if isinstance(backend, str):
             bck = get_backend(backend, scipy=True, random=True, seed=seed)
             if isinstance(bck, tuple):
@@ -242,76 +252,81 @@ class Solver(ABC):
                 _backend, _backend_sp = bck, None
                 _rng, _rng_k = None, None
             return _backend, _backend_sp, (_rng, _rng_k), backend
-        _backendstr = 'np' if (backend is None or (backend == 'default' and not JAX_AVAILABLE) or backend == np) else 'jax'
+        _backendstr = (
+            "np"
+            if (backend is None or (backend == "default" and not JAX_AVAILABLE) or backend == np)
+            else "jax"
+        )
         return Solver.obtain_backend(_backendstr, seed)
-    
+
     ###################################
     #! Setters
     ###################################
-    
+
     def set_replica_idx(self, idx: int):
-        '''
+        """
         Set the replica index.
-        '''
+        """
         self._replica_idx = idx
         return self._replica_idx
-    
+
     def set_early_stopping(self, *args, **kwargs):
-        '''
+        """
         Set the early stopping criteria.
-        '''
+        """
         #!TODO: implement the early stopping criteria
-        self._early_stop = kwargs.get('early_stop', None)
+        self._early_stop = kwargs.get("early_stop", None)
         return self._early_stop
-    
+
     def set_optimizer(self, *args, **kwargs):
-        '''
+        """
         Set the optimizer.
-        '''
+        """
         #!TODO: implement the optimizer
-        self._optimizer = kwargs.get('optimizer', None)
+        self._optimizer = kwargs.get("optimizer", None)
         return self._optimizer
-    
+
     def set_preconditioner(self, *args, **kwargs):
-        '''
+        """
         Set the preconditioner.
-        '''
+        """
         #!TODO: implement the preconditioner
-        self._preconditioner = kwargs.get('preconditioner', None)
+        self._preconditioner = kwargs.get("preconditioner", None)
         return self._preconditioner
-    
+
     def set_scheduler(self, *args, **kwargs):
-        '''
+        """
         Set the scheduler.
-        '''
-        #!TODO: implement the scheduler        
-        self._scheduler = kwargs.get('scheduler', None)
+        """
+        #!TODO: implement the scheduler
+        self._scheduler = kwargs.get("scheduler", None)
         return self._scheduler
-    
+
     def set_solver(self, *args, **kwargs):
-        '''
+        """
         Set the solver.
-        '''
+        """
         #!TODO: implement the solver
-        self._solver = kwargs.get('solver', None)
+        self._solver = kwargs.get("solver", None)
         return self._solver
-    
+
     ###################################
     #! ABSTRACT METHODS
     ###################################
-    
+
     @abstractmethod
     def clone(self):
-        '''
+        """
         Clone the solver.
-        '''
+        """
         pass
-    
+
     @abstractmethod
     def swap(self, other):
-        '''
+        """
         Swap the state of the solver with another solver.
-        '''
+        """
         pass
-    
+
+
 ########################################

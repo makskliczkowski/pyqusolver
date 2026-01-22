@@ -1,17 +1,16 @@
-'''
+"""
 Factories for operator wrapping functions
-'''
+"""
+
+from functools import partial
 
 import numba
-import numpy as np
 import numba.typed
-import inspect
-from numba import njit
-from inspect import signature
-from functools import partial
+import numpy as np
 
 try:
     from QES.general_python.algebra.utils import JAX_AVAILABLE
+
     if JAX_AVAILABLE:
         import jax
         import jax.numpy as jnp
@@ -20,46 +19,60 @@ except ImportError:
     jax = None
     jnp = None
 
+
 def _make_add_int_njit(f1, f2):
-    """ Factory for (f1 + f2) integer backend """
-    @numba.njit(inline='always')
+    """Factory for (f1 + f2) integer backend"""
+
+    @numba.njit(inline="always")
     def add_int(s, *args):
         s1, v1 = f1(s, *args)
         s2, v2 = f2(s, *args)
         # Concatenate results: (A+B)|psi> = A|psi> + B|psi>
         return np.concatenate((s1, s2)), np.concatenate((v1, v2))
+
     return add_int
 
+
 def _make_add_np_njit(f1, f2):
-    """ Factory for (f1 + f2) numpy backend """
-    @numba.njit(inline='always')
+    """Factory for (f1 + f2) numpy backend"""
+
+    @numba.njit(inline="always")
     def add_np(s, *args):
         s1, v1 = f1(s, *args)
         s2, v2 = f2(s, *args)
         return np.concatenate((s1, s2)), np.concatenate((v1, v2))
+
     return add_np
 
+
 def _make_sub_int_njit(f1, f2):
-    """ Factory for (f1 - f2) integer backend """
-    @numba.njit(inline='always')
+    """Factory for (f1 - f2) integer backend"""
+
+    @numba.njit(inline="always")
     def sub_int(s, *args):
         s1, v1 = f1(s, *args)
         s2, v2 = f2(s, *args)
         # Negate the values of the second operator
         return np.concatenate((s1, s2)), np.concatenate((v1, -v2))
+
     return sub_int
 
+
 def _make_sub_np_njit(f1, f2):
-    """ Factory for (f1 - f2) numpy backend """
-    @numba.njit(inline='always')
+    """Factory for (f1 - f2) numpy backend"""
+
+    @numba.njit(inline="always")
     def sub_np(s, *args):
         s1, v1 = f1(s, *args)
         s2, v2 = f2(s, *args)
         return np.concatenate((s1, s2)), np.concatenate((v1, -v2))
+
     return sub_np
+
 
 # JAX versions
 if JAX_AVAILABLE:
+
     def _make_add_jax(f1, f2):
         @jax.jit
         def add_jax(s, *args):
@@ -67,6 +80,7 @@ if JAX_AVAILABLE:
             s2, v2 = f2(s, *args)
             # JAX concatenation
             return jnp.concatenate([s1, s2], axis=0), jnp.concatenate([v1, v2], axis=0)
+
         return add_jax
 
     def _make_sub_jax(f1, f2):
@@ -75,11 +89,14 @@ if JAX_AVAILABLE:
             s1, v1 = f1(s, *args)
             s2, v2 = f2(s, *args)
             return jnp.concatenate([s1, s2], axis=0), jnp.concatenate([v1, -v2], axis=0)
+
         return sub_jax
-    
+
+
 # ----------------------------------------------------------------------------
 
 ####################################################################################################
+
 
 def _make_mul_int_njit(outer_op_fun, inner_op_fun, allocator_m=2):
     """
@@ -87,54 +104,56 @@ def _make_mul_int_njit(outer_op_fun, inner_op_fun, allocator_m=2):
     Natively supports Tuple inputs to avoid allocation overhead.
     """
     try:
+
         @numba.njit(cache=True)
         def mul_int_impl(state, *args):
             # 1. Get results (Tuples or Arrays)
-            g_states, g_coeffs  = inner_op_fun(state, *args)
-            size                = len(g_states)
-            
+            g_states, g_coeffs = inner_op_fun(state, *args)
+            size = len(g_states)
+
             # 2. Handle empty result case
             if size == 0:
                 # Return empty arrays (allocating empty is cheap)
                 return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.complex128)
 
             # 3. Allocation for the *result* is unavoidable for variable-sized products
-            total_estimate  = size * allocator_m
-            res_states      = np.empty(total_estimate, dtype=np.int64)
-            res_coeffs      = np.empty(total_estimate, dtype=np.complex128)
-            count           = 0
+            total_estimate = size * allocator_m
+            res_states = np.empty(total_estimate, dtype=np.int64)
+            res_coeffs = np.empty(total_estimate, dtype=np.complex128)
+            count = 0
 
             # 4. Iterate directly (works for Tuple and Array)
             for k in range(size):
-                g_state_k               = g_states[k]
-                g_coeff_k               = g_coeffs[k]
-                
+                g_state_k = g_states[k]
+                g_coeff_k = g_coeffs[k]
+
                 # Apply outer operator
-                f_states_k, f_coeffs_k  = outer_op_fun(g_state_k, *args)
-                
+                f_states_k, f_coeffs_k = outer_op_fun(g_state_k, *args)
+
                 # Iterate over result (Tuple or Array)
                 len_f = len(f_states_k)
                 for l in range(len_f):
                     # Dynamic resizing if estimate was too low
                     if count >= len(res_states):
-                        new_size        = len(res_states) * 2
-                        tmp_s           = np.empty(new_size, dtype=np.int64)
-                        tmp_c           = np.empty(new_size, dtype=np.complex128)
-                        tmp_s[:count]   = res_states[:count]
-                        tmp_c[:count]   = res_coeffs[:count]
-                        res_states      = tmp_s
-                        res_coeffs      = tmp_c
+                        new_size = len(res_states) * 2
+                        tmp_s = np.empty(new_size, dtype=np.int64)
+                        tmp_c = np.empty(new_size, dtype=np.complex128)
+                        tmp_s[:count] = res_states[:count]
+                        tmp_c[:count] = res_coeffs[:count]
+                        res_states = tmp_s
+                        res_coeffs = tmp_c
 
-                    res_states[count]   = f_states_k[l]
+                    res_states[count] = f_states_k[l]
                     # Enforce complex type for safety
-                    res_coeffs[count]   = g_coeff_k * f_coeffs_k[l]
-                    count              += 1
+                    res_coeffs[count] = g_coeff_k * f_coeffs_k[l]
+                    count += 1
 
             return res_states[:count], res_coeffs[:count]
 
         return mul_int_impl
     except Exception as e:
         raise e
+
 
 def _make_mul_np_njit(outer_op_fun, inner_op_fun, allocator_m=2):
     """
@@ -164,17 +183,19 @@ def _make_mul_np_njit(outer_op_fun, inner_op_fun, allocator_m=2):
     - If Numba compilation is intended but fails, the function falls back to a pure NumPy implementation.
     - The function assumes that the input state is a 1D NumPy array.
     """
-    
+
     def mul_np_impl(state_np, *args_np):
         g_states, g_coeffs = inner_op_fun(state_np, *args_np)  # (M, D), (M,)
         if g_states.shape[0] == 0:
-            return np.empty((0, state_np.shape[0]), dtype=state_np.dtype), np.empty((0,), dtype=g_coeffs.dtype)
+            return np.empty((0, state_np.shape[0]), dtype=state_np.dtype), np.empty(
+                (0,), dtype=g_coeffs.dtype
+            )
 
-        max_est     = g_states.shape[0] * allocator_m
-        state_dim   = state_np.shape[0]  # assumes 1D input
-        res_states  = np.empty((max_est, state_dim), dtype=state_np.dtype)
-        res_coeffs  = np.empty((max_est,), dtype=g_coeffs.dtype)
-        count       = 0
+        max_est = g_states.shape[0] * allocator_m
+        state_dim = state_np.shape[0]  # assumes 1D input
+        res_states = np.empty((max_est, state_dim), dtype=state_np.dtype)
+        res_coeffs = np.empty((max_est,), dtype=g_coeffs.dtype)
+        count = 0
 
         for k in range(g_states.shape[0]):
             f_states_k, f_coeffs_k = outer_op_fun(g_states[k], *args_np)
@@ -183,21 +204,27 @@ def _make_mul_np_njit(outer_op_fun, inner_op_fun, allocator_m=2):
                     break
                 res_states[count] = f_states_k[j]
                 res_coeffs[count] = g_coeffs[k] * f_coeffs_k[j]
-                count            += 1
+                count += 1
         return res_states[:count], res_coeffs[:count]
-    
+
     #! Attempt Numba compilation; if it fails, use the pure Python/NumPy version.
     try:
         return mul_np_impl
     except Exception as e:
-        print("Numba compilation failed for _make_mul_np_njit. Falling back to pure NumPy version: ", e)
-        return lambda state_np, *args_np: np.empty((0, state_np.shape[0]), dtype=state_np.dtype), np.empty((0,), dtype=np.float64)
+        print(
+            "Numba compilation failed for _make_mul_np_njit. Falling back to pure NumPy version: ",
+            e,
+        )
+        return lambda state_np, *args_np: np.empty(
+            (0, state_np.shape[0]), dtype=state_np.dtype
+        ), np.empty((0,), dtype=np.float64)
+
 
 def _make_mul_jax_vmap(outer_op_fun_jax, inner_op_fun_jax):
 
     if not JAX_AVAILABLE:
-        return None 
-        
+        return None
+
     if outer_op_fun_jax is None or inner_op_fun_jax is None:
         return None
 
@@ -220,7 +247,7 @@ def _make_mul_jax_vmap(outer_op_fun_jax, inner_op_fun_jax):
 
         s_dim = f_states.shape[-1]
         return f_states.reshape(-1, s_dim), f_coeffs.reshape(-1)
-    
+
     try:
         # Example call to force compilation and catch errors early (optional)
         # This requires knowing typical shapes and dtypes for s_initial and args_for_ops
@@ -231,8 +258,11 @@ def _make_mul_jax_vmap(outer_op_fun_jax, inner_op_fun_jax):
         # This is complex to generalize here. JAX will compile on first actual call.
         pass
     except jax.errors.JAXTypeError as e:
-        print(f"JAX compilation failed for _make_mul_jax_vmap: {e}. JAX operations will not be available for this composed operator.")
+        print(
+            f"JAX compilation failed for _make_mul_jax_vmap: {e}. JAX operations will not be available for this composed operator."
+        )
         return None
     return mul_jax_impl
+
 
 # ----------------------------------------------------------------------------

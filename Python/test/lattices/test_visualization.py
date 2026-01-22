@@ -105,11 +105,15 @@ def test_plotter_wrapper_delegates(monkeypatch):
         calls["bz"] = True
         return plt.figure(), plt.gca()
 
-    monkeypatch.setattr("QES.general_python.lattices.visualization.plotting.plot_real_space", _stub_real)
+    monkeypatch.setattr(
+        "QES.general_python.lattices.visualization.plotting.plot_real_space", _stub_real
+    )
     monkeypatch.setattr(
         "QES.general_python.lattices.visualization.plotting.plot_reciprocal_space", _stub_recip
     )
-    monkeypatch.setattr("QES.general_python.lattices.visualization.plotting.plot_brillouin_zone", _stub_bz)
+    monkeypatch.setattr(
+        "QES.general_python.lattices.visualization.plotting.plot_brillouin_zone", _stub_bz
+    )
 
     plotter.real_space()
     plotter.reciprocal_space()
@@ -158,7 +162,9 @@ def test_plotter_structure_in_3d():
 def main() -> int:
     """Entrypoint mirroring pytest CLI while optionally showing plots."""
     parser = argparse.ArgumentParser(description="Run lattice visualization tests.")
-    parser.add_argument("--show-plots", action="store_true", help="Display plots while running tests.")
+    parser.add_argument(
+        "--show-plots", action="store_true", help="Display plots while running tests."
+    )
     args = parser.parse_args()
 
     if args.show_plots:

@@ -12,8 +12,6 @@ Author: Maksymilian Kliczkowski
 Email: maksymilian.kliczkowski@pwr.edu.pl
 """
 
-from . import (
-    free_fermions
-)
+from . import free_fermions
 
-__all__ = ['free_fermions']
+__all__ = ["free_fermions"]

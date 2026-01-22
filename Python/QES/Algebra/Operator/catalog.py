@@ -32,12 +32,14 @@ Date        : 2025-10-30
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, Mapping, Tuple
 
 # ---------------------------------------------------------------------------
 # Data containers
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class OperatorSpec:
@@ -64,17 +66,19 @@ class OperatorSpec:
         Keyword arguments forwarded to ``factory`` unless explicitly overridden.
     """
 
-    key                 : str                                                   # Unique operator identifier
-    factory             : Callable[..., Any]                                    # Factory producing operator kernels
-    description         : str                                                   # Short human readable explanation      
-    algebra             : str                                                   # Text snippet describing the algebraic relations              
-    sign_convention     : str                                                   # Explanation of the sign/statistics convention
-    tags                : Tuple[str, ...]   = field(default_factory=tuple)      # Optional tags
-    default_kwargs      : Mapping[str, Any] = field(default_factory=dict)       # Optional default kwargs
+    key: str  # Unique operator identifier
+    factory: Callable[..., Any]  # Factory producing operator kernels
+    description: str  # Short human readable explanation
+    algebra: str  # Text snippet describing the algebraic relations
+    sign_convention: str  # Explanation of the sign/statistics convention
+    tags: Tuple[str, ...] = field(default_factory=tuple)  # Optional tags
+    default_kwargs: Mapping[str, Any] = field(default_factory=dict)  # Optional default kwargs
+
 
 # ---------------------------------------------------------------------------
 #! Catalog implementation
 # ---------------------------------------------------------------------------
+
 
 class OperatorCatalog:
     """
@@ -102,16 +106,16 @@ class OperatorCatalog:
         if hasattr(local_space, "name") and hasattr(local_space, "value"):
             enum_name = f"{local_space.__class__.__name__}.{local_space.name}"
             return enum_name.lower()
-        
+
         if isinstance(local_space, str):
             return local_space.strip().lower()
-        
+
         return str(local_space).strip().lower()
 
     def _space_bucket(self, local_space: Any) -> Dict[str, OperatorSpec]:
         """
         Retrieve or create the registry bucket for a specific local space.
-        
+
         Parameters
         ----------
         local_space:
@@ -126,12 +130,7 @@ class OperatorCatalog:
     #! Registration API
     # -----------------------------
 
-    def register(
-        self,
-        local_space     : Any,
-        spec            : OperatorSpec,
-        *,
-        overwrite       : bool = False) -> None:
+    def register(self, local_space: Any, spec: OperatorSpec, *, overwrite: bool = False) -> None:
         """
         Register a new operator specification.
 
@@ -183,7 +182,9 @@ class OperatorCatalog:
         try:
             spec = bucket[key]
         except KeyError as exc:
-            raise KeyError(f"Operator '{key}' not registered for local space {local_space!r}.") from exc
+            raise KeyError(
+                f"Operator '{key}' not registered for local space {local_space!r}."
+            ) from exc
 
         merged_kwargs = dict(spec.default_kwargs)
         merged_kwargs.update(kwargs)
@@ -192,19 +193,21 @@ class OperatorCatalog:
         from QES.Algebra.Hilbert.hilbert_local import LocalOperator, LocalOpKernels
 
         kernels = spec.factory(**merged_kwargs)
-        
+
         # Verify correct return type
         if not isinstance(kernels, LocalOpKernels):
-            raise TypeError(f"Factory for operator '{key}' returned {type(kernels)!r}, expected LocalOpKernels.")
+            raise TypeError(
+                f"Factory for operator '{key}' returned {type(kernels)!r}, expected LocalOpKernels."
+            )
 
         return LocalOperator(
-            key             = spec.key,
-            kernels         = kernels,
-            description     = spec.description,
-            algebra         = spec.algebra,
-            sign_convention = spec.sign_convention,
-            tags            = spec.tags,
-            parameters      = merged_kwargs,
+            key=spec.key,
+            kernels=kernels,
+            description=spec.description,
+            algebra=spec.algebra,
+            sign_convention=spec.sign_convention,
+            tags=spec.tags,
+            parameters=merged_kwargs,
         )
 
     def build_local_operator_map(self, local_space: Any, **kwargs: Any) -> Dict[str, Any]:
@@ -227,17 +230,19 @@ class OperatorCatalog:
 
 OPERATOR_CATALOG = OperatorCatalog()
 
+
 def register_local_operator(
-    local_space     : Any,
+    local_space: Any,
     *,
-    key             : str,
-    factory         : Callable[..., Any],
-    description     : str,
-    algebra         : str,
-    sign_convention : str,
-    tags            : Tuple[str, ...] = (),
-    default_kwargs  : Mapping[str, Any] | None = None,
-    overwrite       : bool = False) -> None:
+    key: str,
+    factory: Callable[..., Any],
+    description: str,
+    algebra: str,
+    sign_convention: str,
+    tags: Tuple[str, ...] = (),
+    default_kwargs: Mapping[str, Any] | None = None,
+    overwrite: bool = False,
+) -> None:
     """
     Convenience wrapper around :meth:`OperatorCatalog.register`.
     Parameters
@@ -267,16 +272,18 @@ def register_local_operator(
 
     OPERATOR_CATALOG.register(
         local_space,
-        OperatorSpec(key    = key,
-            factory         = factory,
-            description     = description,
-            algebra         = algebra,
-            sign_convention = sign_convention,
-            tags            = tuple(tags),
-            default_kwargs  = default_kwargs or {},
+        OperatorSpec(
+            key=key,
+            factory=factory,
+            description=description,
+            algebra=algebra,
+            sign_convention=sign_convention,
+            tags=tuple(tags),
+            default_kwargs=default_kwargs or {},
         ),
         overwrite=overwrite,
     )
+
 
 # ---------------------------------------------------------------------------
 
