@@ -50,18 +50,14 @@ from numba.core.registry import CPUDispatcher
 
 try:
     if TYPE_CHECKING:
-        from QES.Algebra.hilbert import HilbertSpace
-        from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
-        from QES.general_python.algebra.utils import Array
-        from QES.general_python.lattices import Lattice
+        from QES.Algebra.hilbert                import HilbertSpace
+        from QES.general_python.algebra.utils   import Array
+        from QES.general_python.lattices        import Lattice
+        from QES.Algebra.Hilbert.hilbert_local  import LocalSpaceTypes
 
-    from QES.Algebra.Operator.matrix import GeneralMatrix
-    from QES.Algebra.Operator.operator_function import (
-        _PYTHON_SCALARS,
-        OperatorFunction,
-        OperatorTypeActing,
-        make_jax_operator_closure,
-    )
+    from QES.Algebra.Operator.matrix            import GeneralMatrix
+    from QES.Algebra.Operator.operator_function import OperatorFunction, OperatorTypeActing, make_jax_operator_closure, _PYTHON_SCALARS
+    from QES.Algebra.Operator.adapters          import NumpyAdapter, JaxAdapter
 except ImportError as e:
     raise ImportError(
         "QES modules are required for this module to function properly. Please ensure QES is installed."
@@ -88,23 +84,23 @@ class SymmetryGenerators(Enum):
     """
 
     # lattice / local operators
-    E = auto()
+    E             = auto()
     Translation_x = auto()
     Translation_y = auto()
     Translation_z = auto()
-    Reflection = auto()
-    Inversion = auto()  # spatial inversion (general lattice)
-    ParityX = auto()  # spin-only (sigma-x parity)
-    ParityY = auto()  # spin-only (sigma-y parity)
-    ParityZ = auto()  # spin-only (sigma-z parity)
+    Reflection    = auto()
+    Inversion     = auto()  # spatial inversion (general lattice)
+    ParityX       = auto()  # spin-only (sigma-x parity)
+    ParityY       = auto()  # spin-only (sigma-y parity)
+    ParityZ       = auto()  # spin-only (sigma-z parity)
 
     # fermion-specific
     FermionParity = auto()  # (-1)^{N}
-    ParticleHole = auto()  # PH transform
-    TimeReversal = auto()  # optional placeholder, depends on model
+    ParticleHole  = auto()  # PH transform
+    TimeReversal  = auto()  # optional placeholder, depends on model
 
     # other symmetries - fallback
-    Other = auto()
+    Other         = auto()
 
     # ---------------
     #! HASERS
@@ -210,22 +206,22 @@ class Operator(GeneralMatrix):
 
     def __init__(
         self,
-        op_fun: OperatorFunction = None,
-        fun_int: Callable = None,
-        fun_np: Optional[Callable] = None,
-        fun_jnp: Optional[Callable] = None,
-        eigval=1.0,
-        lattice: Optional["Lattice"] = None,
-        ns: Optional[int] = None,
-        typek: Optional[SymmetryGenerators] = SymmetryGenerators.Other,
-        name: str = "Operator",
-        modifies: bool = True,
-        quadratic: bool = False,
-        backend: str = "default",
-        is_sparse: bool = True,
-        dtype: Optional[Union[str, np.dtype]] = None,
-        logger: Optional[Any] = None,
-        seed: Optional[int] = None,
+        op_fun                : OperatorFunction = None,
+        fun_int               : Callable = None,
+        fun_np                : Optional[Callable] = None,
+        fun_jnp               : Optional[Callable] = None,
+        eigval                = 1.0,
+        lattice               : Optional["Lattice"] = None,
+        ns                    : Optional[int] = None,
+        typek                 : Optional[SymmetryGenerators] = SymmetryGenerators.Other,
+        name                  : str = "Operator",
+        modifies              : bool = True,
+        quadratic             : bool = False,
+        backend               : str = "default",
+        is_sparse             : bool = True,
+        dtype                 : Optional[Union[str, np.dtype]] = None,
+        logger                : Optional[Any] = None,
+        seed                  : Optional[int] = None,
         **kwargs,
     ):
         """
@@ -301,63 +297,63 @@ class Operator(GeneralMatrix):
             "fun_jax",
             "fun_jnp",  # function kwargs handled by Operator
         }
-        _general_matrix_kwargs = {k: v for k, v in kwargs.items() if k not in _operator_only_kwargs}
+        _general_matrix_kwargs  = {k: v for k, v in kwargs.items() if k not in _operator_only_kwargs}
 
         # Initialize GeneralMatrix parent class
         # Shape is set to (0, 0) initially - will be set when matrix is built
         GeneralMatrix.__init__(
             self,
-            shape=(0, 0),  # Will be determined when matrix is built
-            ns=_ns,  # number of sites - from lattice or provided
-            is_sparse=is_sparse,  # sparse matrix representation
-            backend=backend,  # backend
-            logger=logger,  # logger, already initialized or None
-            seed=seed,  # random seed
-            dtype=dtype,  # data type for matrix elements
+            shape               = (0, 0),     # Will be determined when matrix is built
+            ns                  = _ns,        # number of sites - from lattice or provided
+            is_sparse           = is_sparse,  # sparse matrix representation
+            backend             = backend,    # backend
+            logger              = logger,     # logger, already initialized or None
+            seed                = seed,       # random seed
+            dtype               = dtype,      # data type for matrix elements
             **_general_matrix_kwargs,
         )
 
         # Store lattice (not in GeneralMatrix, specific to Operator)
-        self._lattice = _lattice
+        self._lattice           = _lattice
 
         # property of the operator itself
-        self._eigval = eigval  #! operator's eigenvalue (NOT matrix eigenvalue)
-        self._opeigval = eigval  # backward compatibility
-        self._name = name  # the name of the operator
-        self._type = typek
+        self._eigval            = eigval      #! operator's eigenvalue (NOT matrix eigenvalue)
+        self._opeigval          = eigval      # backward compatibility
+        self._name              = name        # the name of the operator
+        self._type              = typek
         if self._type != SymmetryGenerators.Other and self._name == "Operator":
             self._name = self._type.name
 
         # property for the behavior of the operator - e.g., quadratic, action, etc.
-        self._quadratic = quadratic  # flag for the quadratic operator - this enables different matrix representation
-        self._acton = kwargs.get(
-            "acton", False
-        )  # flag for the action of the operator on the local physical space
-        self._modifies = modifies  # flag for the operator that modifies the state
-        self._matrix_fun = None  # the function that defines the matrix form of the operator - if not provided, the matrix is generated from the function fun
-        self._necessary_args = kwargs.get(
-            "necessary_args", 0
-        )  # number of necessary arguments for the operator function
-        self._fun = (
-            None  # the function that defines the operator - it is set to None if not provided
-        )
+        self._quadratic         = quadratic   # flag for the quadratic operator - this enables different matrix representation
+        self._acton             = kwargs.get("acton", False)  # flag for the action of the operator on the local physical space
+        self._modifies          = modifies    # flag for the operator that modifies the state
+        self._matrix_fun        = None        # the function that defines the matrix form of the operator - if not provided, the matrix is generated from the function fun
+        self._necessary_args    = kwargs.get("necessary_args", 0)  # number of necessary arguments for the operator function
+        self._fun               = (
+                                  None  # the function that defines the operator - it is set to None if not provided
+                                )
         self._jit_wrapper_cache = {}  # cache for JIT wrappers
 
         #! IMPORTANT
-        self._instr_code = kwargs.get(
-            "instr_code", None
-        )  # instruction code for the operator - used in operator builder - linear algebraic operations
-        self._init_functions(op_fun, fun_int, fun_np, fun_jnp)  # initialize the operator function
+        self._instr_code        = kwargs.get("instr_code", None)    # instruction code for the operator - used in operator builder - linear algebraic operations
+        self._init_functions(op_fun, fun_int, fun_np, fun_jnp)      # initialize the operator function
 
+        # Initialize backend adapter
+        if self._is_jax:
+            self._adapter = JaxAdapter()
+        else:
+            self._adapter = NumpyAdapter()
+    
     def __repr__(self):
         """
         String representation of the operator.
         """
-        eigval_str = f"eigval={self._eigval:.4g}" if not np.isclose(self._eigval, 1.0) else ""
-        type_str = f"type={self._type.name}" if self._type != SymmetryGenerators.Other else ""
-        type_act_str = f"act={self.type_acting.name}"
-        name_str = f"{self._name}" if self._name else "Operator"
-        props = ",".join(filter(None, [type_act_str, eigval_str, type_str]))
+        eigval_str    = f"eigval={self._eigval:.4g}" if not np.isclose(self._eigval, 1.0) else ""
+        type_str      = f"type={self._type.name}" if self._type != SymmetryGenerators.Other else ""
+        type_act_str  = f"act={self.type_acting.name}"
+        name_str      = f"{self._name}" if self._name else "Operator"
+        props         = ",".join(filter(None, [type_act_str, eigval_str, type_str]))
         return f"{name_str}({props})"
 
     #################################
@@ -593,10 +589,10 @@ class Operator(GeneralMatrix):
         dtype = new_kwargs.get("_dtype", None)
 
         if isinstance(other, Operator):
-            new_fun = self._fun * other._fun
+            new_fun     = self._fun * other._fun
             #! If eigvals are simple scalars, product makes sense.
-            new_eigval = self._eigval * other._eigval
-            new_name = f"({self._name} * {other._name})"
+            new_eigval  = self._eigval * other._eigval
+            new_name    = f"({self._name} * {other._name})"
             # Modifies state is handled by OperatorFunction composition
             # Quadratic, acton etc. might need rules for combining
             # For now, inherit from self, or define combination rules
@@ -604,20 +600,20 @@ class Operator(GeneralMatrix):
         elif isinstance(other, _PYTHON_SCALARS) or (
             JAX_AVAILABLE and isinstance(other, jax.Array) and other.ndim == 0
         ):
-            new_fun = self._fun * other
-            new_eigval = self._eigval * other
-            new_name = f"({self._name} * {other})"
+            new_fun     = self._fun * other
+            new_eigval  = self._eigval * other
+            new_name    = f"({self._name} * {other})"
         else:
             return NotImplementedError("Incompatible operator function")
         return Operator(
-            op_fun=new_fun,
-            name=new_name,
-            eigval=new_eigval,
-            ns=new_kwargs["_ns"],
-            lattice=new_kwargs["_lattice"],
-            modifies=new_kwargs["_modifies"],
-            backend=new_kwargs["_backend"],
-            logger=new_kwargs.get("_logger", None),
+            op_fun      = new_fun,
+            name        = new_name,
+            eigval      = new_eigval,
+            ns          = new_kwargs["_ns"],
+            lattice     = new_kwargs["_lattice"],
+            modifies    = new_kwargs["_modifies"],
+            backend     = new_kwargs["_backend"],
+            logger      = new_kwargs.get("_logger", None),
             **new_kwargs,
         )
 
@@ -630,14 +626,14 @@ class Operator(GeneralMatrix):
         if isinstance(other, _PYTHON_SCALARS) or (
             JAX_AVAILABLE and isinstance(other, jax.Array) and other.ndim == 0
         ):
-            new_fun = other * self._fun  # OperatorFunction scalar rmul (same as mul)
-            new_eigval = other * self._eigval
-            new_name = f"({other} * {self._name})"
+            new_fun     = other * self._fun  # OperatorFunction scalar rmul (same as mul)
+            new_eigval  = other * self._eigval
+            new_name    = f"({other} * {self._name})"
         elif isinstance(other, Operator):
-            new_fun = other._fun * self._fun
+            new_fun     = other._fun * self._fun
             #! If eigvals are simple scalars, product makes sense.
-            new_eigval = other._eigval * self._eigval
-            new_name = f"({other._name} * {self._name})"
+            new_eigval  = other._eigval * self._eigval
+            new_name    = f"({other._name} * {self._name})"
         else:
             return NotImplementedError("Incompatible operator function")
 
@@ -1364,475 +1360,65 @@ class Operator(GeneralMatrix):
 
     def matvec(
         self,
-        vecs: Array,
+        vecs          : 'Array',
         *args,
-        hilbert_in: HilbertSpace = None,
-        hilbert_out: HilbertSpace = None,
-        symmetry_mode: str = "auto",
-        multithreaded: bool = False,
-        out: Array = None,
-        thread_buffer: Array = None,
-        chunk_size: int = 1,
-        dtype=None,
+        hilbert_in    : HilbertSpace  = None,
+        hilbert_out   : HilbertSpace  = None,
+        symmetry_mode : str           = "auto",
+        multithreaded : bool          = False,
+        out           : Array         = None,
+        thread_buffer : Array         = None,
+        chunk_size    : int           = 1,
+        dtype         = None,
         # alias for hilbert_in
         hilbert: Optional[HilbertSpace] = None,
     ) -> Array:
         """
-        Apply the operator matrix to a vector.
-
-        If Hilbert space is not provided and **kwargs does not have mb=True,
-        the single particle picture is assumed.
-
-        Otherwise, the matrix is generated using the provided Hilbert space.
-        We don't want to create matrix explicitly but that can be done using this function...
-
-        Parameters:
-            vecs (Array):
-                The input vectors to which the operator is applied. Shape (vec_size, n_vecs).
-
-                vec_size can be:
-                    - 1, nstates:           -> n integer states
-                    - ns * nloc, n_vecs:    -> local Hilbert space vectors - usually basis vectors
-                    - hilbert.nh, n_vecs:   -> full Hilbert space vectors
-            hilbert_in (HilbertSpace):
-                The Hilbert space of the input vectors.
-            hilbert_out (HilbertSpace):
-                The Hilbert space of the output vectors (target sector).
-                If None, assumes same as input (hilbert).
-            symmetry_mode (str):
-                - "auto"                    -> use compact fast if possible, else fallback
-                - "fast"                    -> assume operator preserves symmetry sector (commuting case)
-                - "project"                 -> compute y = P O P x (always correct, slower)
-                - "none"                    -> ignore symmetries (explicit basis / full space)
-            *args:
-                Additional arguments for the operator function.
-            out (Array):
-                Preallocated output array to store the result. If None, a new array is created.
-            thread_buffer (Array):
-                Preallocated thread buffer for JIT kernels. If None, a new buffer is created internally.
-            chunk_size (int):
-                Chunk size for JIT kernels. Larger sizes may improve performance.
-            dtype:
-                Desired data type for the output array. If None, defaults to complex128.
-            **kwargs:
-                Additional keyword arguments for the operator function.
-                Can include 'mb' to force many-body picture.
-
-        Returns:
-            Array: The resulting vectors after applying the operator.
-
-            or
-
-            list of values, states if single particle picture is used.
+        Apply the operator matrix to a vector using the backend adapter.
+        Delegates to self._adapter.matvec.
         """
-        logger = hilbert_in._logger if hilbert_in is not None else None
-        symmetry_mode = symmetry_mode.lower() if symmetry_mode is not None else "auto"
-        hilbert_in = hilbert_in if hilbert_in is not None else hilbert
-
+        logger          = hilbert_in._logger if hilbert_in is not None else None
+        hilbert_in      = hilbert_in if hilbert_in is not None else hilbert
+        
         # No Hilbert space provided
         if hilbert_in is None:
-            if isinstance(vecs, list) or (
-                isinstance(vecs, np.ndarray) and vecs.ndim == 1 and "int" in str(vecs.dtype)
-            ):
+            if isinstance(vecs, list) or (isinstance(vecs, np.ndarray) and vecs.ndim == 1 and "int" in str(vecs.dtype)):
                 # Assuming vecs are state INDICES, not amplitudes
                 return self.apply(vecs, *args)
 
             # For now assuming the user knows what they are doing.
             if logger is not None:
-                logger.warning(
-                    "Hilbert space not provided. Assuming single-particle picture for matvec."
-                )
-
-        # use manybody picture -> we must use int function
-        if self._fun._fun_int is None:
-            raise ValueError("Integer function for the operator is not defined.")
-
-        # act on states using the Hilbert space and the operator function
-        try:
-            from QES.Algebra.Hilbert.matrix_builder import (
-                _apply_op_batch_compact_jit,
-                _apply_op_batch_compact_seq_jit,
-                _apply_op_batch_jit,
-                _apply_op_batch_seq_jit,
-                canonicalize_args,
-                ensure_thread_buffer,
-            )
-            from QES.Algebra.Symmetries.jit.matrix_builder_jit import (
-                _apply_op_batch_projected_compact_jit,
-                _apply_op_batch_projected_compact_seq_jit,
-            )
-        except ImportError:
-            raise ImportError(
-                "JIT matrix builder not available. Ensure Numba is installed and QES is properly set up."
-            )
-
-        # Determine Target Space
-        target_space = hilbert_out if hilbert_out is not None else hilbert_in
-        nh = target_space.nh if target_space is not None else vecs.shape[0]
-        nhfull = hilbert_in.nhfull if hilbert_in is not None else vecs.shape[0]
-
-        # Ensure 2D shape for batch kernel: (N_hilbert, N_batch)
-        is_1d = vecs.ndim == 1
-        if is_1d:
-            vecs_in = vecs[:, np.newaxis]
-        else:
-            vecs_in = vecs
-
-        if hilbert_in is not None and vecs_in.shape[0] != nh:
-            raise ValueError(
-                f"Input vector size {vecs_in.shape[0]} does not match Hilbert space dimension {hilbert_in.nh}."
-            )
-
-        # output
-        dtype = dtype if dtype is not None else vecs_in.dtype
-        vecs_out = out if out is not None else np.zeros((nh, vecs_in.shape[1]), dtype=dtype)
-
-        # Check for CompactSymmetryData (O(1) lookup - fast)
-        compact_data_out = getattr(target_space, "compact_symmetry_data", None)
-        compact_data_in = getattr(hilbert_in, "compact_symmetry_data", None)
-
-        # Logic to decide which kernel to use
-        is_same_sector = hilbert_out is None or hilbert_out == hilbert_in
-        force_project = symmetry_mode.startswith("p") and nh != nhfull
-
-        # Use projected kernel if forced OR if we are changing sectors (assuming we want to use symmetry if available)
-        use_projected_kernel = (compact_data_out is not None and compact_data_in is not None) and (
-            force_project or not is_same_sector
+                logger.warning("Hilbert space not provided. Assuming single-particle picture for matvec.")
+        
+        return self._adapter.matvec(
+            self, vecs, hilbert_in, hilbert_out, *args,
+            symmetry_mode=symmetry_mode, multithreaded=multithreaded,
+            out=out, thread_buffer=thread_buffer, chunk_size=chunk_size, dtype=dtype
         )
-        # Use fast kernel if same sector and compact data available and not forced to project
-        use_fast_kernel = (
-            compact_data_out is not None
-            and is_same_sector
-            and not force_project
-            and symmetry_mode in ("auto", "fast")
-        )
-
-        op_args = canonicalize_args(args)
-        op_func = self._fun._fun_int
-
-        if not multithreaded:
-            # SEQUENTIAL PATH
-            if use_fast_kernel and nhfull != hilbert_in.nh:
-                cd = compact_data_out
-                basis_args = (
-                    cd.representative_list,
-                    cd.normalization,
-                    cd.repr_map,
-                    cd.phase_idx,
-                    cd.phase_table,
-                )
-                _apply_op_batch_compact_seq_jit(vecs_in, vecs_out, op_func, op_args, basis_args)
-
-            elif use_projected_kernel and nhfull != hilbert_in.nh:
-                sc = hilbert_in.sym_container
-                sc_out = (
-                    target_space.sym_container
-                    if getattr(target_space, "sym_container", None) is not None
-                    else sc
-                )
-                cg = sc.compiled_group
-
-                basis_in_args = (compact_data_in.representative_list, compact_data_in.normalization)
-                basis_out_args = (
-                    compact_data_out.repr_map,
-                    compact_data_out.normalization,
-                    compact_data_out.representative_list,
-                )
-                cg_args = (
-                    cg.n_group,
-                    cg.n_ops,
-                    cg.op_code,
-                    cg.arg0,
-                    cg.arg1,
-                    cg.chi,
-                    sc_out.compiled_group.chi,
-                )
-
-                _apply_op_batch_projected_compact_seq_jit(
-                    vecs_in,
-                    vecs_out,
-                    op_func,
-                    op_args,
-                    basis_in_args,
-                    basis_out_args,
-                    cg_args,
-                    sc.tables.args,
-                    np.int64(hilbert_in.ns),
-                )
-            else:
-                _apply_op_batch_seq_jit(vecs_in, vecs_out, op_func, op_args)
-
-        else:
-            # MULTITHREADED PATH
-            chunk_size = min(chunk_size, vecs_in.shape[1])
-            th_buffer = ensure_thread_buffer(
-                nh, chunk_size, dtype=dtype, thread_buffers=thread_buffer
-            )
-
-            if use_fast_kernel and nhfull != hilbert_in.nh:
-                cd = compact_data_out
-                basis_args = (
-                    cd.representative_list,
-                    cd.normalization,
-                    cd.repr_map,
-                    cd.phase_idx,
-                    cd.phase_table,
-                )
-                _apply_op_batch_compact_jit(
-                    vecs_in, vecs_out, op_func, op_args, basis_args, th_buffer, chunk_size
-                )
-
-            elif use_projected_kernel and nhfull != hilbert_in.nh:
-                sc = hilbert_in.sym_container
-                sc_out = (
-                    target_space.sym_container
-                    if getattr(target_space, "sym_container", None) is not None
-                    else sc
-                )
-
-                # Pack cg_args with chi_in and chi_out
-                cg = sc.compiled_group
-                cg_args = (
-                    cg.n_group,
-                    cg.n_ops,
-                    cg.op_code,
-                    cg.arg0,
-                    cg.arg1,
-                    cg.chi,
-                    sc_out.compiled_group.chi,
-                )
-
-                basis_in_args = (compact_data_in.representative_list, compact_data_in.normalization)
-                basis_out_args = (
-                    compact_data_out.repr_map,
-                    compact_data_out.normalization,
-                    compact_data_out.representative_list,
-                )
-
-                _apply_op_batch_projected_compact_jit(
-                    vecs_in,
-                    vecs_out,
-                    op_func,
-                    op_args,
-                    basis_in_args,
-                    basis_out_args,
-                    cg_args,
-                    sc.tables.args,
-                    np.int64(hilbert_in.ns),
-                    th_buffer,
-                    local_dim=np.int64(hilbert_in.local_space.local_dim),
-                    chunk_size=chunk_size,
-                )
-
-            else:
-                _apply_op_batch_jit(vecs_in, vecs_out, op_func, op_args, th_buffer, chunk_size)
-
-        return vecs_out.ravel() if is_1d else vecs_out
 
     def matvec_fourier(
         self,
-        phases: Array,
-        vec: Array,
-        hilbert: HilbertSpace,
+        phases        : Array,
+        vec           : Array,
+        hilbert       : HilbertSpace,
         *,
-        symmetry_mode: str = "auto",
-        multithreaded: bool = False,
-        out: Optional[Array] = None,
-        thread_buffer: Optional[Array] = None,
-        chunk_size: int = 4,
-    ) -> Array:
+        symmetry_mode : str = "auto",
+        multithreaded : bool = False,
+        out           : Optional['Array'] = None,
+        thread_buffer : Optional['Array'] = None,
+        chunk_size    : int = 4,
+    ) -> 'Array':
         r"""
-        Computes |out> = O_q |in> without constructing the matrix O_q.
+        Computes |out> = O_q |in> using backend adapter.
         O_q = (1/sqrt(N)) * sum_j exp(i * k * r_j) * sigma_j
-
-        If dagger=True, computes O_q^dagger (conjugates the phase).
-
-        Parameters:
-        -----------
-        phases (Array):
-            The phase factors exp(i * k * r_j) for each site.
-        vec (Array):
-            The input state vector |in>.
-        hilbert (HilbertSpace):
-            The Hilbert space for the system.
-        symmetry_mode (str):
-            - "auto"                    -> use compact fast if possible, else fallback
-            - "fast"                    -> assume operator preserves symmetry sector (commuting case)
-            - "project"                 -> compute y = P O P x (always correct, slower)
-            - "none"                    -> ignore symmetries (explicit basis / full space)
-        multithreaded (bool):
-            If True, use multi-threaded execution.
-        out (Array, optional):
-            Preallocated output array for |out>. If None, a new array is created.
-        thread_buffer (Array, optional):
-            Buffer for thread-local storage to optimize performance.
-        chunk_size (int, optional):
-            Number of vectors to process in each chunk for performance optimization. Default is 4.
-        Returns:
-        --------
-        Array:
-            The resulting state vector |out> after applying the Fourier operator.
-
         """
         if hilbert is None:
             raise ValueError("Hilbert space must be provided for Fourier operator application.")
 
-        try:
-            from QES.Algebra.Hilbert.matrix_builder import (
-                _apply_fourier_batch_compact_jit,
-                _apply_fourier_batch_compact_seq_jit,
-                _apply_fourier_batch_jit,
-                _apply_fourier_batch_seq_jit,
-                ensure_thread_buffer,
-            )
-            from QES.Algebra.Symmetries.jit.matrix_builder_jit import (
-                _apply_fourier_batch_projected_compact_seq_jit,
-            )
-
-        except ImportError:
-            raise ImportError(
-                "JIT matrix builder not available. Ensure Numba is installed and QES is properly set up."
-            )
-
-        is_1d = vec.ndim == 1
-        if is_1d:
-            vecs_in = vec[:, np.newaxis]
-        else:
-            vecs_in = vec
-
-        # output
-        vecs_out = np.zeros_like(vecs_in, dtype=np.complex128) if out is None else out
-        nh, n_batch = vecs_in.shape
-
-        # This function must have signature (state, site_idx, *args)
-        if not self.type_acting.is_local():
-            raise ValueError(
-                "Fourier operator application requires a local operator. This means it needs to accept 'i' argument..."
-            )
-
-        compact_data = getattr(hilbert, "compact_symmetry_data", None)
-        symmetry_mode = symmetry_mode.lower() if symmetry_mode is not None else "auto"
-
-        force_project = symmetry_mode.startswith("p") and hilbert.nh != hilbert.nhfull
-        use_projected_kernel = (compact_data is not None) and force_project
-        use_fast_kernel = (compact_data is not None) and (
-            not force_project and symmetry_mode in ("auto", "fast")
+        return self._adapter.matvec_fourier(self, phases, vec, hilbert,
+            symmetry_mode=symmetry_mode, multithreaded=multithreaded,
+            out=out, thread_buffer=thread_buffer, chunk_size=chunk_size
         )
-
-        if not multithreaded:
-            # SEQUENTIAL PATH
-            if use_fast_kernel and (hilbert.nhfull != hilbert.nh):
-                cd = compact_data
-                basis_args = (
-                    cd.representative_list,
-                    cd.normalization,
-                    cd.repr_map,
-                    cd.phase_idx,
-                    cd.phase_table,
-                )
-                _apply_fourier_batch_compact_seq_jit(
-                    vecs_in, vecs_out, phases, self._fun._fun_int, basis_args
-                )
-
-            elif use_projected_kernel and (hilbert.nhfull != hilbert.nh):
-                sc = hilbert.sym_container
-                ns = np.int64(hilbert.ns)
-                cg = sc.compiled_group
-                basis_in_args = (compact_data.representative_list, compact_data.normalization)
-                basis_out_args = (
-                    compact_data.repr_map,
-                    compact_data.normalization,
-                    compact_data.representative_list,
-                )
-                cg_args = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
-                _apply_fourier_batch_projected_compact_seq_jit(
-                    vecs_in,
-                    vecs_out,
-                    phases,
-                    self._fun._fun_int,
-                    basis_in_args,
-                    basis_out_args,
-                    cg_args,
-                    sc.tables.args,
-                    ns,
-                )
-
-            else:
-                _apply_fourier_batch_seq_jit(vecs_in, vecs_out, phases, self._fun._fun_int)
-
-        else:
-            # MULTITHREADED PATH
-            chunk_size = min(chunk_size, n_batch)
-            thread_buffer = ensure_thread_buffer(
-                nh, chunk_size, dtype=np.complex128, thread_buffers=thread_buffer
-            )
-
-            if use_fast_kernel and (hilbert.nhfull != hilbert.nh):
-                # Fast path with compact data
-                cd = compact_data
-                basis_args = (
-                    cd.representative_list,
-                    cd.normalization,
-                    cd.repr_map,
-                    cd.phase_idx,
-                    cd.phase_table,
-                )
-
-                _apply_fourier_batch_compact_jit(
-                    vecs_in,
-                    vecs_out,
-                    phases,
-                    self._fun._fun_int,
-                    basis_args,
-                    thread_buffer,
-                    chunk_size,
-                )
-
-            elif use_projected_kernel and (hilbert.nhfull != hilbert.nh):
-                # Projected path
-                sc = hilbert.sym_container
-                ns = hilbert.ns
-
-                try:
-                    from QES.Algebra.Symmetries.jit.matrix_builder_jit import (
-                        _apply_fourier_batch_projected_compact_jit,
-                    )
-                except ImportError:
-                    raise ImportError("JIT projected compact matrix builder not available.")
-
-                basis_in_args = (compact_data.representative_list, compact_data.normalization)
-                basis_out_args = (
-                    compact_data.repr_map,
-                    compact_data.normalization,
-                    compact_data.representative_list,
-                )
-                cg = sc.compiled_group
-                cg_args = (cg.n_group, cg.n_ops, cg.op_code, cg.arg0, cg.arg1, cg.chi, cg.chi)
-
-                _apply_fourier_batch_projected_compact_jit(
-                    vecs_in,
-                    vecs_out,
-                    phases,
-                    self._fun._fun_int,
-                    # Grouped basis and symmetry data
-                    basis_in_args,
-                    basis_out_args,
-                    cg_args,
-                    sc.tables.args,
-                    np.int64(ns),
-                    thread_buffer,
-                    np.int64(hilbert.local_space.local_dim),
-                    chunk_size,
-                )
-            else:
-                # Fallback path (no symmetry or full space)
-                _apply_fourier_batch_jit(
-                    vecs_in, vecs_out, phases, self._fun._fun_int, thread_buffer, chunk_size
-                )
-
-        if is_1d:
-            return vecs_out.flatten()
-        return vecs_out
 
     #################################
     # K-space Transformation Methods

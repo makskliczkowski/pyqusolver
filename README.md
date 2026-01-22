@@ -95,6 +95,23 @@ maksymilian.kliczkowski.at.pwr.edu.pl
 
 ---
 
+## Canonical High-Level API (New)
+
+QES now supports a direct Python API for configuration, removing the need to manage environment variables manually (though they are still supported).
+
+```python
+import QES
+
+# Run a session with specific configuration
+with QES.run(backend='jax', seed=42, precision='float64'):
+    # Your QES code here...
+    pass
+
+# Or configure programmatically
+session = QES.QESSession(backend='numpy', seed=123)
+session.start()
+```
+
 ## Environment Setup for QES
 
 To run the QES package correctly, set the following environment variables before running your scripts:

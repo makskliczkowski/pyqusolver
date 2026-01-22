@@ -97,6 +97,10 @@ def qes_seed_scope(
 # Mapping of attribute names to (module_relative_path, attribute_name_in_module)
 # If attribute_name_in_module is None, the module itself is imported.
 _LAZY_IMPORTS = {
+    # Session Management
+    'QESSession'        : ('.session',          'QESSession'),
+    'run'               : ('.session',          'run'),
+
     # Top-level packages
     "Algebra": (".Algebra", None),
     "NQS": (".NQS", None),
@@ -138,16 +142,20 @@ _LAZY_IMPORTS = {
 _LAZY_CACHE = {}
 
 if TYPE_CHECKING:
-    from . import NQS, Algebra, Solver, general_python
-    from .Algebra.hamil import Hamiltonian
+    from .session import QESSession, run
 
+    from . import Algebra
+    from . import NQS
+    from . import Solver
+    from . import general_python
+    
     # Core
-    from .Algebra.hilbert import HilbertSpace
+    from .Algebra.hilbert           import HilbertSpace
     from .Algebra.Operator.operator import Operator
-    from .general_python import algebra as gp_algebra
-    from .general_python import common as gp_common
-    from .general_python import lattices as gp_lattices
-    from .general_python import maths as gp_maths
+    from .general_python            import algebra  as gp_algebra
+    from .general_python            import common   as gp_common
+    from .general_python            import lattices as gp_lattices
+    from .general_python            import maths    as gp_maths
 
     # Aliases
     from .general_python import ml as gp_ml
@@ -207,6 +215,9 @@ def __dir__():
 
 
 __all__ = [
+    # Session
+    "QESSession",
+    "run",
     # RNG / backend helpers (public stable API surface)
     "qes_reseed",
     "qes_next_key",

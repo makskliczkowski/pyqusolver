@@ -279,6 +279,9 @@ class SpecialOperator(Operator, ABC):
             dtype (str or np.dtype, optional):
                 The dtype to use for the Hamiltonian.
         """
+        
+        self._iscpx = False
+
         if dtype is not None:
             super()._handle_dtype(dtype)
         else:
@@ -301,10 +304,10 @@ class SpecialOperator(Operator, ABC):
                     self._dtype = np.float64
             else:
                 self._dtype = np.float64
-
-        if self._iscpx:
-            if self._verbose:
-                self._log("I am complex!", lvl=2, color="red")
+                
+        if getattr(self, '_iscpx', False):
+            if self._verbose: 
+                self._log("I am complex!", lvl = 2, color='red')
         else:
             if self._verbose:
                 self._log("I am real!", lvl=2, color="green")
@@ -381,6 +384,10 @@ class SpecialOperator(Operator, ABC):
         # Handle system (ns, hilbert_space, lattice) before Operator init
         self._handle_system(ns, hilbert_space, lattice, logger, **kwargs)
         self._handle_dtype(dtype)
+        
+        # Update ns/lattice for Operator init (they might have been set in _handle_system)
+        ns      = self._ns
+        lattice = self._lattice
 
         # Initialize base Operator
         super().__init__(
