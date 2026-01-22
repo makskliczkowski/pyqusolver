@@ -261,10 +261,11 @@ def local_energy_jax_wrap(
     import numpy as np
 
     def group_operators(funcs, indices, mults):
-        """Groups operators by function identity for vectorization."""
+        """Groups operators by function identity and arity for vectorization."""
         groups = defaultdict(list)
         for f, idx, m in zip(funcs, indices, mults):
-            groups[f].append((idx, m))
+            # Group by (function, arity) to ensure uniform index shapes
+            groups[(f, len(idx))].append((idx, m))
         return groups
 
     # -------------------------------------------------------------------------
@@ -273,7 +274,7 @@ def local_energy_jax_wrap(
     def process_groups(groups):
         data = []
         fallback_items = []
-        for f, items in groups.items():
+        for (f, _), items in groups.items():
             idxs = [it[0] for it in items]
             ms = [it[1] for it in items]
 
@@ -440,7 +441,7 @@ def local_energy_jax_wrap(
                 diag = diag + contrib
 
             # Non-modifying WITHOUT sites
-            for f, mults in nmod_nos_data:
+            for f, _, mults in nmod_nos_data:
                 # f(state) -> (state, coeff)
                 _, coeff = f(state)
                 total_mult = jnp.sum(mults)
@@ -517,7 +518,7 @@ def local_energy_jax_wrap(
             # --------------------------------------------------------------
             # 3) Modifying operators WITHOUT sites (Vectorized)
             # --------------------------------------------------------------
-            for f, mults in mod_nos_data:
+            for f, _, mults in mod_nos_data:
                 # f(state) -> (new_states, coeffs)
                 # new_states: (K_branch, ns)
                 # coeffs: (K_branch,)
