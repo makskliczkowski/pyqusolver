@@ -2,7 +2,7 @@
 QES Neural Quantum States (NQS)
 ===============================
 
-Library for Variational Quantum Monte Carlo using 
+Library for Variational Quantum Monte Carlo using
 Neural Networks, JAX, and Time-Dependent Variational Principles (TDVP).
 
 Key Components:
@@ -16,7 +16,7 @@ Usage Example:
     >>> import jax
     >>> import jax.numpy as jnp
     >>> from QES.NQS import NQS, NQSTrainer, NetworkFactory, VMCSampler
-    >>> 
+    >>>
     >>> # Mock Hamiltonian (replace with your actual model)
     >>> class MockHamiltonian:
     ...     def __init__(self, ns): self.ns = ns
@@ -24,15 +24,15 @@ Usage Example:
     ...     @property
     ...     def shape(self): return (16,)
     >>> model = MockHamiltonian(ns=16)
-    >>> 
+    >>>
     >>> # 1. Create Network (RBM)
     >>> net = NetworkFactory.create('rbm', input_shape=(model.ns,), alpha=2.0)
-    >>> 
+    >>>
     >>> # 2. Create Sampler
     >>> sampler = VMCSampler(
-    ...     net         =   net, 
+    ...     net         =   net,
     ...     shape       =   (model.ns,),
-    ...     rng         =   jax.random, 
+    ...     rng         =   jax.random,
     ...     rng_k       =   jax.random.PRNGKey(0),
     ...     numchains   =   1,
     ...     numsamples  =   10,
@@ -40,10 +40,10 @@ Usage Example:
     ...     sweep_steps =   1,
     ...     backend     =   'jax'
     ... )
-    >>> 
+    >>>
     >>> # 3. Define NQS Physics
     >>> psi = NQS(net=net, sampler=sampler, model=model)
-    >>> 
+    >>>
     # 4. Train (using 'kitaev' preset for frustrated systems)
     >>> trainer = NQSTrainer(nqs=psi, phases="kitaev")
     >>> # stats = trainer.train() # Uncomment to run actual training
@@ -87,11 +87,11 @@ Ground State Optimization Example:
     print("Starting Ground State Optimization...")
     # stats = trainer.train() # Uncomment to run actual training
     # print(f"Final Energy: {stats.history[-1]:.5f}")
-    
+
     # Alternative: Use train() method directly on NQS
     # stats = psi.train(n_epochs=300, lr=1e-2, lr_scheduler='cosine', use_sr=True)
     # stats = psi.train(n_epochs=100, override=False)  # Continue with same trainer
-    
+
     # 6. Save/Load Checkpoints
     # psi.save_weights("ground_state.h5")  # Save network weights
     # psi.load_weights("ground_state.h5")  # Load network weights
@@ -105,7 +105,7 @@ Excited State Optimization Example:
 
     # Mock Hamiltonian (replace with your actual model)
     model = Hamiltonian(...)  # Replace with actual Hamiltonian
-    
+
     # 1. Load/Create Ground State (The Lower State)
     #    In practice, you would load weights: psi_ground.load("ground_weights.h5")
     net_g       = NetworkFactory.create('rbm', input_shape=(16,), alpha=1.0)
@@ -121,7 +121,7 @@ Excited State Optimization Example:
         backend     =   'jax'
     )
     psi_ground              = NQS(net=net_g, sampler=sampler_g, model=model, shape=(16,))
-    psi_ground.beta_penalty = 10.0 
+    psi_ground.beta_penalty = 10.0
 
     # 2. Create New State (The Excited State)
     #    Usually a different architecture or larger alpha
@@ -152,7 +152,7 @@ Excited State Optimization Example:
     print("Starting Excited State Optimization...")
     # stats = trainer.train() # Uncomment to run actual training
     # print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
-    
+
     # Alternative: Use train() method with lower_states
     # stats = psi_excited.train(
     #     n_epochs=300,
@@ -160,7 +160,7 @@ Excited State Optimization Example:
     #     lr=1e-2,
     #     lr_scheduler='cosine'
     # )
-    
+
     # 5. Save/Load
     # psi_excited.save_weights("excited_state.h5")
 
@@ -169,17 +169,17 @@ Checkpoint Management:
     # Manual Save/Load (weights only)
     psi.save_weights("checkpoint.h5")
     psi.load_weights("checkpoint.h5")
-    
+
     # Automatic checkpoints during training
     stats = psi.train(
         n_epochs=300,
         checkpoint_every=50,      # Save every 50 epochs
         save_path="./checkpoints" # Directory for checkpoints
     )
-    
+
     # Training creates files like:
     # ./checkpoints/epoch_50.h5, epoch_100.h5, ...
-    
+
     # Resume training from checkpoint
     psi.load_weights("./checkpoints/epoch_200.h5")
     stats = psi.train(n_epochs=100)  # Continue from loaded state
@@ -191,83 +191,93 @@ Date        : 2025-11-01
 ---------------------------------------------------------------------
 """
 
-import  importlib
-from    typing import Any, TYPE_CHECKING
+import importlib
+from typing import TYPE_CHECKING, Any
 
 # ----------------------------------------------------------------------------
 # Lazy Import Configuration
 # ----------------------------------------------------------------------------
 
 _LAZY_IMPORTS = {
-    'NQS'               : ('.nqs',                          'NQS'),
-    'VMCSampler'        : ('QES.Solver.MonteCarlo.vmc',     'VMCSampler'),
-    'NQSTrainer'        : ('.src.nqs_train',                'NQSTrainer'),
-    'NQSTrainStats'     : ('.src.nqs_train',                'NQSTrainStats'),
-    'NQSObservable'     : ('.src.nqs_engine',               'NQSObservable'),
-    'NQSLoss'           : ('.src.nqs_engine',               'NQSLoss'),
-    'NQSEvalEngine'     : ('.src.nqs_engine',               'NQSEvalEngine'),
-    'EvaluationResult'  : ('.src.nqs_engine',               'EvaluationResult'),
-    'NetworkFactory'    : ('.src.nqs_network_integration',  'NetworkFactory'),
-    'TDVP'              : ('.src.tdvp',                     'TDVP'),
-    'TDVPStepInfo'      : ('.src.tdvp',                     'TDVPStepInfo'),
+    "NQS": (".nqs", "NQS"),
+    "VMCSampler": ("QES.Solver.MonteCarlo.vmc", "VMCSampler"),
+    "NQSTrainer": (".src.nqs_train", "NQSTrainer"),
+    "NQSTrainStats": (".src.nqs_train", "NQSTrainStats"),
+    "NQSObservable": (".src.nqs_engine", "NQSObservable"),
+    "NQSLoss": (".src.nqs_engine", "NQSLoss"),
+    "NQSEvalEngine": (".src.nqs_engine", "NQSEvalEngine"),
+    "EvaluationResult": (".src.nqs_engine", "EvaluationResult"),
+    "NetworkFactory": (".src.nqs_network_integration", "NetworkFactory"),
+    "TDVP": (".src.tdvp", "TDVP"),
+    "TDVPStepInfo": (".src.tdvp", "TDVPStepInfo"),
 }
 
 _LAZY_CACHE = {}
 
 if TYPE_CHECKING:
-    from QES.Solver.MonteCarlo.vmc      import VMCSampler
-    from .nqs                           import NQS
-    from .src.nqs_train                 import NQSTrainer, NQSTrainStats
-    from .src.nqs_engine                import NQSObservable, NQSLoss, NQSEvalEngine, EvaluationResult
-    from .src.nqs_network_integration   import NetworkFactory
-    from .src.tdvp                      import TDVP, TDVPStepInfo
+    from QES.Solver.MonteCarlo.vmc import VMCSampler
+
+    from .nqs import NQS
+    from .src.nqs_engine import EvaluationResult, NQSEvalEngine, NQSLoss, NQSObservable
+    from .src.nqs_network_integration import NetworkFactory
+    from .src.nqs_train import NQSTrainer, NQSTrainStats
+    from .src.tdvp import TDVP, TDVPStepInfo
+
 
 def __getattr__(name: str) -> Any:
     """Module-level __getattr__ for lazy imports (PEP 562)."""
     if name in _LAZY_CACHE:
         return _LAZY_CACHE[name]
-    
+
     if name in _LAZY_IMPORTS:
-        module_path, attr_name  = _LAZY_IMPORTS[name]
+        module_path, attr_name = _LAZY_IMPORTS[name]
         try:
-            if module_path.startswith('.'):
-                module          = importlib.import_module(module_path, package=__name__)
+            if module_path.startswith("."):
+                module = importlib.import_module(module_path, package=__name__)
             else:
-                module          = importlib.import_module(module_path)
-            
-            result              = getattr(module, attr_name)
-            _LAZY_CACHE[name]   = result
+                module = importlib.import_module(module_path)
+
+            result = getattr(module, attr_name)
+            _LAZY_CACHE[name] = result
             return result
         except (ImportError, AttributeError) as e:
             # Special handling for NQS as it's critical
-            if name == 'NQS':
-                 raise ImportError(f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}") from e
+            if name == "NQS":
+                raise ImportError(
+                    f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}"
+                ) from e
             # VMCSampler might be optional or handle gracefully
-            if name == 'VMCSampler':
+            if name == "VMCSampler":
                 return None
-            raise ImportError(f"Failed to import lazy attribute '{name}' from '{module_path}': {e}") from e
+            raise ImportError(
+                f"Failed to import lazy attribute '{name}' from '{module_path}': {e}"
+            ) from e
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 def __dir__():
     """Support for dir() and tab completion."""
     return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
 
+
 # Metadata
-MODULE_DESCRIPTION  = "Neural Quantum States (NQS) with TDVP and Adaptive Scheduling."
-__version__         = "2.0.0"
+MODULE_DESCRIPTION = "Neural Quantum States (NQS) with TDVP and Adaptive Scheduling."
+__version__ = "2.0.0"
 
 # Helper Functions
+
 
 def info():
     """Prints the library capability summary."""
     print(__doc__)
 
-def quick_start(mode: str = 'ground'):
+
+def quick_start(mode: str = "ground"):
     """
     Prints a runnable boilerplate script to the console.
     Usage: QES.NQS.quick_start(mode='ground'|'excited')
-    
+
     Parameters:
     -----------
     mode : str
@@ -350,10 +360,11 @@ print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
 # psi_excited.save_weights("excited_state.h5")
 """
 
-    if mode.lower() == 'excited':
+    if mode.lower() == "excited":
         print(boilerplate + excited_body)
     else:
         print(boilerplate + ground_body)
+
 
 # --------------------------------------------------------------
 
@@ -371,7 +382,7 @@ __all__ = [
     "NetworkFactory",
     "VMCSampler",
     "quick_start",
-    "info"
+    "info",
 ]
 
 # --------------------------------------------------------------

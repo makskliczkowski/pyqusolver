@@ -1,4 +1,4 @@
-'''
+"""
 Module      : Algebra/hamil_energy_jax.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-04-01
@@ -44,10 +44,10 @@ Notes:
     - Site-dependent operators use padded indices and masks to handle variable-length inputs.
     - The wrapper function, local_energy_jax_wrap, combines all operator contributions into a
         single callable that returns aggregated state updates and energy contributions.
-        
+
 This structured approach allows seamless integration of various Hamiltonian contributions while
 ensuring optimal performance and differentiability using the JAX ecosystem.
-'''
+"""
 
 ################################################################################
 
@@ -56,24 +56,28 @@ try:
     import jax.numpy as jnp
 except ImportError as e:
     raise ImportError("JAX is required for this module. Please install JAX to proceed.") from e
-    
-from functools  import partial
-from typing     import Tuple, Optional, List, Callable, Union
+
+from functools import partial
+from typing import Callable, List, Optional, Tuple
 
 try:
-    from QES.Algebra.Hamil.hamil_energy_helper import unpack_operator_terms, flatten_operator_terms
+    from QES.Algebra.Hamil.hamil_energy_helper import flatten_operator_terms, unpack_operator_terms
 except ImportError as e:
-    raise ImportError("Failed to import from hamil_energy_helper. Ensure the module exists and is accessible.") from e
+    raise ImportError(
+        "Failed to import from hamil_energy_helper. Ensure the module exists and is accessible."
+    ) from e
 
 ################################################################################
 # Diagonal (non-modifying) contribution – no sites
 ################################################################################
 
+
 @partial(jax.jit, static_argnums=(1,))
 def local_energy_jax_nonmod_nosites(
-    state       : jnp.ndarray,
-    functions   : Tuple[Callable, ...],
-    multipliers : jnp.ndarray,) -> jnp.ndarray:
+    state: jnp.ndarray,
+    functions: Tuple[Callable, ...],
+    multipliers: jnp.ndarray,
+) -> jnp.ndarray:
     r"""
     Diagonal local energy from operators that do **not** depend on site indices
     and do **not** modify the state.
@@ -105,30 +109,32 @@ def local_energy_jax_nonmod_nosites(
         return jnp.zeros((1,), dtype=state.dtype)
 
     # Work in the multiplying dtype.
-    dtype_e         = multipliers.dtype
-    multipliers     = jnp.asarray(multipliers, dtype=dtype_e)
+    dtype_e = multipliers.dtype
+    multipliers = jnp.asarray(multipliers, dtype=dtype_e)
 
     def loop_body(i, carry):
-        _, coeff    = jax.lax.switch(i, functions, state)
-        coeff       = jnp.asarray(coeff, dtype=dtype_e)
-        contrib     = jnp.squeeze(coeff) * multipliers[i]
+        _, coeff = jax.lax.switch(i, functions, state)
+        coeff = jnp.asarray(coeff, dtype=dtype_e)
+        contrib = jnp.squeeze(coeff) * multipliers[i]
         return carry + contrib
 
-    init        = jnp.zeros((), dtype=dtype_e)
-    total       = jax.lax.fori_loop(0, num_local, loop_body, init)
+    init = jnp.zeros((), dtype=dtype_e)
+    total = jax.lax.fori_loop(0, num_local, loop_body, init)
     return total.reshape((1,))
+
 
 ################################################################################
 # Diagonal (non-modifying) contribution – with/without sites
 ################################################################################
 
+
 @partial(jax.jit, static_argnums=(1, 3))
 def local_energy_jax_nonmod(
-    state              : jnp.ndarray,
-    functions_no_sites : Tuple[Callable, ...],
-    mult_no_sites      : jnp.ndarray,
-    functions_sites    : Tuple[Callable, ...],
-    mult_sites         : jnp.ndarray,
+    state: jnp.ndarray,
+    functions_no_sites: Tuple[Callable, ...],
+    mult_no_sites: jnp.ndarray,
+    functions_sites: Tuple[Callable, ...],
+    mult_sites: jnp.ndarray,
 ) -> jnp.ndarray:
     r"""
     Diagonal local energy from non-modifying operators, with and without sites.
@@ -139,21 +145,23 @@ def local_energy_jax_nonmod(
     """
 
     e1 = local_energy_jax_nonmod_nosites(state, functions_no_sites, mult_no_sites)
-    e2 = local_energy_jax_nonmod_nosites(state, functions_sites,    mult_sites)
+    e2 = local_energy_jax_nonmod_nosites(state, functions_sites, mult_sites)
     return e1 + e2
+
 
 ################################################################################
 # Main wrapper
 ################################################################################
 
+
 def local_energy_jax_wrap(
-    ns                          : int,
-    operator_terms_list         : List,
-    operator_terms_list_ns      : List,
-    operator_terms_list_nmod    : List,
-    operator_terms_list_nmod_ns : List,
-    n_max                       : Optional[int]       = 1,
-    dtype                       : Optional[jnp.dtype] = jnp.complex128,
+    ns: int,
+    operator_terms_list: List,
+    operator_terms_list_ns: List,
+    operator_terms_list_nmod: List,
+    operator_terms_list_nmod_ns: List,
+    n_max: Optional[int] = 1,
+    dtype: Optional[jnp.dtype] = jnp.complex128,
 ) -> Callable:
     r"""
     Build a JIT-compiled local-energy function
@@ -188,21 +196,25 @@ def local_energy_jax_wrap(
     # 1. Unpack and flatten all operator groups
     ###########################################################################
 
-    f_mod_sites,  i_mod_sites,  m_mod_sites  = unpack_operator_terms(ns, operator_terms_list)
-    f_mod_nos,    i_mod_nos,    m_mod_nos    = unpack_operator_terms(ns, operator_terms_list_ns)
+    f_mod_sites, i_mod_sites, m_mod_sites = unpack_operator_terms(ns, operator_terms_list)
+    f_mod_nos, i_mod_nos, m_mod_nos = unpack_operator_terms(ns, operator_terms_list_ns)
     f_nmod_sites, i_nmod_sites, m_nmod_sites = unpack_operator_terms(ns, operator_terms_list_nmod)
-    f_nmod_nos,   i_nmod_nos,   m_nmod_nos   = unpack_operator_terms(ns, operator_terms_list_nmod_ns)
+    f_nmod_nos, i_nmod_nos, m_nmod_nos = unpack_operator_terms(ns, operator_terms_list_nmod_ns)
 
-    f_mod_sites,  i_mod_sites,  m_mod_sites  = flatten_operator_terms(f_mod_sites,  i_mod_sites,  m_mod_sites)
-    f_mod_nos,    i_mod_nos,    m_mod_nos    = flatten_operator_terms(f_mod_nos,    i_mod_nos,    m_mod_nos)
-    f_nmod_sites, i_nmod_sites, m_nmod_sites = flatten_operator_terms(f_nmod_sites, i_nmod_sites, m_nmod_sites)
-    f_nmod_nos,   i_nmod_nos,   m_nmod_nos   = flatten_operator_terms(f_nmod_nos,   i_nmod_nos,   m_nmod_nos)
+    f_mod_sites, i_mod_sites, m_mod_sites = flatten_operator_terms(
+        f_mod_sites, i_mod_sites, m_mod_sites
+    )
+    f_mod_nos, i_mod_nos, m_mod_nos = flatten_operator_terms(f_mod_nos, i_mod_nos, m_mod_nos)
+    f_nmod_sites, i_nmod_sites, m_nmod_sites = flatten_operator_terms(
+        f_nmod_sites, i_nmod_sites, m_nmod_sites
+    )
+    f_nmod_nos, i_nmod_nos, m_nmod_nos = flatten_operator_terms(f_nmod_nos, i_nmod_nos, m_nmod_nos)
 
     # Multipliers live in the chosen complex dtype.
-    m_mod_sites   = jnp.asarray(m_mod_sites,   dtype=dtype)
-    m_mod_nos     = jnp.asarray(m_mod_nos,     dtype=dtype)
-    m_nmod_sites  = jnp.asarray(m_nmod_sites,  dtype=dtype)
-    m_nmod_nos    = jnp.asarray(m_nmod_nos,    dtype=dtype)
+    m_mod_sites = jnp.asarray(m_mod_sites, dtype=dtype)
+    m_mod_nos = jnp.asarray(m_mod_nos, dtype=dtype)
+    m_nmod_sites = jnp.asarray(m_nmod_sites, dtype=dtype)
+    m_nmod_nos = jnp.asarray(m_nmod_nos, dtype=dtype)
 
     ###########################################################################
     # 2. Wrap operators to enforce shapes
@@ -210,28 +222,30 @@ def local_energy_jax_wrap(
 
     def wrap_mod(f, sites):
         """Wrap a modifying operator f(state, *sites)."""
-        
+
         sites = tuple(int(s) for s in sites)
 
         def op(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-            new_states, coeffs  = f(state, *sites)
-            new_states          = jnp.asarray(new_states, dtype=state.dtype)
-            coeffs              = jnp.asarray(coeffs,     dtype=dtype)
+            new_states, coeffs = f(state, *sites)
+            new_states = jnp.asarray(new_states, dtype=state.dtype)
+            coeffs = jnp.asarray(coeffs, dtype=dtype)
 
             # Enforce (K, ns) for states and (K,) for coeffs.
             if new_states.ndim == 1:
                 new_states = new_states.reshape((1, new_states.shape[0]))
-            
+
             coeffs = coeffs.reshape((-1,))
             return new_states, coeffs
+
         return op
 
     def wrap_nos(f):
         """Wrap a modifying operator f(state) without site indices."""
+
         def op(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-            new_states, coeffs  = f(state)
-            new_states          = jnp.asarray(new_states, dtype=state.dtype)
-            coeffs              = jnp.asarray(coeffs,     dtype=dtype)
+            new_states, coeffs = f(state)
+            new_states = jnp.asarray(new_states, dtype=state.dtype)
+            coeffs = jnp.asarray(coeffs, dtype=dtype)
 
             if new_states.ndim == 1:
                 new_states = new_states.reshape((1, new_states.shape[0]))
@@ -243,6 +257,7 @@ def local_energy_jax_wrap(
 
     # Grouping operators for vectorization
     from collections import defaultdict
+
     import numpy as np
 
     def group_operators(funcs, indices, mults):
@@ -252,70 +267,117 @@ def local_energy_jax_wrap(
             groups[f].append((idx, m))
         return groups
 
-    # Group modifying operators with sites
+    # -------------------------------------------------------------------------
+    # Helper to process groups and handle failures (fallback list)
+    # -------------------------------------------------------------------------
+    def process_groups(groups):
+        data = []
+        fallback_items = []
+        for f, items in groups.items():
+            idxs = [it[0] for it in items]
+            ms = [it[1] for it in items]
+
+            if not idxs:
+                continue
+
+            try:
+                # Attempt to create uniform arrays
+                idxs_arr = np.array(idxs, dtype=np.int32)
+                ms_arr = (
+                    np.array(ms, dtype=dtype) if not isinstance(dtype, jnp.dtype) else np.array(ms)
+                )
+
+                # Check for jagged arrays (object dtype) implies failure to vectorize
+                if idxs_arr.dtype == object:
+                    raise ValueError("Jagged indices array detected")
+
+                data.append((f, jnp.array(idxs_arr), jnp.array(ms_arr, dtype=dtype)))
+            except Exception:
+                # Add to fallback list if vectorization fails
+                for idx, m in zip(idxs, ms):
+                    fallback_items.append((f, idx, m))
+
+        return data, fallback_items
+
+    # -------------------------------------------------------------------------
+    # Modifying Operators
+    # -------------------------------------------------------------------------
+
+    # 1) Modifying WITH sites
     mod_sites_groups = group_operators(f_mod_sites, i_mod_sites, m_mod_sites)
+    mod_sites_data, mod_sites_fallback = process_groups(mod_sites_groups)
 
-    # Pre-process groups into arrays
-    # List of (func, indices_array, mults_array)
-    mod_sites_data = []
-    for f, items in mod_sites_groups.items():
-        # items is list of (indices_list, mult)
-        # Convert indices to array. Handle consistent shapes.
-        # Assuming f always takes same number of site args.
-        idxs = [it[0] for it in items]
-        ms   = [it[1] for it in items]
+    # 2) Modifying WITHOUT sites
+    mod_nos_groups = group_operators(f_mod_nos, i_mod_nos, m_mod_nos)
+    mod_nos_data, mod_nos_fallback = process_groups(mod_nos_groups)
 
-        # Check if indices have consistent length
-        if not idxs: continue
+    # -------------------------------------------------------------------------
+    # Non-Modifying Operators (Diagonal)
+    # -------------------------------------------------------------------------
 
-        try:
-            # Create numpy arrays first (host side)
-            idxs_arr = np.array(idxs, dtype=np.int32)
-            ms_arr   = np.array(ms, dtype=dtype) if not isinstance(dtype, jnp.dtype) else np.array(ms)
+    # 1) Non-modifying WITH sites
+    nmod_sites_groups = group_operators(f_nmod_sites, i_nmod_sites, m_nmod_sites)
+    nmod_sites_data, nmod_sites_fallback = process_groups(nmod_sites_groups)
 
-            # If indices are jagged (list of lists of different lengths),
-            # this would fail or create object array.
-            # But operators grouped by 'f' should have same arity.
-            if idxs_arr.dtype == object:
-                 # Fallback or error? For now assume consistent arity for same f.
-                 # If inconsistent, we can't vectorize easily without padding.
-                 # But standard Pauli ops (sig_x, etc.) have fixed arity.
-                 pass
+    # 2) Non-modifying WITHOUT sites
+    nmod_nos_groups = group_operators(f_nmod_nos, i_nmod_nos, m_nmod_nos)
+    nmod_nos_data, nmod_nos_fallback = process_groups(nmod_nos_groups)
 
-            mod_sites_data.append((f, jnp.array(idxs_arr), jnp.array(ms_arr, dtype=dtype)))
-        except Exception:
-            # Fallback for complex cases?
-            pass
-
-    # Non-modifying operators: wrap to match diagonal interface
-    # (Keeping original logic for non-modifying for now as they are usually diagonal/simpler,
-    # but could be vectorized too. However, main bottleneck is usually the modifying terms)
+    # -------------------------------------------------------------------------
+    # Fallback Wrappers
+    # -------------------------------------------------------------------------
+    # If any items failed vectorization, we need to wrap them individually
+    # and pass them to the legacy handling logic or a loop.
 
     def wrap_nmod_sites(f, sites):
         sites = tuple(int(s) for s in sites)
+
         def op(state: jnp.ndarray):
             _, coeff = f(state, *sites)
             return state, coeff
+
         return op
 
+    # Prepare fallback lists for non-modifying (diagonal) terms
+    fallback_nmod_sites_funcs = []
+    fallback_nmod_sites_mults = []
+
+    for f, idx, m in nmod_sites_fallback:
+        fallback_nmod_sites_funcs.append(wrap_nmod_sites(f, idx))
+        fallback_nmod_sites_mults.append(m)
+
+    # Also include fallback for NO SITES if any (though usually uniform)
+    # Reuse wrap_nmod_sites with empty sites? Or create specific wrapper.
     def wrap_nmod_nos(f):
         def op(state: jnp.ndarray):
             _, coeff = f(state)
             return state, coeff
+
         return op
 
-    f_nmod_sites_wrapped    = tuple(wrap_nmod_sites(f_nmod_sites[i], i_nmod_sites[i]) for i in range(len(f_nmod_sites)))
-    f_nmod_nos_wrapped      = tuple(wrap_nmod_nos(f_nmod_nos[i]) for i in range(len(f_nmod_nos)))
+    fallback_nmod_nos_funcs = []
+    fallback_nmod_nos_mults = []
+    for f, idx, m in nmod_nos_fallback:
+        fallback_nmod_nos_funcs.append(wrap_nmod_nos(f))
+        fallback_nmod_nos_mults.append(m)
+
+    # We will use vectorized approach by default, but keep wrappers if we wanted to support mixed mode.
+    # Currently we fully replace the logic for NMOD inside wrapper.
 
     # Modifying no-sites (usually global ops like global flip?)
-    # usually few of them, can keep loop or group.
-    # Grouping them:
-    mod_nos_groups = group_operators(f_mod_nos, i_mod_nos, m_mod_nos)
-    mod_nos_data = []
-    for f, items in mod_nos_groups.items():
-        ms = [it[1] for it in items]
-        ms_arr = np.array(ms, dtype=dtype) if not isinstance(dtype, jnp.dtype) else np.array(ms)
-        mod_nos_data.append((f, jnp.array(ms_arr, dtype=dtype)))
+    # Handled above via mod_nos_data.
+
+    # We also need to prepare fallback wrappers for modifying operators
+    fallback_mod_sites_wrappers = []
+    for f, idx, m in mod_sites_fallback:
+        op = wrap_mod(f, idx)
+        # op(state) -> (new_states, coeffs)
+        fallback_mod_sites_wrappers.append((op, m))
+
+    fallback_mod_nos_wrappers = []
+    for f, idx, m in mod_nos_fallback:
+        op = wrap_nos(f)
+        fallback_mod_nos_wrappers.append((op, m))
 
     ###########################################################################
     # 3. Build the inner JAX function
@@ -323,35 +385,82 @@ def local_energy_jax_wrap(
 
     def init_wrapper():
 
-        # Capture as tuples/arrays so JAX sees them as static.
-        f_nmod_sites_t   = tuple(f_nmod_sites_wrapped)
-        f_nmod_nos_t     = tuple(f_nmod_nos_wrapped)
+        # Capture fallback data as tuples
+        fallback_nmod_sites_funcs_t = tuple(fallback_nmod_sites_funcs)
+        fallback_nmod_sites_mults_arr = (
+            jnp.array(fallback_nmod_sites_mults, dtype=dtype)
+            if fallback_nmod_sites_mults
+            else jnp.array([], dtype=dtype)
+        )
 
-        m_nmod_sites_arr = jnp.asarray(m_nmod_sites,  dtype=dtype)
-        m_nmod_nos_arr   = jnp.asarray(m_nmod_nos,    dtype=dtype)
+        fallback_nmod_nos_funcs_t = tuple(fallback_nmod_nos_funcs)
+        fallback_nmod_nos_mults_arr = (
+            jnp.array(fallback_nmod_nos_mults, dtype=dtype)
+            if fallback_nmod_nos_mults
+            else jnp.array([], dtype=dtype)
+        )
 
         # Capture vectorized data
-        # We need to pass mod_sites_data and mod_nos_data into the closure
+        # We need to pass data into the closure.
         # They contain (f, indices_arr, mults_arr). f is static/hashable.
 
         @jax.jit
         def wrapper(state: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
             state = jnp.asarray(state)
-            ns    = state.shape[0]
+            ns = state.shape[0]
 
             # --------------------------------------------------------------
-            # 1) Diagonal (non-modifying) contribution
+            # 1) Diagonal (non-modifying) contribution (Vectorized)
             # --------------------------------------------------------------
-            diag = local_energy_jax_nonmod(
-                state,
-                f_nmod_nos_t,
-                m_nmod_nos_arr,
-                f_nmod_sites_t,
-                m_nmod_sites_arr,
-            ) # (1,) in state's dtype
+
+            diag = jnp.zeros((1,), dtype=dtype)
+
+            # Non-modifying WITH sites
+            for f, indices, mults in nmod_sites_data:
+
+                # f(state, *sites) -> (state, coeff)
+                # indices: (N, Arity)
+
+                def apply_op(s, idxs):
+                    if idxs.ndim == 0:
+                        return f(s, idxs)
+                    return f(s, *idxs)
+
+                def get_coeff(idx):
+                    _, c = apply_op(state, idx)
+                    return c
+
+                # vmap over indices
+                # get_coeff returns (coeff,)
+                coeffs = jax.vmap(get_coeff)(indices)
+
+                # Sum contribution: sum(coeff * mult)
+                # coeffs shape could be (N,) or (N,1)
+                contrib = jnp.sum(coeffs.reshape(-1) * mults.reshape(-1))
+                diag = diag + contrib
+
+            # Non-modifying WITHOUT sites
+            for f, mults in nmod_nos_data:
+                # f(state) -> (state, coeff)
+                _, coeff = f(state)
+                total_mult = jnp.sum(mults)
+                diag = diag + (coeff * total_mult)
+
+            # --------------------------------------------------------------
+            # 1b) Diagonal Fallback (Legacy)
+            # --------------------------------------------------------------
+            if len(fallback_nmod_sites_funcs_t) > 0 or len(fallback_nmod_nos_funcs_t) > 0:
+                diag_fallback = local_energy_jax_nonmod(
+                    state,
+                    fallback_nmod_nos_funcs_t,
+                    fallback_nmod_nos_mults_arr,
+                    fallback_nmod_sites_funcs_t,
+                    fallback_nmod_sites_mults_arr,
+                )
+                diag = diag + diag_fallback.reshape(())
 
             # Collect outputs in lists; length is static, so XLA can unroll.
-            states_list   = [state.reshape((1, ns))]
+            states_list = [state.reshape((1, ns))]
             energies_list = [jnp.asarray(diag, dtype=dtype).reshape((1,))]
 
             # --------------------------------------------------------------
@@ -362,13 +471,27 @@ def local_energy_jax_wrap(
                 # indices shape: (N_terms, Arity) or (N_terms,) if Arity=1
                 # mults shape: (N_terms,)
 
+                # DEBUG PRINT (Should see this only during compilation)
+                # jax.debug.print("Processing group for {}: indices shape {}", f, indices.shape)
+
                 # Helper to apply f to state and sites
                 def apply_op(s, idxs):
                     # Unpack indices if it's an array
                     # If Arity=1, idxs might be scalar or 0-d array
                     if idxs.ndim == 0:
-                        return f(s, idxs)
-                    return f(s, *idxs)
+                        new_states, coeffs = f(s, idxs)
+                    else:
+                        new_states, coeffs = f(s, *idxs)
+
+                    # Ensure shapes are (K, ns) and (K,) to support broadcasting in vmap
+                    new_states = jnp.asarray(new_states, dtype=state.dtype)
+                    coeffs = jnp.asarray(coeffs, dtype=dtype)
+
+                    if new_states.ndim == 1:
+                        new_states = new_states.reshape((1, new_states.shape[0]))
+                    coeffs = jnp.atleast_1d(coeffs)
+
+                    return new_states, coeffs
 
                 # vmap over indices (axis 0)
                 # state is broadcasted (None)
@@ -417,9 +540,22 @@ def local_energy_jax_wrap(
                 energies_list.append(coeffs * total_mult)
 
             # --------------------------------------------------------------
+            # 3b) Modifying Fallback
+            # --------------------------------------------------------------
+            for op, m in fallback_mod_sites_wrappers:
+                new_states, coeffs = op(state)
+                states_list.append(new_states)
+                energies_list.append(coeffs * m)
+
+            for op, m in fallback_mod_nos_wrappers:
+                new_states, coeffs = op(state)
+                states_list.append(new_states)
+                energies_list.append(coeffs * m)
+
+            # --------------------------------------------------------------
             # 4) Stack everything
             # --------------------------------------------------------------
-            all_states   = jnp.concatenate(states_list, axis=0)
+            all_states = jnp.concatenate(states_list, axis=0)
             all_energies = jnp.concatenate(
                 [e.reshape((-1,)) for e in energies_list],
                 axis=0,
@@ -438,6 +574,7 @@ def local_energy_jax_wrap(
         return inner_wrapper(state)
 
     return final_wrapper
+
 
 ################################################################################
 # End of file

@@ -1,20 +1,21 @@
-'''
+"""
 QES/Algebra/Properties/statistical.py
 
 author  : Maksymilian Kliczkowski
 email   : maksymilian.kliczkowski@pwr.edu.pl
 This module contains functions for calculating statistical properties of quantum systems.
-'''
+"""
 
-from enum import Enum
-from typing import Tuple, Union, Optional, List, Callable
-from functools import partial
-import numpy as np
-import numba
 import math
+from enum import Enum
+from functools import partial
+from typing import List, Optional, Tuple, Union
+
+import numba
+import numpy as np
 
 try:
-    
+
     from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
 except ImportError:
     print("Error importing modules in statistical.py")
@@ -26,36 +27,36 @@ else:
     jax = None
     jnp = np
 
+
 class StatTypes(Enum):
-    MEAN       = 'mean'
-    MEDIAN     = 'median'
-    VARIANCE   = 'variance'
-    STD        = 'std'
+    MEAN = "mean"
+    MEDIAN = "median"
+    VARIANCE = "variance"
+    STD = "std"
+
 
 # -----------------------------------------------------------------------------
 #! LDOS
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
-    
+
     @partial(jax.jit, static_argnames=["degenerate", "tol"])
     def ldos_jax(
-            energies    : Array,
-            overlaps    : Array,
-            degenerate  : bool = False,
-            tol         : float = 1e-8) -> Array:
-            """
-            JAX version of LDOS/strength function.
-            """
-            if not degenerate:
-                return jnp.abs(overlaps) ** 2
+        energies: Array, overlaps: Array, degenerate: bool = False, tol: float = 1e-8
+    ) -> Array:
+        """
+        JAX version of LDOS/strength function.
+        """
+        if not degenerate:
+            return jnp.abs(overlaps) ** 2
 
-            # for each E_i sum |overlaps[j]|^2 over j with |E_j - E_i| < tol
-            def _ldos_i(E_i):
-                mask = jnp.abs(energies - E_i) < tol
-                return jnp.sum(jnp.abs(overlaps) ** 2 * mask)
+        # for each E_i sum |overlaps[j]|^2 over j with |E_j - E_i| < tol
+        def _ldos_i(E_i):
+            mask = jnp.abs(energies - E_i) < tol
+            return jnp.sum(jnp.abs(overlaps) ** 2 * mask)
 
-            return jax.vmap(_ldos_i)(energies)
+        return jax.vmap(_ldos_i)(energies)
 
     @partial(jax.jit, static_argnames=["nbins"])
     def dos_jax(energies: Array, nbins: int = 100, **kwargs) -> Array:
@@ -64,9 +65,11 @@ if JAX_AVAILABLE:
         """
         counts, _ = jnp.histogram(energies, bins=nbins, **kwargs)
         return counts
+
 else:
     ldos_jax = None
     dos_jax = None
+
 
 def ldos(energies: Array, overlaps: Array, degenerate: bool = False, tol: float = 1e-8) -> Array:
     r"""
@@ -98,14 +101,15 @@ def ldos(energies: Array, overlaps: Array, degenerate: bool = False, tol: float 
         LDOS for each energy index.
     """
     if not degenerate:
-        return np.abs(overlaps)**2
+        return np.abs(overlaps) ** 2
 
     N = energies.size
     ldos = np.empty(N, dtype=float)
     for i in range(N):
-        mask      = np.abs(energies - energies[i]) < tol
-        ldos[i]   = np.sum(np.abs(overlaps[mask])**2)
+        mask = np.abs(energies - energies[i]) < tol
+        ldos[i] = np.sum(np.abs(overlaps[mask]) ** 2)
     return ldos
+
 
 def dos(energies: Array, nbins: int = 100, **kwargs) -> Array:
     r"""
@@ -126,87 +130,88 @@ def dos(energies: Array, nbins: int = 100, **kwargs) -> Array:
     counts, _ = np.histogram(energies, bins=nbins, **kwargs)
     return counts
 
+
 # -----------------------------------------------------------------------------
 #! Matrix elements
 # -----------------------------------------------------------------------------
 
+
 @numba.njit(fastmath=True, cache=True)
 def extract_indices_window(
-        start               : int,
-        stop                : int,
-        eigvals             : np.ndarray,
-        energy_target       : float = 0.0,
-        bw                  : float = 1.0,
-        energy_diff_cut     : float = 0.015,
-        whole_spectrum      : bool  = False):
-    '''
+    start: int,
+    stop: int,
+    eigvals: np.ndarray,
+    energy_target: float = 0.0,
+    bw: float = 1.0,
+    energy_diff_cut: float = 0.015,
+    whole_spectrum: bool = False,
+):
+    """
     Extract indices of eigenvalues within a specified energy window.
-    '''
+    """
 
     if whole_spectrum:
         return np.empty((0, 3), dtype=np.int64), 0
 
     #! allocate -> idx_i, idx_j_start, idx_j_end
     if stop < start:
-        tmp     = start
-        start   = stop
-        stop    = tmp
+        tmp = start
+        start = stop
+        stop = tmp
     if stop > eigvals.shape[0]:
         stop = eigvals.shape[0]
     if start < 0:
         start = 0
     indices_alloc = np.zeros(((stop - start), 3), dtype=np.int64)
 
-    tol     = bw * energy_diff_cut
-    j_lo    = stop - 1
-    j_hi    = stop - 1
+    tol = bw * energy_diff_cut
+    j_lo = stop - 1
+    j_hi = stop - 1
 
     # iterate i descending so j_lo/j_hi move forward only
-    cnt     = 0
+    cnt = 0
     for i in range(start, stop):
-        e_i         = eigvals[i]
+        e_i = eigvals[i]
         # [|(E_i + E_j)/2 - e_target| < eps] -> [E_j < 2*e_target + eps - E_i] & [E_j > 2*e_target - eps - E_i]
-        low         = 2.0 * (energy_target - tol) - e_i
-        high        = 2.0 * (energy_target + tol) - e_i
-        
+        low = 2.0 * (energy_target - tol) - e_i
+        high = 2.0 * (energy_target + tol) - e_i
+
         # advance j_hi to first eigvals[j] > high
-        j_hi        = stop - 1
+        j_hi = stop - 1
         while eigvals[j_hi] >= high:
-            j_hi   -= 1        
-        
+            j_hi -= 1
+
         # advance j_lo to first eigvals[j] >= low
         # we can start from j_hi!
-        j_lo        = j_hi
+        j_lo = j_hi
         while eigvals[j_lo] > low and j_lo > i:
-            j_lo   -= 1 # decrement in the upper right triangle
+            j_lo -= 1  # decrement in the upper right triangle
 
         if j_hi <= j_lo:
-            break # we finished the upper triangle
-        
+            break  # we finished the upper triangle
+
         indices_alloc[cnt, 0] = i
         indices_alloc[cnt, 1] = j_lo
-        indices_alloc[cnt, 2] = j_hi + 1 # exclusive end
-        cnt                  += 1
+        indices_alloc[cnt, 2] = j_hi + 1  # exclusive end
+        cnt += 1
     return indices_alloc, cnt
 
-@numba.njit(fastmath=True, cache=True, inline='always')
+
+@numba.njit(fastmath=True, cache=True, inline="always")
 def _m2_hermitian(v):
     # Works for real or complex
     a = abs(v)
     return a * a
 
-@numba.njit(fastmath=True, cache=True, inline='always')
+
+@numba.njit(fastmath=True, cache=True, inline="always")
 def _m2_generic(x, y):
     # |x*y| = |x|*|y|
     return abs(x) * abs(y)
 
-@numba.njit(cache=True, fastmath=True, inline='always')
-def _bin_index( omega, 
-                bins,
-                bin0,
-                inv_binw,
-                uniform_bins        = False,
-                uniform_log_bins    = False):
+
+@numba.njit(cache=True, fastmath=True, inline="always")
+def _bin_index(omega, bins, bin0, inv_binw, uniform_bins=False, uniform_log_bins=False):
     nBins = bins.shape[0] - 1
 
     if uniform_bins:
@@ -233,65 +238,74 @@ def _bin_index( omega,
         return 0
     elif omega >= bins[-1]:
         return nBins
-    idx = np.searchsorted(bins, omega, side='right')
+    idx = np.searchsorted(bins, omega, side="right")
     return idx  # already in [1..nBins-1]
+
 
 # -----------------------------------------------------------------------------
 
+
 @numba.njit(fastmath=True, cache=True)
-def _alloc_values_or_bins(nh: int, bins: Optional[np.ndarray] = None, indices_alloc: Optional[np.ndarray] = None) -> Tuple[np.ndarray, int]:
+def _alloc_values_or_bins(
+    nh: int, bins: Optional[np.ndarray] = None, indices_alloc: Optional[np.ndarray] = None
+) -> Tuple[np.ndarray, int]:
     if bins is not None and bins.shape[0] >= 2:
-        nbins           = bins.shape[0]
-        counts          = np.zeros(nbins, dtype=np.uint64)
-        sums            = np.zeros(nbins, dtype=np.float64)
-        empty_values    = np.empty((0, 2), dtype=np.float64)
+        nbins = bins.shape[0]
+        counts = np.zeros(nbins, dtype=np.uint64)
+        sums = np.zeros(nbins, dtype=np.float64)
+        empty_values = np.empty((0, 2), dtype=np.float64)
         return (counts, sums, nbins), empty_values
     else:
         if indices_alloc is not None and indices_alloc.shape[0] > 0 and indices_alloc.shape[1] == 3:
             cap = indices_alloc.shape[0]
         else:
             cap = nh * (nh - 1) // 2
-    
-        values  = np.empty((cap, 2), dtype=np.float64)
-        counts  = np.empty(0, dtype=np.uint64)
-        sums    = np.empty(0, dtype=np.float64)
+
+        values = np.empty((cap, 2), dtype=np.float64)
+        counts = np.empty(0, dtype=np.uint64)
+        sums = np.empty(0, dtype=np.float64)
         return (counts, sums, 0), values
 
+
 @numba.njit(fastmath=True, cache=True)
-def _alloc_bin_info(uniform_bins: bool, uniform_log_bins: bool, bins: Optional[np.ndarray]) -> Tuple[float, float, int]:
-    '''
+def _alloc_bin_info(
+    uniform_bins: bool, uniform_log_bins: bool, bins: Optional[np.ndarray]
+) -> Tuple[float, float, int]:
+    """
     Allocate bin information for histogramming.
-    '''
+    """
     if (not uniform_bins and not uniform_log_bins) or (bins is None) or (bins.shape[0] < 2):
         return 0.0, 0.0, (False, False)
 
     if uniform_bins:
-        bin0                = bins[0]
-        binw                = bins[1] - bins[0]
-        inv_binw            = 1.0 / binw if binw > 0.0 else 0.0
-        uniform_log_bins    = False
+        bin0 = bins[0]
+        binw = bins[1] - bins[0]
+        inv_binw = 1.0 / binw if binw > 0.0 else 0.0
+        uniform_log_bins = False
         return bin0, inv_binw, (True, False)
     elif uniform_log_bins:
-        log_bin0            = math.log(bins[0]) if bins[0] > 0.0 else -np.inf
-        log_binw            = math.log(bins[1]) - log_bin0
-        uniform_bins        = False
-        
-        bin0                = log_bin0
-        inv_binw            = 1.0 / log_binw if log_binw > 0.0 else 0.0
+        log_bin0 = math.log(bins[0]) if bins[0] > 0.0 else -np.inf
+        log_binw = math.log(bins[1]) - log_bin0
+        uniform_bins = False
+
+        bin0 = log_bin0
+        inv_binw = 1.0 / log_binw if log_binw > 0.0 else 0.0
         return bin0, inv_binw, (False, True)
     else:
         #! Non-uniform bins
-        bin0                = 0.0
-        inv_binw            = 0.0
-        uniform_bins        = False
-        uniform_log_bins    = False
+        bin0 = 0.0
+        inv_binw = 0.0
+        uniform_bins = False
+        uniform_log_bins = False
         return bin0, inv_binw, (False, False)
+
 
 # -----------------------------------------------------------------------------
 
+
 @numba.njit(fastmath=True, cache=True)
 def _normalize_by_bin_width(sums: np.ndarray, bins: np.ndarray) -> None:
-    """
+    r"""
     In-place divide by delta \Omega; counts- or typical-normalization can be done elsewhere.
     """
     nbins = bins.shape[0] - 1
@@ -302,60 +316,70 @@ def _normalize_by_bin_width(sums: np.ndarray, bins: np.ndarray) -> None:
         else:
             sums[i] = 0.0
 
+
 # -----------------------------------------------------------------------------
+
 
 @numba.njit(fastmath=True, cache=True)
 def f_value(overlaps, ldos, i, j, log_eps, typical):
     m2 = _m2_hermitian(overlaps[i, j])
     return math.log(m2 + log_eps) if typical else m2
 
+
 @numba.njit(fastmath=True, cache=True)
 def k_value(overlaps, ldos, i, j, log_eps, typical):
     val = ldos[i] * ldos[j]
     return math.log(val + log_eps) if typical else val
 
+
 @numba.njit(fastmath=True, cache=True)
 def s_value(overlaps, ldos, i, j, log_eps, typical):
-    val     = ldos[i] * ldos[j]
-    val    *= _m2_hermitian(overlaps[i, j])
+    val = ldos[i] * ldos[j]
+    val *= _m2_hermitian(overlaps[i, j])
     return math.log(val + log_eps) if typical else val
 
-@numba.njit(inline='always', fastmath=True)
+
+@numba.njit(inline="always", fastmath=True)
 def _value(mode, overlaps, ldos, i, j, log_eps, typical):
-    ''' 
+    """
     Combined f, k, s value function.
-    '''
+    """
     # mode: 0=f, 1=k, 2=s
-    if mode == 0:                  # f
+    if mode == 0:  # f
         v = _m2_hermitian(overlaps[i, j])
-    elif mode == 1:                # k
+    elif mode == 1:  # k
         v = ldos[i] * ldos[j]
-    else:                          # s
-        v  = ldos[i] * ldos[j]
+    else:  # s
+        v = ldos[i] * ldos[j]
         v *= _m2_hermitian(overlaps[i, j])
     return math.log(v + log_eps) if typical else v
 
-@numba.njit(inline='always', fastmath=True)
+
+@numba.njit(inline="always", fastmath=True)
 def _own_contig_1d(a):
     # cheap guard; Numba can't introspect .base, so assume caller did the copy.
     return a
 
-@numba.njit(inline='always', fastmath=True)
+
+@numba.njit(inline="always", fastmath=True)
 def _own_contig_2d(a):
     return a
 
+
 @numba.njit(fastmath=True)
-def pair_histogram(eigvals, 
-                overlaps,
-                ldos,
-                indices_alloc       = None, 
-                bins                = None,
-                mode                : int = 0, # 0=f, 1=k, 2=s
-                typical             = False, 
-                uniform_bins        = False, 
-                uniform_log_bins    = False,
-                log_eps             = 1e-24):
-    """
+def pair_histogram(
+    eigvals,
+    overlaps,
+    ldos,
+    indices_alloc=None,
+    bins=None,
+    mode: int = 0,  # 0=f, 1=k, 2=s
+    typical=False,
+    uniform_bins=False,
+    uniform_log_bins=False,
+    log_eps=1e-24,
+):
+    r"""
     Generic pairwise histogram/scatter accumulator.
     Parameters
     ----------
@@ -384,42 +408,44 @@ def pair_histogram(eigvals,
     sums : (nbins,) float
         Bin sums (width-normalized, counts-normalization left for later).
     """
-    nh          = eigvals.shape[0]
-    use_hist    = (bins is not None) and (bins.shape[0] >= 2)
+    nh = eigvals.shape[0]
+    use_hist = (bins is not None) and (bins.shape[0] >= 2)
 
-    (counts, sums, nbins), values           = _alloc_values_or_bins(nh, bins, indices_alloc)
-    bin0, inv_binw, (is_uniform, is_log)    = _alloc_bin_info(uniform_bins, uniform_log_bins, bins)
+    (counts, sums, nbins), values = _alloc_values_or_bins(nh, bins, indices_alloc)
+    bin0, inv_binw, (is_uniform, is_log) = _alloc_bin_info(uniform_bins, uniform_log_bins, bins)
 
     #!path 1: indices_alloc provided
     if indices_alloc is not None and indices_alloc.shape[0] > 0 and indices_alloc.shape[1] == 3:
         if use_hist:
             for k in range(indices_alloc.shape[0]):
-                i   = indices_alloc[k, 0]
-                j0  = indices_alloc[k, 1]
-                j1  = indices_alloc[k, 2]
-                ei  = eigvals[i]
+                i = indices_alloc[k, 0]
+                j0 = indices_alloc[k, 1]
+                j1 = indices_alloc[k, 2]
+                ei = eigvals[i]
                 for j in range(j0, j1):
-                    omega   = ei - eigvals[j]
+                    omega = ei - eigvals[j]
                     if omega < 0.0:
                         omega = -omega
-                    b       = _bin_index(omega, bins, bin0, inv_binw, is_uniform, is_log)
+                    b = _bin_index(omega, bins, bin0, inv_binw, is_uniform, is_log)
                     if 0 <= b < nbins:
-                        val         = _value(mode, overlaps, ldos, i, j, log_eps, typical)
-                        sums[b]    += val
-                        counts[b]  += 1
+                        val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
+                        sums[b] += val
+                        counts[b] += 1
             # _normalize_by_bin_width(sums, bins)
             return np.empty((0, 2), dtype=np.float64), counts, sums
         else:
             cnt = 0
             cap = values.shape[0]
             for k in range(indices_alloc.shape[0]):
-                i   = indices_alloc[k, 0]
-                j0  = indices_alloc[k, 1]
-                j1  = indices_alloc[k, 2]
+                i = indices_alloc[k, 0]
+                j0 = indices_alloc[k, 1]
+                j1 = indices_alloc[k, 2]
                 for j in range(j0, j1):
-                    if cnt >= cap: break
+                    if cnt >= cap:
+                        break
                     omega = eigvals[i] - eigvals[j]
-                    if omega < 0.0: omega = -omega
+                    if omega < 0.0:
+                        omega = -omega
                     val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
                     values[cnt, 0] = omega
                     values[cnt, 1] = val
@@ -432,11 +458,12 @@ def pair_histogram(eigvals,
             ei = eigvals[i]
             for j in range(i + 1, nh):
                 omega = ei - eigvals[j]
-                if omega < 0.0: omega = -omega
+                if omega < 0.0:
+                    omega = -omega
                 b = _bin_index(omega, bins, bin0, inv_binw, is_uniform, is_log)
                 if 0 <= b < nbins:
                     val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
-                    sums[b]   += val
+                    sums[b] += val
                     counts[b] += 1
         # _normalize_by_bin_width(sums, bins)
         return np.empty((0, 2), dtype=np.float64), counts, sums
@@ -446,33 +473,57 @@ def pair_histogram(eigvals,
         for i in range(nh):
             ei = eigvals[i]
             for j in range(i + 1, nh):
-                if cnt >= cap: break
+                if cnt >= cap:
+                    break
                 omega = ei - eigvals[j]
-                if omega < 0.0: omega = -omega
+                if omega < 0.0:
+                    omega = -omega
                 val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
                 values[cnt, 0] = omega
                 values[cnt, 1] = val
                 cnt += 1
         return values[:cnt], counts, sums
 
+
 # -----------------------------------------------------------------------------
 
+
 @numba.njit(fastmath=True)
-def f_function(overlaps, eigvals, indices_alloc=None, bins=None, typical=False, uniform_bins=False, uniform_log_bins=False, log_eps=1e-24):
-    ldos = np.empty((0,), dtype=np.float64) # dummy
-    return pair_histogram(eigvals, overlaps, ldos, indices_alloc, bins, 0, typical, uniform_bins, uniform_log_bins, log_eps)
+def f_function(
+    overlaps,
+    eigvals,
+    indices_alloc=None,
+    bins=None,
+    typical=False,
+    uniform_bins=False,
+    uniform_log_bins=False,
+    log_eps=1e-24,
+):
+    ldos = np.empty((0,), dtype=np.float64)  # dummy
+    return pair_histogram(
+        eigvals,
+        overlaps,
+        ldos,
+        indices_alloc,
+        bins,
+        0,
+        typical,
+        uniform_bins,
+        uniform_log_bins,
+        log_eps,
+    )
+
 
 # -----------------------------------------------------------------------------
 #! Fidelity susceptibility
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
+
     @partial(jax.jit, static_argnames=["idx"])
     def fidelity_susceptibility_jax(
-        energies    : Array,
-        V           : Array,
-        mu          : float,
-        idx         : Optional[int] = None) -> Array:
+        energies: Array, V: Array, mu: float, idx: Optional[int] = None
+    ) -> Array:
         """
         JAX version of fidelity susceptibility. If idx is given (and in-range),
         returns a scalar chi_idx; otherwise returns an Array of shape (N,) with all chi_i.
@@ -480,26 +531,30 @@ if JAX_AVAILABLE:
         mu2 = mu * mu
 
         if idx is not None and 0 <= idx < energies.shape[0]:
-            E      = energies[idx]
-            dE     = energies - E               # shape (N,)
-            omm    = dE**2                      # (E_j - E_i)^2
+            E = energies[idx]
+            dE = energies - E  # shape (N,)
+            omm = dE**2  # (E_j - E_i)^2
             denom2 = (omm + mu2) ** 2
             V2_row = jnp.abs(V[idx, :]) ** 2
             return jnp.sum(V2_row * omm / denom2)
 
         # full-vector version
-        dE      = energies[:, None] - energies[None, :]  # shape (N,N)
-        omm     = dE**2
-        denom2  = (omm + mu2) ** 2
-        V2      = jnp.abs(V) ** 2
+        dE = energies[:, None] - energies[None, :]  # shape (N,N)
+        omm = dE**2
+        denom2 = (omm + mu2) ** 2
+        V2 = jnp.abs(V) ** 2
         return jnp.sum(V2 * omm / denom2, axis=1)
+
 else:
     fidelity_susceptibility_jax = None
 
-def fidelity_susceptibility(energies: Array, V: Array, mu: float, idx: Optional[int] = None) -> float:
+
+def fidelity_susceptibility(
+    energies: Array, V: Array, mu: float, idx: Optional[int] = None
+) -> float:
     r"""
     Compute fidelity susceptibility for state `idx`:
-    
+
     .. math::
         \chi_i = \sum_{j\neq i}
         \frac{|V_{ij}|^2\,(E_j - E_i)^2}
@@ -520,7 +575,7 @@ def fidelity_susceptibility(energies: Array, V: Array, mu: float, idx: Optional[
     -------
     float
         Fidelity susceptibility \(\chi_i\).
-        
+
     Examples
     --------
     >>> import numpy as np
@@ -536,31 +591,31 @@ def fidelity_susceptibility(energies: Array, V: Array, mu: float, idx: Optional[
     mu2 = mu * mu
 
     if idx is not None:
-        E       = energies[idx]
-        dE      = energies - E
-        omm     = dE**2
-        V_row   = np.abs(V[idx])**2
+        E = energies[idx]
+        dE = energies - E
+        omm = dE**2
+        V_row = np.abs(V[idx]) ** 2
 
-        mask    = np.ones(len(energies), dtype=bool)
+        mask = np.ones(len(energies), dtype=bool)
         mask[idx] = False
 
-        denom   = omm[mask] + mu2
+        denom = omm[mask] + mu2
         return np.sum(V_row[mask] * omm[mask] / denom**2)
     else:
-        dE      = energies[:, None] - energies[None, :]
-        omm     = dE**2
-        denom2  = (omm + mu2)**2
+        dE = energies[:, None] - energies[None, :]
+        omm = dE**2
+        denom2 = (omm + mu2) ** 2
         np.fill_diagonal(denom2, 1.0)  # avoid div-by-zero (will get zero in numerator anyway)
-        V2      = np.abs(V)**2
-        np.fill_diagonal(V2, 0.0)      # eliminate diagonal contribution explicitly
+        V2 = np.abs(V) ** 2
+        np.fill_diagonal(V2, 0.0)  # eliminate diagonal contribution explicitly
         return np.sum(V2 * omm / denom2, axis=1)
 
-def fidelity_susceptibility_low_rank(energies   : np.ndarray, 
-                                    V_overlaps  : np.ndarray, 
-                                    mu          : float, 
-                                    idx         : Union[int, List[int], None] = None) -> Union[float, np.ndarray]:
+
+def fidelity_susceptibility_low_rank(
+    energies: np.ndarray, V_overlaps: np.ndarray, mu: float, idx: Union[int, List[int], None] = None
+) -> Union[float, np.ndarray]:
     r"""
-    Compute fidelity susceptibility using only a subset of energies and 
+    Compute fidelity susceptibility using only a subset of energies and
     projection vectors (overlaps). Useful when N_hilbert is too large.
 
     .. math::
@@ -579,7 +634,7 @@ def fidelity_susceptibility_low_rank(energies   : np.ndarray,
         Broadening parameter \(\mu\).
     idx : int, list of ints, or None
         The index of the reference state(s) \(k\) within the `energies` array.
-        
+
         - If `int`: Calculates scalar \(\chi_{idx}\).
         - If `list`: Calculates array of \(\chi\) for those specific indices.
         - If `None`: Calculates array of \(\chi\) for all M states (assumes V is square).
@@ -589,33 +644,37 @@ def fidelity_susceptibility_low_rank(energies   : np.ndarray,
     float or np.ndarray
         The fidelity susceptibility (or array of them).
     """
-    
-    energies    = np.asarray(energies)
-    V_overlaps  = np.asarray(V_overlaps)
-    mu2         = mu**2
-    
+
+    energies = np.asarray(energies)
+    V_overlaps = np.asarray(V_overlaps)
+    mu2 = mu**2
+
     # if full ED
-    if len(V_overlaps.shape) == 2 and V_overlaps.shape[0] == V_overlaps.shape[1] and V_overlaps.shape[0] == len(energies):
+    if (
+        len(V_overlaps.shape) == 2
+        and V_overlaps.shape[0] == V_overlaps.shape[1]
+        and V_overlaps.shape[0] == len(energies)
+    ):
         return fidelity_susceptibility(energies, V_overlaps, mu, idx)
 
     # helper to compute one column
     def _compute_column(target_idx, overlap_col):
-        E_k                 = energies[target_idx]
-        dE                  = energies - E_k
-        omm                 = dE**2
-        
+        E_k = energies[target_idx]
+        dE = energies - E_k
+        omm = dE**2
+
         # Numerator: |<n|V|k>|^2 * (En - Ek)^2
-        numerator           = (np.abs(overlap_col)**2) * omm
-        
+        numerator = (np.abs(overlap_col) ** 2) * omm
+
         # Denominator: ((En - Ek)^2 + mu^2)^2
-        denom               = (omm + mu2)**2
-        
+        denom = (omm + mu2) ** 2
+
         # Handle the singularity/self-contribution (n=k)
         # Analytically this term is 0, numerically we force it to avoid 0/0 or noise
         # We use a mask instead of slicing to keep array shapes aligned
-        mask                = np.ones(len(energies), dtype=bool)
-        mask[target_idx]    = False
-        
+        mask = np.ones(len(energies), dtype=bool)
+        mask[target_idx] = False
+
         return np.sum(numerator[mask] / denom[mask])
 
     # Single Target State (idx is int)
@@ -626,15 +685,17 @@ def fidelity_susceptibility_low_rank(energies   : np.ndarray,
                 V_overlaps = V_overlaps.flatten()
             else:
                 V_overlaps = V_overlaps[:, idx]
-        
+
         return _compute_column(idx, V_overlaps)
 
     # Specific Subset of States (idx is list)
     elif isinstance(idx, (list, tuple, np.ndarray)):
         idx = np.asarray(idx)
         if V_overlaps.ndim != 2 or V_overlaps.shape[1] != len(idx):
-            raise ValueError(f"V_overlaps shape {V_overlaps.shape} must match (len(energies), len(idx))")
-        # 
+            raise ValueError(
+                f"V_overlaps shape {V_overlaps.shape} must match (len(energies), len(idx))"
+            )
+        #
         results = []
         for i, target_k in enumerate(idx):
             col = V_overlaps[:, i]
@@ -646,28 +707,32 @@ def fidelity_susceptibility_low_rank(energies   : np.ndarray,
     else:
         if V_overlaps.ndim != 2 or V_overlaps.shape[0] != V_overlaps.shape[1]:
             raise ValueError("If idx is None, V_overlaps must be a square matrix (M, M).")
-            
+
         # Vectorized implementation for square matrix
-        dE          = energies[:, None] - energies[None, :] # (n, k) matrix
-        omm         = dE**2
-        
-        numerator   = (np.abs(V_overlaps)**2) * omm
-        denom       = (omm + mu2)**2
-        
+        dE = energies[:, None] - energies[None, :]  # (n, k) matrix
+        omm = dE**2
+
+        numerator = (np.abs(V_overlaps) ** 2) * omm
+        denom = (omm + mu2) ** 2
+
         # Clean diagonal
         np.fill_diagonal(numerator, 0.0)
-        np.fill_diagonal(denom, 1.0) # Avoid div by zero
-        
+        np.fill_diagonal(denom, 1.0)  # Avoid div by zero
+
         # Sum over n (rows), producing result for each k (columns)
         return np.sum(numerator / denom, axis=0)
+
 
 # -----------------------------------------------------------------------------
 #! State information
 # -----------------------------------------------------------------------------
 
 if JAX_AVAILABLE:
+
     @partial(jax.jit, static_argnames=["q", "new_basis"])
-    def inverse_participation_ratio_jax(state: Array, q: float = 1.0, new_basis: Optional[Array] = None) -> float:
+    def inverse_participation_ratio_jax(
+        state: Array, q: float = 1.0, new_basis: Optional[Array] = None
+    ) -> float:
         r"""
         Compute the inverse participation ratio (IPR) of a quantum state.
 
@@ -689,16 +754,20 @@ if JAX_AVAILABLE:
             Inverse participation ratio.
         """
         if new_basis is not None:
-            return jnp.sum(jnp.abs(new_basis.T @ state)**(2*q))
-        return jnp.sum(jnp.abs(state)**(2*q))
+            return jnp.sum(jnp.abs(new_basis.T @ state) ** (2 * q))
+        return jnp.sum(jnp.abs(state) ** (2 * q))
+
 else:
     inverse_participation_ratio_jax = None
 
+
 @numba.njit(parallel=True, fastmath=True)
-def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True) -> np.ndarray:
+def inverse_participation_ratio(
+    states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True
+) -> np.ndarray:
     """
-    Compute IPR_j = ∑_i |\psi _{i j}|^{2q} for each column j of `states`.
-    If `new_basis` is provided (shape n \times n), then \psi  -> B^T\cdot \psi  is used
+    Compute IPR_j = ∑_i |\\psi _{i j}|^{2q} for each column j of `states`.
+    If `new_basis` is provided (shape n \times n), then \\psi  -> B^T\\cdot \\psi  is used
     before raising to the 2q power.  Works on 1D or 2D `states`.
 
     Parameters
@@ -708,8 +777,8 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
     q : float
         Exponent in the IPR definition (default 1.0).
     new_basis : np.ndarray, optional
-        Change-of-basis matrix (n \times n).  If not None, each state \psi _j is
-        transformed via B^T\cdot \psi _j before computing |\cdot |^(2q).
+        Change-of-basis matrix (n \times n).  If not None, each state \\psi _j is
+        transformed via B^T\\cdot \\psi _j before computing |\\cdot |^(2q).
 
     Returns
     -------
@@ -717,25 +786,25 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
         If input was 1D, returns a scalar in a 0-d array; if 2D, returns
         a length-m array of IPR values.
     """
-    
+
     # reshape 1D->2D so we can always write m-parallel loops
     single = False
     if states.ndim == 1:
         states = states.reshape(states.shape[0], 1)
         single = True
 
-    n, m    = states.shape
-    out     = np.zeros(m, dtype=np.float64)
-    two_q   = 2.0 * q if square else q
+    n, m = states.shape
+    out = np.zeros(m, dtype=np.float64)
+    two_q = 2.0 * q if square else q
 
     if new_basis is None:
-        # no transform 
+        # no transform
         for j in numba.prange(m):
             acc = 0.0
             for i in range(n):
-                c       = states[i, j]
-                p       = np.abs(c)**two_q
-                acc    += p
+                c = states[i, j]
+                p = np.abs(c) ** two_q
+                acc += p
             out[j] = acc
     else:
         # on-the-fly transform: φ_i = ∑_k B[k,i]*\psi _k
@@ -748,57 +817,89 @@ def inverse_participation_ratio(states: np.ndarray, q: float = 1.0, new_basis: O
                 im = 0.0
                 # compute (B^T\cdot \psi )_i = ∑_k B[k,i] * \psi [k,j]
                 for k in range(n):
-                    b   = B[k, i]
-                    s   = states[k, j]
+                    b = B[k, i]
+                    s = states[k, j]
                     # complex multiply: (b_r + i b_i)*(s_r + i s_i)
-                    re += b.real*s.real - b.imag*s.imag
-                    im += b.real*s.imag + b.imag*s.real
-                p       = re*re + im*im
-                acc    += p**q
+                    re += b.real * s.real - b.imag * s.imag
+                    im += b.real * s.imag + b.imag * s.real
+                p = re * re + im * im
+                acc += p**q
             out[j] = acc
 
     return out
+
 
 # -----------------------------------------------------------------------------
 #! K - function
 # -----------------------------------------------------------------------------
 
+
 @numba.njit(fastmath=True)
-def k_function( ldos            : np.ndarray,
-                eigvals         : np.ndarray,
-                indices_alloc   : Optional[np.ndarray] = None,
-                bins            : Optional[np.ndarray] = None,
-                # additional parameters
-                typical         : bool = False,
-                uniform_bins    : bool = False,
-                uniform_log_bins: bool = False,
-                log_eps         : float = 1e-24) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    overlaps = np.empty((1, 1), dtype=np.complex128) # dummy
-    return pair_histogram(eigvals, overlaps, ldos, indices_alloc, bins, 1, typical, uniform_bins, uniform_log_bins, log_eps)
+def k_function(
+    ldos: np.ndarray,
+    eigvals: np.ndarray,
+    indices_alloc: Optional[np.ndarray] = None,
+    bins: Optional[np.ndarray] = None,
+    # additional parameters
+    typical: bool = False,
+    uniform_bins: bool = False,
+    uniform_log_bins: bool = False,
+    log_eps: float = 1e-24,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    overlaps = np.empty((1, 1), dtype=np.complex128)  # dummy
+    return pair_histogram(
+        eigvals,
+        overlaps,
+        ldos,
+        indices_alloc,
+        bins,
+        1,
+        typical,
+        uniform_bins,
+        uniform_log_bins,
+        log_eps,
+    )
+
 
 # -----------------------------------------------------------------------------
 #! Fourier spectrum function - S(omega) = \sum _{n \neq m} |c_n|^2 |c_m|^2 |O_mn|^2 \delta (omega - |E_m - E_n|)
 # -----------------------------------------------------------------------------
 
+
 @numba.njit(fastmath=True)
-def s_function( ldos            : np.ndarray,
-                eigvals         : np.ndarray,
-                overlaps        : np.ndarray,
-                indices_alloc   : Optional[np.ndarray] = None,
-                bins            : Optional[np.ndarray] = None,
-                # additional parameters
-                typical         : bool = False,
-                uniform_bins    : bool = False,
-                uniform_log_bins: bool = False,
-                log_eps         : float = 1e-24) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    return pair_histogram(eigvals, overlaps, ldos, indices_alloc, bins, 2, typical, uniform_bins, uniform_log_bins, log_eps)
+def s_function(
+    ldos: np.ndarray,
+    eigvals: np.ndarray,
+    overlaps: np.ndarray,
+    indices_alloc: Optional[np.ndarray] = None,
+    bins: Optional[np.ndarray] = None,
+    # additional parameters
+    typical: bool = False,
+    uniform_bins: bool = False,
+    uniform_log_bins: bool = False,
+    log_eps: float = 1e-24,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    return pair_histogram(
+        eigvals,
+        overlaps,
+        ldos,
+        indices_alloc,
+        bins,
+        2,
+        typical,
+        uniform_bins,
+        uniform_log_bins,
+        log_eps,
+    )
+
 
 # -----------------------------------------------------------------------------
 #! Spectral CDF
 # -----------------------------------------------------------------------------
 
+
 @staticmethod
-def spectral_cdf(x, y, gammaval = 0.5, BINVAL = 21):
+def spectral_cdf(x, y, gammaval=0.5, BINVAL=21):
     """
     Calculate the cumulative distribution function (CDF) and find the gamma value.
 
@@ -815,22 +916,23 @@ def spectral_cdf(x, y, gammaval = 0.5, BINVAL = 21):
         - gammaf (float): The value of the independent variable corresponding to the target CDF value.
     """
     # Apply the moving average to smooth y
-    y_smoothed  = np.convolve(y, np.ones(BINVAL)/BINVAL, mode='same')
-    cdf         = np.cumsum(y_smoothed * np.diff(np.insert(x, 0, 0)))
-    cdf         /= cdf[-1]
-    y_smoothed  /= cdf[-1]
-    gammaf      = x[np.argmin(np.abs(cdf - gammaval))]
+    y_smoothed = np.convolve(y, np.ones(BINVAL) / BINVAL, mode="same")
+    cdf = np.cumsum(y_smoothed * np.diff(np.insert(x, 0, 0)))
+    cdf /= cdf[-1]
+    y_smoothed /= cdf[-1]
+    gammaf = x[np.argmin(np.abs(cdf - gammaval))]
     return x, y_smoothed, cdf, gammaf
+
 
 # -----------------------------------------------------------------------------
 #! Survival probability
 # -----------------------------------------------------------------------------
 
+
 @numba.njit(fastmath=True, cache=True)
-def survival_prob(psi0  : np.ndarray,
-                psi_t   : np.ndarray,
-                axis    : int = 0,
-                out     : np.ndarray | None = None) -> np.ndarray:
+def survival_prob(
+    psi0: np.ndarray, psi_t: np.ndarray, axis: int = 0, out: np.ndarray | None = None
+) -> np.ndarray:
     """
     P_k = |<psi(0) | psi(t_k)>|^2
 
@@ -858,9 +960,9 @@ def survival_prob(psi0  : np.ndarray,
                 br = psi0[h].real
                 bi = psi0[h].imag
                 # a * conj(b) = (ar+iai)*(br-ibi)
-                re += ar*br + ai*bi
-                im += -ar*bi + ai*br
-            P[k] = re*re + im*im
+                re += ar * br + ai * bi
+                im += -ar * bi + ai * br
+            P[k] = re * re + im * im
         return P
 
     elif axis == 1:
@@ -880,17 +982,19 @@ def survival_prob(psi0  : np.ndarray,
                 ai = psi_t[k, h].imag
                 br = psi0[h].real
                 bi = psi0[h].imag
-                re += ar*br + ai*bi
-                im += -ar*bi + ai*br
-            P[k] = re*re + im*im
+                re += ar * br + ai * bi
+                im += -ar * bi + ai * br
+            P[k] = re * re + im * im
         return P
 
     else:
         raise ValueError("axis must be 0 (psi_t shape (H,N)) or 1 (psi_t shape (N,H)).")
 
+
 # -----------------------------------------------------------------------------
 #! Structures
 # -----------------------------------------------------------------------------
+
 
 def spectral_structure(data: np.ndarray, window: int) -> np.ndarray:
     """
@@ -914,34 +1018,37 @@ def spectral_structure(data: np.ndarray, window: int) -> np.ndarray:
         Array of the same shape as `data`, containing the residuals after subtracting the moving average.
     """
 
-    N, T      = data.shape
-    cumsum    = np.cumsum(data, axis=1)      # shape (N, T)
-    residual  = np.empty_like(data, dtype=float)
+    N, T = data.shape
+    cumsum = np.cumsum(data, axis=1)  # shape (N, T)
+    residual = np.empty_like(data, dtype=float)
 
     # first `window` points use growing denominator (1,2,…,window)
-    t0        = min(window, T)
-    counts    = np.arange(1, t0+1)           # [1, 2, …, t0]
+    t0 = min(window, T)
+    counts = np.arange(1, t0 + 1)  # [1, 2, …, t0]
     residual[:, :t0] = data[:, :t0] - cumsum[:, :t0] / counts
 
     # remaining points use fixed window
     if T > window:
         numer = cumsum[:, window:] - cumsum[:, :-window]
-        ma    = numer / window
+        ma = numer / window
         residual[:, window:] = data[:, window:] - ma
 
     return residual
+
 
 # -----------------------------------------------------------------------------
 #! Statistical properties
 # -----------------------------------------------------------------------------
 
-def microcanonical_average(energies     : np.ndarray,
-                        observables     : np.ndarray,
-                        e_mean          : float,
-                        delta_e         : float = 5e-2,
-                        n_closest       : int   = 10,
-                        stat            : StatTypes = StatTypes.MEAN
-                        ) -> float:
+
+def microcanonical_average(
+    energies: np.ndarray,
+    observables: np.ndarray,
+    e_mean: float,
+    delta_e: float = 5e-2,
+    n_closest: int = 10,
+    stat: StatTypes = StatTypes.MEAN,
+) -> float:
     r"""
     Compute the microcanonical ensemble average Q_ME(\mu) for a single realization \mu.
 
@@ -970,7 +1077,7 @@ def microcanonical_average(energies     : np.ndarray,
     float
         Microcanonical ensemble average Q_ME(\mu).
     """
-    
+
     if len(energies) == 0 or len(observables) == 0:
         return np.nan
 
@@ -996,52 +1103,54 @@ def microcanonical_average(energies     : np.ndarray,
         raise ValueError(f"Unknown statistical method: {stat}")
     return np.nan
 
+
 # -----------------------------------------------------------------------------
 #! StatisticalModule - Hamiltonian wrapper
 # -----------------------------------------------------------------------------
 
+
 class StatisticalModule:
     """
     Statistical properties module for Hamiltonians.
-    
+
     Provides convenient access to LDOS, DOS, matrix element statistics,
     and ensemble averages. Requires diagonalized Hamiltonian.
-    
+
     Examples
     --------
     >>> hamil.diagonalize()
     >>> stats = hamil.statistical
-    >>> 
+    >>>
     >>> # LDOS for a state
     >>> psi0 = np.zeros(hamil.hilbert_size); psi0[0] = 1.0
     >>> overlaps = hamil.eig_vec.conj().T @ psi0
     >>> ldos_vals = stats.ldos(overlaps)
-    >>> 
+    >>>
     >>> # DOS histogram
     >>> dos_vals = stats.dos(nbins=50)
-    >>> 
+    >>>
     >>> # Diagonal ensemble average
     >>> observable = np.diag(hamil.hamil)
     >>> avg = stats.diagonal_ensemble(observable, overlaps)
     """
-    
+
     def __init__(self, hamiltonian):
         self._hamil = hamiltonian
-    
+
     def _check_diagonalized(self):
         if self._hamil._eig_val is None or len(self._hamil._eig_val) == 0:
             raise RuntimeError("Hamiltonian must be diagonalized first. Call hamil.diagonalize().")
-    
+
     @property
     def energies(self) -> Array:
         """Get eigenvalues."""
         self._check_diagonalized()
         return self._hamil._eig_val
-    
+
     def ldos(self, overlaps: Array, degenerate: bool = False, tol: float = 1e-8) -> Array:
         """
         Local density of states (strength function).
-        
+
         Parameters
         ----------
         overlaps : Array
@@ -1050,7 +1159,7 @@ class StatisticalModule:
             If True, group degenerate states
         tol : float
             Tolerance for degeneracy
-            
+
         Returns
         -------
         Array
@@ -1058,16 +1167,16 @@ class StatisticalModule:
         """
         self._check_diagonalized()
         return ldos(self.energies, overlaps, degenerate=degenerate, tol=tol)
-    
+
     def dos(self, nbins: int = 100, **kwargs) -> Array:
         """
         Density of states histogram.
-        
+
         Parameters
         ----------
         nbins : int
             Number of histogram bins
-            
+
         Returns
         -------
         Array
@@ -1075,18 +1184,18 @@ class StatisticalModule:
         """
         self._check_diagonalized()
         return dos(self.energies, nbins=nbins, **kwargs)
-    
+
     def diagonal_ensemble(self, observable: Array, overlaps: Array) -> float:
         """
         Diagonal ensemble average <O>_DE = sum_n |c_n|^2 O_nn.
-        
+
         Parameters
         ----------
         observable : Array
             Observable matrix or diagonal values
         overlaps : Array
             Overlaps <n|psi_0> with initial state
-            
+
         Returns
         -------
         float
@@ -1099,15 +1208,13 @@ class StatisticalModule:
         else:
             obs_diag = observable
         return np.sum(probs * obs_diag)
-    
-    def microcanonical_average(self, 
-                              observable: Array,
-                              e_mean: float,
-                              delta_e: float = 5e-2,
-                              stat: str = 'mean') -> float:
+
+    def microcanonical_average(
+        self, observable: Array, e_mean: float, delta_e: float = 5e-2, stat: str = "mean"
+    ) -> float:
         """
         Microcanonical ensemble average around energy e_mean.
-        
+
         Parameters
         ----------
         observable : Array
@@ -1118,7 +1225,7 @@ class StatisticalModule:
             Energy window width
         stat : str
             'mean', 'median', 'max', or 'min'
-            
+
         Returns
         -------
         float
@@ -1128,20 +1235,19 @@ class StatisticalModule:
         return microcanonical_ensemble_single(
             self.energies, observable, e_mean, delta_e=delta_e, stat=stat
         )
-    
+
     # -------------------------------------------------------------------------
     # Fidelity Susceptibility
     # -------------------------------------------------------------------------
-    
-    def fidelity_susceptibility(self, 
-                                operator_matrix: Array,
-                                state_idx: int = 0,
-                                mu: float = None) -> float:
+
+    def fidelity_susceptibility(
+        self, operator_matrix: Array, state_idx: int = 0, mu: float = None
+    ) -> float:
         """
         Compute fidelity susceptibility χ_F for a given perturbation.
-        
+
         χ_F = sum_{n≠m} |<n|V|m>|² / (E_n - E_m)²
-        
+
         Parameters
         ----------
         operator_matrix : Array
@@ -1151,12 +1257,12 @@ class StatisticalModule:
             Index of the reference state (default: ground state)
         mu : float, optional
             Regularization parameter. If None, uses 1/N_hilbert.
-            
+
         Returns
         -------
         float
             Fidelity susceptibility
-            
+
         Example
         -------
         >>> # Project total S_z onto eigenbasis
@@ -1169,20 +1275,17 @@ class StatisticalModule:
         return fidelity_susceptibility_low_rank(
             self.energies, operator_matrix, mu=mu, idx=state_idx
         )
-    
+
     # -------------------------------------------------------------------------
     # Inverse Participation Ratio
     # -------------------------------------------------------------------------
-    
-    def ipr(self, 
-            state: Array = None, 
-            state_idx: int = None,
-            q: float = 2.0) -> float:
+
+    def ipr(self, state: Array = None, state_idx: int = None, q: float = 2.0) -> float:
         """
         Inverse Participation Ratio: IPR_q = sum_i |ψ_i|^(2q).
-        
+
         For q=2 (default): IPR = sum_i |ψ_i|^4
-        
+
         Parameters
         ----------
         state : Array, optional
@@ -1191,7 +1294,7 @@ class StatisticalModule:
             Index of eigenstate to use. Default: 0 (ground state).
         q : float
             Rényi parameter. Default: 2.
-            
+
         Returns
         -------
         float
@@ -1202,21 +1305,19 @@ class StatisticalModule:
             state_idx = state_idx if state_idx is not None else 0
             state = self._hamil.eig_vec[:, state_idx]
         probs = np.abs(state) ** 2
-        return np.sum(probs ** q)
-    
-    def participation_entropy(self, 
-                             state: Array = None,
-                             state_idx: int = None) -> float:
+        return np.sum(probs**q)
+
+    def participation_entropy(self, state: Array = None, state_idx: int = None) -> float:
         """
         Participation entropy: S_p = -sum_i |ψ_i|^2 log(|ψ_i|^2).
-        
+
         Parameters
         ----------
         state : Array, optional
             State vector. If None, uses eigenstate at state_idx.
         state_idx : int, optional
             Index of eigenstate. Default: 0 (ground state).
-            
+
         Returns
         -------
         float
@@ -1229,20 +1330,20 @@ class StatisticalModule:
         probs = np.abs(state) ** 2
         probs = probs[probs > 0]
         return -np.sum(probs * np.log(probs))
-    
+
     # -------------------------------------------------------------------------
     # Level Statistics
     # -------------------------------------------------------------------------
-    
+
     def level_spacing(self, unfolded: bool = False) -> Array:
         """
         Level spacings: s_i = E_{i+1} - E_i.
-        
+
         Parameters
         ----------
         unfolded : bool
             If True, normalize by mean spacing (for r-statistics).
-            
+
         Returns
         -------
         Array
@@ -1254,14 +1355,14 @@ class StatisticalModule:
             mean_spacing = np.mean(spacings)
             spacings = spacings / mean_spacing
         return spacings
-    
+
     def level_spacing_ratio(self) -> Array:
         """
         Level spacing ratio: r_i = min(s_i, s_{i+1}) / max(s_i, s_{i+1}).
-        
+
         For GOE (chaotic): <r> ≈ 0.536
         For Poisson (integrable): <r> ≈ 0.386
-        
+
         Returns
         -------
         Array
@@ -1271,28 +1372,26 @@ class StatisticalModule:
         spacings = np.diff(self.energies)
         r = np.minimum(spacings[:-1], spacings[1:]) / np.maximum(spacings[:-1], spacings[1:])
         return r
-    
+
     def mean_level_spacing_ratio(self) -> float:
         """Average level spacing ratio <r>."""
         return np.mean(self.level_spacing_ratio())
-    
+
     # -------------------------------------------------------------------------
     # Survival Probability
     # -------------------------------------------------------------------------
-    
-    def survival_probability(self,
-                            initial_state: Array,
-                            times: Array) -> Array:
+
+    def survival_probability(self, initial_state: Array, times: Array) -> Array:
         """
         Survival probability |<ψ(0)|ψ(t)>|².
-        
+
         Parameters
         ----------
         initial_state : Array
             Initial state in Hilbert space basis.
         times : Array
             Time points.
-            
+
         Returns
         -------
         Array
@@ -1301,7 +1400,7 @@ class StatisticalModule:
         self._check_diagonalized()
         overlaps = self._hamil.eig_vec.conj().T @ initial_state
         return survival_prob(initial_state, overlaps, self.energies, times)
-    
+
     def help(self):
         """Print help for statistical module."""
         print("""
@@ -1347,9 +1446,7 @@ def get_statistical_module(hamiltonian) -> StatisticalModule:
     """Factory function to create statistical module."""
     return StatisticalModule(hamiltonian)
 
+
 # -----------------------------------------------------------------------------
-#! EOF 
+#! EOF
 # -----------------------------------------------------------------------------
-
-
-

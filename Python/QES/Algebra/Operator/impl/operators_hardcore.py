@@ -13,8 +13,9 @@ parameter:
 
 from __future__ import annotations
 
-import numpy as np
 from typing import Sequence, Tuple
+
+import numpy as np
 
 from QES.Algebra.Operator import sign as op_sign
 from QES.Algebra.Operator.operator import ensure_operator_output_shape_numba
@@ -23,7 +24,6 @@ from QES.general_python.algebra.utils import (
     DEFAULT_NP_FLOAT_TYPE,
     DEFAULT_NP_INT_TYPE,
 )
-
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -72,7 +72,7 @@ def hardcore_create_int(
             statistics_angle,
         )
         coeff *= phase
-        new_state ^= (1 << pos)
+        new_state ^= 1 << pos
 
     out_state = np.array([new_state], dtype=DEFAULT_NP_INT_TYPE)
     out_coeff = np.array([coeff], dtype=DEFAULT_NP_CPX_TYPE)
@@ -100,7 +100,7 @@ def hardcore_annihilate_int(
             -statistics_angle,
         )
         coeff *= phase
-        new_state ^= (1 << pos)
+        new_state ^= 1 << pos
 
     out_state = np.array([new_state], dtype=DEFAULT_NP_INT_TYPE)
     out_coeff = np.array([coeff], dtype=DEFAULT_NP_CPX_TYPE)

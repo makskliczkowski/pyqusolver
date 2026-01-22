@@ -43,19 +43,21 @@ top-level `QES` package remains lightweight. The first call to
 """
 
 from __future__ import annotations
-from typing import Optional, Any
+
 import threading
+from typing import Any
 
 # Thread-local storage for singletons
-_LOCK               = threading.Lock()
+_LOCK = threading.Lock()
 
 # Internal storage for singletons
-_LOGGER: Any        = None
-_BACKEND_MGR: Any   = None
+_LOGGER: Any = None
+_BACKEND_MGR: Any = None
 
 # ----------------------------------------------------------------
 #! Global logger accessor
 # ----------------------------------------------------------------
+
 
 def get_logger(**kwargs):
     """
@@ -73,12 +75,15 @@ def get_logger(**kwargs):
     with _LOCK:
         if _LOGGER is None:
             from QES.general_python.common.flog import get_global_logger
+
             _LOGGER = get_global_logger(**kwargs)
     return _LOGGER
+
 
 # ----------------------------------------------------------------
 #! Global backend manager accessor
 # ----------------------------------------------------------------
+
 
 def get_backend_manager() -> Any:
     """
@@ -93,17 +98,21 @@ def get_backend_manager() -> Any:
     with _LOCK:
         if _BACKEND_MGR is None:
             from QES.general_python.algebra.utils import backend_mgr
+
             _BACKEND_MGR = backend_mgr
     return _BACKEND_MGR
+
 
 # ----------------------------------------------------------------
 #! RNG accessors
 # ----------------------------------------------------------------
 
+
 def get_numpy_rng():
     """Return the NumPy Generator instance from the backend manager."""
     mgr = get_backend_manager()
     return mgr.default_rng
+
 
 def reseed_all(seed: int):
     """Reseed backend manager (NumPy / JAX) and python's random state.
@@ -113,17 +122,21 @@ def reseed_all(seed: int):
     mgr = get_backend_manager()
     return mgr.reseed(seed)
 
+
 # ----------------------------------------------------------------
+
 
 def next_jax_key():
     """Get a fresh JAX subkey from the backend manager (if JAX active)."""
     mgr = get_backend_manager()
     return mgr.next_key()
 
+
 def split_jax_keys(n: int):
     """Split the current JAX key into ``n`` subkeys (if JAX active)."""
     mgr = get_backend_manager()
     return mgr.split_keys(n)
+
 
 # ----------------------------------------------------------------
 
