@@ -330,7 +330,7 @@ class HeisenbergKitaev(Hamiltonian):
         self._gz            = self._set_some_coupling(self._gz  if gz  is None else gz ) if gz is not None else self._gz
 
     def _set_local_energy_operators(self):
-        """
+        r"""
         Set up the local and non-local energy operators for the spin lattice.
         This method constructs the operator lists representing local (single-site)
         and correlation (two-site) interactions for the system. It iterates over
