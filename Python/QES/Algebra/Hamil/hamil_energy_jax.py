@@ -57,8 +57,11 @@ try:
 except ImportError as e:
     raise ImportError("JAX is required for this module. Please install JAX to proceed.") from e
 
+from collections import defaultdict
 from functools import partial
 from typing import Callable, List, Optional, Tuple
+
+import numpy as np
 
 try:
     from QES.Algebra.Hamil.hamil_energy_helper import (  # type: ignore[import-untyped]
@@ -259,9 +262,6 @@ def local_energy_jax_wrap(
         return op
 
     # Grouping operators for vectorization
-    from collections import defaultdict
-
-    import numpy as np
 
     def group_operators(funcs, indices, mults):
         """Groups operators by function identity and arity for vectorization."""
