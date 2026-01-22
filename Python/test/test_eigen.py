@@ -13,8 +13,8 @@ import scipy.sparse as sp
 
 try:
     from QES.general_python.algebra.eigen.factory import choose_eigensolver
-except ImportError:
-    raise ImportError("QES package is required to run these tests.")
+except ImportError as exc:
+    raise ImportError("QES package is required to run these tests.") from exc
 
 # ----------------------------------
 #! Helper function to compute residual norm
