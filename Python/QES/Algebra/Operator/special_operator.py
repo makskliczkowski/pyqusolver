@@ -1408,23 +1408,38 @@ class SpecialOperator(Operator, ABC):
         # Resolve instruction code
         op_code     = self._resolve_operator_code(operator, sites)
         
+        # Normalize sites for hashing
+        s_list      = list(sites) if sites else [0]
+        term_key    = (op_code, tuple(s_list))
+
+        # Check if term already exists -> Fuse it!
+        if term_key in self._term_index_map:
+            idx = self._term_index_map[term_key]
+            self._instr_coeffs[idx] += coefficient
+            # If fusion makes coefficient zero, we could remove it, but that's expensive (O(N)).
+            # We keep it; negligible terms might be filtered later if needed.
+            return
+
         # Store instruction
+        idx = len(self._instr_codes)
         self._instr_codes.append(op_code)
         self._instr_coeffs.append(coefficient)
+        self._term_index_map[term_key] = idx
         
         # Handle sites
-        s_list      = list(sites) if sites else [0]
         arity       = len(s_list)
         
         # Extend max arity if needed
         if arity > self._instr_max_arity:
             self._instr_max_arity = arity
         
-        # Pad to max arity
-        while len(s_list) < self._instr_max_arity:
-            s_list.append(-1)
+        # Pad to max arity (for JIT array) - Note: stored list keeps padding
+        # But for fusion key we used unpadded sites
+        padded_s_list = list(s_list)
+        while len(padded_s_list) < self._instr_max_arity:
+            padded_s_list.append(-1)
         
-        self._instr_sites.append(s_list)
+        self._instr_sites.append(padded_s_list)
     
     # -------------------------------------------------------------------------
     #! Help and Documentation
