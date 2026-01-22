@@ -6,13 +6,13 @@ This module contains various quantum spin models with interactions.
 
 Modules:
 --------
-- heisenberg_kitaev: 
+- heisenberg_kitaev:
     Heisenberg-Kitaev model implementations
-- qsm: 
+- qsm:
     Quantum Spin Models
-- transverse_ising: 
+- transverse_ising:
     Transverse Field Ising Model
-- ultrametric: 
+- ultrametric:
     Ultrametric spin models
 - xxz:
     XXZ Spin Model
@@ -25,20 +25,22 @@ License     : MIT
 ------------------------------------------------------------------------
 """
 
-
-__all__ = ['heisenberg_kitaev', 'qsm', 'transverse_ising', 'ultrametric', 'j1j2']
+__all__ = ["heisenberg_kitaev", "qsm", "transverse_ising", "ultrametric", "j1j2"]
 
 # Lazy import machinery (PEP 562 style)
 import importlib
 import sys
+
 
 def __getattr__(name):
     if name in __all__:
         return importlib.import_module(f".{name}", __name__)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 def __dir__():
     return sorted(list(globals().keys()) + __all__)
+
 
 # ----------------------------------------------------------------------
 #! End of File

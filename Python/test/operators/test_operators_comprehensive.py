@@ -5,9 +5,9 @@ Comprehensive Operator Test Suite
 
 This module provides a comprehensive test suite for quantum operators across all backends.
 Tests cover:
-- spin operators, 
-- fermionic operators, 
-- operator combinations, and 
+- spin operators,
+- fermionic operators,
+- operator combinations, and
 - backend compatibility.
 
 Tests are organized by functionality:
@@ -28,18 +28,18 @@ Version     : 1.0
 run: pytest Python/test/operators/test_operators_comprehensive.py
 """
 
+
 import numpy as np
 import pytest
-from typing import Union, List
 
 # Core imports
 try:
-    from QES.Algebra.Hilbert.hilbert_local      import LocalSpace
-    from QES.Algebra.hilbert                    import HilbertSpace
-    from QES.Algebra.Operator.operator          import OperatorTypeActing
-    from QES.general_python.lattices.square     import SquareLattice
-    from QES.general_python.lattices.lattice    import LatticeBC
-    from QES.general_python.algebra.utils       import JAX_AVAILABLE
+    from QES.Algebra.hilbert import HilbertSpace
+    from QES.Algebra.Hilbert.hilbert_local import LocalSpace
+    from QES.Algebra.Operator.operator import OperatorTypeActing
+    from QES.general_python.algebra.utils import JAX_AVAILABLE
+    from QES.general_python.lattices.lattice import LatticeBC
+    from QES.general_python.lattices.square import SquareLattice
 except ImportError as e:
     raise ImportError(f"Required QES modules not found: {e}")
 
@@ -60,22 +60,23 @@ else:
 #! Comprehensive Operator Test Suite
 # ----------------------------------------------------------------------------
 
+
 class TestOperatorCatalog:
     """Test operator catalog and metadata."""
 
     def test_spin_catalog_keys(self):
         """Test that all required spin operators are available in the catalog."""
-        space               = LocalSpace.default_spin_half()
-        keys                = set(space.list_operator_keys())
+        space = LocalSpace.default_spin_half()
+        keys = set(space.list_operator_keys())
 
-        required_operators  = {"sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus"}
-        missing_operators   = required_operators - keys
+        required_operators = {"sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus"}
+        missing_operators = required_operators - keys
 
         assert not missing_operators, f"Missing spin operators: {missing_operators}"
         print(f"(ok)  Found all required spin operators: {required_operators}")
 
         # Test operator metadata
-        sigma_plus          = space.get_op("sigma_plus")
+        sigma_plus = space.get_op("sigma_plus")
         assert "raising" in sigma_plus.tags, "sigma_plus should have 'raising' tag"
         print("(ok)  sigma_plus has correct 'raising' tag")
 
@@ -83,10 +84,10 @@ class TestOperatorCatalog:
 
     def test_fermion_catalog_keys(self):
         """Test that fermionic operators are available."""
-        space               = LocalSpace.default_fermion_spinless()
-        keys                = set(space.list_operator_keys())
-        required_operators  = {"c", "c_dag", "n"}
-        missing_operators   = required_operators - keys
+        space = LocalSpace.default_fermion_spinless()
+        keys = set(space.list_operator_keys())
+        required_operators = {"c", "c_dag", "n"}
+        missing_operators = required_operators - keys
 
         assert not missing_operators, f"Missing fermion operators: {missing_operators}"
         print(f"(ok)  Found all required fermion operators: {required_operators}")
@@ -95,17 +96,18 @@ class TestOperatorCatalog:
 
     def test_anyon_catalog_keys(self):
         """Test that anyon operators are available."""
-        theta               = np.pi / 2  # semion
-        space               = LocalSpace.default_abelian_anyon(statistics_angle=theta)
-        keys                = set(space.list_operator_keys())
-        required_operators  = {"a", "a_dag"}
-        missing_operators   = required_operators - keys
+        theta = np.pi / 2  # semion
+        space = LocalSpace.default_abelian_anyon(statistics_angle=theta)
+        keys = set(space.list_operator_keys())
+        required_operators = {"a", "a_dag"}
+        missing_operators = required_operators - keys
 
         assert not missing_operators, f"Missing anyon operators: {missing_operators}"
         print(f"(ok)  Found all required anyon operators: {required_operators}")
 
 
 # --------------------------------------------------------------------------------
+
 
 class TestFermionicOperators:
     """Test fermionic creation/annihilation operators with correct signs."""
@@ -157,7 +159,9 @@ class TestFermionicOperators:
 
         assert out_state[0] == 0b110, f"Expected state 0b110, got {out_state[0]:0b}"
         assert np.allclose(coeff[0], expected_coeff), f"Expected {expected_coeff}, got {coeff[0]}"
-        print(f"(ok)  Semion phase correct: coefficient = {coeff[0]} ≈ exp(ipi/2) = {expected_coeff}")
+        print(
+            f"(ok)  Semion phase correct: coefficient = {coeff[0]} ≈ exp(ipi/2) = {expected_coeff}"
+        )
 
 
 class TestOperatorCombinations:
@@ -181,19 +185,19 @@ class TestOperatorCombinations:
         assert isinstance(result_x[1], np.ndarray), "Result coeffs should be array"
         assert result_x[0].shape == (1,), f"Expected shape (1,), got {result_x[0].shape}"
         assert result_x[1].shape == (1,), f"Expected shape (1,), got {result_x[1].shape}"
-        print(f"(ok)  \sigma_x on |000⟩: {len(result_x[0])} states generated")
+        print(rf"(ok)  \sigma_x on |000⟩: {len(result_x[0])} states generated")
 
         result_z = sig_z_g(state)
         assert isinstance(result_z[0], np.ndarray), "Result states should be array"
         assert isinstance(result_z[1], np.ndarray), "Result coeffs should be array"
-        print(f"(ok)  \sigmaz on |000⟩: {len(result_z[0])} states generated")
+        print(rf"(ok)  \sigmaz on |000⟩: {len(result_z[0])} states generated")
 
         # Test combination
         sig_x_sig_z = sig_x_g * sig_z_g
         result_comb = sig_x_sig_z(state)
         assert isinstance(result_comb[0], np.ndarray), "Combined result states should be array"
         assert isinstance(result_comb[1], np.ndarray), "Combined result coeffs should be array"
-        print(f"(ok)  \sigma_x\sigmaz on |000⟩: {len(result_comb[0])} states generated")
+        print(rf"(ok)  \sigma_x\sigmaz on |000⟩: {len(result_comb[0])} states generated")
 
     def test_spin_global_operators_numpy_backend(self, lattice):
         """Test global spin operators on NumPy states."""
@@ -205,14 +209,14 @@ class TestOperatorCombinations:
         result_x = sig_x_g(np_state)
         assert result_x[0].shape == (1, 8), f"Expected shape (1, 8), got {result_x[0].shape}"
         assert result_x[1].shape == (1,), f"Expected shape (1,), got {result_x[1].shape}"
-        print(f"(ok)  \sigma_x on NumPy |000⟩: output shape {result_x[0].shape}")
+        print(rf"(ok)  \sigma_x on NumPy |000⟩: output shape {result_x[0].shape}")
 
         # Test combination
         sig_x_sig_z = sig_x_g * sig_z_g
         result_comb = sig_x_sig_z(np_state)
         assert result_comb[0].shape == (1, 8), f"Expected shape (1, 8), got {result_comb[0].shape}"
         assert result_comb[1].shape == (1,), f"Expected shape (1,), got {result_comb[1].shape}"
-        print(f"(ok)  \sigma_x\sigmaz on NumPy |000⟩: output shape {result_comb[0].shape}")
+        print(rf"(ok)  \sigma_x\sigmaz on NumPy |000⟩: output shape {result_comb[0].shape}")
 
     @pytest.mark.skipif(not JAX_AVAILABLE, reason="JAX not available")
     def test_spin_global_operators_jax_backend(self, lattice):
@@ -225,14 +229,14 @@ class TestOperatorCombinations:
         result_x = sig_x_g(jnp_state)
         assert result_x[0].shape == (1, 8), f"Expected shape (1, 8), got {result_x[0].shape}"
         assert result_x[1].shape == (1,), f"Expected shape (1,), got {result_x[1].shape}"
-        print(f"(ok)  \sigma_x on JAX |000⟩: output shape {result_x[0].shape}")
+        print(rf"(ok)  \sigma_x on JAX |000⟩: output shape {result_x[0].shape}")
 
         # Test combination
         sig_x_sig_z = sig_x_g * sig_z_g
         result_comb = sig_x_sig_z(jnp_state)
         assert result_comb[0].shape == (1, 8), f"Expected shape (1, 8), got {result_comb[0].shape}"
         assert result_comb[1].shape == (1,), f"Expected shape (1,), got {result_comb[1].shape}"
-        print(f"(ok)  \sigma_x\sigmaz on JAX |000⟩: output shape {result_comb[0].shape}")
+        print(rf"(ok)  \sigma_x\sigmaz on JAX |000⟩: output shape {result_comb[0].shape}")
 
 
 class TestFermionOperators:
@@ -277,7 +281,9 @@ class TestFermionOperators:
         np_state = np.array([0.0, 0.0, 0.0])  # empty
         result = c_dag(np_state, 0)
         expected_state = np.array([1.0, 0.0, 0.0])
-        assert np.allclose(result[0], expected_state), f"State mismatch: expected {expected_state}, got {result[0]}"
+        assert np.allclose(
+            result[0], expected_state
+        ), f"State mismatch: expected {expected_state}, got {result[0]}"
         assert result[1][0] == 1.0, f"Expected coefficient 1.0, got {result[1][0]}"
         print("(ok)  Creation on NumPy empty state: [0,0,0] -> [1,0,0]")
 
@@ -319,7 +325,10 @@ class TestMomentumSpaceOperators:
 
         result = sigma_k_op(state, 0)  # site 0 (k is already set in operator)
         assert len(result) == 2, "Should return (states, coeffs) tuple"
-        assert isinstance(result[1], np.ndarray) and result[1].dtype in [np.complex64, np.complex128], "Should return complex coefficient array"
+        assert isinstance(result[1], np.ndarray) and result[1].dtype in [
+            np.complex64,
+            np.complex128,
+        ], "Should return complex coefficient array"
         print(f"(ok)  Spin momentum operator at k=pi: coefficient = {result[1]}")
 
 
@@ -350,8 +359,8 @@ class TestBackendCompatibility:
             # Test JAX input
             jnp_state = jnp.array([1.0, 0.0, 0.0])
             jnp_result = sig_x(jnp_state, 0)
-            assert hasattr(jnp_result[0], 'device'), "JAX input should return JAX arrays"
-            assert hasattr(jnp_result[1], 'device'), "JAX input should return JAX arrays"
+            assert hasattr(jnp_result[0], "device"), "JAX input should return JAX arrays"
+            assert hasattr(jnp_result[1], "device"), "JAX input should return JAX arrays"
 
         print("(ok)  All backends return consistent output types")
 
@@ -378,36 +387,39 @@ class TestTranslationSymmetry:
     @pytest.fixture
     def lattice_1d(self):
         """Create a 1D lattice for testing."""
-        from QES.general_python.lattices.square import SquareLattice
         from QES.general_python.lattices.lattice import LatticeBC
+        from QES.general_python.lattices.square import SquareLattice
+
         return SquareLattice(dim=1, lx=4, ly=1, lz=1, bc=LatticeBC.PBC)
 
     @pytest.fixture
     def lattice_2d(self):
         """Create a 2D lattice for testing."""
-        from QES.general_python.lattices.square import SquareLattice
         from QES.general_python.lattices.lattice import LatticeBC
+        from QES.general_python.lattices.square import SquareLattice
+
         return SquareLattice(dim=2, lx=4, ly=4, lz=1, bc=LatticeBC.PBC)
 
     def test_translation_real_coefficients_zero_sector(self, lattice_1d, lattice_2d):
         """Test that translation operators return real coefficients at k=0."""
         from QES.Algebra.Symmetries.translation import TranslationSymmetry
-        from QES.general_python.lattices.lattice import LatticeDirection
 
         # Test 1D k=0 sector
-        trans_1d = TranslationSymmetry(lattice_1d, sector=0, ns=lattice_1d.Ns, direction='x')
-        assert trans_1d.get_momentum_sector().name == 'ZERO'
+        trans_1d = TranslationSymmetry(lattice_1d, sector=0, ns=lattice_1d.Ns, direction="x")
+        assert trans_1d.get_momentum_sector().name == "ZERO"
 
         # Test several states
         for state in [0b0000, 0b0001, 0b0101, 0b1111]:
             new_state, phase = trans_1d.apply_int(state, lattice_1d.Ns)
             assert np.isreal(phase), f"Phase {phase} is not real for state {state:04b} at k=0"
-            assert phase.imag == 0.0, f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=0"
+            assert (
+                phase.imag == 0.0
+            ), f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=0"
             print(f"(ok)  1D k=0: state {state:04b} -> phase {phase}")
 
         # Test 2D k=(0,0) sector
-        trans_2d_x = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction='x')
-        trans_2d_y = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction='y')
+        trans_2d_x = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction="x")
+        trans_2d_y = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction="y")
 
         # Test combined translation (should still be real)
         for state in [0, 1, 15]:  # Some test states
@@ -416,8 +428,12 @@ class TestTranslationSymmetry:
             state_xy, phase_y = trans_2d_y.apply_int(state_x, lattice_2d.Ns)
             total_phase = phase_x * phase_y
 
-            assert np.isreal(total_phase), f"Combined phase {total_phase} is not real for state {state} at k=(0,0)"
-            assert total_phase.imag == 0.0, f"Combined phase {total_phase} has non-zero imaginary part for state {state} at k=(0,0)"
+            assert np.isreal(
+                total_phase
+            ), f"Combined phase {total_phase} is not real for state {state} at k=(0,0)"
+            assert (
+                total_phase.imag == 0.0
+            ), f"Combined phase {total_phase} has non-zero imaginary part for state {state} at k=(0,0)"
             print(f"(ok)  2D k=(0,0): state {state} -> combined phase {total_phase}")
 
     def test_translation_real_coefficients_pi_sector(self, lattice_1d, lattice_2d):
@@ -425,29 +441,43 @@ class TestTranslationSymmetry:
         from QES.Algebra.Symmetries.translation import TranslationSymmetry
 
         # Test 1D k=pi sector (sector = L/2 = 2 for L=4)
-        trans_1d = TranslationSymmetry(lattice_1d, sector=2, ns=lattice_1d.Ns, direction='x')
-        assert trans_1d.get_momentum_sector().name == 'PI'
+        trans_1d = TranslationSymmetry(lattice_1d, sector=2, ns=lattice_1d.Ns, direction="x")
+        assert trans_1d.get_momentum_sector().name == "PI"
 
         # Test several states
         for state in [0b0000, 0b0001, 0b0101, 0b1111]:
             new_state, phase = trans_1d.apply_int(state, lattice_1d.Ns)
             assert np.isreal(phase), f"Phase {phase} is not real for state {state:04b} at k=pi"
-            assert phase.imag == 0.0, f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=pi"
+            assert (
+                phase.imag == 0.0
+            ), f"Phase {phase} has non-zero imaginary part for state {state:04b} at k=pi"
             print(f"(ok)  1D k=pi: state {state:04b} -> phase {phase}")
 
         # Test 2D k=(pi,0) and k=(0,pi) sectors
-        trans_2d_x_pi = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='x')  # k_x = pi
-        trans_2d_y_pi = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='y')  # k_y = pi
+        trans_2d_x_pi = TranslationSymmetry(
+            lattice_2d, sector=2, ns=lattice_2d.Ns, direction="x"
+        )  # k_x = pi
+        trans_2d_y_pi = TranslationSymmetry(
+            lattice_2d, sector=2, ns=lattice_2d.Ns, direction="y"
+        )  # k_y = pi
 
         for state in [0, 1, 15]:  # Some test states
             # Test individual directions
             _, phase_x = trans_2d_x_pi.apply_int(state, lattice_2d.Ns)
             _, phase_y = trans_2d_y_pi.apply_int(state, lattice_2d.Ns)
 
-            assert np.isreal(phase_x), f"X-direction phase {phase_x} is not real for state {state} at k=(pi,0)"
-            assert np.isreal(phase_y), f"Y-direction phase {phase_y} is not real for state {state} at k=(0,pi)"
-            assert phase_x.imag == 0.0, f"X-direction phase {phase_x} has non-zero imaginary part for state {state} at k=(pi,0)"
-            assert phase_y.imag == 0.0, f"Y-direction phase {phase_y} has non-zero imaginary part for state {state} at k=(0,pi)"
+            assert np.isreal(
+                phase_x
+            ), f"X-direction phase {phase_x} is not real for state {state} at k=(pi,0)"
+            assert np.isreal(
+                phase_y
+            ), f"Y-direction phase {phase_y} is not real for state {state} at k=(0,pi)"
+            assert (
+                phase_x.imag == 0.0
+            ), f"X-direction phase {phase_x} has non-zero imaginary part for state {state} at k=(pi,0)"
+            assert (
+                phase_y.imag == 0.0
+            ), f"Y-direction phase {phase_y} has non-zero imaginary part for state {state} at k=(0,pi)"
 
             print(f"(ok)  2D k=(pi,0): state {state} -> phase {phase_x}")
             print(f"(ok)  2D k=(0,pi): state {state} -> phase {phase_y}")
@@ -457,8 +487,8 @@ class TestTranslationSymmetry:
         from QES.Algebra.Symmetries.translation import TranslationSymmetry
 
         # Test 1D generic k sector (sector = 1 for L=4, k=pi/2)
-        trans_1d = TranslationSymmetry(lattice_1d, sector=1, ns=lattice_1d.Ns, direction='x')
-        assert trans_1d.get_momentum_sector().name == 'GENERIC'
+        trans_1d = TranslationSymmetry(lattice_1d, sector=1, ns=lattice_1d.Ns, direction="x")
+        assert trans_1d.get_momentum_sector().name == "GENERIC"
 
         # For generic k, phases can be complex
         state = 0b0001
@@ -469,13 +499,13 @@ class TestTranslationSymmetry:
 
     def test_momentum_sector_detection(self, lattice_1d, lattice_2d):
         """Test that momentum sectors are correctly identified."""
-        from QES.Algebra.Symmetries.translation import TranslationSymmetry
         from QES.Algebra.Symmetries.base import MomentumSector
+        from QES.Algebra.Symmetries.translation import TranslationSymmetry
 
         # 1D lattice L=4
-        trans_k0 = TranslationSymmetry(lattice_1d, sector=0, ns=lattice_1d.Ns, direction='x')
-        trans_k1 = TranslationSymmetry(lattice_1d, sector=1, ns=lattice_1d.Ns, direction='x')
-        trans_k2 = TranslationSymmetry(lattice_1d, sector=2, ns=lattice_1d.Ns, direction='x')
+        trans_k0 = TranslationSymmetry(lattice_1d, sector=0, ns=lattice_1d.Ns, direction="x")
+        trans_k1 = TranslationSymmetry(lattice_1d, sector=1, ns=lattice_1d.Ns, direction="x")
+        trans_k2 = TranslationSymmetry(lattice_1d, sector=2, ns=lattice_1d.Ns, direction="x")
 
         assert trans_k0.get_momentum_sector() == MomentumSector.ZERO
         assert trans_k1.get_momentum_sector() == MomentumSector.GENERIC
@@ -484,10 +514,10 @@ class TestTranslationSymmetry:
         print("(ok)  Momentum sector detection works correctly for 1D")
 
         # 2D lattice 4x4
-        trans_2d_k0x = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction='x')
-        trans_2d_k2x = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='x')
-        trans_2d_k0y = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction='y')
-        trans_2d_k2y = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction='y')
+        trans_2d_k0x = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction="x")
+        trans_2d_k2x = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction="x")
+        trans_2d_k0y = TranslationSymmetry(lattice_2d, sector=0, ns=lattice_2d.Ns, direction="y")
+        trans_2d_k2y = TranslationSymmetry(lattice_2d, sector=2, ns=lattice_2d.Ns, direction="y")
 
         assert trans_2d_k0x.get_momentum_sector() == MomentumSector.ZERO
         assert trans_2d_k2x.get_momentum_sector() == MomentumSector.PI

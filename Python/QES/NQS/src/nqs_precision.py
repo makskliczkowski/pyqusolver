@@ -4,11 +4,13 @@ Precision utilities for NQS mixed-precision policies.
 
 from dataclasses import dataclass
 from typing import Any
+
 import numpy as np
 
 try:
     import jax
     import jax.numpy as jnp
+
     JAX_AVAILABLE = True
 except ImportError:
     jax = None
@@ -21,10 +23,11 @@ class NQSPrecisionPolicy:
     """
     Precision policy for sampling and numerically sensitive paths.
     """
-    state_dtype         : Any
-    prob_dtype          : Any
-    accum_real_dtype    : Any
-    accum_complex_dtype : Any
+
+    state_dtype: Any
+    prob_dtype: Any
+    accum_real_dtype: Any
+    accum_complex_dtype: Any
 
 
 def _jax_x64_enabled(is_jax: bool) -> bool:
@@ -57,7 +60,9 @@ def _complex_dtype_for(dtype, *, is_jax: bool):
 
 def _default_accum_dtypes(net_dtype, *, prefer_x64: bool, is_jax: bool):
     if _is_double_precision_dtype(net_dtype):
-        return _real_dtype_for(net_dtype, is_jax=is_jax), _complex_dtype_for(net_dtype, is_jax=is_jax)
+        return _real_dtype_for(net_dtype, is_jax=is_jax), _complex_dtype_for(
+            net_dtype, is_jax=is_jax
+        )
 
     use_x64 = prefer_x64 and (not is_jax or _jax_x64_enabled(is_jax))
     if use_x64:

@@ -21,7 +21,7 @@ try:
     from .hamil_energy_helper import *
     from .hamil_jit_methods import *
     from .hamil_types import *
-    
+
     __all__ = []
 except ImportError:
     __all__ = []

@@ -23,4 +23,4 @@ Email: maksymilian.kliczkowski@pwr.edu.pl
 from . import Interacting as intr
 from . import Noninteracting as nintr
 
-__all__ = ['intr', 'nintr']
+__all__ = ["intr", "nintr"]

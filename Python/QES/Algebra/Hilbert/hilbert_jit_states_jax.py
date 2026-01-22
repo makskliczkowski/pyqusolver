@@ -1,12 +1,13 @@
-import numpy as np
-from typing import Union, Optional, Callable
 from functools import partial
+from typing import Callable, Union
+
+import numpy as np
 
 from QES.general_python.algebra.utils import JAX_AVAILABLE
 
 if JAX_AVAILABLE:
-    import jax.numpy as jnp
     import jax
+    import jax.numpy as jnp
 else:
     jax = None
     jnp = np
@@ -14,30 +15,30 @@ else:
 #######################################################################
 
 if JAX_AVAILABLE:
-    
+
     # a) MAPPING
-    
+
     @jax.jit
     def get_mapping_jax(mapping, state):
         """
         Get the mapping of the state.
-        
+
         Args:
             mapping (list)  : The mapping of the states.
             state (int)     : The state to get the mapping for.
-        
+
         Returns:
             int: The mapping of the state.
         """
         return mapping[state] if len(mapping) > state else state
-    
-    
+
     @partial(jax.jit)
-    def calculate_slater_det_jax(sp_eigvecs         : jnp.ndarray,      # U matrix (Ns x Norb)
-                                occupied_orbitals   : jnp.ndarray,      # Indices {\alpha_k}
-                                org_basis_state     : Union[int, jnp.ndarray],
-                                ns                  : int
-                                ) -> jnp.ndarray: # Returns JAX array (scalar)
+    def calculate_slater_det_jax(
+        sp_eigvecs: jnp.ndarray,  # U matrix (Ns x Norb)
+        occupied_orbitals: jnp.ndarray,  # Indices {\alpha_k}
+        org_basis_state: Union[int, jnp.ndarray],
+        ns: int,
+    ) -> jnp.ndarray:  # Returns JAX array (scalar)
         r"""
         Calculates the Slater determinant using JAX.
 
@@ -52,7 +53,7 @@ if JAX_AVAILABLE:
                 1D array (length N) of integer indices of the occupied orbitals {\alpha_k}.
             org_basis_state (Union[int, jnp.ndarray]):
                 Represents the Fock state R.
-                If int: 
+                If int:
                     Bitmask where bit i is set if site i is occupied.
                 If jnp.ndarray:
                     Boolean or integer array (length Ns) where entry i is
@@ -61,9 +62,8 @@ if JAX_AVAILABLE:
             jnp.ndarray: Scalar JAX array containing the complex value of the
                         Slater determinant det(M).
         """
-        ns              = sp_eigvecs.shape[0]
-        n_particles     = occupied_orbitals.shape[0]
-
+        ns = sp_eigvecs.shape[0]
+        n_particles = occupied_orbitals.shape[0]
 
         #! Determine occupied sites mask and check particle number
         site_indices = jnp.arange(ns, dtype=jnp.int32)
@@ -83,23 +83,21 @@ if JAX_AVAILABLE:
         def compute_det(sp_eigvecs, occupied_orbitals, basis_state_mask):
             # Get occupied site indices using nonzero with fixed size.
             # This requires n_particles_fock == n_particles, ensured by outer cond.
-            occupied_sites  = jnp.nonzero(basis_state_mask, size=n_particles, fill_value=-1)[0]
+            occupied_sites = jnp.nonzero(basis_state_mask, size=n_particles, fill_value=-1)[0]
             # Ensure no fill_value used (safety check, shouldn't happen if counts match)
-            valid_indices   = jnp.all(occupied_sites != -1)
+            valid_indices = jnp.all(occupied_sites != -1)
 
             #! Construct Slater Matrix M using vectorized indexing
             # M_{jk} = U_{i_j, \alpha_k} = sp_eigvecs[occupied_sites[j], occupied_orbitals[k]]
-            row_idx         = occupied_sites[:, None]       # Shape (N, 1)
-            col_idx         = occupied_orbitals[None, :]    # Shape (1, N)
-            slater_matrix   = sp_eigvecs[row_idx, col_idx]  # Shape (N, N)
+            row_idx = occupied_sites[:, None]  # Shape (N, 1)
+            col_idx = occupied_orbitals[None, :]  # Shape (1, N)
+            slater_matrix = sp_eigvecs[row_idx, col_idx]  # Shape (N, N)
 
             #! Calculate Determinant
-            sign, logdet    = jnp.linalg.slogdet(slater_matrix)
+            sign, logdet = jnp.linalg.slogdet(slater_matrix)
 
             # Combine sign and logdet, handle sign=0 (singular matrix)
-            det_val = jnp.where(sign == 0,
-                                jnp.zeros(1, dtype=logdet.dtype),
-                                sign * jnp.exp(logdet))
+            det_val = jnp.where(sign == 0, jnp.zeros(1, dtype=logdet.dtype), sign * jnp.exp(logdet))
 
             # Return 0 if indices were invalid (e.g., wrong particle count detected subtly)
             return jnp.where(valid_indices, det_val, jnp.zeros(1, dtype=det_val.dtype))
@@ -107,50 +105,60 @@ if JAX_AVAILABLE:
         # Use jax.lax.cond for conditional execution based on particle numbers
         det_result = jax.lax.cond(
             n_particles == 0,
-            lambda: jnp.ones(1),        # N=0 case
-            lambda: compute_det(sp_eigvecs, occupied_orbitals, basis_state_mask)
+            lambda: jnp.ones(1),  # N=0 case
+            lambda: compute_det(sp_eigvecs, occupied_orbitals, basis_state_mask),
         )
         return det_result
-    
+
     #############################################################################
     #! Bogolubov - de'Gennes - a BCS-like state amplitudes
     #############################################################################
-    
-    def calculate_bcs_amp_jax(f_mat                 : jnp.ndarray,   # (ns x ns) pairing matrix f = v u^{-1}
-                        occupied_sites              : jnp.ndarray,   # length 2N
-                        pfaffian_function           : Callable
-                        ):
+
+    def calculate_bcs_amp_jax(
+        f_mat: jnp.ndarray,  # (ns x ns) pairing matrix f = v u^{-1}
+        occupied_sites: jnp.ndarray,  # length 2N
+        pfaffian_function: Callable,
+    ):
         pass
-    
+
     #############################################################################
     #! Permanents
     #############################################################################
-    
+
     @jax.jit
-    def calculate_permament_jax(sp_eigvecs          : jnp.ndarray,   # (Ns x Norb) matrix of eigenvectors
-                            occupied_orbitals       : jnp.ndarray,   # 1D array of integer indices of the occupied single-particle orbitals {\alpha_k}.
-                            org_basis_state         : Union[int, jnp.ndarray]):
+    def calculate_permament_jax(
+        sp_eigvecs: jnp.ndarray,  # (Ns x Norb) matrix of eigenvectors
+        occupied_orbitals: jnp.ndarray,  # 1D array of integer indices of the occupied single-particle orbitals {\alpha_k}.
+        org_basis_state: Union[int, jnp.ndarray],
+    ):
         return 1.0
+
 else:
-    def calculate_slater_det_jax(sp_eigvecs         : np.ndarray,
-                                occupied_orbitals   : np.ndarray,
-                                org_basis_state     : Union[int, np.ndarray],
-                                ns                  : int
-                            ) -> np.ndarray:
+
+    def calculate_slater_det_jax(
+        sp_eigvecs: np.ndarray,
+        occupied_orbitals: np.ndarray,
+        org_basis_state: Union[int, np.ndarray],
+        ns: int,
+    ) -> np.ndarray:
         """
         JAX is not available. This function is a placeholder.
         """
         raise ImportError("JAX is not available. Cannot compute Slater determinant.")
-    
-    def calculate_bcs_amp_jax(f_mat                 : np.ndarray,   # (ns x ns) pairing matrix f = v u^{-1}
-                        occupied_sites              : np.ndarray,   # length 2N
-                        pfaffian_function           : Callable
-                        ):
+
+    def calculate_bcs_amp_jax(
+        f_mat: np.ndarray,  # (ns x ns) pairing matrix f = v u^{-1}
+        occupied_sites: np.ndarray,  # length 2N
+        pfaffian_function: Callable,
+    ):
         pass
-    
-    def calculate_permament_jax(sp_eigvecs          : np.ndarray,   # (Ns x Norb) matrix of eigenvectors
-                            occupied_orbitals       : np.ndarray,   # 1D array of integer indices of the occupied single-particle orbitals {\alpha_k}.
-                            org_basis_state         : Union[int, np.ndarray]):
+
+    def calculate_permament_jax(
+        sp_eigvecs: np.ndarray,  # (Ns x Norb) matrix of eigenvectors
+        occupied_orbitals: np.ndarray,  # 1D array of integer indices of the occupied single-particle orbitals {\alpha_k}.
+        org_basis_state: Union[int, np.ndarray],
+    ):
         return 1.0
-        
+
+
 #######################################################################

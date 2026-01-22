@@ -11,8 +11,9 @@ Email       : maxgrom97@gmail.com
 """
 
 from __future__ import annotations
-import numpy as np
+
 import numba
+import numpy as np
 
 __all__ = [
     "bit_popcount_mask",
@@ -20,6 +21,7 @@ __all__ = [
     "fermionic_parity_int",
     "fermionic_parity_array",
 ]
+
 
 @numba.njit(inline="always")
 def bit_popcount_mask(x: int, mask_bits: int) -> int:
@@ -57,9 +59,9 @@ def fermionic_parity_int(state: int, ns: int, site: int) -> float:
     site:
         Site index (0-based) at which the operator acts.
     """
-    shift       = ns - site
-    mask_bits   = ((1 << ns) - 1) ^ ((1 << shift) - 1)
-    parity      = bit_popcount_mask(state, mask_bits) & 1
+    shift = ns - site
+    mask_bits = ((1 << ns) - 1) ^ ((1 << shift) - 1)
+    parity = bit_popcount_mask(state, mask_bits) & 1
     return -1.0 if parity else 1.0
 
 
@@ -72,4 +74,3 @@ def fermionic_parity_array(state: np.ndarray, site: int) -> float:
     for i in range(site):
         parity ^= int(state[i] > 0)
     return -1.0 if parity else 1.0
-

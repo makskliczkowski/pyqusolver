@@ -23,45 +23,49 @@ Implementation notes
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, asdict
-from typing import Iterable, List, Dict, Optional
+
 import importlib
+from dataclasses import asdict, dataclass
+from typing import Dict, List, Optional
+
 
 @dataclass
 class ModuleInfo:
-    name            : str           # short name, e.g. "Algebra.Hilbert"
-    path            : str           # dotted path, e.g. "QES.Algebra.hilbert"
-    description     : str           # one-liner
+    name: str  # short name, e.g. "Algebra.Hilbert"
+    path: str  # dotted path, e.g. "QES.Algebra.hilbert"
+    description: str  # one-liner
 
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
 
+
 # Curated index of key modules: name -> dotted path
 _TOP_LEVEL: Dict[str, str] = {
-    'Algebra'               : 'QES.Algebra',
-    'NQS'                   : 'QES.NQS',
-    'Solver'                : 'QES.Solver',
-    'general_python'        : 'QES.general_python',
+    "Algebra": "QES.Algebra",
+    "NQS": "QES.NQS",
+    "Solver": "QES.Solver",
+    "general_python": "QES.general_python",
 }
 
 _COMMON_SUBMODULES: Dict[str, str] = {
     # Algebra submodules
-    'Algebra.Hilbert'       : 'QES.Algebra.hilbert',
-    'Algebra.Hamil'         : 'QES.Algebra.hamil',
-    'Algebra.Operator'      : 'QES.Algebra.Operator',
-    'Algebra.Symmetries'    : 'QES.Algebra.symmetries',
+    "Algebra.Hilbert": "QES.Algebra.hilbert",
+    "Algebra.Hamil": "QES.Algebra.hamil",
+    "Algebra.Operator": "QES.Algebra.Operator",
+    "Algebra.Symmetries": "QES.Algebra.symmetries",
     # NQS submodules
-    'NQS.core'              : 'QES.NQS.nqs',
-    'NQS.train'             : 'QES.NQS.nqs_train',
-    'NQS.tdvp'              : 'QES.NQS.tdvp',
+    "NQS.core": "QES.NQS.nqs",
+    "NQS.train": "QES.NQS.nqs_train",
+    "NQS.tdvp": "QES.NQS.tdvp",
     # Solver submodules
-    'Solver.core'           : 'QES.Solver.solver',
+    "Solver.core": "QES.Solver.solver",
 }
 
 _DEF_FALLBACK = "No description available."
 
 # ----------------------------------------------------------------------------
 # Helper functions
+
 
 def _first_line(s: Optional[str]) -> str:
     if not s:
@@ -72,17 +76,21 @@ def _first_line(s: Optional[str]) -> str:
             return line
     return _DEF_FALLBACK
 
+
 # ----------------------------------------------------------------------------
+
 
 def _desc_from_module(mod) -> str:
     # Prefer explicit MODULE_DESCRIPTION if present
-    desc = getattr(mod, 'MODULE_DESCRIPTION', None)
+    desc = getattr(mod, "MODULE_DESCRIPTION", None)
     if isinstance(desc, str) and desc.strip():
         return desc.strip()
     # Fallback to first non-empty docstring line
-    return _first_line(getattr(mod, '__doc__', None))
+    return _first_line(getattr(mod, "__doc__", None))
+
 
 # ---------------------------------------------------------------------------
+
 
 def _safe_import(path: str):
     try:
@@ -90,7 +98,9 @@ def _safe_import(path: str):
     except Exception:
         return None
 
+
 # ----------------------------------------------------------------------------
+
 
 def _collect(entries: Dict[str, str]) -> List[ModuleInfo]:
     out: List[ModuleInfo] = []
@@ -100,7 +110,9 @@ def _collect(entries: Dict[str, str]) -> List[ModuleInfo]:
         out.append(ModuleInfo(name=name, path=path, description=desc))
     return out
 
+
 # ---------------------------------------------------------------------------
+
 
 def list_modules(include_submodules: bool = True) -> List[Dict[str, str]]:
     """Return a list of dicts with name, path, and description of QES modules.
@@ -118,7 +130,9 @@ def list_modules(include_submodules: bool = True) -> List[Dict[str, str]]:
     items.sort(key=lambda x: x.name)
     return [mi.to_dict() for mi in items]
 
+
 # ----------------------------------------------------------------------------
+
 
 def describe_module(name_or_path: str) -> str:
     """Return a short description for a given module name or dotted path.
@@ -140,12 +154,13 @@ def describe_module(name_or_path: str) -> str:
         return _desc_from_module(mod) if mod else _DEF_FALLBACK
 
     # Try importing as QES.<name>
-    if not name_or_path.startswith('QES.'):
-        mod = _safe_import('QES.' + name_or_path)
+    if not name_or_path.startswith("QES."):
+        mod = _safe_import("QES." + name_or_path)
         if mod is not None:
             return _desc_from_module(mod)
 
     return _DEF_FALLBACK
+
 
 # ----------------------------------------------------------------------------
 #! EOF

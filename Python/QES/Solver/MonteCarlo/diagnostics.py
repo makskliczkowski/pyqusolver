@@ -8,16 +8,19 @@ import numpy as np
 try:
     import jax
     import jax.numpy as jnp
+
     JAX_AVAILABLE = True
 except ImportError:
     JAX_AVAILABLE = False
     jnp = np
 
+
 def _ensure_numpy(x):
     """Convert JAX array to NumPy array if needed."""
-    if hasattr(x, '__array__') or (JAX_AVAILABLE and isinstance(x, jax.Array)):
+    if hasattr(x, "__array__") or (JAX_AVAILABLE and isinstance(x, jax.Array)):
         return np.array(x)
     return x
+
 
 def autocorr_func_1d(x, norm=True):
     """
@@ -44,7 +47,7 @@ def autocorr_func_1d(x, norm=True):
     # Use FFT for efficient computation
     # Zero-pad to avoid circular correlation
     xp = x - mean
-    fr = np.fft.fft(xp, n=2*n)
+    fr = np.fft.fft(xp, n=2 * n)
     ac = np.fft.ifft(fr * np.conjugate(fr))[:n]
     ac = np.real(ac)
 
@@ -56,6 +59,7 @@ def autocorr_func_1d(x, norm=True):
     if norm:
         return ac / ac[0]
     return ac
+
 
 def compute_autocorr_time(x, c=5.0):
     """
@@ -87,7 +91,8 @@ def compute_autocorr_time(x, c=5.0):
     # Fallback: sum until ACF goes negative or too small
     # But usually the loop above works for decent chains.
     # If it fails, it means tau is very large (comparable to N).
-    return float(n) # Worst case
+    return float(n)  # Worst case
+
 
 def compute_ess(x):
     """
@@ -105,6 +110,7 @@ def compute_ess(x):
     n = len(x)
     tau = compute_autocorr_time(x)
     return n / tau
+
 
 def compute_rhat(chains):
     """
@@ -124,10 +130,10 @@ def compute_rhat(chains):
     if chains.ndim != 2:
         raise ValueError("chains must be 2D array (num_chains, num_samples)")
 
-    m, n = chains.shape # m chains, n samples
+    m, n = chains.shape  # m chains, n samples
 
     if m < 2:
-        return np.nan # Cannot compute R-hat with single chain
+        return np.nan  # Cannot compute R-hat with single chain
     if n < 2:
         return np.nan
 
@@ -148,7 +154,7 @@ def compute_rhat(chains):
     var_plus = ((n - 1) / n) * W + np.var(chain_means, ddof=1)
 
     if W < 1e-12:
-        return 1.0 # If variances are zero, we are converged (or stuck)
+        return 1.0  # If variances are zero, we are converged (or stuck)
 
     rhat = np.sqrt(var_plus / W)
     return rhat

@@ -12,11 +12,12 @@ MODULES = [
     "QES.Algebra",
     "QES.Algebra.Operator",
     "QES.Algebra.hilbert",
-    "QES.Algebra.hamil", 
+    "QES.Algebra.hamil",
     "QES.Algebra.symmetries",
     "QES.general_python.common.flog",
     "QES.general_python.algebra.utils",
 ]
+
 
 def main():
     failed = []
@@ -30,6 +31,7 @@ def main():
     if failed:
         sys.exit(1)
     print("All key QES modules imported successfully.")
+
 
 if __name__ == "__main__":
     main()

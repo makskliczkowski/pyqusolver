@@ -7,13 +7,16 @@ metadata and instantiate them from lightweight dataclasses.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 try:
-    from QES.Algebra.hilbert import HilbertSpace, HilbertConfig
+    from QES.Algebra.hilbert import HilbertConfig, HilbertSpace
 except ImportError as e:
-    raise ImportError("Could not import HilbertSpace or HilbertConfig from QES.Algebra.hilbert") from e
+    raise ImportError(
+        "Could not import HilbertSpace or HilbertConfig from QES.Algebra.hilbert"
+    ) from e
 
 if TYPE_CHECKING:
     from .hamil import Hamiltonian
@@ -21,6 +24,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 #! Registry data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class HamiltonianSpec:
@@ -40,21 +44,23 @@ class HamiltonianSpec:
         Default keyword arguments for the builder.
     """
 
-    key             : str
-    builder         : Callable[["HamiltonianConfig", Dict[str, Any]], "Hamiltonian"]
-    description     : str
-    tags            : Tuple[str, ...]   = field(default_factory=tuple)
-    default_kwargs  : Mapping[str, Any] = field(default_factory=dict)
+    key: str
+    builder: Callable[["HamiltonianConfig", Dict[str, Any]], "Hamiltonian"]
+    description: str
+    tags: Tuple[str, ...] = field(default_factory=tuple)
+    default_kwargs: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "key"               : self.key,
-            "description"       : self.description,
-            "tags"              : self.tags,
-            "default_kwargs"    : dict(self.default_kwargs),
+            "key": self.key,
+            "description": self.description,
+            "tags": self.tags,
+            "default_kwargs": dict(self.default_kwargs),
         }
 
+
 # ---------------------------------------------------------------------------
+
 
 class HamiltonianRegistry:
     """
@@ -62,7 +68,7 @@ class HamiltonianRegistry:
     This class maintains a mapping from string keys to Hamiltonian builders
     along with descriptive metadata.  Users can register new Hamiltonian types
     and instantiate them from configuration dataclasses.
-    
+
     Parameters
     ----------
     None
@@ -75,14 +81,16 @@ class HamiltonianRegistry:
     #! registration
     # ------------------
 
-    def register(self,
-                key             : str,
-                builder         : Callable[["HamiltonianConfig", Dict[str, Any]], "Hamiltonian"],
-                *,
-                description     : str,
-                tags            : Tuple[str, ...] = (),
-                default_kwargs  : Optional[Mapping[str, Any]] = None,
-                overwrite       : bool = False) -> None:
+    def register(
+        self,
+        key: str,
+        builder: Callable[["HamiltonianConfig", Dict[str, Any]], "Hamiltonian"],
+        *,
+        description: str,
+        tags: Tuple[str, ...] = (),
+        default_kwargs: Optional[Mapping[str, Any]] = None,
+        overwrite: bool = False,
+    ) -> None:
         """
         Register a new Hamiltonian builder.
 
@@ -101,11 +109,17 @@ class HamiltonianRegistry:
         overwrite:
             Whether to overwrite an existing registration.
         """
-        
+
         if not overwrite and key in self._registry:
             raise KeyError(f"Hamiltonian '{key}' already registered.")
-        
-        spec = HamiltonianSpec(key=key, builder=builder, description=description, tags=tuple(tags), default_kwargs=default_kwargs or {})
+
+        spec = HamiltonianSpec(
+            key=key,
+            builder=builder,
+            description=description,
+            tags=tuple(tags),
+            default_kwargs=default_kwargs or {},
+        )
         self._registry[key] = spec
 
     # ------------------
@@ -135,12 +149,14 @@ class HamiltonianRegistry:
         params.update(overrides)
         return spec.builder(config, params)
 
+
 # Singleton registry instance
 HAMILTONIAN_REGISTRY = HamiltonianRegistry()
 
 # ---------------------------------------------------------------------------
 #! Configuration dataclass
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class HamiltonianConfig:
@@ -192,17 +208,21 @@ class HamiltonianConfig:
             params.update(extra)
         return params
 
+
 # ---------------------------------------------------------------------------
 # Convenience wrapper
 # ---------------------------------------------------------------------------
 
-def register_hamiltonian(key            : str,
-                        *,
-                        builder         : Callable[[HamiltonianConfig, Dict[str, Any]], "Hamiltonian"],
-                        description     : str,
-                        tags            : Tuple[str, ...] = (),
-                        default_kwargs  : Optional[Mapping[str, Any]] = None,
-                        overwrite       : bool = False) -> None:
+
+def register_hamiltonian(
+    key: str,
+    *,
+    builder: Callable[[HamiltonianConfig, Dict[str, Any]], "Hamiltonian"],
+    description: str,
+    tags: Tuple[str, ...] = (),
+    default_kwargs: Optional[Mapping[str, Any]] = None,
+    overwrite: bool = False,
+) -> None:
     """
     Register a Hamiltonian builder with the global registry.
     Parameters
@@ -228,6 +248,7 @@ def register_hamiltonian(key            : str,
         default_kwargs=default_kwargs,
         overwrite=overwrite,
     )
+
 
 # ---------------------------------------------------------------------------
 #! EOF

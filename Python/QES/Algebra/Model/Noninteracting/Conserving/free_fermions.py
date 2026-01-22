@@ -9,21 +9,26 @@ date    : 2025-05-01
 -----------------------------------------------------
 """
 
-import numpy as np
+from typing import TYPE_CHECKING, Optional, Union
+
 import numba
-from typing import Optional, Union, TYPE_CHECKING
+import numpy as np
 
 # import the quadratic base
 try:
-    from QES.Algebra.hamil_quadratic import QuadraticHamiltonian, JAX_AVAILABLE
+    from QES.Algebra.hamil_quadratic import JAX_AVAILABLE, QuadraticHamiltonian
+
     if TYPE_CHECKING:
         from QES.general_python.algebra.utils import Array
 except ImportError as e:
-    raise ImportError("Could not import QuadraticHamiltonian base class. Ensure that QES package is properly installed.") from e
+    raise ImportError(
+        "Could not import QuadraticHamiltonian base class. Ensure that QES package is properly installed."
+    ) from e
 
 # ---------------------------------------------------------------------
 #! Spectrum
 # ---------------------------------------------------------------------
+
 
 @numba.njit
 def _free_fermions_spectrum(ns: int, t) -> tuple[np.ndarray, np.ndarray]:
@@ -42,14 +47,15 @@ def _free_fermions_spectrum(ns: int, t) -> tuple[np.ndarray, np.ndarray]:
     tuple
         Eigenvalues and eigenvectors.
     """
-    k               = np.arange(ns)
-    twopi_over_L    = 2.0 * np.pi / ns
-    eig_val         = -2.0 * t * np.cos(twopi_over_L * k)
-    
+    k = np.arange(ns)
+    twopi_over_L = 2.0 * np.pi / ns
+    eig_val = -2.0 * t * np.cos(twopi_over_L * k)
+
     #! plane waves
-    j               = np.arange(ns)[:, None]      # (ns,1)
-    phase           = np.exp(1j * twopi_over_L * j * k) / np.sqrt(ns)
+    j = np.arange(ns)[:, None]  # (ns,1)
+    phase = np.exp(1j * twopi_over_L * j * k) / np.sqrt(ns)
     return eig_val, phase.astype(np.complex128)
+
 
 if JAX_AVAILABLE:
     import jax
@@ -72,21 +78,25 @@ if JAX_AVAILABLE:
         tuple
             Eigenvalues and eigenvectors.
         """
-        k               = jnp.arange(ns)
-        twopi_over_L    = 2.0 * jnp.pi / ns
-        eig_val         = -2.0 * t * jnp.cos(twopi_over_L * k)
-        
+        k = jnp.arange(ns)
+        twopi_over_L = 2.0 * jnp.pi / ns
+        eig_val = -2.0 * t * jnp.cos(twopi_over_L * k)
+
         #! plane waves
-        j               = jnp.arange(ns)[:, None]
-        phase           = jnp.exp(1j * twopi_over_L * j * k) / jnp.sqrt(ns)
+        j = jnp.arange(ns)[:, None]
+        phase = jnp.exp(1j * twopi_over_L * j * k) / jnp.sqrt(ns)
         return eig_val, phase.astype(jnp.complex128)
+
 else:
     jax = None
     jnp = np
+
     def _free_fermions_spectrum_jax(ns: int, t: float) -> tuple[np.ndarray, np.ndarray]:
         raise ImportError("JAX is not available. Please install JAX to use this function.")
 
+
 # ---------------------------------------------------------------------
+
 
 class FreeFermions(QuadraticHamiltonian):
     r"""
@@ -120,26 +130,28 @@ class FreeFermions(QuadraticHamiltonian):
         - :math:`k` is the momentum index.
     """
 
-    def __init__(self,
-                ns                  : int,
-                t                   : Union['Array', float] = 1.0,
-                constant_offset     : float                 = 0.0,
-                dtype               : Optional[np.dtype]    = None,
-                backend             : str                   = "default",
-                logger              = None,
-                **kwargs
-                ):
-        super().__init__(ns                     = ns,
-                        particle_conserving     = True,
-                        dtype                   = dtype,
-                        backend                 = backend,
-                        constant_offset         = constant_offset,
-                        particles               = "fermions",
-                        is_sparse               = False,
-                        lattice                 = None,
-                        hilbert_space           = None,
-                        logger                  = logger,
-                        **kwargs
+    def __init__(
+        self,
+        ns: int,
+        t: Union["Array", float] = 1.0,
+        constant_offset: float = 0.0,
+        dtype: Optional[np.dtype] = None,
+        backend: str = "default",
+        logger=None,
+        **kwargs,
+    ):
+        super().__init__(
+            ns=ns,
+            particle_conserving=True,
+            dtype=dtype,
+            backend=backend,
+            constant_offset=constant_offset,
+            particles="fermions",
+            is_sparse=False,
+            lattice=None,
+            hilbert_space=None,
+            logger=logger,
+            **kwargs,
         )
         self._t = self._set_some_coupling(t).astype(self._dtype)
         # # Allocate dummy single-particle matrix so that parent methods that
@@ -152,7 +164,7 @@ class FreeFermions(QuadraticHamiltonian):
     # -----------------------------------------------------------------
     #! analytic spectrum
     # -----------------------------------------------------------------
-    
+
     def _set_free_spectrum(self):
         t = self._backend.asarray(self._t, dtype=self._dtype)
         if self._is_jax:
@@ -161,33 +173,37 @@ class FreeFermions(QuadraticHamiltonian):
             self._eig_val, self._eig_vec = _free_fermions_spectrum(self._ns, t)
 
         # If target dtype is non-complex -> keep only the real part (cast in-place, no extra copy)
-        if np.issubdtype(np.dtype(self._dtype), np.complexfloating) or self._is_jax and jnp.issubdtype(self._dtype, jnp.complexfloating):
-            self._eig_vec  = self._eig_vec.astype(self._dtype, copy=False)
+        if (
+            np.issubdtype(np.dtype(self._dtype), np.complexfloating)
+            or self._is_jax
+            and jnp.issubdtype(self._dtype, jnp.complexfloating)
+        ):
+            self._eig_vec = self._eig_vec.astype(self._dtype, copy=False)
         else:
             # use backend.real for NumPy/JAX symmetry; cast to requested float dtype
-            self._eig_vec  = self._backend.real(self._eig_vec).astype(self._dtype, copy=False)
+            self._eig_vec = self._backend.real(self._eig_vec).astype(self._dtype, copy=False)
 
     # -----------------------------------------------------------------
     #! override parent diagonalisation (nothing to diagonalise)
     # -----------------------------------------------------------------
-    
+
     def diagonalize(self, verbose: bool = False, **kwargs):
         if verbose:
-            self._log("FreeFermions: spectrum set analytically.", lvl=2, log='debug')
-            
+            self._log("FreeFermions: spectrum set analytically.", lvl=2, log="debug")
+
         # eigenvalues/vectors already cached
         # still apply constant offset if needed
         if self._constant_offset != 0.0 and not getattr(self, "_offset_applied", False):
-            self._eig_val           = self._eig_val + self._constant_offset
-            self._offset_applied    = True
-            
+            self._eig_val = self._eig_val + self._constant_offset
+            self._offset_applied = True
+
         # parent bookkeeping
         self._calculate_av_en()
 
     # -----------------------------------------------------------------
     #! the quadratic builder is a no-op
     # -----------------------------------------------------------------
-    
+
     def _hamiltonian_quadratic(self, use_numpy: bool = False):
         """
         Returns the Hamiltonian in quadratic form.
@@ -206,7 +222,7 @@ class FreeFermions(QuadraticHamiltonian):
             self._hamil_sp = np.zeros((self._ns, self._ns), dtype=self._dtype)
         else:
             self._hamil_sp = self._backend.zeros((self._ns, self._ns), dtype=self._dtype)
-        
+
         for i in range(self._ns):
             self._hamil_sp[i, (i + 1) % self._ns] = -self._t[i]
             self._hamil_sp[i, (i - 1) % self._ns] = -self._t[i]
@@ -214,20 +230,23 @@ class FreeFermions(QuadraticHamiltonian):
     # -----------------------------------------------------------------
     #! adding terms not allowed (would spoil analyticity)
     # -----------------------------------------------------------------
-    
+
     def add_term(self, *_, **__):
-        raise NotImplementedError("FreeFermions is fully analytic - "
-                                "use QuadraticHamiltonian directly for "
-                                "arbitrary hopping matrices.")
+        raise NotImplementedError(
+            "FreeFermions is fully analytic - "
+            "use QuadraticHamiltonian directly for "
+            "arbitrary hopping matrices."
+        )
 
     # -----------------------------------------------------------------
-    
+
     def __repr__(self):
         return f"FreeFermions(ns={self._ns},t={self._t[0]},c={self._constant_offset})"
-    
+
     def __str__(self):
         return self.__repr__()
-    
+
+
 # ---------------------------------------------------------------------
 #! End of file
 # ---------------------------------------------------------------------
