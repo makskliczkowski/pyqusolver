@@ -8,20 +8,21 @@ This example shows:
 3. How to validate regions before entropy computation
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+
 from QES.general_python.lattices.lattice import SquareLattice
+
 
 def create_kitaev_preskill_regions_3x3(lattice):
     """
     Manually define Kitaev-Preskill regions A, B, C for a 3×3 lattice.
-    
+
     Kitaev-Preskill construction:
     - Region A: left portion
-    - Region B: right portion  
+    - Region B: right portion
     - Region C: top portion
     - Overlaps: ABC, AB, AC, BC
-    
+
     Returns dict with region names and site indices.
     """
     # Get site indices (assuming row-major ordering: [0,0], [0,1], [0,2], [1,0], ...)
@@ -30,20 +31,20 @@ def create_kitaev_preskill_regions_3x3(lattice):
     # 0 1 2
     # 3 4 5
     # 6 7 8
-    
+
     regions = {
-        'A': [0, 1, 3, 4],        # Left 2 columns, top 2 rows
-        'B': [1, 2, 4, 5],        # Right 2 columns, top 2 rows  
-        'C': [0, 1, 2],           # Top row
+        "A": [0, 1, 3, 4],  # Left 2 columns, top 2 rows
+        "B": [1, 2, 4, 5],  # Right 2 columns, top 2 rows
+        "C": [0, 1, 2],  # Top row
     }
-    
+
     return regions
 
 
 def validate_region_construction(lattice, regions):
     """
     Validate that regions are properly constructed for TEE calculation.
-    
+
     Checks:
     - No region covers entire system (would give 0 entropy)
     - Regions have overlaps (needed for MI calculation)
@@ -52,29 +53,29 @@ def validate_region_construction(lattice, regions):
     n_sites = lattice.n
     all_sites = set()
     site_counts = {}
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("REGION VALIDATION")
-    print("="*60)
-    
+    print("=" * 60)
+
     for name, indices in regions.items():
         n_in_region = len(indices)
         coverage = n_in_region / n_sites * 100
         print(f"Region {name}: {n_in_region} sites ({coverage:.1f}% coverage)")
-        
+
         if coverage >= 100:
             print(f"  ⚠️  WARNING: Region {name} covers entire system!")
-            print(f"      This will give S=0 (pure state)")
-        
+            print("      This will give S=0 (pure state)")
+
         for idx in indices:
             all_sites.add(idx)
             site_counts[idx] = site_counts.get(idx, 0) + 1
-    
+
     # Check overlaps
     overlaps = {idx: count for idx, count in site_counts.items() if count > 1}
     print(f"\nTotal unique sites covered: {len(all_sites)}/{n_sites}")
     print(f"Overlapping sites: {len(overlaps)}")
-    
+
     if overlaps:
         print("Overlap details:")
         for idx, count in sorted(overlaps.items()):
@@ -83,13 +84,13 @@ def validate_region_construction(lattice, regions):
     else:
         print("  ⚠️  WARNING: No overlaps detected!")
         print("     Kitaev-Preskill TEE requires overlapping regions")
-    
+
     # Check complement
     complement = set(range(n_sites)) - all_sites
     if complement:
         print(f"\nComplement (region D): {len(complement)} sites {sorted(complement)}")
-    
-    print("="*60)
+
+    print("=" * 60)
 
 
 def visualize_regions_basic(lattice, regions):
@@ -104,9 +105,9 @@ def visualize_regions_basic(lattice, regions):
         show_overlaps=False,
         fill=True,
         fill_alpha=0.2,
-        marker_size=200
+        marker_size=200,
     )
-    fig.suptitle("Basic Region Plot", fontsize=14, fontweight='bold')
+    fig.suptitle("Basic Region Plot", fontsize=14, fontweight="bold")
     plt.tight_layout()
     return fig
 
@@ -125,12 +126,11 @@ def visualize_regions_enhanced(lattice, regions):
         fill_alpha=0.15,
         marker_size=250,
         edge_width=2,
-        complement_color='gray',
+        complement_color="gray",
         complement_alpha=0.3,
-        overlap_color='red'
+        overlap_color="red",
     )
-    fig.suptitle("Enhanced Region Plot (Overlaps + Complement)", 
-                 fontsize=14, fontweight='bold')
+    fig.suptitle("Enhanced Region Plot (Overlaps + Complement)", fontsize=14, fontweight="bold")
     plt.tight_layout()
     return fig
 
@@ -138,10 +138,10 @@ def visualize_regions_enhanced(lattice, regions):
 def visualize_individual_regions(lattice, regions):
     """Show each region individually to understand structure."""
     n_regions = len(regions)
-    fig, axes = plt.subplots(1, n_regions, figsize=(5*n_regions, 5))
+    fig, axes = plt.subplots(1, n_regions, figsize=(5 * n_regions, 5))
     if n_regions == 1:
         axes = [axes]
-    
+
     for ax, (name, indices) in zip(axes, regions.items()):
         # Plot just this region
         single_region = {name: indices}
@@ -155,42 +155,42 @@ def visualize_individual_regions(lattice, regions):
             fill=True,
             fill_alpha=0.3,
             marker_size=300,
-            edge_width=2
+            edge_width=2,
         )
-        ax.set_title(f"Region {name}", fontsize=12, fontweight='bold')
-    
-    fig.suptitle("Individual Region Views", fontsize=14, fontweight='bold')
+        ax.set_title(f"Region {name}", fontsize=12, fontweight="bold")
+
+    fig.suptitle("Individual Region Views", fontsize=14, fontweight="bold")
     plt.tight_layout()
     return fig
 
 
 def main():
     """Demonstrate region visualization for debugging TEE calculations."""
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("KITAEV-PRESKILL REGION VISUALIZATION DEMO")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Create 3×3 square lattice
     lattice = SquareLattice(Lx=3, Ly=3, Lz=1, boundary="open")
     print(f"\nLattice: {lattice.n} sites")
-    
+
     # Define Kitaev-Preskill regions
     regions = create_kitaev_preskill_regions_3x3(lattice)
-    
+
     # Validate regions
     validate_region_construction(lattice, regions)
-    
+
     # Create visualizations
     print("\nGenerating visualizations...")
-    
+
     fig1 = visualize_regions_basic(lattice, regions)
     fig2 = visualize_regions_enhanced(lattice, regions)
     fig3 = visualize_individual_regions(lattice, regions)
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("INTERPRETATION GUIDE")
-    print("="*60)
+    print("=" * 60)
     print("""
 For Kitaev-Preskill topological entanglement entropy:
 
@@ -219,8 +219,8 @@ If you get unexpected TEE values:
 - Ensure subsystem encoding matches region definition
 - Compare symmetric vs non-symmetric paths with same regions
     """)
-    print("="*60)
-    
+    print("=" * 60)
+
     plt.show()
 
 

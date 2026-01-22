@@ -17,9 +17,9 @@ import numpy as np
 
 from QES.general_python.lattices.lattice import Lattice, LatticeDirection
 
+from .globals import GlobalSymmetry
 from .Hilbert.hilbert_local import LocalSpace, StateTypes
 from .Operator.operator import SymmetryGenerators
-from .globals import GlobalSymmetry
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,9 @@ class SymmetrySpec:
     def as_tuple(self) -> Tuple[SymmetryGenerators, Union[int, float, complex]]:
         return self.generator, self.sector
 
+
 StateFilter = Callable[[int], bool]
+
 
 @dataclass(frozen=True)
 class HilbertConfig:
@@ -101,4 +103,3 @@ class HilbertConfig:
             if key not in kwargs or kwargs[key] is None:
                 kwargs[key] = value
         return kwargs
-

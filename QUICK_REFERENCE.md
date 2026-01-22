@@ -196,14 +196,48 @@ except ValueError as e:
     print(f"Unknown backend: {e}")
 ```
 
-## Testing
+## Development & Testing
 
-Run full test suite:
+### Installation
 
+Install in editable mode with all dependencies:
 ```bash
-cd /Users/makskliczkowski/Codes/pyqusolver
-python Python/test_comprehensive_suite.py      # 9/9 tests
-python Python/test_backends_interop.py         # 8/8 tests
+pip install -e "Python/[all]"
+```
+
+### Running Tests
+
+Run all tests:
+```bash
+pytest
+```
+
+Run tests with specific Python path (if needed):
+```bash
+export PYTHONPATH=$PYTHONPATH:$(pwd)/Python:$(pwd)/Python/QES
+pytest Python/test
+```
+
+### Running Checks
+
+Format code:
+```bash
+black Python/
+```
+
+Lint code:
+```bash
+ruff check Python/
+```
+
+Type check:
+```bash
+mypy Python/
+```
+
+Run all checks via pre-commit:
+```bash
+pre-commit run --all-files
 ```
 
 ## Documentation

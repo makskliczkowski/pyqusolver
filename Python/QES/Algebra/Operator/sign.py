@@ -15,8 +15,9 @@ modules.  They encode the convention used throughout QES:
 from __future__ import annotations
 
 import cmath
-import numpy as np
 from typing import Iterable
+
+import numpy as np
 
 
 def _count_occupied_to_left_bits(state: int, ns: int, site: int) -> int:

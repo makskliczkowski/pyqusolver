@@ -1,9 +1,9 @@
-
-import numpy as np
-import pytest
-from QES.Algebra.Operator.operator import create_operator, OperatorTypeActing
-from QES.Algebra.hilbert import HilbertSpace
 import numba
+import numpy as np
+
+from QES.Algebra.hilbert import HilbertSpace
+from QES.Algebra.Operator.operator import OperatorTypeActing, create_operator
+
 
 # Simple operator for testing: Sum of Z_i
 @numba.njit
@@ -14,7 +14,7 @@ def op_z_int(state, ns, sites):
     for i in range(ns):
         # bit extraction: (state >> i) & 1
         bit = (state >> i) & 1
-        val += (2.0 * bit - 1.0)
+        val += 2.0 * bit - 1.0
 
     st = np.empty(1, dtype=np.int64)
     st[0] = state
@@ -22,10 +22,12 @@ def op_z_int(state, ns, sites):
     v[0] = val
     return st, v
 
+
 def op_z_np(state, sites):
     # state is (batch, )
     # Not implemented for this test
     raise NotImplementedError
+
 
 def test_matvec_correctness():
     ns = 8
@@ -37,7 +39,7 @@ def test_matvec_correctness():
         op_func_int=op_z_int,
         op_func_np=op_z_np,
         op_func_jnp=None,
-        ns=ns
+        ns=ns,
     )
 
     # 1. Build dense matrix to verify against
@@ -62,6 +64,7 @@ def test_matvec_correctness():
     assert diff < 1e-10, f"Matvec mismatch: {diff}"
     print(f"Matvec correctness verified. Diff: {diff}")
 
+
 def test_matvec_batch_correctness():
     ns = 8
     nh = 2**ns
@@ -72,7 +75,7 @@ def test_matvec_batch_correctness():
         op_func_int=op_z_int,
         op_func_np=op_z_np,
         op_func_jnp=None,
-        ns=ns
+        ns=ns,
     )
 
     op._is_sparse = False
@@ -89,6 +92,7 @@ def test_matvec_batch_correctness():
     diff = np.linalg.norm(res_matvec - res_ref)
     assert diff < 1e-10, f"Batch matvec mismatch: {diff}"
     print(f"Batch matvec correctness verified. Diff: {diff}")
+
 
 if __name__ == "__main__":
     test_matvec_correctness()
