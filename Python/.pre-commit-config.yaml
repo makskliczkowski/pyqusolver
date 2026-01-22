@@ -34,4 +34,4 @@ repos:
     rev: 1.7.5
     hooks:
       - id: bandit
-        args: [-r, -x, tests/]
+        args: [-r, -x, tests/, -x, test/]
