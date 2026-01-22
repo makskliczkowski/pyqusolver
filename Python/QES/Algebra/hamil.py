@@ -1397,10 +1397,31 @@ class Hamiltonian(BasisAwareOperator):
         
         # Start timing
         diag_start      = time.perf_counter()
+
+        # Determine build strategy
+        use_numpy       = kwargs.get("use_numpy", True)
+        force_build     = kwargs.get('force', False)
+
         if build:
-            self.build(verbose=verbose, use_numpy=kwargs.get("use_numpy", True), force=kwargs.get('force', False))
+            self.build(verbose=verbose, use_numpy=use_numpy, force=force_build)
         else:
-            self._check_build() # Ensure built if needed (lazy check)
+            if method == 'exact':
+                # Exact diagonalization requires the matrix.
+                # If matrix not present, we MUST build it (checking cache first).
+                self._check_build()
+            else:
+                # Iterative methods (lanczos, etc.) can operate matrix-free via matvec.
+                # We do NOT force full matrix construction here.
+                # But we MUST ensure operators/functions are setup.
+                if self._is_manybody:
+                    if self._loc_energy_int_fun is None:
+                        # Setup instruction codes and functions if missing
+                        if hasattr(self, 'setup_instruction_codes') and not self._instr_codes:
+                            self.setup_instruction_codes()
+
+                        # Only set local energy functions if we have instructions or it's a legacy build
+                        if self._instr_codes or not hasattr(self, '_instr_codes'):
+                            self._set_local_energy_functions()
         
         # Extract parameters
         if True:
