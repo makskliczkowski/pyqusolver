@@ -61,7 +61,10 @@ from functools import partial
 from typing import Callable, List, Optional, Tuple
 
 try:
-    from QES.Algebra.Hamil.hamil_energy_helper import flatten_operator_terms, unpack_operator_terms
+    from QES.Algebra.Hamil.hamil_energy_helper import (  # type: ignore[import-untyped]
+        flatten_operator_terms,
+        unpack_operator_terms,
+    )
 except ImportError as e:
     raise ImportError(
         "Failed to import from hamil_energy_helper. Ensure the module exists and is accessible."
