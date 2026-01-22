@@ -358,7 +358,7 @@ def local_energy_jax_wrap(
 
     fallback_nmod_nos_funcs = []
     fallback_nmod_nos_mults = []
-    for f, idx, m in nmod_nos_fallback:
+    for f, _idx, m in nmod_nos_fallback:
         fallback_nmod_nos_funcs.append(wrap_nmod_nos(f))
         fallback_nmod_nos_mults.append(m)
 
@@ -376,7 +376,7 @@ def local_energy_jax_wrap(
         fallback_mod_sites_wrappers.append((op, m))
 
     fallback_mod_nos_wrappers = []
-    for f, idx, m in mod_nos_fallback:
+    for f, _idx, m in mod_nos_fallback:
         op = wrap_nos(f)
         fallback_mod_nos_wrappers.append((op, m))
 
@@ -422,13 +422,13 @@ def local_energy_jax_wrap(
                 # f(state, *sites) -> (state, coeff)
                 # indices: (N, Arity)
 
-                def apply_op(s, idxs):
+                def apply_op_nmod(s, idxs, f=f):
                     if idxs.ndim == 0:
                         return f(s, idxs)
                     return f(s, *idxs)
 
                 def get_coeff(idx):
-                    _, c = apply_op(state, idx)
+                    _, c = apply_op_nmod(state, idx)
                     return c
 
                 # vmap over indices
@@ -476,7 +476,7 @@ def local_energy_jax_wrap(
                 # jax.debug.print("Processing group for {}: indices shape {}", f, indices.shape)
 
                 # Helper to apply f to state and sites
-                def apply_op(s, idxs):
+                def apply_op_mod(s, idxs, f=f):
                     # Unpack indices if it's an array
                     # If Arity=1, idxs might be scalar or 0-d array
                     if idxs.ndim == 0:
@@ -496,10 +496,10 @@ def local_energy_jax_wrap(
 
                 # vmap over indices (axis 0)
                 # state is broadcasted (None)
-                # apply_op returns (new_states, coeffs)
+                # apply_op_mod returns (new_states, coeffs)
                 # new_states: (K_branch, ns), coeffs: (K_branch,)
 
-                vmapped_f = jax.vmap(apply_op, in_axes=(None, 0))
+                vmapped_f = jax.vmap(apply_op_mod, in_axes=(None, 0))
 
                 # Result shapes:
                 # new_states_batch: (N_terms, K_branch, ns)
