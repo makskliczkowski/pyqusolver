@@ -135,6 +135,8 @@ extend-exclude = '''
 [tool.ruff]
 line-length = 100
 target-version = "py38"
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -148,7 +150,7 @@ ignore = [
     "C901",  # too complex
 ]
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["QES"]
 
 [tool.mypy]
