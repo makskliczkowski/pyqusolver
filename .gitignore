@@ -232,3 +232,4 @@ data/*
 # MACOS
 *.DS_Store
 .DS_Store
+Python/docs/_build/
