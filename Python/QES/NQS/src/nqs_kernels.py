@@ -3,11 +3,12 @@ Kernels for NQS.
 Separated for modularity and JIT compilation cache stability.
 """
 
-from dataclasses import dataclass
-from functools import partial
-from typing import Any, Callable, List, Optional, Tuple
+from dataclasses    import dataclass
+from functools      import partial
+from typing         import Any, Callable, List, Optional, Tuple
 
-import numpy as np
+import numpy        as np
+Array               = Any
 
 try:
     import jax
@@ -24,9 +25,11 @@ except ImportError:
     # Fallback or error - assume strict dependency
     raise ImportError("Could not import net_utils from QES.general_python.ml.net_impl.utils.")
 
-from .nqs_precision import cast_for_precision
-
-Array = Any
+# Import precision casting utility
+try:
+    from .nqs_precision import cast_for_precision
+except ImportError:
+    raise ImportError("Could not import cast_for_precision from .nqs_precision.")
 
 
 @dataclass
@@ -200,12 +203,10 @@ def _apply_fun_np(
 
 @partial(jax.jit, static_argnames=["net_apply", "single_sample_flat_grad_fun", "batch_size"])
 def log_derivative_jax(
-    net_apply: Callable,  # The network's apply function f(p, x)
-    params: Any,  # Network parameters p
-    states: jnp.ndarray,  # Input states s_i, shape (num_samples, ...)
-    single_sample_flat_grad_fun: Callable[
-        [Callable, Any, Any], jnp.ndarray
-    ],  # JAX-traceable function computing the flattened gradient for one sample.
+    net_apply                   : Callable,     # The network's apply function f(p, x)
+    params                      : Any,          # Network parameters p
+    states                      : jnp.ndarray,  # Input states s_i, shape (num_samples, ...)
+    single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],  # JAX-traceable function computing the flattened gradient for one sample.
     batch_size: int = 1,
 ) -> Tuple[Array, List, List, List]:  # Batch size
     r"""

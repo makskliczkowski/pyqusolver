@@ -131,9 +131,9 @@ class NetworkFactory:
     @staticmethod
     def create(
         network_type: str,
-        input_shape: Tuple[int, ...],
-        dtype: str = "complex128",
-        backend: str = "jax",
+        input_shape     : Tuple[int, ...],
+        dtype           : str = "complex128",
+        backend         : str = "jax",
         **kwargs,
     ) -> "GeneralNet":
         """
@@ -403,11 +403,11 @@ Usage
     net = choose_network('pp', **pp_params)
 """
         return {
-            "rbm": rbm,
-            "cnn": cnn,
-            "ar": ar,
-            "resnet": res,
-            "pp": pp,
+            "rbm"       : rbm,
+            "cnn"       : cnn,
+            "ar"        : ar,
+            "resnet"    : res,
+            "pp"        : pp,
         }
 
 

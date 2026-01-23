@@ -73,23 +73,22 @@ class NQSSymmetricAnsatz:
             If True, enables symmetrization. If False, calls `unset()`.
         """
         if not use_symmetries:
-            self.unset()
+            if self._is_active:
+                self.unset()
+            return
+
+        # Avoid redundant rebuilds if already active
+        if self._is_active and self._projector is not None:
             return
 
         # Check backend
         if not self._nqs._isjax:
-            self._nqs.log(
-                "Symmetry projection skipped: only supported for JAX backend.",
-                lvl=1,
-                color="yellow",
-            )
+            self._nqs.log("Symmetry projection skipped: only supported for JAX backend.", lvl=1, color="yellow")
             self.unset()  # Ensure inactive if backend is not JAX
             return
 
         if not JAX_AVAILABLE:
-            self._nqs.log(
-                "JAX is not available, cannot enable symmetry projection.", lvl=0, color="red"
-            )
+            self._nqs.log("JAX is not available, cannot enable symmetry projection.", lvl=0, color="red")
             self.unset()
             return
 
@@ -154,7 +153,7 @@ class NQSSymmetricAnsatz:
         Wraps a given base ansatz function with the active symmetry projection logic.
 
         If symmetrization is not active, the original `base_func` is returned.
-        Otherwise, a JIT-compiled function is returned that applies the symmetry
+        Otherwise, a function is returned that applies the symmetry
         projection by summing over the symmetry orbit with appropriate weights.
 
         Parameters
@@ -217,7 +216,7 @@ class NQSSymmetricAnsatz:
                 jnp.isinf(log_psi_sym), -jnp.inf, log_psi_sym
             )  # Handle -inf for zero sum
 
-        return jax.jit(symmetrized_ansatz)
+        return symmetrized_ansatz
 
 
 # ----------------------------------

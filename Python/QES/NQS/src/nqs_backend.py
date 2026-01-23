@@ -314,38 +314,38 @@ class JAXBackend(BackendInterface):
         return ansatz_func, eval_func, apply_func
 
     def prepare_gradients(self, net: Networks.GeneralNet, analytic: bool = None):
-        params = net.get_params()
-        leaves, tree_def = tree_flatten(params)
-        leaf_info = net_utils.jaxpy.prepare_leaf_info(params)  # list of (name, shape, is_complex)
-        slice_metadata = net_utils.jaxpy.prepare_unflatten_metadata_from_leaf_info(
+        params              = net.get_params()
+        leaves, tree_def    = tree_flatten(params)
+        leaf_info           = net_utils.jaxpy.prepare_leaf_info(params)  # list of (name, shape, is_complex)
+        slice_metadata      = net_utils.jaxpy.prepare_unflatten_metadata_from_leaf_info(
             leaf_info
         )  # list of slice metadata
-        sizes = [s.size for s in slice_metadata]
-        shapes = [s.shape for s in slice_metadata]
-        is_cplx = [s.is_complex for s in slice_metadata]
-        total_size = slice_metadata[-1].start + slice_metadata[-1].size if slice_metadata else 0
+        sizes               = [s.size for s in slice_metadata]
+        shapes              = [s.shape for s in slice_metadata]
+        is_cplx             = [s.is_complex for s in slice_metadata]
+        total_size          = slice_metadata[-1].start + slice_metadata[-1].size if slice_metadata else 0
 
         flat_grad_func, dict_grad_type = net_utils.decide_grads(
-            iscpx=net.is_complex,
-            isjax=True,
-            isanalytic=net.has_analytic_grad,
-            isholomorphic=net.is_holomorphic,
-        )
+                                iscpx           =   net.is_complex,
+                                isjax           =   True,
+                                isanalytic      =   net.has_analytic_grad,
+                                isholomorphic   =   net.is_holomorphic,
+                            )
 
         # prepare the dictionary
-        out = dict(
-            analytic_grad_func=None,
-            flat_grad_func=flat_grad_func,
-            dict_grad_type=dict_grad_type,
-            slice_metadata=slice_metadata,
-            leaf_info=leaf_info,
-            leaves=leaves,
-            tree_def=tree_def,
-            shapes=shapes,
-            sizes=sizes,
-            is_complex_per_leaf=is_cplx,
-            total_size=total_size,
-        )
+        out                 = dict(
+                                analytic_grad_func  =   net.analytic_grad_jax if (analytic is not None and analytic) else None,
+                                flat_grad_func      =   flat_grad_func,
+                                dict_grad_type      =   dict_grad_type,
+                                slice_metadata      =   slice_metadata,
+                                leaf_info           =   leaf_info,
+                                leaves              =   leaves,
+                                tree_def            =   tree_def,
+                                shapes              =   shapes,
+                                sizes               =   sizes,
+                                is_complex_per_leaf =   is_cplx,
+                                total_size          =   total_size,
+                            )
 
         if analytic is not None and analytic:
             analytical_pytree_fun, _ = net.get_gradient(use_jax=True)

@@ -706,38 +706,31 @@ class SymmetryContainer:
         Backend for computations ('numpy', 'jax', or 'default')
     """
 
-    ns: int
-    lattice: Optional[Lattice] = None
-    nhl: int = 2
-    backend: str = "default"
-    verbose: bool = True
-
+    ns                  : int
+    lattice             : Optional[Lattice] = None
+    nhl                 : int = 2
+    backend             : str = "default"
+    verbose             : bool = True
     # Storage
-    generators: List[Tuple[SymmetryOperator, SymmetrySpec]] = field(default_factory=list)
-    global_symmetries: List[GlobalSymmetry] = field(default_factory=list)
-    symmetry_group: List[GroupElement] = field(default_factory=list)
-    _repr_list: Optional[np.ndarray] = (
-        None  # representatives list -> state (int64), defaults to None (number of representatives, )
-    )
-    _repr_norms: Optional[np.ndarray] = (
-        None  # representatives normalization factors (float64), defaults to 1.0 (number of states in orbit, )
-    )
-    _repr_get_norm: Callable[[StateInt], complex] = (
-        lambda x: 1.0
-    )  # function to get normalization for a state, defaults to 1.0
-    _repr_active: Optional[bool] = (
-        False  # if one adds new element, it stops being valid, i.e., needs recomputation of representatives
-    )
+    generators          : List[Tuple[SymmetryOperator, SymmetrySpec]] = field(default_factory=list)
+    global_symmetries   : List[GlobalSymmetry]              = field(default_factory=list)
+    symmetry_group      : List[GroupElement]                = field(default_factory=list)
+    _repr_list          : Optional[np.ndarray]              = None              # representatives list -> state (int64), defaults to None (number of representatives, )
+    _repr_norms         : Optional[np.ndarray]              = None              # representatives normalization factors (float64), defaults to 1.0 (number of states in orbit, )
+    _repr_get_norm      : Callable[[StateInt], complex]     = lambda x: 1.0     # function to get normalization for a state, defaults to 1.0
+    _repr_active        : Optional[bool]                    = False             # if one adds new element, it stops being valid, i.e., needs recomputation of representatives
+
     # Compact O(1) lookup structure (primary storage, always built when symmetries present)
-    _compact_data: Optional[CompactSymmetryData] = None
-    _compatibility: Optional[SymmetryCompatibility] = None  # Compatibility checker instance
-    logger: Optional[Callable[[str], None]] = None  # Logger function
+    _compact_data       : Optional[CompactSymmetryData]     = None
+    _compatibility      : Optional[SymmetryCompatibility]   = None              # Compatibility checker instance
+    logger              : Optional[Callable[[str], None]]   = None              # Logger function
 
     # Compiled group data for fast application
-    _n_base: int = 0
-    _n_trans: int = 0
-    _compiled_group: CompiledGroup | None = None
-    _tables: SymOpTables | None = None
+    _n_base             : int = 0
+    _n_trans            : int = 0
+    _compiled_group     : CompiledGroup | None              = None
+    _tables             : SymOpTables | None                = None
+    _cached_projector   : Optional[Callable]                = None
 
     # -----------------------------------------------------
     #! Initialization
@@ -892,6 +885,7 @@ class SymmetryContainer:
             - Full:
                 - each non-translation combo x each translation combo
         """
+        self._cached_projector  = None
 
         if not self.generators:
             self.logger.info("No symmetry generators - empty group")
@@ -899,23 +893,21 @@ class SymmetryContainer:
             return
 
         # Separate translations from other generators
-        translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]] = (
-            {}
-        )  # direction -> (op, spec)
+        translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]] = {} # direction -> (op, spec)
         other_generators = []
 
         for op, spec in self.generators:
-            gen_type = spec[0]
+            gen_type    = spec[0]
             # Check if this is any translation symmetry
             if gen_type == SymmetryGenerators.Translation_x:
-                spec_mod = (0,) + spec[1:]
+                spec_mod    = (0,) + spec[1:]
                 translations["x"] = (op, spec_mod)
             elif gen_type == SymmetryGenerators.Translation_y:
-                spec_mod = (1,) + spec[1:]
+                spec_mod    = (1,) + spec[1:]
                 translations["y"] = (op, spec_mod)
 
             elif gen_type == SymmetryGenerators.Translation_z:
-                spec_mod = (1,) + spec[1:]
+                spec_mod    = (2,) + spec[1:]
                 translations["z"] = (op, spec_mod)
             else:
                 other_generators.append((op, spec))
@@ -942,10 +934,10 @@ class SymmetryContainer:
         else:
 
             # Build translation group (product of cyclic groups)
-            translation_elements = self._build_translation_group(translations)
+            translation_elements            = self._build_translation_group(translations)
 
             # Combine: each base element with each translation element
-            full_group: List[GroupElement] = []
+            full_group: List[GroupElement]  = []
             for t_elem in translation_elements:
                 for base_elem in base_elements:
                     # Concatenate tuples: (other ops) + (translation ops)
@@ -954,8 +946,8 @@ class SymmetryContainer:
                     combined = base_elem + t_elem
                     full_group.append(combined)
 
-            self._n_trans = len(translation_elements)
-            self._n_base = len(base_elements)
+            self._n_trans       = len(translation_elements)
+            self._n_base        = len(base_elements)
             self.symmetry_group = full_group
             if self.verbose:
                 self.logger.info(
@@ -983,17 +975,17 @@ class SymmetryContainer:
         # ------------------------------------------------------------
         # 1) Build tables and assign "table indices" to operator objects
         # ------------------------------------------------------------
-        trans_ops: List[SymmetryOperator] = []
-        refl_ops: List[SymmetryOperator] = []
-        parity_ops: List[SymmetryOperator] = []
-        inv_ops: List[SymmetryOperator] = []
+        trans_ops: List[SymmetryOperator]   = []
+        refl_ops: List[SymmetryOperator]    = []
+        parity_ops: List[SymmetryOperator]  = []
+        inv_ops: List[SymmetryOperator]     = []
         op_to_table = {}  # python dict: op_object -> (opcode, table_index)
 
         for op, spec in self.generators:
             gen_type = spec[0]
 
             if (
-                gen_type == SymmetryGenerators.Translation_x
+                gen_type    == SymmetryGenerators.Translation_x
                 or gen_type == SymmetryGenerators.Translation_y
                 or gen_type == SymmetryGenerators.Translation_z
             ):
@@ -1006,7 +998,7 @@ class SymmetryContainer:
                 op_to_table[op] = (SymmetryApplicationCodes.OP_REFLECTION, len(refl_ops) - 1)
 
             elif (
-                gen_type == SymmetryGenerators.ParityX
+                gen_type    == SymmetryGenerators.ParityX
                 or gen_type == SymmetryGenerators.ParityY
                 or gen_type == SymmetryGenerators.ParityZ
             ):
@@ -1020,15 +1012,13 @@ class SymmetryContainer:
 
         # translation perms
         if len(trans_ops) == 0:
-            trans_perm = np.zeros((1, ns), dtype=np.int64)  # permutations
-            trans_cross_mask = np.zeros((1, ns), dtype=np.uint8)  # crossing masks
-            trans_shift = np.zeros((1,), dtype=np.int32)  # shifts
+            trans_perm          = np.zeros((1, ns), dtype=np.int64)  # permutations
+            trans_cross_mask    = np.zeros((1, ns), dtype=np.uint8)  # crossing masks
+            trans_shift         = np.zeros((1,), dtype=np.int32)  # shifts
         else:
-            trans_perm = np.stack([np.asarray(op.perm, dtype=np.int64) for op in trans_ops], axis=0)
-            trans_cross_mask = np.stack(
-                [np.asarray(op.crossing_mask, dtype=np.uint8) for op in trans_ops], axis=0
-            )
-            trans_shift = np.asarray([getattr(op, "shift", 1) for op in trans_ops], dtype=np.int32)
+            trans_perm          = np.stack([np.asarray(op.perm, dtype=np.int64) for op in trans_ops], axis=0)
+            trans_cross_mask    = np.stack([np.asarray(op.crossing_mask, dtype=np.uint8) for op in trans_ops], axis=0)
+            trans_shift         = np.asarray([getattr(op, "shift", 1) for op in trans_ops], dtype=np.int32)
 
         # reflection perms (you may need to add `op.perm` to ReflectionSymmetry class like Translation does)
         if len(refl_ops) == 0:
@@ -1049,9 +1039,7 @@ class SymmetryContainer:
             parity_axis = np.zeros((1,), dtype=np.uint8)
         else:
             # z is default if not specified
-            parity_axis = np.asarray(
-                [axis_map[getattr(op, "axis", "z")] for op in parity_ops], dtype=np.uint8
-            )
+            parity_axis = np.asarray([axis_map[getattr(op, "axis", "z")] for op in parity_ops], dtype=np.uint8)
 
         # boundary phase
         if self.lattice is not None:
@@ -1060,33 +1048,33 @@ class SymmetryContainer:
             boundary_phase = None
 
         tables = SymOpTables(
-            trans_perm=trans_perm,
-            trans_cross_mask=trans_cross_mask,
-            trans_shift=trans_shift,
-            refl_perm=refl_perm,
-            inv_perm=inv_perm,
-            parity_axis=parity_axis,
-            boundary_phase=boundary_phase,
+            trans_perm          = trans_perm,
+            trans_cross_mask    = trans_cross_mask,
+            trans_shift         = trans_shift,
+            refl_perm           = refl_perm,
+            inv_perm            = inv_perm,
+            parity_axis         = parity_axis,
+            boundary_phase      = boundary_phase,
         )
 
         # ------------------------------------------------------------
         # 2) Encode group elements
         # ------------------------------------------------------------
-        group_elements = self.symmetry_group
-        n_group = len(group_elements)
-        max_ops = max((len(e) for e in group_elements), default=0)
+        group_elements  = self.symmetry_group
+        n_group         = len(group_elements)
+        max_ops         = max((len(e) for e in group_elements), default=0)
 
-        n_ops = np.zeros((n_group,), dtype=np.int32)
-        op_code = np.zeros((n_group, max_ops), dtype=np.uint8)
-        arg0 = np.zeros((n_group, max_ops), dtype=np.int64)
-        arg1 = np.zeros((n_group, max_ops), dtype=np.int64)
+        n_ops           = np.zeros((n_group,), dtype=np.int32)
+        op_code         = np.zeros((n_group, max_ops), dtype=np.uint8)
+        arg0            = np.zeros((n_group, max_ops), dtype=np.int64)
+        arg1            = np.zeros((n_group, max_ops), dtype=np.int64)
 
         # character array in the *same order*
-        chi = np.zeros((n_group,), dtype=np.complex128)
+        chi             = np.zeros((n_group,), dtype=np.complex128)
 
         for g, elem in enumerate(group_elements):
-            n_ops[g] = len(elem)
-            chi[g] = np.complex128(self.get_character(elem))
+            n_ops[g]    = len(elem)
+            chi[g]      = np.complex128(self.get_character(elem))
 
             for j, entry in enumerate(elem):
                 if isinstance(entry, tuple):
@@ -1095,10 +1083,10 @@ class SymmetryContainer:
                 else:
                     op, power = entry, 0
 
-                code, tidx = op_to_table[op]
-                op_code[g, j] = code
-                arg0[g, j] = tidx
-                arg1[g, j] = power
+                code, tidx      = op_to_table[op]
+                op_code[g, j]   = code
+                arg0[g, j]      = tidx
+                arg1[g, j]      = power
 
         # globals
         try:
@@ -1106,25 +1094,21 @@ class SymmetryContainer:
 
             global_op_codes, global_op_values = to_codes(self.global_symmetries)
         except ImportError:
-            global_op_codes, global_op_values = np.zeros((0,), dtype=np.int8), np.zeros(
-                (0,), dtype=np.float64
-            )
-            raise ImportError(
-                "Could not import QES.Algebra.globals. Ensure QES is properly installed."
-            )
+            global_op_codes, global_op_values = np.zeros((0,), dtype=np.int8), np.zeros((0,), dtype=np.float64)
+            raise ImportError("Could not import QES.Algebra.globals. Ensure QES is properly installed.")
 
         # create a compiled group!
         cg = CompiledGroup(
-            n_group=n_group,
-            n_trans=self._n_trans,
-            n_base=self._n_base,
-            n_ops=n_ops,
-            op_code=op_code,
-            arg0=arg0,
-            arg1=arg1,
-            chi=chi,
-            global_op_codes=global_op_codes,
-            global_op_vals=global_op_values,
+            n_group         = n_group,
+            n_trans         = self._n_trans,
+            n_base          = self._n_base,
+            n_ops           = n_ops,
+            op_code         = op_code,
+            arg0            = arg0,
+            arg1            = arg1,
+            chi             = chi,
+            global_op_codes = global_op_codes,
+            global_op_vals  = global_op_values,
         )
         return cg, tables
 
@@ -1826,6 +1810,10 @@ class SymmetryContainer:
         if not JAX_AVAILABLE:
             raise RuntimeError("JAX is required for get_jittable_projector.")
 
+        # Check for cached projector
+        if self._cached_projector is not None:
+            return self._cached_projector
+
         # Capture group elements and self
         group_elements = self.symmetry_group
 
@@ -1872,6 +1860,7 @@ class SymmetryContainer:
 
             return states_stack, weights_stack
 
+        self._cached_projector = projector
         return projector
 
 
