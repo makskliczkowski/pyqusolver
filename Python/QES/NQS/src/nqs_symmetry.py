@@ -83,18 +83,12 @@ class NQSSymmetricAnsatz:
 
         # Check backend
         if not self._nqs._isjax:
-            self._nqs.log(
-                "Symmetry projection skipped: only supported for JAX backend.",
-                lvl=1,
-                color="yellow",
-            )
+            self._nqs.log("Symmetry projection skipped: only supported for JAX backend.", lvl=1, color="yellow")
             self.unset()  # Ensure inactive if backend is not JAX
             return
 
         if not JAX_AVAILABLE:
-            self._nqs.log(
-                "JAX is not available, cannot enable symmetry projection.", lvl=0, color="red"
-            )
+            self._nqs.log("JAX is not available, cannot enable symmetry projection.", lvl=0, color="red")
             self.unset()
             return
 

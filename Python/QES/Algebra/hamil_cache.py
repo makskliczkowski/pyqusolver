@@ -5,10 +5,8 @@ This module provides a caching mechanism for heavy matrix constructions,
 allowing reuse of operators across different instances if the configuration matches.
 """
 
-from typing import Dict, Tuple, Any, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .hamil import Hamiltonian
+from typing import Dict, Tuple, Any, Optional
+import weakref
 
 # Global cache storage
 # Key: (system_size, symmetry_sector_info, dtype, backend_name, is_sparse, operator_signature)
@@ -18,23 +16,19 @@ _HAMILTONIAN_CACHE: Dict[Tuple, Any] = {}
 # Use weakrefs? Maybe not for matrices if we want them to persist across re-creation of Hamiltonian objects.
 # But we should be careful about memory. The user asked for caching, implying persistence.
 
-
 def get_matrix_from_cache(key: Tuple) -> Optional[Any]:
     """Retrieve a matrix from the global cache."""
     return _HAMILTONIAN_CACHE.get(key)
-
 
 def store_matrix_in_cache(key: Tuple, matrix: Any):
     """Store a matrix in the global cache."""
     _HAMILTONIAN_CACHE[key] = matrix
 
-
 def clear_cache():
     """Clear the global Hamiltonian cache."""
     _HAMILTONIAN_CACHE.clear()
 
-
-def generate_cache_key(hamiltonian: "Hamiltonian") -> Tuple:
+def generate_cache_key(hamiltonian: 'Hamiltonian') -> Tuple:
     """
     Generate a unique key for the Hamiltonian configuration.
 
@@ -61,9 +55,7 @@ def generate_cache_key(hamiltonian: "Hamiltonian") -> Tuple:
         hs_key = ("NoHilbert",)
 
     # 3. Backend & Dtype
-    backend_str = (
-        hamiltonian.backend if isinstance(hamiltonian.backend, str) else str(hamiltonian.backend)
-    )
+    backend_str = hamiltonian.backend if isinstance(hamiltonian.backend, str) else str(hamiltonian.backend)
     dtype_str = str(hamiltonian.dtype)
     # is_sparse is a method in GeneralMatrix, or use .sparse property
     is_sparse = hamiltonian.sparse
@@ -97,7 +89,7 @@ def generate_cache_key(hamiltonian: "Hamiltonian") -> Tuple:
     # We will defer this implementation detail to the Hamiltonian class to provide a signature.
 
     # Returning a placeholder for now, actual implementation will rely on hamiltonian.signature property
-    if hasattr(hamiltonian, "signature"):
+    if hasattr(hamiltonian, 'signature'):
         op_sig = hamiltonian.signature
     else:
         # Fallback: object id (no caching across instances) or some basic info

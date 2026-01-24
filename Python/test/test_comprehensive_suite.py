@@ -130,6 +130,7 @@ class TestPerformanceScaling:
         """Test matrix construction time."""
         h_matrix = np.array([[1, 0.5], [0.5, -1]], dtype=complex)
 
+
         start = time.time()
         try:
             qh = QuadraticHamiltonian.from_hermitian_matrix(h_matrix)

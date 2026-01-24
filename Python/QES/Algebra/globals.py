@@ -4,18 +4,18 @@ Contains the GlobalSymmetry class for defining and checking global symmetries on
 """
 
 # Import the necessary modules
-from __future__ import annotations
+from    __future__ import annotations
 
-from abc import ABC
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from    abc import ABC
+from    typing import TYPE_CHECKING, Callable, Optional, Union
 
-import numba
-import numpy as np
+import  numba
+import  numpy as np
 
 # operator module for operator overloading (absolute import for reliability)
 try:
     if TYPE_CHECKING:
-        from QES.Algebra.Operator.operator import GlobalSymmetries
+        from QES.Algebra.Operator.operator      import GlobalSymmetries
     # from QES.Algebra.Symmetries.base            import _popcount64
 except ImportError as e:
     raise ImportError(
@@ -24,15 +24,12 @@ except ImportError as e:
 
 # from general Python modules
 try:
-    from QES.general_python.algebra.utils import get_backend
-    from QES.general_python.lattices.lattice import Lattice
+    from QES.general_python.algebra.utils       import get_backend
+    from QES.general_python.lattices.lattice    import Lattice
 except ImportError as e:
     raise ImportError(
         "Failed to import general_python modules. Ensure QES package is correctly installed."
     ) from e
-
-if TYPE_CHECKING:
-    from QES.Algebra.Operator.operator import GlobalSymmetries
 
 
 @numba.njit(cache=True, fastmath=True)
@@ -46,7 +43,6 @@ def _popcount64(x: np.int64) -> np.int64:
 
 
 # ---------------------------
-
 
 class GlobalSymmetry(ABC):
     """
@@ -62,11 +58,11 @@ class GlobalSymmetry(ABC):
 
     def __init__(
         self,
-        lat: Optional[Lattice] = None,
-        ns: Optional[int] = None,
-        val: float = 0.0,
-        name: "GlobalSymmetries" = "Other",
-        backend: str = "default",
+        lat     : Optional[Lattice] = None,
+        ns      : Optional[int] = None,
+        val     : float = 0.0,
+        name    : "GlobalSymmetries" = "Other",
+        backend : str = "default",
     ):
         """
         Initialize the GlobalSymmetry object.

@@ -11,6 +11,7 @@ Email           : maksymilian.kliczkowski@pwr.edu.pl
 -------------------------------------------------------------------------------
 """
 
+
 import numpy as np
 import pytest
 

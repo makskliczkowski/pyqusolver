@@ -34,23 +34,23 @@ import numpy as np
 warnings.filterwarnings("ignore", message=".*Skipped cross-host ArrayMetadata validation.*")
 
 # typing and other imports
-from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
+from functools  import partial
+from typing     import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
 
-Array = Any
+Array           = Any
 
 # import physical problems
 try:
     # New kernel import
-    from .src import nqs_kernels
-    from .src.nqs_ansatz_modifier import AnsatzModifier
-    from .src.nqs_checkpoint_manager import NQSCheckpointManager
-    from .src.nqs_engine import NQSEvalEngine, NQSLoss, NQSObservable
-    from .src.nqs_kernels import NQSSingleStepResult
-    from .src.nqs_network_integration import *
-    from .src.nqs_physics import *
-    from .src.nqs_precision import cast_for_precision, resolve_precision_policy
-    from .src.nqs_symmetry import NQSSymmetricAnsatz
+    from .src                           import nqs_kernels
+    from .src.nqs_ansatz_modifier       import AnsatzModifier
+    from .src.nqs_checkpoint_manager    import NQSCheckpointManager
+    from .src.nqs_engine                import NQSEvalEngine, NQSLoss, NQSObservable
+    from .src.nqs_kernels               import NQSSingleStepResult
+    from .src.nqs_network_integration   import *
+    from .src.nqs_physics               import *
+    from .src.nqs_precision             import cast_for_precision, resolve_precision_policy
+    from .src.nqs_symmetry              import NQSSymmetricAnsatz
 except ImportError as e:
     raise ImportError(
         "Failed to import nqs_physics or nqs_networks module. Ensure QES.NQS is correctly installed."
@@ -59,10 +59,10 @@ except ImportError as e:
 # ----------------------------------------------------------
 
 if TYPE_CHECKING:
-    from QES.Algebra.Operator.operator_loader import OperatorModule
+    from QES.Algebra.Operator.operator_loader   import OperatorModule
 
-    from .src.nqs_precision import NQSPrecisionPolicy
-    from .src.nqs_train import NQSTrainer, NQSTrainStats
+    from .src.nqs_precision                     import NQSPrecisionPolicy
+    from .src.nqs_train                         import NQSTrainer, NQSTrainStats
 
 # from QES.general_python imports
 try:
@@ -71,21 +71,21 @@ try:
     import QES.general_python.ml.net_impl.utils.net_utils as net_utils
 
     #! Hilbert space
-    from QES.Algebra.hilbert import HilbertSpace
-    from QES.Algebra.Operator.operator import Operator
+    from QES.Algebra.hilbert                    import HilbertSpace
+    from QES.Algebra.Operator.operator          import Operator
 
     #! Randomness
-    from QES.general_python.common.directories import Directories
-    from QES.general_python.common.flog import Logger
-    from QES.general_python.ml.networks import GeneralNet
+    from QES.general_python.common.directories  import Directories
+    from QES.general_python.common.flog         import Logger
+    from QES.general_python.ml.networks         import GeneralNet
 
     #! Choose network
-    from QES.general_python.ml.networks import choose_network as nqs_choose_network
-    from QES.Solver.MonteCarlo.montecarlo import MonteCarloSolver
+    from QES.general_python.ml.networks         import choose_network as nqs_choose_network
+    from QES.Solver.MonteCarlo.montecarlo       import MonteCarloSolver
 
     #! Monte Carlo
-    from QES.Solver.MonteCarlo.sampler import Sampler, get_sampler
-    from QES.Solver.MonteCarlo.vmc import VMCSampler
+    from QES.Solver.MonteCarlo.sampler          import Sampler, get_sampler
+    from QES.Solver.MonteCarlo.vmc              import VMCSampler
 
 except ImportError as e:
     warnings.warn(
@@ -97,29 +97,29 @@ except ImportError as e:
 # Conditional JAX imports for SymmetryHandler
 try:
     import jax
-    import jax.numpy as jnp
-    import jax.tree_util as tree_util
-    from jax.scipy.special import logsumexp
-    from jax.tree_util import tree_flatten
+    import jax.numpy        as jnp
+    import jax.tree_util    as tree_util
+    from jax.scipy.special  import logsumexp
+    from jax.tree_util      import tree_flatten
 
     _JAX_AVAILABLE_FOR_SYMMETRY = True
-    JAX_AVAILABLE = True
+    JAX_AVAILABLE               = True
 except ImportError:
     _JAX_AVAILABLE_FOR_SYMMETRY = False
-    JAX_AVAILABLE = False
+    JAX_AVAILABLE               = False
 
 # ----------------------------------------------------------
-AnsatzFunctionType = Callable[
+AnsatzFunctionType      = Callable[
     [Callable, Array, int, Any], Array
 ]  # func, states, batch_size, params -> Array [log ansatz values]
-ApplyFunctionType = Callable[
+ApplyFunctionType       = Callable[
     [Callable, Array, Array, Array, int, Any], Array
 ]  # func, states, probs, params, batch_size -> Array [sampled/evaluated values]
-EvalFunctionType = Callable[
+EvalFunctionType        = Callable[
     [Callable, Array, Any, int], Array
 ]  # func, states, params, batch_size -> Array [log ansatz values]
-CallableFunctionType = Callable[[Array], Tuple[Array, Array]]  # states -> (new_states, coeffs)
-LossFunctionType = CallableFunctionType  # states -> (new_states, coeffs)
+CallableFunctionType    = Callable[[Array], Tuple[Array, Array]]  # states -> (new_states, coeffs)
+LossFunctionType        = CallableFunctionType  # states -> (new_states, coeffs)
 
 #########################################
 
@@ -190,22 +190,18 @@ class NQS(MonteCarloSolver):
     - "SUBPLAQUETTE": Flips sub-sequences of a pattern (e.g. edges of a plaquette).
     """
 
-    _ERROR_ALL_DTYPE_SAME = "All weights must have the same dtype!"
-    _ERROR_NOT_INITIALIZED = "The NQS network is not initialized. Call init_network() first."
-    _ERROR_INVALID_PHYSICS = "Invalid physics problem specified."
-    _ERROR_NO_HAMILTONIAN = "Hamiltonian must be provided for wavefunction physics."
-    _ERROR_INVALID_HAMILTONIAN = "Invalid Hamiltonian type provided."
-    _ERROR_INVALID_NETWORK = "Invalid network type provided."
-    _ERROR_INVALID_NET_FAILED = (
-        "Failed to initialize network. Check the network type and parameters."
-    )
-    _ERROR_INVALID_SAMPLER = "Invalid sampler type provided."
-    _ERROR_INVALID_BATCH_SIZE = "Batch size must be a positive integer."
-    _ERROR_STATES_PSI = (
-        "If providing states and psi, both must be provided as a tuple (states, psi)."
-    )
-    _ERROR_SHAPE_HILBERT = "Either shape or hilbert space must be provided."
-    _ERROR_ENERGY_WAVEFUNCTION = "Energy computation is only valid for wavefunction problems."
+    _ERROR_ALL_DTYPE_SAME       = "All weights must have the same dtype!"
+    _ERROR_NOT_INITIALIZED      = "The NQS network is not initialized. Call init_network() first."
+    _ERROR_INVALID_PHYSICS      = "Invalid physics problem specified."
+    _ERROR_NO_HAMILTONIAN       = "Hamiltonian must be provided for wavefunction physics."
+    _ERROR_INVALID_HAMILTONIAN  = "Invalid Hamiltonian type provided."
+    _ERROR_INVALID_NETWORK      = "Invalid network type provided."
+    _ERROR_INVALID_NET_FAILED   = "Failed to initialize network. Check the network type and parameters."
+    _ERROR_INVALID_SAMPLER      = "Invalid sampler type provided."
+    _ERROR_INVALID_BATCH_SIZE   = "Batch size must be a positive integer."
+    _ERROR_STATES_PSI           = "If providing states and psi, both must be provided as a tuple (states, psi)."
+    _ERROR_SHAPE_HILBERT        = "Either shape or hilbert space must be provided."
+    _ERROR_ENERGY_WAVEFUNCTION  = "Energy computation is only valid for wavefunction problems."
 
     @staticmethod
     def DUMMY_APPLY_FUN_NPY(x):
@@ -218,34 +214,34 @@ class NQS(MonteCarloSolver):
     def __init__(
         self,
         # information on the NQS
-        logansatz: Union[Callable, str, GeneralNet],
-        model: Hamiltonian,
+        logansatz       : Union[Callable, str, GeneralNet],
+        model           : Hamiltonian,
         # information on the Monte Carlo solver
-        sampler: Optional[Union[Callable, str, VMCSampler]] = None,
-        batch_size: Optional[int] = 1,
-        nthstate: Optional[int] = 0,
+        sampler         : Optional[Union[Callable, str, VMCSampler]] = None,
+        batch_size      : Optional[int] = 1,
+        nthstate        : Optional[int] = 0,
         *,
         # information on the NQS
-        nparticles: Optional[int] = None,
+        nparticles      : Optional[int] = None,
         # information on the Monte Carlo solver
-        seed: Optional[int] = None,
-        beta: float = 1,
-        mu: float = 2.0,
-        replica: int = 1,
+        seed            : Optional[int] = None,
+        beta            : float = 1,
+        mu              : float = 2.0,
+        replica         : int = 1,
         # information on the NQS - Hilbert space
-        shape: Optional[Union[list, tuple]] = None,
-        hilbert: Optional[Union[HilbertSpace, list, tuple]] = None,
-        modes: int = 2,
+        shape           : Optional[Union[list, tuple]] = None,
+        hilbert         : Optional[Union[HilbertSpace, list, tuple]] = None,
+        modes           : int = 2,
         # information on the Monte Carlo solver
-        directory: Optional[str] = MonteCarloSolver.defdir,
-        backend: str = "default",
-        dtype: Optional[Union[type, str]] = None,
-        problem: Optional[Union[str, PhysicsInterface]] = "wavefunction",
+        directory       : Optional[str] = MonteCarloSolver.defdir,
+        backend         : str = "default",
+        dtype           : Optional[Union[type, str]] = None,
+        problem         : Optional[Union[str, PhysicsInterface]] = "wavefunction",
         # symmetries
-        symmetrize: bool = True,
+        symmetrize      : bool = True,
         # logging
-        logger: Optional[Logger] = None,
-        verbose: bool = True,
+        logger          : Optional[Logger] = None,
+        verbose         : bool = True,
         **kwargs,
     ):
         r"""
@@ -360,76 +356,70 @@ class NQS(MonteCarloSolver):
             raise ValueError(self._ERROR_SHAPE_HILBERT)
 
         super().__init__(
-            sampler=sampler,
-            seed=seed,
-            beta=beta,
-            mu=mu,
-            replica=replica,
-            shape=shape or ((model.lattice.ns,) if hasattr(model, "lattice") else None),
-            hilbert=model.hilbert if hasattr(model, "hilbert") else None,
-            modes=modes,
-            directory=directory,
-            backend=backend,
-            logger=logger,
-            dtype=dtype,
-            verbose=verbose,
+            sampler     =   sampler,
+            seed        =   seed,
+            beta        =   beta,
+            mu          =   mu,
+            replica     =   replica,
+            shape       =   shape or ((model.lattice.ns,) if hasattr(model, "lattice") else None),
+            hilbert     =   model.hilbert if hasattr(model, "hilbert") else None,
+            modes       =   modes,
+            directory   =   directory,
+            backend     =   backend,
+            logger      =   logger,
+            dtype       =   dtype,
+            verbose     =   verbose,
             **kwargs,
         )
 
         # --------------------------------------------------
-        self._batch_size = batch_size
-        self._initialized = False
-        self._seed = seed
-        self._nthstate = nthstate
+        self._batch_size            = batch_size
+        self._initialized           = False
+        self._seed                  = seed
+        self._nthstate              = nthstate
 
-        self._modifier_wrapper: Optional[AnsatzModifier] = None
-        self._modifier_source: Optional[Union[Operator, Callable]] = None
+        self._modifier_wrapper      : Optional[AnsatzModifier] = None
+        self._modifier_source       : Optional[Union[Operator, Callable]] = None
 
         #######################################
         #! collect the Hilbert space information
         #######################################
 
-        self._nh = self._hilbert.Nh if self._hilbert is not None else None
-        self._nparticles = nparticles if nparticles is not None else self._size
-        self._nvisible = self._size
-        self._nparticles2 = self._nparticles**2
-        self._nvisible2 = self._nvisible**2
-        self._beta_penalty = kwargs.get("beta_penalty", 0.0)
+        self._nh                    = self._hilbert.Nh if self._hilbert is not None else None
+        self._nparticles            = nparticles if nparticles is not None else self._size
+        self._nvisible              = self._size
+        self._nparticles2           = self._nparticles**2
+        self._nvisible2             = self._nvisible**2
+        self._beta_penalty          = kwargs.get("beta_penalty", 0.0)
 
         # --------------------------------------------------
         #! Backend
         # --------------------------------------------------
-        self._nqsbackend = nqs_get_backend(self._backend_str)  # from src/nqs_backend.py
+        self._nqsbackend            = nqs_get_backend(self._backend_str)  # from src/nqs_backend.py
 
         # --------------------------------------------------
         #! Physical problem to solve
         # --------------------------------------------------
-        problem = PhysicsInterfaces[problem.upper()] if isinstance(problem, str) else problem
-        self._nqsproblem = nqs_choose_physics(problem, self._nqsbackend)  # from src/nqs_physics.py
+        problem                     = PhysicsInterfaces[problem.upper()] if isinstance(problem, str) else problem
+        self._nqsproblem            = nqs_choose_physics(problem, self._nqsbackend)  # from src/nqs_physics.py
 
         # --------------------------------------------------
         #! Network
         # --------------------------------------------------
 
         try:
-            if (
-                logansatz is None
-            ):  # We must have a network or some ansatz - it is by definition of NQS
+            if logansatz is None:  # We must have a network or some ansatz - it is by definition of NQS
                 raise ValueError(self._ERROR_INVALID_NETWORK)
 
-            self.log(
-                f"Initializing NQS network backend: {self._nqsbackend.name.upper()}",
-                lvl=1,
-                color="blue",
-            )
+            self.log(f"Initializing NQS network backend: {self._nqsbackend.name.upper()}", lvl=1, color="blue")
 
             self._net = nqs_choose_network(
                 logansatz,
-                input_shape=self._shape,
-                backend=self._backend_str,
-                dtype=dtype,
-                param_dtype=kwargs.get("param_dtype", None),
-                seed=seed,
+                input_shape     =   self._shape,
+                backend         =    self._backend_str,
+                dtype           =   dtype,
+                param_dtype     =   kwargs.get("param_dtype", None),
+                seed            =   seed,
                 **kwargs,
             )
 
@@ -443,55 +433,39 @@ class NQS(MonteCarloSolver):
         if not self._initialized:
             self.init_network()
 
-        self._isjax = getattr(self._net, "is_jax", (self._nqsbackend.name == "jax"))
-        self._iscpx = self._net.is_complex
-        self._holomorphic = self._net.is_holomorphic
-        self._analytic = (
-            self._net.has_analytic_grad
-        )  # Whether analytic gradients are supported - expected for JAX backends
-        self._dtype = self._net.dtype
+        self._isjax                 = getattr(self._net, "is_jax", (self._nqsbackend.name == "jax"))
+        self._iscpx                 = self._net.is_complex
+        self._holomorphic           = self._net.is_holomorphic
+        self._analytic              = self._net.has_analytic_grad # Whether analytic gradients are supported - expected for JAX backends
+        self._dtype                 = self._net.dtype
 
         # Precision policy (mixed precision for stable paths)
-        self._precision_policy: NQSPrecisionPolicy = resolve_precision_policy(
-            self._dtype, is_jax=self._isjax, **kwargs
-        )
+        self._precision_policy: NQSPrecisionPolicy = resolve_precision_policy(self._dtype, is_jax=self._isjax, **kwargs)
 
         # Initialize SymmetryHandler
-        self.symmetry_handler = NQSSymmetricAnsatz(self)
+        self.symmetry_handler       = NQSSymmetricAnsatz(self)
 
         # --------------------------------------------------
         #! Sampler
         # --------------------------------------------------
 
-        self._model = model
-        self._sampler = self.set_sampler(
-            sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs
-        )
+        self._model                 = model
+        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)
 
         # --------------------------------------------------
         #! Handle gradients
         # --------------------------------------------------
-        self._grad_info = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)
-        self._flat_grad_func = self._grad_info[
-            "flat_grad_func"
-        ]  # Function to compute flattened gradients
-        self._analytic_grad_func = self._grad_info[
-            "analytic_grad_func"
-        ]  # Function to compute analytic gradients
-        self._dict_grad_type = self._grad_info["dict_grad_type"]  # Dictionary of gradient types
-        self._params_slice_metadata = self._grad_info[
-            "slice_metadata"
-        ]  # Metadata for slicing parameters
-        self._params_leaf_info = self._grad_info["leaf_info"]  # Leaf information
-        self._params_tree_def = self._grad_info["tree_def"]  # Tree definition
-        self._params_shapes = self._grad_info["shapes"]  # Shapes of parameters
-        self._params_sizes = self._grad_info["sizes"]  # Sizes of parameters
-        self._params_iscpx = self._grad_info[
-            "is_complex_per_leaf"
-        ]  # Whether each parameter is complex
-        self._params_total_size = self._grad_info[
-            "total_size"
-        ]  # Total size of parameters -> cost for training
+        self._grad_info             = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)
+        self._flat_grad_func        = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
+        self._analytic_grad_func    = self._grad_info["analytic_grad_func"]     # Function to compute analytic gradients
+        self._dict_grad_type        = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
+        self._params_slice_metadata = self._grad_info["slice_metadata"]         # Metadata for slicing parameters
+        self._params_leaf_info      = self._grad_info["leaf_info"]              # Leaf information
+        self._params_tree_def       = self._grad_info["tree_def"]               # Tree definition
+        self._params_shapes         = self._grad_info["shapes"]                 # Shapes of parameters
+        self._params_sizes          = self._grad_info["sizes"]                  # Sizes of parameters
+        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]    # Whether each parameter is complex
+        self._params_total_size     = self._grad_info["total_size"]             # Total size of parameters -> cost for training
 
         # --------------------------------------------------
         #! Compile functions
@@ -517,7 +491,7 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         #! Initialize unified evaluation engine
         # --------------------------------------------------
-        self._eval_engine = NQSEvalEngine(self, batch_size=batch_size, **kwargs)
+        self._eval_engine           = NQSEvalEngine(self, batch_size=batch_size, **kwargs)
 
         #######################################
         #! Directory to save the results
@@ -526,12 +500,12 @@ class NQS(MonteCarloSolver):
         self._init_directory()
 
         # Initialize the Manager
-        self.ckpt_manager = NQSCheckpointManager(
-            directory=self._dir_detailed,
-            use_orbax=kwargs.get("use_orbax", True),
-            max_to_keep=kwargs.get("orbax_max_to_keep", 3),
-            logger=self._logger,
-        )
+        self.ckpt_manager           = NQSCheckpointManager(
+                                        directory   =   self._dir_detailed,
+                                        use_orbax   =   kwargs.get("use_orbax", True),
+                                        max_to_keep =   kwargs.get("orbax_max_to_keep", 3),
+                                        logger      =   self._logger,
+                                    )
 
         # --------------------------------------------------
         #! Exact information (Ground Truth)
@@ -3151,42 +3125,40 @@ class NQS(MonteCarloSolver):
 
                 return gpu_info
 
-            gpu_specs = get_gpu_specs()
-            precision_factor = 2 if is_double_precision else 1
-            fixed_overhead_mb = 1024
+            gpu_specs           = get_gpu_specs()
+            precision_factor    = 2 if is_double_precision else 1
+            fixed_overhead_mb   = 1024
 
             # Cost per chain (variable)
             # N * depth * width factors... simplified heuristic:
             # A complex64 number is 8 bytes.
-            estimated_chain_mb = (system_size * net_depth_estimate * 8) / (1024**2)
-            estimated_chain_mb = max(0.5, estimated_chain_mb) * precision_factor
+            estimated_chain_mb  = (system_size * net_depth_estimate * 8) / (1024**2)
+            estimated_chain_mb  = max(0.5, estimated_chain_mb) * precision_factor
 
             # Available memory for batching (leaving 1GB buffer)
             available_for_batch = max(512, gpu_specs["free_memory_mb"] - fixed_overhead_mb)
 
             # Calculate Max Chains
-            calculated_chains = int(available_for_batch / estimated_chain_mb)
+            calculated_chains   = int(available_for_batch / estimated_chain_mb)
 
             # Clamp to hardware reasonable limits (powers of 2)
             # Even with 24GB VRAM, going > 8192 yields diminishing returns
-            max_limit = 256 if is_double_precision else 8192
-            optimal_chains = min(calculated_chains, max_limit)
+            max_limit           = 256 if is_double_precision else 8192
+            optimal_chains      = min(calculated_chains, max_limit)
 
             # Round down to nearest power of 2
-            optimal_chains = 2 ** (optimal_chains.bit_length() - 1)
-            optimal_chains = max(32, optimal_chains)  # Minimum 32
-            optimal_chains = int(min(target_total_samples, optimal_chains))
+            optimal_chains      = 2 ** (optimal_chains.bit_length() - 1)
+            optimal_chains      = max(32, optimal_chains)  # Minimum 32
+            optimal_chains      = int(min(target_total_samples, optimal_chains))
             num_samples_per_chain = int(max(1, target_total_samples // optimal_chains))
 
             # GPU hates sequential loops. Keep these minimal.
             config = {
-                "s_numchains": optimal_chains,
-                "s_numsamples": num_samples_per_chain,
-                "s_therm_steps": num_therm if num_therm is not None else 10,  # Quick re-adjustment
-                "s_sweep_steps": (
-                    num_sweep if num_sweep is not None else 1
-                ),  # Reliance on ensemble averaging
-                "hardware": f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}',
+                "s_numchains"   : optimal_chains,
+                "s_numsamples"  : num_samples_per_chain,
+                "s_therm_steps" : num_therm if num_therm is not None else 10,   # Quick re-adjustment
+                "s_sweep_steps" : num_sweep if num_sweep is not None else 1,    # Reliance on ensemble averaging
+                "hardware"      : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}',
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 

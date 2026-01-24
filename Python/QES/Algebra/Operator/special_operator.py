@@ -32,9 +32,6 @@ try:
 except ImportError:
     JAX_AVAILABLE = False
 
-if TYPE_CHECKING:
-    from QES.general_python.algebra.utils import Array
-
 # ---------------------------------------------------------------------------
 # QES imports
 # ---------------------------------------------------------------------------
@@ -308,9 +305,9 @@ class SpecialOperator(Operator, ABC):
             else:
                 self._dtype = np.float64
 
-        if getattr(self, "_iscpx", False):
+        if getattr(self, '_iscpx', False):
             if self._verbose:
-                self._log("I am complex!", lvl=2, color="red")
+                self._log("I am complex!", lvl = 2, color='red')
         else:
             if self._verbose:
                 self._log("I am real!", lvl=2, color="green")
@@ -389,7 +386,7 @@ class SpecialOperator(Operator, ABC):
         self._handle_dtype(dtype)
 
         # Update ns/lattice for Operator init (they might have been set in _handle_system)
-        ns = self._ns
+        ns      = self._ns
         lattice = self._lattice
 
         # Initialize base Operator
@@ -576,6 +573,7 @@ class SpecialOperator(Operator, ABC):
         """
         if self._cached_matvec_fun is not None:
             return self._cached_matvec_fun
+
 
         hilbert_in = self._hilbert_space
         if hilbert_in is None:
@@ -1638,28 +1636,28 @@ class SpecialOperator(Operator, ABC):
             return  # Skip negligible terms
 
         # Resolve instruction code
-        op_code = self._resolve_operator_code(operator, sites)
+        op_code     = self._resolve_operator_code(operator, sites)
 
         # Normalize sites for hashing
-        s_list = list(sites) if sites else [0]
-        term_key = (op_code, tuple(s_list))
+        s_list      = list(sites) if sites else [0]
+        term_key    = (op_code, tuple(s_list))
 
         # Check if term already exists -> Fuse it!
         if term_key in self._term_index_map:
-            idx = self._term_index_map[term_key]
+            idx                      = self._term_index_map[term_key]
             self._instr_coeffs[idx] += coefficient
             # If fusion makes coefficient zero, we could remove it, but that's expensive (O(N)).
             # We keep it; negligible terms might be filtered later if needed.
             return
 
         # Store instruction
-        idx = len(self._instr_codes)
+        idx         = len(self._instr_codes)
         self._instr_codes.append(op_code)
         self._instr_coeffs.append(coefficient)
         self._term_index_map[term_key] = idx
 
         # Handle sites
-        arity = len(s_list)
+        arity       = len(s_list)
 
         # Extend max arity if needed
         if arity > self._instr_max_arity:

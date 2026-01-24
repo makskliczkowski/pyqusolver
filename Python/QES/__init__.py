@@ -98,8 +98,9 @@ def qes_seed_scope(
 # If attribute_name_in_module is None, the module itself is imported.
 _LAZY_IMPORTS = {
     # Session Management
-    "QESSession": (".session", "QESSession"),
-    "run": (".session", "run"),
+    'QESSession'        : ('.session',          'QESSession'),
+    'run'               : ('.session',          'run'),
+
     # Top-level packages
     "Algebra": (".Algebra", None),
     "NQS": (".NQS", None),
@@ -149,12 +150,12 @@ if TYPE_CHECKING:
     from . import general_python
 
     # Core
-    from .Algebra.hilbert import HilbertSpace
+    from .Algebra.hilbert           import HilbertSpace
     from .Algebra.Operator.operator import Operator
-    from .general_python import algebra as gp_algebra
-    from .general_python import common as gp_common
-    from .general_python import lattices as gp_lattices
-    from .general_python import maths as gp_maths
+    from .general_python            import algebra  as gp_algebra
+    from .general_python            import common   as gp_common
+    from .general_python            import lattices as gp_lattices
+    from .general_python            import maths    as gp_maths
 
     # Aliases
     from .general_python import ml as gp_ml

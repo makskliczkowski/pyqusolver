@@ -6,6 +6,7 @@ A Hamiltonian model is defined as a class of Hamiltonians that share a common st
 Date: 2025-02-01
 """
 
+
 try:
     from QES.general_python.algebra.utils import distinguish_type
 except ImportError:
