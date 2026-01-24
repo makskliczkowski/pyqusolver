@@ -512,11 +512,13 @@ class OperatorFunction:
                 c_res = np.array(c_res)
 
             state_valid = isinstance(s_res, (int, np.integer, np.ndarray, jnp.ndarray))
-            
+
             if state_valid:
                 return (s_res, c_res)
-              
-        elif isinstance(result, list) and all(isinstance(item, tuple) and len(item) == 2 for item in result):
+
+        elif isinstance(result, list) and all(
+            isinstance(item, tuple) and len(item) == 2 for item in result
+        ):
             return result
         raise ValueError(
             "Operator function returned an invalid type. Expected a tuple or a list of (state, value) pairs."

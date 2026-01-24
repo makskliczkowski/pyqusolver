@@ -28,6 +28,7 @@ from typing import Optional, Union, Literal
 
 from .qes_globals import get_backend_manager, get_logger
 
+
 class QESSession:
     """
     Manages the configuration and state of a QES session.
@@ -44,11 +45,13 @@ class QESSession:
         Number of threads for CPU operations. If None, uses all available cores.
     """
 
-    def __init__(self,
-                 backend: str = 'numpy',
-                 seed: int = 42,
-                 precision: Literal['float32', 'float64'] = 'float64',
-                 num_threads: Optional[int] = None):
+    def __init__(
+        self,
+        backend: str = "numpy",
+        seed: int = 42,
+        precision: Literal["float32", "float64"] = "float64",
+        num_threads: Optional[int] = None,
+    ):
         self._backend_name = backend
         self._seed = seed
         self._precision = precision
@@ -61,7 +64,9 @@ class QESSession:
         """
         Apply the session configuration.
         """
-        self._log.info(f"Starting QESSession(backend={self._backend_name}, seed={self._seed}, precision={self._precision})")
+        self._log.info(
+            f"Starting QESSession(backend={self._backend_name}, seed={self._seed}, precision={self._precision})"
+        )
 
         # Store previous state (simplified - full restoration might be complex)
         # For now we assume we are setting global state.
@@ -114,10 +119,13 @@ class QESSession:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-def run(backend: str = 'numpy',
-        seed: int = 42,
-        precision: Literal['float32', 'float64'] = 'float64',
-        num_threads: Optional[int] = None):
+
+def run(
+    backend: str = "numpy",
+    seed: int = 42,
+    precision: Literal["float32", "float64"] = "float64",
+    num_threads: Optional[int] = None,
+):
     """
     Context manager to run a block of code with a specific QES configuration.
 

@@ -18,17 +18,17 @@ import numpy as np
 # -------------------------------------------------------------------------
 
 try:
-    from QES.Algebra.globals                import violates_global_syms
-    from QES.Algebra.Symmetries.base        import (
+    from QES.Algebra.globals import violates_global_syms
+    from QES.Algebra.Symmetries.base import (
         OP_IDENTITY,
         OP_INVERSION,
         OP_PARITY,
         OP_REFLECTION,
         OP_TRANSLATION,
     )
-    from QES.Algebra.Symmetries.inversion   import _apply_inversion_permutation
-    from QES.Algebra.Symmetries.parity      import _apply_parity_prim
-    from QES.Algebra.Symmetries.reflection  import _apply_perm_prim
+    from QES.Algebra.Symmetries.inversion import _apply_inversion_permutation
+    from QES.Algebra.Symmetries.parity import _apply_parity_prim
+    from QES.Algebra.Symmetries.reflection import _apply_perm_prim
     from QES.Algebra.Symmetries.translation import _apply_translation_prim
 
     # other
@@ -39,21 +39,25 @@ except ImportError:
 #! Constants
 #############################################################################
 
-_STATE_TYPE             : TypeAlias = np.int64
-_STATE_TYPE_NB          : TypeAlias = numba.int64
-_REPR_MAP_DTYPE         : TypeAlias = np.uint32
-_REPR_MAP_DTYPE_NB      : TypeAlias = numba.uint32
-_PHASE_IDX_DTYPE        : TypeAlias = np.uint8
-_PHASE_IDX_DTYPE_NB     : TypeAlias = numba.uint8
+_STATE_TYPE: TypeAlias = np.int64
+_STATE_TYPE_NB: TypeAlias = numba.int64
+_REPR_MAP_DTYPE: TypeAlias = np.uint32
+_REPR_MAP_DTYPE_NB: TypeAlias = numba.uint32
+_PHASE_IDX_DTYPE: TypeAlias = np.uint8
+_PHASE_IDX_DTYPE_NB: TypeAlias = numba.uint8
 
-_INVALID_REPR_IDX_NB    : TypeAlias = numba.uint32(0xFFFFFFFF)  # Max uint32 for numba  (sufficient for up to ~4 billion representatives)
-_INVALID_PHASE_IDX_NB   : TypeAlias = numba.uint8(0xFF)         # Max uint8 for numba   (sufficient for up to 255 distinct phases)
+_INVALID_REPR_IDX_NB: TypeAlias = numba.uint32(
+    0xFFFFFFFF
+)  # Max uint32 for numba  (sufficient for up to ~4 billion representatives)
+_INVALID_PHASE_IDX_NB: TypeAlias = numba.uint8(
+    0xFF
+)  # Max uint8 for numba   (sufficient for up to 255 distinct phases)
 
-_INT_HUGE               = np.int64(0x7FFFFFFFFFFFFFFF)          # THE HUGEST!!!
-_INVALID_REPR_IDX       = np.iinfo(_REPR_MAP_DTYPE).max         # ~4 billion, marks state not in sector
-_INVALID_PHASE_IDX      = np.iinfo(_PHASE_IDX_DTYPE).max        # 255, marks invalid phase index
-_SYM_NORM_THRESHOLD     = 1e-7
-_NUMBA_OVERHEAD_SIZE    = 2**14                                 # remove threads for small arrays to check
+_INT_HUGE = np.int64(0x7FFFFFFFFFFFFFFF)  # THE HUGEST!!!
+_INVALID_REPR_IDX = np.iinfo(_REPR_MAP_DTYPE).max  # ~4 billion, marks state not in sector
+_INVALID_PHASE_IDX = np.iinfo(_PHASE_IDX_DTYPE).max  # 255, marks invalid phase index
+_SYM_NORM_THRESHOLD = 1e-7
+_NUMBA_OVERHEAD_SIZE = 2**14  # remove threads for small arrays to check
 
 # -----------------------
 #! APPLY GROUP ELEMENT FUNCTION
@@ -200,6 +204,7 @@ def fill_representatives(repr_map: np.ndarray, out: np.ndarray):
 
 
 # -----------------------
+
 
 @numba.njit(parallel=True, fastmath=True)
 def scan_chunk_find_representatives(

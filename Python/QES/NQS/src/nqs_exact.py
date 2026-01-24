@@ -160,9 +160,9 @@ def set_exact_impl(nqs_instance: "NQS", info: Optional[dict]):
             )
     elif isinstance(info, np.ndarray):
         nqs_instance._exact_info = {
-            "exact_predictions" : info,
-            "exact_method"      : "provided_array",
-            "exact_energy"      : float(info) if np.ndim(info) == 0 else info[nqs_instance._nthstate],
+            "exact_predictions": info,
+            "exact_method": "provided_array",
+            "exact_energy": float(info) if np.ndim(info) == 0 else info[nqs_instance._nthstate],
         }
         logfun(
             f"Exact information set from array: {nqs_instance._exact_info['exact_energy']}", lvl=1
