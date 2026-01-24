@@ -1422,14 +1422,6 @@ class NQS(MonteCarloSolver):
         params = self._net.get_params() if params is None else params
 
         if self._isjax:
-            if not self._analytic:
-                grads, shapes, sizes, is_cpx = nqs_kernels.log_derivative_jax(
-                    self._ansatz_func, params, states, self._flat_grad_func, batch_size
-                )
-            else:
-                grads, shapes, sizes, is_cpx = nqs_kernels.log_derivative_jax(
-                    self._grad_func, params, states, self._flat_grad_func, batch_size
-                )
             accum_real_dtype = (
                 self._precision_policy.accum_real_dtype
                 if hasattr(self, "_precision_policy")
@@ -1440,7 +1432,17 @@ class NQS(MonteCarloSolver):
                 if hasattr(self, "_precision_policy")
                 else None
             )
-            grads = cast_for_precision(grads, accum_real_dtype, accum_complex_dtype, self._isjax)
+
+            if not self._analytic:
+                grads, shapes, sizes, is_cpx = nqs_kernels.log_derivative_jax(
+                    self._ansatz_func, params, states, self._flat_grad_func, batch_size,
+                    accum_real_dtype=accum_real_dtype, accum_complex_dtype=accum_complex_dtype
+                )
+            else:
+                grads, shapes, sizes, is_cpx = nqs_kernels.log_derivative_jax(
+                    self._grad_func, params, states, self._flat_grad_func, batch_size,
+                    accum_real_dtype=accum_real_dtype, accum_complex_dtype=accum_complex_dtype
+                )
             return grads, shapes, sizes, is_cpx
 
         if not self._analytic:
