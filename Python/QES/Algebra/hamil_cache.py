@@ -6,7 +6,6 @@ allowing reuse of operators across different instances if the configuration matc
 """
 
 from typing import Dict, Tuple, Any, Optional
-import weakref
 
 # Global cache storage
 # Key: (system_size, symmetry_sector_info, dtype, backend_name, is_sparse, operator_signature)

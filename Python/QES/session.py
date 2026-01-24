@@ -23,8 +23,7 @@ Usage
 """
 
 import os
-import contextlib
-from typing import Optional, Union, Literal
+from typing import Optional, Literal
 
 from .qes_globals import get_backend_manager, get_logger
 
