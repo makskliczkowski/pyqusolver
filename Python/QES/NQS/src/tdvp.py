@@ -1218,10 +1218,21 @@ class TDVP:
         """
         x0 = self._x0
 
-        if use_old_result:
-            x0 = self._solution
+        if use_old_result and self._solution is not None:
+            # Extract vector from SolverResult if needed
+            if hasattr(self._solution, 'x'):
+                x0 = self._solution.x
+            else:
+                x0 = self._solution
 
-        if x0 is None or x0.shape != vec_b.shape:
+            # Unscale if needed (because self._solution stores the final scaled result,
+            # but we want to solve the unscaled system to allow real-arithmetic optimization)
+            if self.rhs_prefactor != 1.0 and x0 is not None:
+                # Avoid division by zero
+                if abs(self.rhs_prefactor) > 1e-12:
+                    x0 = x0 / self.rhs_prefactor
+
+        if x0 is None or getattr(x0, 'shape', None) != vec_b.shape:
             x0 = self.backend.zeros_like(vec_b)
         return x0
 
@@ -1325,24 +1336,33 @@ class TDVP:
         ) as x0:
             pass
 
-        #! prepare the rhs
-        if self.rhs_prefactor != 1.0:
-            vec_b = vec_b * self.rhs_prefactor
-
         #! if not using SR, return the negative force vector as the solution
         if not self.use_sr:
+            # Apply prefactor directly for non-SR
+            final_b = vec_b * self.rhs_prefactor if self.rhs_prefactor != 1.0 else vec_b
             return solvers.SolverResult(
-                x=-vec_b,
+                x=-final_b,
                 iterations=0,
                 residual_norm=0.0,
                 converged=True,
             )
 
         #! solve the linear system
+        # We solve the system with unscaled RHS to potentially allow real-arithmetic solvers
+        # (e.g. for real-time evolution of real-parameter ansatz)
         with self._time(
             "solve", self._solve_choice, vec_b=vec_b, mat_O=mat_O, mat_a=s, solve_func=solve_func
         ) as solve:
             solution = solve
+
+        #! apply rhs_prefactor to the solution
+        if solution is not None and self.rhs_prefactor != 1.0:
+            solution = solvers.SolverResult(
+                x=solution.x * self.rhs_prefactor,
+                iterations=solution.iterations,
+                residual_norm=solution.residual_norm,
+                converged=solution.converged
+            )
 
         if self.use_minsr and solution is not None:
             new_solution = solvers.SolverResult(

@@ -123,15 +123,29 @@ def _apply_fun_jax(
     Returns:
         The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
     """
+    # Wrap the function to ensure outputs are shaped (K, ...) to prevent broadcasting errors
+    def _func_reshaped(s, *args):
+        out = func(s, *args)
+        # If output is just the value (no new states), it might be a single array/scalar
+        # But apply_callable_jax expects (new_states, new_vals)
+        if isinstance(out, tuple) and len(out) == 2:
+            new_states, new_vals = out
+            if not hasattr(new_vals, 'ndim') or new_vals.ndim == 0:
+                new_vals = jnp.atleast_1d(new_vals)
+            if hasattr(new_states, 'ndim') and new_states.ndim == 1:
+                new_states = new_states.reshape((1, -1))
+            return new_states, new_vals
+        return out
+
     if batch_size is None or batch_size == 1:
         funct_in = net_utils.jaxpy.apply_callable_jax
         return funct_in(
-            func, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args
+            _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args
         )
     else:
         funct_in = net_utils.jaxpy.apply_callable_batched_jax
         return funct_in(
-            func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args
+            _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args
         )
 
 
@@ -201,13 +215,15 @@ def _apply_fun_np(
 # ----------------------------------------------------------------------
 
 
-@partial(jax.jit, static_argnames=["net_apply", "single_sample_flat_grad_fun", "batch_size"])
+@partial(jax.jit, static_argnames=["net_apply", "single_sample_flat_grad_fun", "batch_size", "accum_real_dtype", "accum_complex_dtype"])
 def log_derivative_jax(
     net_apply                   : Callable,     # The network's apply function f(p, x)
     params                      : Any,          # Network parameters p
     states                      : jnp.ndarray,  # Input states s_i, shape (num_samples, ...)
     single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],  # JAX-traceable function computing the flattened gradient for one sample.
     batch_size: int = 1,
+    accum_real_dtype: Any = None,
+    accum_complex_dtype: Any = None,
 ) -> Tuple[Array, List, List, List]:  # Batch size
     r"""
     Compute the batch of flattened gradients using JAX (JIT compiled).
@@ -230,6 +246,10 @@ def log_derivative_jax(
         Static argument for JIT.
     batch_size : int
         Batch size. Static argument for JIT.
+    accum_real_dtype : Any
+        Accumulation dtype for real values. Static argument for JIT.
+    accum_complex_dtype : Any
+        Accumulation dtype for complex values. Static argument for JIT.
 
     Returns
     -------
@@ -240,6 +260,9 @@ def log_derivative_jax(
     gradients_batch, shapes, sizes, is_cpx = net_utils.jaxpy.compute_gradients_batched(
         net_apply, params, states, single_sample_flat_grad_fun, batch_size
     )
+
+    gradients_batch = cast_for_precision(gradients_batch, accum_real_dtype, accum_complex_dtype, True)
+
     return gradients_batch, shapes, sizes, is_cpx
 
 
