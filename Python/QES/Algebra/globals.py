@@ -31,6 +31,9 @@ except ImportError as e:
         "Failed to import general_python modules. Ensure QES package is correctly installed."
     ) from e
 
+if TYPE_CHECKING:
+    from QES.Algebra.Operator.operator import GlobalSymmetries
+
 
 @numba.njit(cache=True, fastmath=True)
 def _popcount64(x: np.int64) -> np.int64:
