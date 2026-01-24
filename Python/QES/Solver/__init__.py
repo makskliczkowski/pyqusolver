@@ -2,20 +2,34 @@
 QES Solver Module
 =================
 
-This module contains various quantum eigenvalue solvers and computational methods.
+Simulation engines and optimization backends.
 
-Modules:
---------
-- solver        : Base solver classes and implementations
-- MonteCarlo    : Monte Carlo methods for quantum systems
+This module provides the abstract interfaces and concrete implementations for
+simulating quantum systems. It primarily houses the Monte Carlo engines used
+by NQS.
 
-Classes:
---------
-- Solver        : Abstract base class for quantum eigenvalue solvers
+Entry Points
+------------
+- :class:`MonteCarloSolver`: Base class for MC-based simulations.
+- :class:`QES.Solver.MonteCarlo.sampler.Sampler`: Abstract interface for sampling.
+- :class:`QES.Solver.MonteCarlo.vmc.VMCSampler`: Metropolis-Hastings sampler.
 
-File    : QES/Solver/__init__.py
-Author  : Maksymilian Kliczkowski
-Email   : maksymilian.kliczkowski@pwr.edu.pl
+Flow
+----
+::
+
+    Sampler (MCMC)
+        |
+        v
+    MonteCarloSolver (Optimization Loop)
+        |
+        v
+    Physics Results
+
+Submodules
+----------
+- ``MonteCarlo``: Samplers and VMC logic.
+- ``solver``: Abstract base classes.
 """
 
 from .solver import Solver

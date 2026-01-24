@@ -1178,16 +1178,32 @@ class Hamiltonian(BasisAwareOperator):
 
     def loc_energy_int(self, k_map: int, i: int):
         """
-        Calculates the local energy.  MUST return NumPy arrays.
+        Calculates the local energy (off-diagonal terms) for a state.
 
-        Parameters:
-            k_map (int) : The mapping of the k'th element.
-            i (int)     : The i'th site.
+        This low-level function determines how the Hamiltonian acts on a single basis
+        state (represented by an integer index `k_map`). It returns the indices
+        of the connected states and the corresponding matrix elements.
 
-        Returns:
-            Tuple[np.ndarray, np.ndarray]   :  (row_indices, values)
-                - row_indices               :  The row indices after the operator acts.
-                - values                    : The corresponding matrix element values.
+        Parameters
+        ----------
+        k_map : int
+            The integer index representing the basis state (column index).
+        i : int
+            The site index (argument used for compatibility, typically unused for
+            global Hamiltonian action but relevant for local updates).
+
+        Returns
+        -------
+        row_indices : np.ndarray
+            Array of integers (int64) representing the indices of the connected basis states.
+        values : np.ndarray
+            Array of matrix elements (complex128 or float64) corresponding to the transitions.
+            H_{row, k_map} = values
+
+        Notes
+        -----
+        This function must return NumPy arrays regardless of the active backend, as it is
+        primarily used for constructing sparse matrices on the CPU.
         """
         if self._loc_energy_int_fun is None:
             self._set_local_energy_functions()
@@ -1667,7 +1683,12 @@ class Hamiltonian(BasisAwareOperator):
         # Perform diagonalization
         try:
             # Create matvec closure with hilbert space for thread buffer pre-allocation
-            _matvec_with_hilbert = self.matvec_fun
+            try:
+                _matvec_with_hilbert = self.matvec_fun
+            except (AttributeError, ValueError):
+                # Fallback if matvec_fun cannot be created (e.g. QuadraticHamiltonian without operator function)
+                _matvec_with_hilbert = None
+
             result = self._diag_engine.diagonalize(
                 A=matrix_to_diag,
                 matvec=_matvec_with_hilbert,

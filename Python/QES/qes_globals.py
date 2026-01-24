@@ -45,7 +45,12 @@ top-level `QES` package remains lightweight. The first call to
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, List, Union
+
+try:
+    from numpy.random import Generator
+except ImportError:
+    Generator = Any
 
 # Thread-local storage for singletons
 _LOCK = threading.Lock()
@@ -59,7 +64,7 @@ _BACKEND_MGR: Any = None
 # ----------------------------------------------------------------
 
 
-def get_logger(**kwargs):
+def get_logger(**kwargs) -> Any:
     """
     Return the process-global logger instance.
 
@@ -68,6 +73,11 @@ def get_logger(**kwargs):
     **kwargs : dict
         Optional keyword arguments forwarded to `get_global_logger` the first
         time the logger is created.
+
+    Returns
+    -------
+    QES.general_python.common.flog.Logger
+        The global logger instance.
     """
     global _LOGGER
     if _LOGGER is not None:
@@ -91,6 +101,11 @@ def get_backend_manager() -> Any:
 
     The first call imports `general_python.algebra.utils` which performs its
     guarded initialization. Subsequent calls are cheap.
+
+    Returns
+    -------
+    QES.general_python.algebra.utils.BackendManager
+        The global backend manager handling NumPy/JAX dispatch and RNGs.
     """
     global _BACKEND_MGR
     if _BACKEND_MGR is not None:
@@ -108,16 +123,35 @@ def get_backend_manager() -> Any:
 # ----------------------------------------------------------------
 
 
-def get_numpy_rng():
-    """Return the NumPy Generator instance from the backend manager."""
+def get_numpy_rng() -> Generator:
+    """
+    Return the NumPy Generator instance from the backend manager.
+
+    This generator should be used for all NumPy-based random number generation
+    to ensure reproducibility when reseeding via the backend manager.
+
+    Returns
+    -------
+    numpy.random.Generator
+        The global NumPy random generator.
+    """
     mgr = get_backend_manager()
     return mgr.default_rng
 
 
-def reseed_all(seed: int):
-    """Reseed backend manager (NumPy / JAX) and python's random state.
+def reseed_all(seed: int) -> Any:
+    """
+    Reseed backend manager (NumPy / JAX) and python's random state.
 
-    Returns the RNG manager object from `backend_mgr.reseed`.
+    Parameters
+    ----------
+    seed : int
+        The integer seed to set.
+
+    Returns
+    -------
+    QES.general_python.algebra.utils.BackendManager
+        The backend manager object, for chaining.
     """
     mgr = get_backend_manager()
     return mgr.reseed(seed)
@@ -126,14 +160,33 @@ def reseed_all(seed: int):
 # ----------------------------------------------------------------
 
 
-def next_jax_key():
-    """Get a fresh JAX subkey from the backend manager (if JAX active)."""
+def next_jax_key() -> Any:
+    """
+    Get a fresh JAX subkey from the backend manager (if JAX active).
+
+    Returns
+    -------
+    jax.random.PRNGKey or None
+        A new JAX key if JAX is the active backend, otherwise None.
+    """
     mgr = get_backend_manager()
     return mgr.next_key()
 
 
-def split_jax_keys(n: int):
-    """Split the current JAX key into ``n`` subkeys (if JAX active)."""
+def split_jax_keys(n: int) -> Union[Any, List[None]]:
+    """
+    Split the current JAX key into ``n`` subkeys (if JAX active).
+
+    Parameters
+    ----------
+    n : int
+        Number of keys to generate.
+
+    Returns
+    -------
+    jax.random.PRNGKeyArray or List[None]
+        An array of n keys if JAX is active, otherwise a list of Nones.
+    """
     mgr = get_backend_manager()
     return mgr.split_keys(n)
 

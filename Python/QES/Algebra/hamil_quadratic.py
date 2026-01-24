@@ -1525,9 +1525,8 @@ class QuadraticHamiltonian(Hamiltonian):
 
             # Ensure the quadratic matrix is assembled before diagonalization
             try:
-                if (
-                    not self._hamil_sp or (not self._particle_conserving and not self._delta_sp)
-                ) and not force:
+                # Check if we need to build/assemble (e.g. if _hamil is missing)
+                if self._hamil is None or force:
                     self._hamiltonian_quadratic()
             except Exception:
                 # best-effort; if build fails, let base class handle errors

@@ -227,42 +227,41 @@ class Operator(GeneralMatrix):
         """
         Initialize the Operator object.
 
-        Args:
-            op_fun (OperatorFunction, optional):
-                Pre-built operator function object.
-            fun_int (callable, optional):
-                The function that defines the operator - it shall take a state (or a list of states)
-                and return the transformed state (or a list of states). States can be represented as
-                integers or numpy arrays or JAX arrays. This enables the user to define any operator
-                that can be applied to the state. The function shall return a list of pairs (state, value).
-            fun_np (callable, optional):
-                The function that defines the operator for NumPy arrays.
-            fun_jnp (callable, optional):
-                The function that defines the operator for JAX arrays.
-            eigval (float):
-                The eigenvalue of the operator (default is 1.0).
-            lattice (Lattice, optional):
-                The lattice object.
-            ns (int, optional):
-                The number of sites in the system.
-            typek (SymmetryGenerators, optional):
-                The type/symmetry of the operator.
-            name (str):
-                The name of the operator.
-            modifies (bool):
-                Flag for the operator that modifies the state.
-            quadratic (bool):
-                Flag for the quadratic operator.
-            backend (str):
-                The backend for the operator (default is 'default').
-            is_sparse (bool):
-                Whether to use sparse matrix representation (default is True).
-            dtype (dtype, optional):
-                Data type for matrix elements.
-            logger (Logger, optional):
-                Logger instance.
-            seed (int, optional):
-                Random seed for reproducibility.
+        Parameters
+        ----------
+        op_fun : OperatorFunction, optional
+            Pre-built operator function object.
+        fun_int : callable, optional
+            The function defining the operator on integer states.
+            Signature: `f(state, *args) -> (new_state, value)`.
+        fun_np : callable, optional
+            The function defining the operator on NumPy arrays.
+        fun_jnp : callable, optional
+            The function defining the operator on JAX arrays.
+        eigval : float, default=1.0
+            Scalar multiplier for the operator.
+        lattice : Lattice, optional
+            The lattice object defining the geometry.
+        ns : int, optional
+            The number of sites. Required if lattice is not provided.
+        typek : SymmetryGenerators, optional
+            The symmetry type of the operator.
+        name : str, default="Operator"
+            Name of the operator.
+        modifies : bool, default=True
+            Whether the operator modifies the basis states (e.g. flip spin).
+        quadratic : bool, default=False
+            Whether the operator is quadratic (single-particle).
+        backend : str, default="default"
+            Computation backend ('numpy', 'jax').
+        is_sparse : bool, default=True
+            Whether to use sparse matrix representation.
+        dtype : dtype, optional
+            Data type for matrix elements.
+        logger : Logger, optional
+            Logger instance.
+        seed : int, optional
+            Random seed for reproducibility.
         """
 
         # handle the system physical size dimension and the lattice
@@ -1025,13 +1024,26 @@ class Operator(GeneralMatrix):
 
     def apply(self, states: list | Array, *args):
         """
-        Apply the operator to the state.
+        Apply the operator to a state or batch of states.
 
-        Args:
-            states            : list of states to which the operator is applied.
-            args              : Additional arguments for the operator - inform how to act on a state.
-                                If there no arguments, the operator acts on the state as a whole - global operator.
-                                If there are arguments, the operator acts on the state locally - local operator (e.g., site-dependent).
+        Parameters
+        ----------
+        states : list or array-like
+            The state(s) to which the operator is applied. Can be:
+            - Integer (basis state index)
+            - NumPy/JAX array (dense vector or batch of vectors)
+        *args : int
+            Additional arguments specifying the site(s) on which the operator acts.
+            - Global operator: No args.
+            - Local operator: `site_index`.
+            - Correlation operator: `site_i, site_j`.
+
+        Returns
+        -------
+        tuple
+            (new_states, coefficients)
+            - new_states: The resulting states after operator application.
+            - coefficients: The matrix elements (amplitudes) for the transitions.
         """
         if self._type_acting.is_global():
             return self._apply_global(states)
@@ -1138,22 +1150,27 @@ class Operator(GeneralMatrix):
         """
         Generates the matrix representation of the operator.
 
-        Parameters:
-            dim (int, optional):
-                The dimension of the matrix. Required if hilbert_1 and hilbert_2 are not provided.
-            matrix_type (str, optional):
-                The type of matrix to generate ('sparse' or 'dense'). Default is 'sparse'.
-            dtype (data-type, optional):
-                The desired data-type for the matrix elements. If None, defaults to the backend's complex128.
-            hilbert_1 (HilbertSpace, optional):
-                The first Hilbert space for matrix construction.
-            hilbert_2 (HilbertSpace, optional):
-                The second Hilbert space for matrix construction.
-            use_numpy (bool, optional):
-                Whether to use NumPy for matrix construction when JAX is available. Default is True.
-            **kwargs:
-                Additional keyword arguments for matrix construction.
-        :return: The matrix representation of the operator.
+        Parameters
+        ----------
+        dim : int, optional
+            The dimension of the matrix. Required if Hilbert spaces are not provided.
+        matrix_type : str, default='sparse'
+            The type of matrix to generate ('sparse' or 'dense').
+        dtype : dtype, optional
+            The data type for matrix elements. Defaults to complex128.
+        hilbert_1 : HilbertSpace, optional
+            The source Hilbert space.
+        hilbert_2 : HilbertSpace, optional
+            The target Hilbert space (if different).
+        use_numpy : bool, default=True
+            Whether to force NumPy backend for matrix construction.
+        **kwargs : dict
+            Additional arguments passed to the matrix builder.
+
+        Returns
+        -------
+        array-like
+            The matrix representation (scipy.sparse.csr_matrix or numpy/jax array).
         """
 
         # check the dimension of the matrix

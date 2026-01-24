@@ -1,198 +1,130 @@
+# Quantum EigenSolver (QES)
 
-# Quantum Eigensolver
+**QES** is a high-performance, modular Python framework for simulating quantum many-body systems. It unifies **Exact Diagonalization (ED)** and **Variational Monte Carlo (VMC)** with **Neural Quantum States (NQS)** into a single consistent API.
 
-This project provides a comprehensive framework for simulating quantum systems using various models and functionalities. The project leverages advanced mathematical libraries and parallel computing techniques to ensure efficient and accurate simulations.
-
-## Project Overview
-
-Quantum Eigensolver (QES) is a modular Python framework for quantum many-body simulation, variational optimization, and exact diagonalization. It is designed for extensibility, performance, and reproducibility in research and development.
-
-### Main Capabilities
-
-- **Exact Diagonalization (ED):** Solve quantum Hamiltonians on lattice or Hilbert space graphs, including spin systems and random models. Supports quadratic Hamiltonians and multithreaded correlation matrix calculations.
-- **Variational Monte Carlo (VMC):** Optimize neural network quantum states (NQS) using Monte Carlo sampling. Supports ground and excited state search with flexible ansatzes (RBM, RBM-PP, custom networks).
-- **Symmetry Handling:** Implements point and global symmetries for efficient state space reduction and analysis.
-- **TDVP Optimization:** Time-Dependent Variational Principle (TDVP) for time evolution and advanced optimization of variational states.
-- **Flexible Backends:** Choose between NumPy and JAX for computation, enabling CPU and GPU acceleration.
-- **Logging and Reproducibility:** Centralized global state management for logging, random number generation, and backend configuration.
-
-### Architecture
-
-- `QES/Algebra/` — Operator algebra, Hilbert space, and mathematical utilities.
-- `QES/NQS/` — Neural Quantum State solvers, training routines, TDVP, and supporting modules.
-- `QES/Solver/` — Monte Carlo samplers and optimization engines.
-- `QES/general_python/` — Common utilities, logging, configuration, and backend management.
-- `examples/` — Example scripts for typical workflows and model setups.
-- `test/` — Comprehensive test suite for integration and correctness.
-
-### Extensibility
-
-QES is designed to be modular. You can:
-
-- Add new ansatzes or neural network architectures.
-- Implement custom Hamiltonians or physical models.
-- Extend samplers, optimizers, or training routines.
-- Integrate with external libraries via the backend manager.
-
-### Typical Workflow
-
-1. **Set up environment variables and Python paths** (see below).
-2. **Define your model, network, and sampler.**
-3. **Create a solver instance (ED, NQS, etc.).**
-4. **Run optimization or simulation.**
-5. **Analyze results and export data.**
-
-For more details, see the documentation, example scripts, and the [project wiki](https://github.com/makskliczkowski/QuantumEigenSolver/wiki).
-
-It is a general solver for physical Hamiltonians. The work is in progress. Currently, the solver includes:
-
-- ED solutions to multiple Hamiltonians on the Lattice or Hilbert space graphs. This includes standard spin systems and random Hamiltonians. The software also enables solutions to quadratic Hamiltonians with multithreaded correlation matrices calculation.
-- Implementation of point and global symmetries for the systems.
-- the variational Quantum Monte Carlo solver for ansatz ground (and excited) states with RBM and RBM-PP ansatzes.
-
-For detailed documentation and usage instructions, please refer to the [project wiki](https://github.com/makskliczkowski/QuantumEigenSolver/wiki).
-
-## Globals and Singletons
-
-### Centralized Global State: `QES.qes_globals`
-
-To avoid double initialization and ensure all modules share the same logger, backend manager, and random number generator, QES now provides a single authoritative module for global state: `QES.qes_globals`.
-
-**Key Singletons Provided:**
-
-- Global logger: `get_logger()`
-- Backend manager: `get_backend_manager()`
-- NumPy RNG: `get_numpy_rng()`
-- JAX key helpers: `next_jax_key()`, `split_jax_keys()`
-
-**Usage Example:**
-
-```python
-from QES.qes_globals import get_logger, get_backend_manager, get_numpy_rng, next_jax_key
-
-log = get_logger()
-backend_mgr = get_backend_manager()
-xp = backend_mgr.np
-rng = get_numpy_rng()
-jax_key = next_jax_key()
-
-# Example of using a seeded scope
-with backend_mgr.seed_scope(123):
-... # deterministic code ...
-```
-
-**Migration Notes:**
-
-- Do **not** create new loggers, backend managers, or RNGs in your own modules. Always import from `QES.qes_globals`.
-- This pattern prevents double initialization, race conditions, and inconsistent state across the codebase.
-
-See `Python/QES/qes_globals.py` for full documentation and rationale.
-
-Copyright 2024-2026
-Maksymilian Kliczkowski
-Wroclaw University of Science and Technology
-maksymilian.kliczkowski.at.pwr.edu.pl
+Designed for computational physicists and quantum researchers, QES leverages **JAX** for GPU-accelerated neural networks and automatic differentiation, while maintaining a robust **NumPy/SciPy** backend for exact methods and small-scale prototyping.
 
 ---
 
-## Canonical High-Level API (New)
+## Key Concepts
 
-QES now supports a direct Python API for configuration, removing the need to manage environment variables manually (though they are still supported).
+- **Backend Agnostic**: Switch between `numpy` (CPU, exact) and `jax` (GPU/TPU, AD-enabled) with a single configuration flag.
+- **Global State**: Managed via `QES.qes_globals` to ensure consistent logging, random number generation (reproducibility), and backend configuration across modules.
+- **Hybrid Workflow**: Seamlessly transition from solving a 10-site system exactly (to benchmark) to optimizing a variational ansatz on a 100-site system using the same Hamiltonian definitions.
+
+## Installation
+
+Requires Python 3.10+.
+
+### Quick Install
+```bash
+pip install .
+```
+
+### For Developers (Editable)
+```bash
+git clone https://github.com/makskliczkowski/pyqusolver.git
+cd pyqusolver
+pip install -e "Python/[all]"
+```
+
+---
+
+## Quickstart
+
+### 1. Minimal Exact Diagonalization (ED)
+Solve for the ground state of a free fermion chain (Quadratic Hamiltonian).
 
 ```python
 import QES
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
 
-# Run a session with specific configuration
-with QES.run(backend='jax', seed=42, precision='float64'):
-    # Your QES code here...
-    pass
+# Start a session (manages precision and backend)
+with QES.run(backend='numpy'):
 
-# Or configure programmatically
-session = QES.QESSession(backend='numpy', seed=123)
-session.start()
+    # Define Hamiltonian: 10 sites
+    H = QuadraticHamiltonian(ns=10)
+
+    # Add hopping terms: -t * (c_i^dag c_{i+1} + h.c.)
+    for i in range(9):
+        H.add_hopping(i, i+1, -1.0)
+
+    # Diagonalize (O(N^3) for quadratic)
+    H.diagonalize()
+
+    print(f"Ground State Energy: {sum(val for val in H.eig_val if val < 0):.6f}")
 ```
 
-## Environment Setup for QES
-
-To run the QES package correctly, set the following environment variables before running your scripts:
-
-- `QES_PYPATH`: Path to the QES installation directory.  
-Example:
-
-```bash
-export QES_PYPATH=/path/to/QES
-```
-
-- `PY_BACKEND`: Backend for numerical operations (`numpy` or `jax`).  
-Example:
-
-```bash
-export PY_BACKEND=jax
-```
-
-- `PY_GLOBAL_SEED`: (Optional) Global random seed.  
-Example:
-
-```bash
-export PY_GLOBAL_SEED=42
-```
-
-- `PY_NUM_CORES`: (Optional) Number of CPU cores to use.  
-Example:
-
-```bash
-export PY_NUM_CORES=8
-```
-
-- `PY_FLOATING_POINT`: (Optional) Floating point precision (`float32` or `float64`).  
-Example:
-
-```bash
-export PY_FLOATING_POINT=float64
-```
-
-- `PY_JAX_DONT_USE`: (Optional) Set to `1` to disable JAX backend.  
-Example:
-
-```bash
-export PY_JAX_DONT_USE=1
-```
-
-### Python Path Setup
-
-You must ensure the QES modules are discoverable by Python. Add the QES directories to your `sys.path` at the start of your script. If you don't want the installation step, you can manually set up the paths as follows:
+### 2. Minimal Neural Quantum State (VMC)
+Train a Neural Network (RBM) to find the ground state of a Transverse Field Ising Model.
 
 ```python
-import os
-import sys
-from pathlib import Path
+import QES
+from QES.Algebra.Model.Interacting.Spin.transverse_ising import TransverseFieldIsing
+from QES.general_python.lattices.square import SquareLattice
+from QES.NQS import NQS
 
-qes_path = Path(os.environ.get("QES_PYPATH", "/usr/local/QES")).resolve()
-sys.path.insert(0, str(qes_path))
-sys.path.insert(0, str(qes_path / 'QES'))
-sys.path.insert(0, str(qes_path / 'QES' / 'general_python'))
+# Use JAX for GPU acceleration and gradients
+with QES.run(backend='jax', seed=42):
+
+    # 1. Define Model (TFIM) on a 1D chain
+    lat = SquareLattice(dim=1, lx=20, bc='pbc')
+    H = TransverseFieldIsing(lattice=lat, j=1.0, hx=0.5)
+
+    # 2. Initialize Solver (RBM Ansatz + Metropolis Sampler)
+    psi = NQS(
+        logansatz='rbm',
+        model=H,
+        alpha=1,             # Hidden layer density
+        batch_size=1024
+    )
+
+    # 3. Train using Stochastic Reconfiguration (SR)
+    stats = psi.train(n_epochs=100, lr=0.01)
+
+    print(f"Final Variational Energy: {stats.loss_mean[-1]:.6f}")
 ```
 
-### Installation
+---
 
-The installation of QES requires setting up the Python environment with necessary dependencies.
+## Project Structure
 
-- Make sure you have all dependencies installed (see `requirements/requirements.txt`).
-- Install with pip if needed:
+The package is located in `Python/QES`. Key submodules:
+
+- **`QES.Algebra`**: The physics engine. Defines `Hamiltonian`, `HilbertSpace`, and `Operator`. Handles symmetries and matrix construction.
+- **`QES.NQS`**: The variational engine. Implements `NQS` solver, neural networks (RBM, CNN, Transformers), and VMC logic.
+- **`QES.Solver`**: Abstract simulation backends. Includes `MonteCarloSolver` and samplers (`VMCSampler`).
+- **`QES.general_python`**: Shared utilities. Contains the `backend_manager` (JAX/NumPy dispatch), `flog` (logging), and `lattices` (geometry).
+
+## Documentation
+
+Full documentation is available in `Python/docs`. To build it locally:
 
 ```bash
-pip install -r requirements/requirements.txt
+cd Python/docs
+make html
 ```
 
-### Usage Example
+## Reproducibility
 
-To use QES in your Python scripts, ensure the environment variables are set and the paths are configured as shown above. Then you can import and use QES modules as needed:
+QES enforces reproducibility through its `QESSession` and global state manager.
 
 ```python
-import os
-os.environ['PY_BACKEND'] = 'jax'
-os.environ['QES_PYPATH'] = '/path/to/QES'
-
-# Add QES to sys.path as shown above
-# ... import and use QES modules ...
+# Guaranteed reproducible run across backend resets
+with QES.run(seed=123, precision='float64'):
+    ...
 ```
+
+## Performance Notes
+
+- **JAX**: When using `backend='jax'`, the first call to functions (like `train_step`) will trigger JIT compilation, which may take a few seconds. Subsequent calls are highly optimized.
+- **Batching**: For NQS, ensure `batch_size` is large enough to saturate your GPU but small enough to fit in VRAM.
+- **Precision**: Use `precision='float32'` for NQS training (standard deep learning practice) and `precision='float64'` for high-precision ED.
+
+## Citation & License
+
+This project is licensed under CC-BY-4.0.
+
+Author: Maksymilian Kliczkowski
+Email: maksymilian.kliczkowski@pwr.edu.pl
+Copyright 2025
