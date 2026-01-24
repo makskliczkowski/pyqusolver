@@ -178,7 +178,7 @@ def local_energy_jax_wrap(
         coeffs.shape     == (K,)
 
     The returned function is JAX-compatible (pure, JIT-able, vmap-able).
-    
+
     Parameters
     ----------
     ns
@@ -203,7 +203,7 @@ def local_energy_jax_wrap(
     # Normalise dtype; default to complex64 for speed, but honour user choice.
     if not isinstance(dtype, jnp.dtype):
         dtype = jnp.dtype(dtype)
-        
+
     # Always use complex dtype for Hamiltonian energies. Later we can cast to real if needed.
     if dtype not in (jnp.complex64, jnp.complex128):
         dtype = jnp.complex128
@@ -277,12 +277,12 @@ def local_energy_jax_wrap(
     # -------------------------------------------------------------------------
     # Helper to process groups and handle failures (fallback list)
     # -------------------------------------------------------------------------
-    
+
     def process_groups(groups):
         data            = []
         fallback_items  = []
         for (f, arity), items in groups.items():
-            
+
             # Split indices and multipliers
             idxs        = [it[0] for it in items]
             ms          = [it[1] for it in items]
@@ -300,9 +300,9 @@ def local_energy_jax_wrap(
                     raise ValueError("Jagged indices array detected")
 
                 data.append((f, jnp.array(idxs_arr), jnp.array(ms_arr, dtype=dtype)))
-            
+
             except Exception:
-                
+
                 # Add to fallback list if vectorization fails
                 for idx, m in zip(idxs, ms):
                     fallback_items.append((f, idx, m))
@@ -332,7 +332,7 @@ def local_energy_jax_wrap(
     # 2) Non-modifying WITHOUT sites
     nmod_nos_groups                         = group_operators(f_nmod_nos, i_nmod_nos, m_nmod_nos)
     nmod_nos_data, nmod_nos_fallback        = process_groups(nmod_nos_groups)
-    
+
     # -------------------------------------------------------------------------
     # Fallback Wrappers
     # -------------------------------------------------------------------------
@@ -365,14 +365,14 @@ def local_energy_jax_wrap(
 
     fallback_nmod_nos_funcs                 = []
     fallback_nmod_nos_mults                 = []
-    
+
     for f, _idx, m in nmod_nos_fallback:
         fallback_nmod_nos_funcs.append(wrap_nmod_nos(f))
         fallback_nmod_nos_mults.append(m)
 
     # We will use vectorized approach by default, but keep wrappers if we wanted to support mixed mode.
     # We also need to prepare fallback wrappers for modifying operators
-    
+
     fallback_mod_sites_wrappers             = []
     for f, idx, m in mod_sites_fallback:
         op = wrap_mod(f, idx)
@@ -454,7 +454,7 @@ def local_energy_jax_wrap(
             # --------------------------------------------------------------
             # 1b) Diagonal Fallback (Legacy)
             # --------------------------------------------------------------
-            
+
             if len(fallback_nmod_sites_funcs_t) > 0 or len(fallback_nmod_nos_funcs_t) > 0:
                 diag_fallback   = local_energy_jax_nonmod(
                                     state,
@@ -476,7 +476,7 @@ def local_energy_jax_wrap(
             for f, indices, mults in mod_sites_data:
                 # indices shape:    (N_terms, Arity) or (N_terms,) if Arity=1
                 # mults shape:      (N_terms,)
-                
+
                 # Fix closure capture by binding f as default arg
                 def apply_op_mod(s, idxs, op_func=f):
                     # If Arity=1, idxs might be scalar or 0-d array
@@ -518,7 +518,7 @@ def local_energy_jax_wrap(
             # --------------------------------------------------------------
             # 3) Modifying operators WITHOUT sites (Vectorized)
             # --------------------------------------------------------------
-            
+
             for f, _, mults in mod_nos_data:
                 # f(state) ->   (new_states, coeffs)
                 # new_states:   (K_branch, ns)
@@ -539,7 +539,7 @@ def local_energy_jax_wrap(
             # --------------------------------------------------------------
             # 3b) Modifying Fallback
             # --------------------------------------------------------------
-            
+
             for op, m in fallback_mod_sites_wrappers:
                 new_states, coeffs = op(state)
                 states_list.append(new_states)
@@ -553,7 +553,7 @@ def local_energy_jax_wrap(
             # --------------------------------------------------------------
             # 4) Stack everything
             # --------------------------------------------------------------
-            
+
             all_states      = jnp.concatenate(states_list, axis=0)
             all_energies    = jnp.concatenate([e.reshape((-1,)) for e in energies_list], axis=0)
             return all_states, all_energies

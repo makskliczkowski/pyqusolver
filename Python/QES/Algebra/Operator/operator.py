@@ -344,7 +344,7 @@ class Operator(GeneralMatrix):
             self._adapter = JaxAdapter()
         else:
             self._adapter = NumpyAdapter()
-    
+
     def __repr__(self):
         """
         String representation of the operator.
@@ -1379,7 +1379,7 @@ class Operator(GeneralMatrix):
         """
         logger          = hilbert_in._logger if hilbert_in is not None else None
         hilbert_in      = hilbert_in if hilbert_in is not None else hilbert
-        
+
         # No Hilbert space provided
         if hilbert_in is None:
             if isinstance(vecs, list) or (isinstance(vecs, np.ndarray) and vecs.ndim == 1 and "int" in str(vecs.dtype)):
@@ -1389,7 +1389,7 @@ class Operator(GeneralMatrix):
             # For now assuming the user knows what they are doing.
             if logger is not None:
                 logger.warning("Hilbert space not provided. Assuming single-particle picture for matvec.")
-        
+
         return self._adapter.matvec(
             self, vecs, hilbert_in, hilbert_out, *args,
             symmetry_mode=symmetry_mode, multithreaded=multithreaded,

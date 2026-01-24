@@ -2166,11 +2166,11 @@ def sigma_composition_integer(
         If True, only applies the operators without combining coefficients.
     """
     dtype           = np.complex128 if is_complex else np.float64
-    
+
     @numba.njit(nogil=True) # compile separately for real/complex
     def sigma_operator_composition_single_op(state: int, code: int, site1: int, site2: int, ns: int):
         ''' Applies a single operator based on the code. '''
-        
+
         current_s   = state
         current_c   = dtype(1.0)
         is_diagonal = False

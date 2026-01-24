@@ -12,7 +12,7 @@ Description : Interoperability utilities for Qiskit Nature and OpenFermion.
 --------------------------------------------------------------------------
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -211,7 +211,7 @@ class OpenFermionInterop:
     @staticmethod
     def to_openfermion_hamiltonian(
         h_matrix: np.ndarray, v_matrix: Optional[np.ndarray] = None, constant: float = 0.0
-    ) -> "FermionOperator":
+    ) -> "Any":
         """Convert to OpenFermion FermionOperator.
 
         Parameters

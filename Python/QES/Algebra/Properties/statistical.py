@@ -788,10 +788,8 @@ def inverse_participation_ratio(
     """
 
     # reshape 1D->2D so we can always write m-parallel loops
-    single = False
     if states.ndim == 1:
         states = states.reshape(states.shape[0], 1)
-        single = True
 
     n, m = states.shape
     out = np.zeros(m, dtype=np.float64)
@@ -1232,7 +1230,7 @@ class StatisticalModule:
             Microcanonical average
         """
         self._check_diagonalized()
-        return microcanonical_ensemble_single(
+        return microcanonical_average(
             self.energies, observable, e_mean, delta_e=delta_e, stat=stat
         )
 
@@ -1406,32 +1404,32 @@ class StatisticalModule:
         print("""
         StatisticalModule - Statistical properties for Hamiltonians
         ===========================================================
-        
+
         Requires: hamil.diagonalize() first
-        
+
         Methods:
         --------
         # Density of States
         ldos(overlaps)                  - Local density of states
-        dos(nbins=100)                  - Density of states histogram  
-        
+        dos(nbins=100)                  - Density of states histogram
+
         # Ensemble Averages
         diagonal_ensemble(O, c)         - Diagonal ensemble <O>_DE
         microcanonical_average(...)     - Microcanonical average
-        
+
         # Fidelity & Localization
         fidelity_susceptibility(V)      - Fidelity susceptibility χ_F
         ipr(state, q=2)                 - Inverse participation ratio
         participation_entropy(state)    - Participation entropy
-        
+
         # Level Statistics
         level_spacing(unfolded=False)   - Level spacings s_i = E_{i+1} - E_i
         level_spacing_ratio()           - r_i = min/max ratio
         mean_level_spacing_ratio()      - <r> average
-        
+
         # Dynamics
         survival_probability(psi0, t)   - |<ψ(0)|ψ(t)>|²
-        
+
         Example:
         --------
         >>> psi0    = np.zeros(N); psi0[0] = 1.0

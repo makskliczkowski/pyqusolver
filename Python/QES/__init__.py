@@ -148,7 +148,7 @@ if TYPE_CHECKING:
     from . import NQS
     from . import Solver
     from . import general_python
-    
+
     # Core
     from .Algebra.hilbert           import HilbertSpace
     from .Algebra.Operator.operator import Operator

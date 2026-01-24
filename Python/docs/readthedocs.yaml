@@ -16,6 +16,7 @@ python:
       extra_requirements:
         - docs
         - jax
+        - hdf5
 
 sphinx:
   configuration: Python/docs/conf.py

@@ -34,7 +34,7 @@ try:
     from    QES.Algebra.Hilbert.matrix_builder              import build_operator_matrix
     from    QES.Algebra.Hamil.hamil_types                   import *
     from    QES.Algebra.Hamil.hamil_energy                  import local_energy_np_wrap
-    from    QES.Algebra.hamil_config                        import HamiltonianConfig, HAMILTONIAN_REGISTRY, register_hamiltonian    
+    from    QES.Algebra.hamil_config                        import HamiltonianConfig, HAMILTONIAN_REGISTRY, register_hamiltonian
     from    QES.Algebra.Hamil.hamil_diag_engine             import DiagonalizationEngine
     import  QES.Algebra.Hamil.hamil_jit_methods             as hjm
     from    QES.Algebra.hamil_cache                         import get_matrix_from_cache, store_matrix_in_cache, generate_cache_key
@@ -190,13 +190,13 @@ class Hamiltonian(BasisAwareOperator):
         if isinstance(hilbert_space, HilbertConfig):
             hilbert_space           = HilbertSpace.from_config(hilbert_space)
         self._use_forward           = use_forward
-        
+
         name = kwargs.pop('name', 'Hamiltonian')
 
         # Initialize BasisAwareOperator base class (which inherits from SpecialOperator -> Operator -> GeneralMatrix)
         # This sets up backend, sparse, dtype, matrix storage, diagonalization infrastructure,
         # the instruction code system, custom operator registry, AND basis tracking/transformation dispatch
-        BasisAwareOperator.__init__(self, 
+        BasisAwareOperator.__init__(self,
                         ns              =   ns,
                         lattice         =   lattice,
                         name            =   name,
@@ -209,7 +209,7 @@ class Hamiltonian(BasisAwareOperator):
                         seed            =   seed,
                         verbose         =   verbose,
                         **kwargs)
-        
+
         # =====================================================================
         #! HAMILTONIAN-SPECIFIC TRANSFORMED REPRESENTATION
         # =====================================================================
@@ -1100,19 +1100,19 @@ class Hamiltonian(BasisAwareOperator):
                         self.setup_instruction_codes()
 
                     # Build the functions
-                    self._set_local_energy_functions()  
+                    self._set_local_energy_functions()
                 except Exception as e:
                     raise RuntimeError(f"Failed to set up operators/local energy functions: {e}")
 
             # Setup instruction codes if not already done (critical for signature)
             if hasattr(self, 'setup_instruction_codes') and not getattr(self, '_lookup_codes', None):
                  self.setup_instruction_codes()
-        
+
         # Check Cache
         if not force and self._is_manybody:
             cache_key     = generate_cache_key(self)
             cached_matrix = get_matrix_from_cache(cache_key)
-            
+
             if cached_matrix is not None:
                 self._log("Hamiltonian matrix found in cache. Using cached version.", lvl=1, color="green")
                 self.hamil      = cached_matrix
@@ -1565,7 +1565,7 @@ class Hamiltonian(BasisAwareOperator):
                         # Only set local energy functions if we have instructions or it's a legacy build
                         if self._instr_codes or not hasattr(self, '_instr_codes'):
                             self._set_local_energy_functions()
-        
+
         # Extract parameters
         if True:
             method = method or self._diag_method

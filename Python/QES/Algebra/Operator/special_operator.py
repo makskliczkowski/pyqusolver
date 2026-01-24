@@ -279,7 +279,7 @@ class SpecialOperator(Operator, ABC):
             dtype (str or np.dtype, optional):
                 The dtype to use for the Hamiltonian.
         """
-        
+
         self._iscpx = False
 
         if dtype is not None:
@@ -304,9 +304,9 @@ class SpecialOperator(Operator, ABC):
                     self._dtype = np.float64
             else:
                 self._dtype = np.float64
-                
+
         if getattr(self, '_iscpx', False):
-            if self._verbose: 
+            if self._verbose:
                 self._log("I am complex!", lvl = 2, color='red')
         else:
             if self._verbose:
@@ -384,7 +384,7 @@ class SpecialOperator(Operator, ABC):
         # Handle system (ns, hilbert_space, lattice) before Operator init
         self._handle_system(ns, hilbert_space, lattice, logger, **kwargs)
         self._handle_dtype(dtype)
-        
+
         # Update ns/lattice for Operator init (they might have been set in _handle_system)
         ns      = self._ns
         lattice = self._lattice
@@ -1637,7 +1637,7 @@ class SpecialOperator(Operator, ABC):
 
         # Resolve instruction code
         op_code     = self._resolve_operator_code(operator, sites)
-        
+
         # Normalize sites for hashing
         s_list      = list(sites) if sites else [0]
         term_key    = (op_code, tuple(s_list))
@@ -1655,22 +1655,22 @@ class SpecialOperator(Operator, ABC):
         self._instr_codes.append(op_code)
         self._instr_coeffs.append(coefficient)
         self._term_index_map[term_key] = idx
-        
+
         # Handle sites
         arity       = len(s_list)
-        
+
         # Extend max arity if needed
         if arity > self._instr_max_arity:
             self._instr_max_arity = arity
-        
+
         # Pad to max arity (for JIT array) - Note: stored list keeps padding
         # But for fusion key we used unpadded sites
         padded_s_list = list(s_list)
         while len(padded_s_list) < self._instr_max_arity:
             padded_s_list.append(-1)
-        
+
         self._instr_sites.append(padded_s_list)
-    
+
     # -------------------------------------------------------------------------
     #! Help and Documentation
     # -------------------------------------------------------------------------
