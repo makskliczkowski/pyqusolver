@@ -32,16 +32,32 @@ class QESSession:
     """
     Manages the configuration and state of a QES session.
 
+    This class handles the initialization of the global backend manager,
+    setting the computation backend (NumPy/JAX), random seeding, and
+    floating point precision.
+
     Parameters
     ----------
     backend : str, optional
-        Computation backend ('numpy', 'jax'). Default is 'numpy'.
+        Computation backend to use. Options are 'numpy' or 'jax'.
+        Default is 'numpy'.
     seed : int, optional
-        Random seed for reproducibility. Default is 42.
-    precision : str, optional
-        Floating point precision ('float32', 'float64'). Default is 'float64'.
+        Global random seed for reproducibility. Default is 42.
+    precision : Literal['float32', 'float64'], optional
+        Floating point precision for computations. Default is 'float64'.
+        Note: This sets the `PY_FLOATING_POINT` environment variable,
+        which influences default dtypes.
     num_threads : int, optional
-        Number of threads for CPU operations. If None, uses all available cores.
+        Number of threads for CPU operations (OMP/MKL/BLAS).
+        If None, uses the system default.
+        Note: Setting this may not affect libraries that are already initialized.
+
+    Examples
+    --------
+    >>> session = QESSession(backend='jax', seed=123)
+    >>> session.start()
+    >>> # ... run code ...
+    >>> session.stop()
     """
 
     def __init__(self,
@@ -57,9 +73,17 @@ class QESSession:
         self._log = get_logger()
         self._previous_config = {}
 
-    def start(self):
+    def start(self) -> 'QESSession':
         """
-        Apply the session configuration.
+        Apply the session configuration to the global state.
+
+        This sets the environment variables, activates the requested backend,
+        and reseeds the random number generators.
+
+        Returns
+        -------
+        QESSession
+            The started session instance.
         """
         self._log.info(f"Starting QESSession(backend={self._backend_name}, seed={self._seed}, precision={self._precision})")
 
@@ -100,8 +124,10 @@ class QESSession:
 
     def stop(self):
         """
-        Restore previous state (if applicable) or cleanup.
-        Currently primarily serves as a marker for session end.
+        End the session.
+
+        Currently, this primarily logs the session end. Full state restoration
+        is not yet implemented.
         """
         self._log.info("Stopping QESSession")
         # Implementation of full restore is tricky with global singletons.
@@ -117,24 +143,34 @@ class QESSession:
 def run(backend: str = 'numpy',
         seed: int = 42,
         precision: Literal['float32', 'float64'] = 'float64',
-        num_threads: Optional[int] = None):
+        num_threads: Optional[int] = None) -> QESSession:
     """
     Context manager to run a block of code with a specific QES configuration.
 
+    This is the recommended entry point for configuring a QES workflow. It ensures
+    parameters are set before the code block runs.
+
     Parameters
     ----------
-    backend : str
-        'numpy' or 'jax'
-    seed : int
-        Random seed
-    precision : str
-        'float32' or 'float64'
+    backend : str, optional
+        Computation backend ('numpy', 'jax'). Default 'numpy'.
+    seed : int, optional
+        Random seed for reproducibility. Default 42.
+    precision : {'float32', 'float64'}, optional
+        Floating point precision. Default 'float64'.
     num_threads : int, optional
-        Number of threads
+        Number of threads for CPU operations.
 
     Returns
     -------
     QESSession
         The active session object.
+
+    Examples
+    --------
+    >>> import QES
+    >>> with QES.run(backend='jax', seed=123):
+    ...     # Code runs with JAX backend and seeded RNG
+    ...     pass
     """
     return QESSession(backend=backend, seed=seed, precision=precision, num_threads=num_threads)

@@ -1,5 +1,7 @@
 """
-Monte Carlo Solver base class.
+Monte Carlo Solver Base Class
+=============================
+
 This module defines the abstract base class for Monte Carlo solvers, providing a common interface
 and shared functionality for various Monte Carlo simulation methods. It includes methods for
 initialization, state management, training loops, and statistical tracking.
@@ -496,7 +498,14 @@ class MonteCarloSolver(Solver):
     ) -> bool:
         """
         Determine when to stop training.
-        Implementations should define the condition to stop based on the training progress.
+
+        Implementations should define the condition to stop based on the training progress
+        (e.g., maximum epochs reached, target accuracy achieved).
+
+        Returns
+        -------
+        bool
+            True if training should stop, False otherwise.
         """
         pass
 
@@ -513,14 +522,26 @@ class MonteCarloSolver(Solver):
     ) -> "McsReturn":
         """
         Perform a single training step.
-        Parameters:
-        - par           : Monte Carlo training parameters - those can be also included in kwargs (may be None)
-        - verbose       : flag to print the information
-        - rand_start    : flag to start from a random configuration
-        - update        : flag to update the parameters (if the model needs this)
 
-        Returns:
-        - TrainStepVars : object containing the variables used during a training step
+        Parameters
+        ----------
+        i : int
+            Current step/epoch index.
+        verbose : bool
+            Whether to print progress.
+        start_st : Optional[Union[SolverInitState, int]]
+            Initial state configuration.
+        par : Union[McsTrain, dict, None]
+            Training parameters.
+        update : bool
+            Whether to update model parameters.
+        timer : Optional[Timer]
+            Timer object for profiling.
+
+        Returns
+        -------
+        McsReturn
+            Object containing loss statistics and other variables from the step.
         """
         pass
 
@@ -534,18 +555,27 @@ class MonteCarloSolver(Solver):
         **kwargs,
     ) -> "McsReturn":
         """
-        Perform the training.
+        Execute the full training loop.
 
-        Parameters:
-        - par         : Monte Carlo training parameters
-        - verbose     : flag to print the information
-        - rand_start  : flag to start from a random configuration
-        - timer       : timer object
-        - kwargs      : additional parameters
+        Parameters
+        ----------
+        par : McsTrain
+            Monte Carlo training parameters.
+        verbose : bool
+            Whether to print progress.
+        rand_start : bool
+            Whether to start from random configuration.
+        timer : Optional[Timer]
+            Timer object for profiling.
+        **kwargs : dict
+            Additional arguments.
 
-        Returns:
-        - TrainStepVars : object containing the variables used during a training step
+        Returns
+        -------
+        McsReturn
+            Final training statistics.
         """
+        pass
 
     # ----------------------------------------------------------------------
     #! Save and load
@@ -553,13 +583,35 @@ class MonteCarloSolver(Solver):
 
     def save_weights(self, directory: Union[str, Directories] = None, name: str = "weights"):
         """
-        Save the weights of the model.
+        Save the model weights to disk.
+
+        Parameters
+        ----------
+        directory : str or Directories, optional
+            Target directory. If None, uses default solver directory.
+        name : str, default='weights'
+            Filename (without extension).
+
+        Returns
+        -------
+        None
         """
         pass
 
     def load_weights(self, directory: Union[str, Directories] = None, name: str = "weights"):
         """
-        Load the weights of the model.
+        Load model weights from disk.
+
+        Parameters
+        ----------
+        directory : str or Directories, optional
+            Source directory.
+        name : str, default='weights'
+            Filename (without extension).
+
+        Returns
+        -------
+        None
         """
         pass
 

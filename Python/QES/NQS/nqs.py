@@ -913,6 +913,28 @@ class NQS(MonteCarloSolver):
     ):
         """
         Evaluate the neural network (log ansatz) for the given quantum states.
+
+        Computes log(\psi(s)) for a batch of states.
+
+        Parameters
+        ----------
+        states : array_like
+            Batch of quantum states. Shape should be (batch_size, n_visible).
+        batch_size : int, optional
+            Batch size for evaluation. Defaults to self.batch_size.
+        params : Any, optional
+            Network parameters. If None, uses current parameters.
+        return_stats : bool, default=False
+            If True, returns an NQSEvalResult object with stats.
+        return_values : bool, default=False
+            If True, returns raw values (same as default behavior if return_stats=False).
+
+        Returns
+        -------
+        array_like
+            The log-amplitudes log(\psi(s)). Shape (batch_size,).
+            Type depends on backend (jax.numpy.ndarray or numpy.ndarray).
+            If return_stats is True, returns result object instead.
         """
         states = self._nqsbackend.asarray(states, dtype=self._sampler._statetype)
         result = self._eval_engine.ansatz(
@@ -1352,7 +1374,30 @@ class NQS(MonteCarloSolver):
         self, num_samples=None, num_chains=None, reset: bool = False, *, params=None, **kwargs
     ):
         """
-        Sample the NQS using the provided sampler.
+        Sample configurations from the NQS probability distribution |psi(s)|^2.
+
+        Parameters
+        ----------
+        num_samples : int, optional
+            Number of samples per chain. Defaults to sampler configuration.
+        num_chains : int, optional
+            Number of independent Markov chains. Defaults to sampler configuration.
+        reset : bool, default=False
+            If True, resets the sampler state (e.g., random positions) before sampling.
+        params : Any, optional
+            Network parameters to sample from. If None, uses current parameters.
+
+        Returns
+        -------
+        tuple
+            A nested tuple containing sampling results:
+            ((last_configs, last_ansatze), (states, all_ansatze), all_probabilities)
+
+            - **last_configs**: Final states of chains. Shape (num_chains, n_visible).
+            - **last_ansatze**: Log amplitudes of final states. Shape (num_chains,).
+            - **states**: All sampled states. Shape (num_chains * num_samples, n_visible).
+            - **all_ansatze**: Log amplitudes of all states. Shape (num_chains * num_samples,).
+            - **all_probabilities**: Probabilities (or weights) of samples. Shape (num_chains * num_samples,).
         """
         if reset and hasattr(self._sampler, "reset"):
             self._sampler.reset()

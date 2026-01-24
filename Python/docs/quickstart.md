@@ -1,91 +1,80 @@
-# Quick Start
+# Quickstart
 
-Welcome to the fast track! This guide will help you solve your first quantum problem with QES in minutes. We'll focus on a **Quadratic Hamiltonian** (free fermions), which is a great starting point because it's fast and exact.
+This guide covers the two most common workflows: Exact Diagonalization (ED) and Variational Monte Carlo (VMC) with Neural Quantum States (NQS).
 
-## Your First Simulation
+## 1. Exact Diagonalization (ED)
 
-Let's calculate the ground state energy of a simple 1D chain of fermions with hopping and onsite energy.
+Use ED for small systems or non-interacting (quadratic) systems where you need the exact ground state energy and spectrum.
 
-### 1. Import QES
-
-First, bring in the necessary tools.
+Here we solve a **free fermion chain** (Tight-Binding Model) which can be solved efficiently ($O(N^3)$) even for large $N$.
 
 ```python
 import numpy as np
-from QES.Algebra import QuadraticHamiltonian
+import QES
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
+
+# 1. Start a session (handles backend/precision)
+with QES.run(backend='numpy'):
+
+    # 2. Define a Quadratic Hamiltonian
+    # ns=20 sites
+    H = QuadraticHamiltonian(ns=20)
+
+    # Add hopping: H = -t sum (c_i^dag c_{i+1} + h.c.)
+    for i in range(19):
+        H.add_hopping(i, i+1, -1.0)
+
+    # 3. Diagonalize
+    # This computes single-particle eigenvalues
+    H.diagonalize()
+
+    # Ground state energy is sum of negative eigenvalues (filled Fermi sea)
+    E_gs = sum(val for val in H.eig_val if val < 0)
+    print(f"Ground State Energy: {E_gs:.6f}")
 ```
 
-### 2. Define the Hamiltonian
+## 2. Neural Quantum States (VMC)
 
-We'll create a system with 4 sites. We will add:
-*   **Hopping** ($t = -1.0$) between neighboring sites.
-*   **Onsite energy** ($\mu = 0.5$) on the first site.
+Use VMC/NQS for large interacting systems where ED is intractable. This example trains an RBM ground state for the **Transverse Field Ising Model**.
 
 ```python
-# Create a Hamiltonian for 4 sites, conserving particle number
-qh = QuadraticHamiltonian(ns=4, particle_conserving=True)
+import QES
+from QES.Algebra.Model.Interacting.Spin.transverse_ising import TransverseFieldIsing
+from QES.general_python.lattices.square import SquareLattice
+from QES.NQS import NQS
 
-# Add nearest-neighbor hopping (periodic boundary if we closed the loop, but let's do open chain)
-# Site 0 <-> 1, 1 <-> 2, 2 <-> 3
-qh.add_hopping(0, 1, -1.0)
-qh.add_hopping(1, 2, -1.0)
-qh.add_hopping(2, 3, -1.0)
+# 1. Use JAX backend for training (GPU acceleration)
+with QES.run(backend='jax', seed=42):
 
-# Add a potential to site 0
-qh.add_onsite(0, 0.5)
+    # 2. Define Model
+    # 1D Chain with 20 sites, Periodic Boundary Conditions
+    lat = SquareLattice(dim=1, lx=20, bc='pbc')
+    H = TransverseFieldIsing(lattice=lat, j=1.0, hx=0.5)
+
+    # 3. Initialize NQS Solver
+    # ansatz='rbm' creates a Restricted Boltzmann Machine
+    # alpha=1 sets hidden density (nh = alpha * ns)
+    psi = NQS(
+        logansatz='rbm',
+        model=H,
+        alpha=1,
+        sampler='vmc',  # Standard Metropolis
+        batch_size=1024
+    )
+
+    # 4. Train
+    # Uses Stochastic Reconfiguration (SR) by default
+    stats = psi.train(
+        n_epochs=100,
+        lr=0.01,
+        n_batch=1000
+    )
+
+    print(f"Final Energy: {stats.loss_mean[-1]:.6f}")
 ```
-
-### 3. Solve It!
-
-Now, we diagonalize the Hamiltonian to find its single-particle energy levels.
-
-```python
-qh.diagonalize()
-
-print("Single-particle eigenvalues:")
-print(qh.eig_val)
-```
-
-### 4. Calculate Many-Body Energy
-
-With the single-particle spectrum known, we can calculate the energy of a specific many-body state. Let's fill the two lowest energy levels (half-filling).
-
-```python
-# Indices of the occupied orbitals (0 and 1 are the lowest energy states)
-occupied_orbitals = [0, 1]
-
-energy = qh.many_body_energy(occupied_orbitals)
-print(f"Ground state energy (half-filling): {energy}")
-```
-
-## Going Further: Superconductivity
-
-QES easily handles non-particle-conserving systems like superconductors using the Bogoliubov-de Gennes (BdG) formalism.
-
-```python
-# Set particle_conserving=False to enable pairing terms
-bdg_ham = QuadraticHamiltonian(ns=4, particle_conserving=False)
-
-# Add hopping
-for i in range(3):
-    bdg_ham.add_hopping(i, i+1, -1.0)
-
-# Add superconducting pairing (Delta = 0.5)
-for i in range(3):
-    bdg_ham.add_pairing(i, i+1, 0.5)
-
-bdg_ham.diagonalize()
-print("BdG Quasiparticle Spectrum:")
-print(bdg_ham.eig_val)
-```
-
-## What Just Happened?
-
-1.  **Object Creation**: You instantiated a `QuadraticHamiltonian`. This object manages the matrix representation of your physics problem.
-2.  **Model Definition**: You used helper methods like `add_hopping` to describe the physics term-by-term.
-3.  **Diagonalization**: QES solved the eigenvalue problem under the hood using efficient linear algebra routines (NumPy or JAX).
-4.  **Analysis**: You queried the results to get real physical quantities.
 
 ## Next Steps
 
-Now that you've got the basics, check out the :doc:`Examples <examples>` section for more complex scenarios, including interacting spin models and neural network optimizations!
+- **Concepts**: Learn about the [Global State and Backends](concepts.md).
+- **Modules**: Explore [Project Structure](modules.md).
+- **Examples**: Check the `examples/` folder for advanced scripts (symmetries, custom networks, TDVP).

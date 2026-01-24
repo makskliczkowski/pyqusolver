@@ -125,7 +125,26 @@ class SamplerErrors(Exception):
 
 class Sampler(ABC):
     """
-    A base class for the sampler.
+    Abstract base class for Monte Carlo samplers.
+
+    Defines the interface for sampling states from a Hilbert space.
+    Concrete implementations (like `VMCSampler`) must implement the
+    `sample` method.
+
+    Attributes
+    ----------
+    shape : tuple
+        Shape of the system (e.g., lattice dimensions).
+    numsamples : int
+        Number of samples per chain.
+    numchains : int
+        Number of parallel Markov chains.
+    backend : module
+        Computational backend (numpy or jax).
+    rng : np.random.Generator
+        NumPy random number generator.
+    rng_k : jax.random.PRNGKey
+        JAX random key.
     """
 
     _name = "BaseSampler"
@@ -148,56 +167,36 @@ class Sampler(ABC):
         **kwargs,
     ):
         """
-        Abstract base class for samplers.
-        Parameters:
-            shape (Tuple[int, ...]):
-                Shape of the system (e.g., lattice dimensions).
-            upd_fun (Callable):
-                Update function for proposing new states. Signature: `new_state = upd_fun(state, rng/rng_k, **kwargs)`.
-                If None, defaults to single random spin flip.
-            rng (np.random.Generator):
-                NumPy random number generator (used if backend is NumPy or seed is provided).
-            rng_k (Optional[jax.random.PRNGKey]):
-                JAX random key (used if backend is JAX).
-            seed (Optional[int]):
-                Seed for initializing random number generators if `rng` and `rng_k` are not provided.
-            hilbert (Optional[HilbertSpace]):
-                Hilbert space instance (currently not fully utilized in provided code, but kept for structure).
-            numsamples (int):
-                Number of samples to generate per chain *after* thermalization.
-            numchains (int):
-                Number of parallel Markov chains.
-            initstate (Array or str or SolverInitState or int):
-                Initial state configuration specification. Can be an array, an integer state index,
-                a predefined string ('RND', 'F_UP', 'F_DN', 'AF'), or a SolverInitState enum. Defaults to 'RND'.
-            backend (str):
-                Computational backend ('numpy', 'jax', or 'default'). 'default' chooses JAX if available.
-            statetype (Union[np.dtype, jnp.dtype]):
-                Type of the state (e.g., np.float32, jnp.float32). Not used in the provided code.
-            logger (Logger):
-                Logger object for logging information.
-            **kwargs:
-                Additional arguments passed to state generation (e.g., `modes`, `mode_repr`).
+        Initialize the Sampler.
 
-        Raises:
-            SamplerErrors: If backend/initial state is invalid or RNG setup fails.
-
-        Attributes:
-            _shape (Tuple[int, ...])            : Shape of the system.
-            _size (int)                         : Total number of sites/spins.
-            _hilbert (Optional[HilbertSpace])   : Hilbert space instance.
-            _rng, _rng_k                        : Random number generators.
-            _backend                            : Computational backend module (np or jnp).
-            _isjax (bool)                       : True if using JAX backend.
-            _backendstr (str)                   : Name of the backend ('np' or 'jax').
-            _numsamples (int)                   : Number of samples per chain.
-            _numchains (int)                    : Number of chains.
-            _initstate                          : Initial state configuration (single state).
-            _states                             : Current states of all chains (shape: [numchains, *shape]).
-            _tmpstates (np.ndarray)             : Temporary storage for NumPy proposals (if needed).
-            _num_proposed, _num_accepted        : Counters for proposed and accepted moves per chain.
-            _upd_fun                            : The actual update function used.
-            _logger                             : Logger object.
+        Parameters
+        ----------
+        shape : Tuple[int, ...]
+            Shape of the system (e.g., (10,) for a chain).
+        upd_fun : Callable
+            Function to propose new states.
+        rng : np.random.Generator, optional
+            NumPy random number generator.
+        rng_k : jax.random.PRNGKey, optional
+            JAX random key.
+        seed : int, optional
+            Random seed for initialization (if rng/rng_k not provided).
+        hilbert : HilbertSpace, optional
+            Hilbert space object.
+        numsamples : int, default=1
+            Number of samples per chain.
+        numchains : int, default=1
+            Number of chains.
+        initstate : Union[np.ndarray, jnp.ndarray], optional
+            Initial state configuration.
+        backend : str, default='default'
+            Backend to use ('numpy', 'jax').
+        statetype : dtype, optional
+            Data type for states.
+        makediffer : bool, default=False
+            Whether to ensure initial states are different across chains.
+        logger : Logger, optional
+            Logger instance.
         """
         if isinstance(backend, str):
             self._backendstr = backend
@@ -291,7 +290,23 @@ class Sampler(ABC):
 
     @abstractmethod
     def sample(self, parameters=None, num_samples=None, num_chains=None):
-        """Tries to sample the state from the Hilbert space."""
+        """
+        Generate samples from the target distribution.
+
+        Parameters
+        ----------
+        parameters : dict, optional
+            Parameters of the wavefunction/model.
+        num_samples : int, optional
+            Number of samples to generate per chain.
+        num_chains : int, optional
+            Number of chains to run.
+
+        Returns
+        -------
+        tuple
+            Structure usually: (final_states, (all_states, all_log_psi), all_probs)
+        """
         pass
 
     def diagnose(self, *args, **kwargs) -> dict:
@@ -427,6 +442,9 @@ class Sampler(ABC):
     def reset(self):
         """
         Reset the sampler to its initial state.
+
+        Resets proposal/acceptance counters and re-initializes the state
+        of the Markov chains to the configured initial state.
         """
         int_dtype = DEFAULT_JP_INT_TYPE if self._isjax else DEFAULT_NP_INT_TYPE
         self._num_proposed = self._backend.zeros(self._numchains, dtype=int_dtype)
@@ -902,9 +920,9 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
         neighbor_table = get_neighbor_table(lattice, order=bond_order)
         return partial(propose_bond_flip, neighbor_table=neighbor_table)
 
-    ###############################################################
+    ###############################################################################
     #! GLOBAL UPDATES
-    ###############################################################
+    ###############################################################################
 
     elif rule == UpdateRule.PLAQUETTE:
         # is like global but patterns come from lattice

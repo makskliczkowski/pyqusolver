@@ -2,28 +2,40 @@
 QES Algebra Module
 ==================
 
-This package contains modules for algebraic operations in the Quantum EigenSolver project.
+Core components for defining quantum systems.
 
-Modules:
---------
-- hilbert       : High-level Hilbert space class for quantum many-body systems
-- hamil         : Hamiltonian construction and manipulation
-- symmetries    : Symmetry operations and group theory
-- Operator      : General operators in quantum mechanics
-- Model         : Predefined quantum models (interacting and non-interacting)
-- Hilbert       : Hilbert space utilities
-- Properties    : Physical properties calculations
-And more...
+This module provides the building blocks for quantum mechanics simulations:
+Hilbert spaces, Operators, and Hamiltonians. It handles basis management,
+symmetries, and matrix construction.
 
-Classes:
---------
-- HilbertSpace  : Main class for quantum many-body Hilbert spaces
-- Hamiltonian   : Hamiltonian matrix construction and operations
-- Operator      : General quantum mechanical operators
+Entry Points
+------------
+- :class:`Hamiltonian`: The main object for defining physical models.
+- :class:`HilbertSpace`: Defines the state space (spins, fermions) and symmetries.
+- :class:`Operator`: General operators (observables).
 
-File    : QES/Algebra/__init__.py
-Author  : Maksymilian Kliczkowski
-Email   : maksymilian.kliczkowski@pwr.edu.pl
+Flow
+----
+::
+
+    Lattice (geometry)
+        |
+        v
+    HilbertSpace (basis & symmetries)
+        |
+        v
+    Hamiltonian (interactions)
+        |
+        +---> Matrix Building (ED)
+        |
+        +---> NQS Training (VMC)
+
+Submodules
+----------
+- ``hamil``: Hamiltonian implementations.
+- ``hilbert``: Hilbert space logic.
+- ``symmetries``: Group theory and symmetry operations.
+- ``Operator``: Operator definitions.
 """
 
 # A short, user-facing description used by QES.registry
@@ -33,7 +45,7 @@ MODULE_DESCRIPTION = (
 
 # Import main classes with explicit relative imports to avoid ambiguity
 try:
-    from . import symmetries as _sym  # type: ignore
+    from . import Symmetries as _sym  # type: ignore
     from .backends import identity, inner, kron, outer, overlap, trace  # type: ignore
     from .hamil import Hamiltonian  # type: ignore
     from .hamil_config import (  # type: ignore
@@ -56,7 +68,9 @@ try:
         "register_hamiltonian",
         *_sym_exports,
     ]
-except Exception:  # Broad except to keep package import resilient
+except Exception as e:  # Broad except to keep package import resilient
+    import warnings
+    warnings.warn(f"QES.Algebra import failed: {e}")
     __all__ = [
         "HilbertSpace",
         "Hamiltonian",
