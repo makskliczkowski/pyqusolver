@@ -309,13 +309,11 @@ def diagonal_ensemble_jax(soverlaps: Array, diag_mat: Array) -> Array:
     """
     # \sum _n a_nn |<\psi |n>|^2
     return jnp.dot(soverlaps, diag_mat)
-    return jnp.sum(overlaps * diag_mat)
 
 
 def diagonal_ensemble(soverlaps: Array, diag_mat: Array):
     # \sum _n a_nn |<\psi |n>|^2
     return np.dot(soverlaps, diag_mat)
-    return np.sum(overlaps * diag_mat)
 
 
 # -----------------------------------------------------------------------------
@@ -430,7 +428,7 @@ def create_initial_quench_state(
 
     elif quench_type == QuenchTypes.AF_DN:
         idx = int(Nh / 3) if (Ns % 2 == 0) else int((Nh + 1) / 3)
-        idx = flip_all(idx, Ns)
+        idx = BinaryMod.flip_all(idx, Ns)
         if _JAX_AVAILABLE:
             state = state.at[idx].set(1.0)
         else:
@@ -451,15 +449,15 @@ def create_initial_quench_state(
             state[0] = 1.0
 
     elif quench_type == QuenchTypes.DW_HALF_UP:
-        idx = ULLPOW(max(int(Ns / 2) - 1, 0))
+        idx = BinaryMod.ULLPOW(max(int(Ns / 2) - 1, 0))
         if _JAX_AVAILABLE:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
 
     elif quench_type == QuenchTypes.DW_HALF_DN:
-        idx = ULLPOW(max(int(Ns / 2) - 1, 0))
-        idx = flip_all(idx, Ns)
+        idx = BinaryMod.ULLPOW(max(int(Ns / 2) - 1, 0))
+        idx = BinaryMod.flip_all(idx, Ns)
         if _JAX_AVAILABLE:
             state = state.at[idx].set(1.0)
         else:

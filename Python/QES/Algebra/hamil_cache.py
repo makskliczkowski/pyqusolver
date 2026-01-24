@@ -5,7 +5,10 @@ This module provides a caching mechanism for heavy matrix constructions,
 allowing reuse of operators across different instances if the configuration matches.
 """
 
-from typing import Dict, Tuple, Any, Optional
+from typing import Dict, Tuple, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .hamil import Hamiltonian
 
 # Global cache storage
 # Key: (system_size, symmetry_sector_info, dtype, backend_name, is_sparse, operator_signature)

@@ -32,6 +32,9 @@ try:
 except ImportError:
     JAX_AVAILABLE = False
 
+if TYPE_CHECKING:
+    from QES.general_python.algebra.utils import Array
+
 # ---------------------------------------------------------------------------
 # QES imports
 # ---------------------------------------------------------------------------

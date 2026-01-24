@@ -8,9 +8,12 @@ Description
 Simple SYK model for non-interacting fermions.
 """
 
-from typing import Optional, Union
+from typing import Optional, Union, TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from QES.Algebra.hilbert import HilbertSpace
 
 # import the quadratic base
 from QES.Algebra.hamil_quadratic import QuadraticHamiltonian

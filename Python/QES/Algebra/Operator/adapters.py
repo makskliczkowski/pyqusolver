@@ -13,7 +13,11 @@ Date        : 2025-12-01
 
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from QES.Algebra.Operator.operator import Operator
+    from QES.Algebra.hilbert import HilbertSpace
 
 # Try importing JAX
 try:
