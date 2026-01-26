@@ -7,3 +7,4 @@ jax[cuda12]
 # ML and optimization libraries (GPU-safe)
 flax>=0.6.0
 optax>=0.1.0
+orbax-checkpoint>=0.10.0
