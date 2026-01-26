@@ -9,14 +9,17 @@ import numpy as np
 
 try:
     import jax
-    import jax.numpy as jnp
+    import jax.numpy    as jnp
+    import jax.lax      as lax
 
-    JAX_AVAILABLE = True
+    JAX_AVAILABLE       = True
 except ImportError:
-    jax = None
-    jnp = None
-    JAX_AVAILABLE = False
-
+    jax                 = None
+    jnp                 = None
+    lax                 = None
+    JAX_AVAILABLE       = False
+    
+# ----------------------------------
 
 @dataclass(frozen=True)
 class NQSPrecisionPolicy:
@@ -24,11 +27,10 @@ class NQSPrecisionPolicy:
     Precision policy for sampling and numerically sensitive paths.
     """
 
-    state_dtype: Any
-    prob_dtype: Any
-    accum_real_dtype: Any
-    accum_complex_dtype: Any
-
+    state_dtype          : Any
+    prob_dtype           : Any
+    accum_real_dtype     : Any
+    accum_complex_dtype  : Any
 
 def _jax_x64_enabled(is_jax: bool) -> bool:
     if not is_jax or jax is None:
@@ -38,11 +40,9 @@ def _jax_x64_enabled(is_jax: bool) -> bool:
     except Exception:
         return False
 
-
 def _is_double_precision_dtype(dtype) -> bool:
     dt = np.dtype(dtype)
     return dt == np.dtype("float64") or dt == np.dtype("complex128")
-
 
 def _real_dtype_for(dtype, *, is_jax: bool):
     dt = np.dtype(dtype)
@@ -50,13 +50,11 @@ def _real_dtype_for(dtype, *, is_jax: bool):
         return jnp.float64 if is_jax else np.float64
     return jnp.float32 if is_jax else np.float32
 
-
 def _complex_dtype_for(dtype, *, is_jax: bool):
     dt = np.dtype(dtype)
     if dt == np.dtype("float64") or dt == np.dtype("complex128"):
         return jnp.complex128 if is_jax else np.complex128
     return jnp.complex64 if is_jax else np.complex64
-
 
 def _default_accum_dtypes(net_dtype, *, prefer_x64: bool, is_jax: bool):
     if _is_double_precision_dtype(net_dtype):
@@ -67,27 +65,26 @@ def _default_accum_dtypes(net_dtype, *, prefer_x64: bool, is_jax: bool):
     use_x64 = prefer_x64 and (not is_jax or _jax_x64_enabled(is_jax))
     if use_x64:
         return (
-            jnp.float64 if is_jax else np.float64,
-            jnp.complex128 if is_jax else np.complex128,
+            jnp.float64     if is_jax else np.float64,
+            jnp.complex128  if is_jax else np.complex128,
         )
     return (
-        jnp.float32 if is_jax else np.float32,
-        jnp.complex64 if is_jax else np.complex64,
+        jnp.float32         if is_jax else np.float32,
+        jnp.complex64       if is_jax else np.complex64,
     )
-
 
 def _resolve_accum_dtypes(
     net_dtype,
     *,
-    prefer_x64: bool,
-    is_jax: bool,
-    accum_dtype=None,
-    accum_real_dtype=None,
-    accum_complex_dtype=None,
+    prefer_x64              : bool,
+    is_jax                  : bool,
+    accum_dtype             = None,
+    accum_real_dtype        = None,
+    accum_complex_dtype     = None,
 ):
-    real_override = accum_real_dtype
-    complex_override = accum_complex_dtype
-    base_override = accum_dtype
+    real_override       = accum_real_dtype
+    complex_override    = accum_complex_dtype
+    base_override       = accum_dtype
 
     if base_override is not None:
         base_dt = np.dtype(base_override)
@@ -140,6 +137,24 @@ def resolve_precision_policy(net_dtype, *, is_jax: bool, **kwargs) -> NQSPrecisi
         accum_complex_dtype=accum_complex_dtype,
     )
 
+# ----------------------------------
+
+def cast_for_precision_jax(x, accum_real_dtype, accum_complex_dtype):
+    ''' Cast JAX array x to appropriate accumulation dtype.'''
+    
+    # x is assumed to be a JAX array/tracer here.
+    if accum_real_dtype is None and accum_complex_dtype is None:
+        return x
+
+    is_cpx = jnp.issubdtype(x.dtype, jnp.complexfloating)  # trace-time constant
+    target = accum_complex_dtype if is_cpx else accum_real_dtype
+
+    if target is None or x.dtype == target:
+        return x
+
+    return lax.convert_element_type(x, target)
+
+# ----------------------------------
 
 def cast_for_precision(array, real_dtype, complex_dtype, use_jax: bool):
     if hasattr(array, "compute_weighted_sum"):

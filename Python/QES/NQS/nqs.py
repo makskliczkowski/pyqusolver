@@ -903,15 +903,15 @@ class NQS(MonteCarloSolver):
         self,
         states,
         *,
-        batch_size=None,
-        params=None,
-        num_samples=None,
-        num_chains=None,
-        return_stats=False,
-        return_values=False,
+        batch_size      =   None,
+        params          =   None,
+        num_samples     =   None,
+        num_chains      =   None,
+        return_stats    =   False,
+        return_values   =   False,
         **kwargs,
     ):
-        """
+        r"""
         Evaluate the neural network (log ansatz) for the given quantum states.
 
         Computes log(\psi(s)) for a batch of states.

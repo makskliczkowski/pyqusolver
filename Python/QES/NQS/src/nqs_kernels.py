@@ -27,7 +27,7 @@ except ImportError:
 
 # Import precision casting utility
 try:
-    from .nqs_precision import cast_for_precision
+    from .nqs_precision import cast_for_precision_jax
 except ImportError:
     raise ImportError("Could not import cast_for_precision from .nqs_precision.")
 
@@ -38,13 +38,13 @@ class NQSSingleStepResult:
     Data class to hold the results of a single optimization step in the NQS solver.
     """
 
-    loss: float  # Estimated energy or loss value
-    loss_mean: float  # Mean of the energy or loss
-    loss_std: float  # Standard deviation of the energy or loss
-    grad_flat: Array  # Flattened gradient vector
-    params_shapes: List[Tuple]  # Shapes of the parameters
-    params_sizes: List[int]  # Sizes of the parameters
-    params_cpx: List[bool]  # Whether each parameter is complex
+    loss                : float         # Estimated energy or loss value
+    loss_mean           : float         # Mean of the energy or loss
+    loss_std            : float         # Standard deviation of the energy or loss
+    grad_flat           : Array         # Flattened gradient vector
+    params_shapes       : List[Tuple]   # Shapes of the parameters
+    params_sizes        : List[int]     # Sizes of the parameters
+    params_cpx          : List[bool]    # Whether each parameter is complex
 
 
 # Register as PyTree node for JIT compatibility
@@ -64,14 +64,14 @@ if JAX_AVAILABLE:
 
 
 def apply_fun(
-    func: Callable,
-    states: Array,
-    probabilities: Array,
-    logproba_in: Array,
-    logproba_fun: Callable,
-    parameters: Any,
-    batch_size: Optional[int] = None,
-    is_jax: bool = True,
+    func            : Callable,
+    states          : Array,
+    probabilities   : Array,
+    logproba_in     : Array,
+    logproba_fun    : Callable,
+    parameters      : Any,
+    batch_size      : Optional[int] = None,
+    is_jax          : bool = True,
     *op_args,
 ):
     """
@@ -90,15 +90,15 @@ def apply_fun(
 
 @partial(jax.jit, static_argnames=["func", "logproba_fun", "batch_size"])
 def _apply_fun_jax(
-    func: Callable,  # function to be evaluated (e.g., local energy f: s -> E_loc(s))
-    states: Array,  # input states (shape: (N, ...))
-    probabilities: Array,  # probabilities associated with the states (shape: (N,))
-    logproba_in: Array,  # logarithm of the probabilities for the input states (\log p(s))
-    logproba_fun: Callable,  # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
-    parameters: Any,  # parameters to be passed to the function - for the Networks ansatze
-    batch_size: Optional[int] = None,  # batch size for evaluation
+    func            : Callable,             # function to be evaluated (e.g., local energy f: s -> E_loc(s))
+    states          : Array,                # input states (shape: (N, ...))
+    probabilities   : Array,                # probabilities associated with the states (shape: (N,))
+    logproba_in     : Array,                # logarithm of the probabilities for the input states (\log p(s))
+    logproba_fun    : Callable,             # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
+    parameters      : Any,                  # parameters to be passed to the function - for the Networks ansatze
+    batch_size      : Optional[int] = None, # batch size for evaluation
     *op_args,
-):  # additional arguments to pass to func (broadcast across states)
+):
     r"""
     Evaluates a given function on a set of states and probabilities, with optional batching.
     Args:
@@ -148,15 +148,14 @@ def _apply_fun_jax(
             _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args
         )
 
-
 def _apply_fun_np(
-    func: Callable,
-    states: np.ndarray,
-    probabilities: np.ndarray,
-    logproba_in: np.ndarray,
-    logproba_fun: Callable,
-    parameters: Any,
-    batch_size: Optional[int] = None,
+    func            : Callable,
+    states          : np.ndarray,
+    probabilities   : np.ndarray,
+    logproba_in     : np.ndarray,
+    logproba_fun    : Callable,
+    parameters      : Any,
+    batch_size      : Optional[int] = None,
     *op_args,
 ):
     """
@@ -209,11 +208,9 @@ def _apply_fun_np(
         *op_args,
     )
 
-
 # ----------------------------------------------------------------------
 #! Log Derivative Kernels
 # ----------------------------------------------------------------------
-
 
 @partial(jax.jit, static_argnames=["net_apply", "single_sample_flat_grad_fun", "batch_size", "accum_real_dtype", "accum_complex_dtype"])
 def log_derivative_jax(
@@ -221,9 +218,9 @@ def log_derivative_jax(
     params                      : Any,          # Network parameters p
     states                      : jnp.ndarray,  # Input states s_i, shape (num_samples, ...)
     single_sample_flat_grad_fun : Callable[[Callable, Any, Any], jnp.ndarray],  # JAX-traceable function computing the flattened gradient for one sample.
-    batch_size: int = 1,
-    accum_real_dtype: Any = None,
-    accum_complex_dtype: Any = None,
+    batch_size                  : int = 1,
+    accum_real_dtype            : Any = None,
+    accum_complex_dtype         : Any = None,
 ) -> Tuple[Array, List, List, List]:  # Batch size
     r"""
     Compute the batch of flattened gradients using JAX (JIT compiled).
@@ -261,10 +258,9 @@ def log_derivative_jax(
         net_apply, params, states, single_sample_flat_grad_fun, batch_size
     )
 
-    gradients_batch = cast_for_precision(gradients_batch, accum_real_dtype, accum_complex_dtype, True)
+    gradients_batch = cast_for_precision_jax(gradients_batch, accum_real_dtype, accum_complex_dtype)
 
     return gradients_batch, shapes, sizes, is_cpx
-
 
 def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
     r"""
@@ -300,39 +296,36 @@ def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
 # ----------------------------------------------------------------------
 
 
-@partial(
-    jax.jit,
-    static_argnames=[
-        "ansatz_fn",
-        "apply_fn",
-        "local_loss_fn",
-        "flat_grad_fn",
-        "compute_grad_f",
-        "accum_real_dtype",
-        "accum_complex_dtype",
-        "use_jax",
-        "batch_size",
-    ],
-)
+@partial(jax.jit, static_argnames=[
+                                    "ansatz_fn",
+                                    "apply_fn",
+                                    "local_loss_fn",
+                                    "flat_grad_fn",
+                                    "compute_grad_f",
+                                    "accum_real_dtype",
+                                    "accum_complex_dtype",
+                                    "use_jax",
+                                    "batch_size",
+                                ])
 def _single_step(
-    params: Any,
-    configs: Array,
-    configs_ansatze: Any,
-    probabilities: Any,
+    params                      : Any,
+    configs                     : Array,
+    configs_ansatze             : Any,
+    probabilities               : Any,
     # functions (Static input for JIT)
-    ansatz_fn: Callable = None,
-    apply_fn: Callable = None,
-    local_loss_fn: Callable = None,
-    flat_grad_fn: Callable = None,
-    compute_grad_f: Callable = net_utils.jaxpy.compute_gradients_batched,
+    ansatz_fn: Callable         = None,
+    apply_fn: Callable          = None,
+    local_loss_fn: Callable     = None,
+    flat_grad_fn: Callable      = None,
+    compute_grad_f: Callable    = net_utils.jaxpy.compute_gradients_batched,
     # precision (Static input for JIT)
-    accum_real_dtype: Any = None,
-    accum_complex_dtype: Any = None,
-    use_jax: bool = True,
+    accum_real_dtype            : Any = None,
+    accum_complex_dtype         : Any = None,
+    use_jax                     : bool = True,
     # Static for evaluation
-    batch_size: int = None,
-    t: float = None,
-    int_step: int = 0,
+    batch_size                  : int = None,
+    t                           : float = None,
+    int_step                    : int = 0,
 ) -> NQSSingleStepResult:
     """
     Perform a single training step. Pure function.
@@ -360,22 +353,28 @@ def _single_step(
         batch_size=batch_size,
     )
 
+    #! REMOVE NUMPY PATH FOR NQS - JAX ONLY
     # Promote numerically sensitive outputs - e.g., loss mean/std and gradients if user wants to have fast ansatz and high-precision accumulation
-    v = cast_for_precision(v, accum_real_dtype, accum_complex_dtype, use_jax)
-    means = cast_for_precision(means, accum_real_dtype, accum_complex_dtype, use_jax)
-    stds = cast_for_precision(stds, accum_real_dtype, accum_complex_dtype, use_jax)
-    flat_grads = cast_for_precision(flat_grads, accum_real_dtype, accum_complex_dtype, use_jax)
+    # if use_jax:
+    v           = cast_for_precision_jax(v, accum_real_dtype, accum_complex_dtype)
+    means       = cast_for_precision_jax(means, accum_real_dtype, accum_complex_dtype)
+    stds        = cast_for_precision_jax(stds, accum_real_dtype, accum_complex_dtype)
+    flat_grads  = cast_for_precision_jax(flat_grads, accum_real_dtype, accum_complex_dtype)
+    # else:
+    #     v           = cast_for_precision(v, accum_real_dtype, accum_complex_dtype, use_jax)
+    #     means       = cast_for_precision(means, accum_real_dtype, accum_complex_dtype, use_jax)
+    #     stds        = cast_for_precision(stds, accum_real_dtype, accum_complex_dtype, use_jax)
+    #     flat_grads  = cast_for_precision(flat_grads, accum_real_dtype, accum_complex_dtype, use_jax)
 
     return NQSSingleStepResult(
-        loss=v,
-        loss_mean=means,
-        loss_std=stds,
-        grad_flat=flat_grads,
-        params_shapes=shapes,
-        params_sizes=sizes,
-        params_cpx=iscpx,
+        loss            =   v,
+        loss_mean       =   means,
+        loss_std        =   stds,
+        grad_flat       =   flat_grads,
+        params_shapes   =   shapes,
+        params_sizes    =   sizes,
+        params_cpx      =   iscpx,
     )
-
 
 # ----------------------------------------------------------------------
 #! EOF
