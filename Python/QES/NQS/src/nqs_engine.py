@@ -456,20 +456,18 @@ class NQSEvalEngine:
     #####################################################################################################
 
     def loss(
-        self,
-        states: Optional[Array] = None,
-        ansatze: Optional[Array] = None,
+        self,   
+        states          : Optional[Array]   = None,
+        ansatze         : Optional[Array]   = None,
         *,
-        action_func: Optional[
-            "CallableFunctionType"
-        ] = None,  # can be replaced if we want to evaluate different model
-        params: Optional[Any] = None,
-        probabilities: Optional[Array] = None,
-        batch_size: Optional[int] = None,
-        num_samples: Optional[int] = None,
-        num_chains: Optional[int] = None,
-        return_stats: Optional[bool] = None,
-        return_values: bool = False,
+        action_func     : Optional["CallableFunctionType"] = None,  # can be replaced if we want to evaluate different model
+        params          : Optional[Any]     = None,
+        probabilities   : Optional[Array]   = None,
+        batch_size      : Optional[int]     = None,
+        num_samples     : Optional[int]     = None,
+        num_chains      : Optional[int]     = None,
+        return_stats    : Optional[bool]    = None,
+        return_values   : bool              = False,
     ) -> NQSLoss:
         """
         Compute local energies E_loc(s) = <s|H|psi>/<s|psi>.
@@ -505,14 +503,14 @@ class NQSEvalEngine:
 
         try:
             output, m, std = self.nqs.apply(
-                functions=action_func,
-                states_and_psi=(states, ansatze),
-                probabilities=probabilities,
-                batch_size=self.batch_size,
-                parameters=params,
-                num_samples=num_samples,
-                num_chains=num_chains,
-                return_values=True,
+                functions       =   action_func,
+                states_and_psi  =   (states, ansatze),
+                probabilities   =   probabilities,
+                batch_size      =   self.batch_size,
+                parameters      =   params,
+                num_samples     =   num_samples,
+                num_chains      =   num_chains,
+                return_values   =   True,
             )
 
             # Convert to EnergyStatistics
@@ -524,9 +522,9 @@ class NQSEvalEngine:
             if return_values:
                 return local_losses
             return NQSLoss(
-                values=local_losses,
-                has_stats=return_stats,
-                backend_used=self.nqs.backend_str,
+                values          =   local_losses,
+                has_stats       =   return_stats,
+                backend_used    =   self.nqs.backend_str,
             )
 
         except Exception as e:
@@ -598,16 +596,16 @@ class NQSEvalEngine:
 
         try:
             output = self.nqs.apply(
-                functions=functions,
-                states_and_psi=(states, ansatze),
-                probabilities=probabilities,
-                batch_size=self.batch_size,
-                parameters=params,
-                num_samples=num_samples,
-                num_chains=num_chains,
-                return_values=True,
-                log_progress=log_progress,
-                args=args,
+                functions           =   functions,
+                states_and_psi      =   (states, ansatze),
+                probabilities       =   probabilities,
+                batch_size          =   self.batch_size,
+                parameters          =   params,
+                num_samples         =   num_samples,
+                num_chains          =   num_chains,
+                return_values       =   True,
+                log_progress        =   log_progress,
+                args                =   args,
             )
 
             if not single_function:
@@ -615,13 +613,13 @@ class NQSEvalEngine:
                 if len(functions) == 1:
                     output = [output]
 
-                values = [np.array(v[0]) for v in output]  # Extract values from output
-                means = [v[1] for v in output]
-                stds = [v[2] for v in output]
+                values  = [np.array(v[0]) for v in output]  # Extract values from output
+                means   = [v[1] for v in output]
+                stds    = [v[2] for v in output]
             else:
-                values = [np.array(output[0])]
-                means = [output[1]]
-                stds = [output[2]]
+                values  = [np.array(output[0])]
+                means   = [output[1]]
+                stds    = [output[2]]
 
             # Convert to NQSObservable
             observables = []
