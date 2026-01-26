@@ -207,14 +207,14 @@ class NQSLoss(EvaluationResult):
                 "n_samples": self.n_samples,
             }
         return {
-            "name": "Local Loss",
-            "mean": self.mean_loss,
-            "std": self.std_loss,
-            "variance": self.variance,
-            "min": self.min_loss,
-            "max": self.max_loss,
-            "error_of_mean": self.error_of_mean,
-            "n_samples": self.n_samples,
+            "name"          : "Local Loss",
+            "mean"          : self.mean_loss,
+            "std"           : self.std_loss,
+            "variance"      : self.variance,
+            "min"           : self.min_loss,
+            "max"           : self.max_loss,
+            "error_of_mean" : self.error_of_mean,
+            "n_samples"     : self.n_samples,
         }
 
     def __str__(self) -> str:
