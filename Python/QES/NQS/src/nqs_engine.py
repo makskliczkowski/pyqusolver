@@ -611,6 +611,10 @@ class NQSEvalEngine:
             )
 
             if not single_function:
+                # Fix for nqs.apply behavior which flattens output if len(functions)==1
+                if len(functions) == 1:
+                    output = [output]
+
                 values = [np.array(v[0]) for v in output]  # Extract values from output
                 means = [v[1] for v in output]
                 stds = [v[2] for v in output]
