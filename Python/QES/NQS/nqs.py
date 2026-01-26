@@ -1709,14 +1709,32 @@ class NQS(MonteCarloSolver):
             use_jax=self._isjax,
         )
 
-        result_abstract = jax.eval_shape(
-            single_step_partial, params, abstract_configs, abstract_ansatze, abstract_probs
-        )
-        return (
-            result_abstract.params_shapes,
-            result_abstract.params_sizes,
-            result_abstract.params_cpx,
-        )
+        try:
+            result_abstract = jax.eval_shape(
+                single_step_partial, params, abstract_configs, abstract_ansatze, abstract_probs
+            )
+            return (
+                result_abstract.params_shapes,
+                result_abstract.params_sizes,
+                result_abstract.params_cpx,
+            )
+        except Exception as e:
+            
+            # Fallback: Run it once with real data
+            old_chains  = self._sampler.numchains
+            old_samples = self._sampler.numsamples
+            try:
+                self._sampler.set_numchains(1)
+                self._sampler.set_numsamples(1)
+
+                params  = self.get_params()
+                (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(params)
+                result  = single_step_partial(params, configs, configs_ansatze, probabilities)
+                
+                return result.params_shapes, result.params_sizes, result.params_cpx
+            finally:
+                self._sampler.set_numchains(old_chains)
+                self._sampler.set_numsamples(old_samples)
 
     def wrap_single_step_jax(self, batch_size: Optional[int] = None):
         """
