@@ -296,17 +296,6 @@ def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
 # ----------------------------------------------------------------------
 
 
-@partial(jax.jit, static_argnames=[
-                                    "ansatz_fn",
-                                    "apply_fn",
-                                    "local_loss_fn",
-                                    "flat_grad_fn",
-                                    "compute_grad_f",
-                                    "accum_real_dtype",
-                                    "accum_complex_dtype",
-                                    "use_jax",
-                                    "batch_size",
-                                ])
 def _single_step(
     params                      : Any,
     configs                     : Array,
