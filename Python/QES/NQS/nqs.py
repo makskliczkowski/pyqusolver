@@ -1059,27 +1059,25 @@ class NQS(MonteCarloSolver):
 
     def apply(
         self,
-        functions: Optional[Union[List, Callable]],
+        functions       : Optional[Union[List, Callable]],
         *,
-        states_and_psi: Optional[
-            Tuple[Union[np.ndarray, jnp.ndarray], Union[np.ndarray, jnp.ndarray]]
-        ] = None,
-        probabilities: Optional[Union[np.ndarray, jnp.ndarray]] = None,
-        batch_size: Optional[int] = None,
-        parameters: Optional[dict] = None,
-        num_samples: Optional[int] = None,
-        num_chains: Optional[int] = None,
-        return_values: bool = False,
-        log_progress: bool = False,
-        args: Optional[tuple] = None,
+        states_and_psi  : Optional[Tuple[Union[np.ndarray, jnp.ndarray], Union[np.ndarray, jnp.ndarray]]] = None,
+        probabilities   : Optional[Union[np.ndarray, jnp.ndarray]]  = None,
+        batch_size      : Optional[int]                             = None,
+        parameters      : Optional[dict]                            = None,
+        num_samples     : Optional[int]                             = None,
+        num_chains      : Optional[int]                             = None,
+        return_values   : bool                                      = False,
+        log_progress    : bool                                      = False,
+        args            : Optional[tuple]                           = None,
     ):
         r"""
         Evaluate a set of functions based on the provided states, wavefunction, and probabilities.
         """
 
-        params = parameters if parameters is not None else self.get_params()
-        batch_size = batch_size if batch_size is not None else self._batch_size
-        op_args = args if args is not None else ()
+        params          = parameters if parameters is not None else self.get_params()
+        batch_size      = batch_size if batch_size is not None else self._batch_size
+        op_args         = args if args is not None else ()
 
         #! check if the functions are provided
         if functions is None or (isinstance(functions, list) and len(functions) == 0):
@@ -1097,15 +1095,15 @@ class NQS(MonteCarloSolver):
                 else:
                     ansatze = self(states) if ansatze is None else ansatze
             elif isinstance(states_and_psi, np.ndarray) or isinstance(states_and_psi, jnp.ndarray):
-                states = states_and_psi  # assume it's the states
+                states  = states_and_psi  # assume it's the states
                 ansatze = self(states)  # call log ansatz function
             else:
                 raise ValueError(self._ERROR_STATES_PSI)
 
         if states_and_psi is None:
             # get other parameters from kwargs
-            num_samples = num_samples or self._sampler.numsamples
-            num_chains = num_chains or self._sampler.numchains
+            num_samples                         = num_samples or self._sampler.numsamples
+            num_chains                          = num_chains or self._sampler.numchains
             _, (states, ansatze), probabilities = self._sampler.sample(
                 parameters=params, num_samples=num_samples, num_chains=num_chains
             )
@@ -1121,9 +1119,14 @@ class NQS(MonteCarloSolver):
                 self._backend.ones_like(ansatze), dtype=prob_dtype
             )
 
+        # handle op_args being (None,)
+        if isinstance(op_args, tuple) and len(op_args) == 1 and op_args[0] is None:
+            op_args = ()
+
         output = []
         for i, f in enumerate(functions):
-
+            
+            
             if log_progress:
                 t0 = time.time()
 
@@ -1135,7 +1138,6 @@ class NQS(MonteCarloSolver):
                 self._ansatz_func,
                 params,
                 batch_size,
-                self._isjax,
                 *op_args,
             )
 
@@ -1192,16 +1194,16 @@ class NQS(MonteCarloSolver):
 
     def loss(
         self,
-        states=None,
-        ansatze=None,
+        states          =   None,
+        ansatze         =   None,
         *,
-        params=None,
-        probabilities=None,
-        batch_size=None,
-        num_samples=None,
-        num_chains=None,
-        return_stats=True,
-        return_values=False,
+        params          =   None,
+        probabilities   =   None,
+        batch_size      =   None,
+        num_samples     =   None,
+        num_chains      =   None,
+        return_stats    =   True,
+        return_values   =   False,
         **kwargs,
     ) -> Union[NQSLoss, Array]:
         """
@@ -2395,7 +2397,6 @@ class NQS(MonteCarloSolver):
         update_kwargs: Optional[dict] = None,
         # Symmetries
         symmetrize: Optional[bool] = None,
-        force_numerical: Optional[bool] = True,
         **kwargs,
     ) -> "NQSTrainStats":
         r"""
