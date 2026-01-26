@@ -53,7 +53,7 @@ if JAX_AVAILABLE:
         NQSSingleStepResult,
         lambda n: (
             (n.loss, n.loss_mean, n.loss_std, n.grad_flat),
-            (n.params_shapes, n.params_sizes, n.params_cpx),
+            (tuple(n.params_shapes), tuple(n.params_sizes), tuple(n.params_cpx)),
         ),
         lambda aux, children: NQSSingleStepResult(*children, *aux),
     )
@@ -61,7 +61,6 @@ if JAX_AVAILABLE:
 # ----------------------------------------------------------------------
 #! Unified Function Application Kernel
 # ----------------------------------------------------------------------
-
 
 def apply_fun(
     func            : Callable,
@@ -88,7 +87,6 @@ def apply_fun(
         )
 
 
-@partial(jax.jit, static_argnames=["func", "logproba_fun", "batch_size"])
 def _apply_fun_jax(
     func            : Callable,             # function to be evaluated (e.g., local energy f: s -> E_loc(s))
     states          : Array,                # input states (shape: (N, ...))
@@ -212,7 +210,6 @@ def _apply_fun_np(
 #! Log Derivative Kernels
 # ----------------------------------------------------------------------
 
-@partial(jax.jit, static_argnames=["net_apply", "single_sample_flat_grad_fun", "batch_size", "accum_real_dtype", "accum_complex_dtype"])
 def log_derivative_jax(
     net_apply                   : Callable,     # The network's apply function f(p, x)
     params                      : Any,          # Network parameters p
@@ -294,7 +291,6 @@ def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
 # ----------------------------------------------------------------------
 #! NQS Single Step Kernel
 # ----------------------------------------------------------------------
-
 
 def _single_step(
     params                      : Any,
