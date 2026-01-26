@@ -53,7 +53,7 @@ if JAX_AVAILABLE:
         NQSSingleStepResult,
         lambda n: (
             (n.loss, n.loss_mean, n.loss_std, n.grad_flat),
-            (n.params_shapes, n.params_sizes, n.params_cpx),
+            (tuple(n.params_shapes), tuple(n.params_sizes), tuple(n.params_cpx)),
         ),
         lambda aux, children: NQSSingleStepResult(*children, *aux),
     )
