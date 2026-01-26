@@ -337,17 +337,17 @@ class HeisenbergKitaev(Hamiltonian):
         parts = [f"Kitaev(Ns={self.ns}"]
 
         parts += [
-            Hamiltonian.fmt("Kx", self._kx, prec=prec),
-            Hamiltonian.fmt("Ky", self._ky, prec=prec),
-            Hamiltonian.fmt("Kz", self._kz, prec=prec),
-            Hamiltonian.fmt("J", self._j, prec=prec) if self._j is not None else "",
-            Hamiltonian.fmt("Gx", self._gx, prec=prec) if self._gx is not None else "",
-            Hamiltonian.fmt("Gy", self._gy, prec=prec) if self._gy is not None else "",
-            Hamiltonian.fmt("Gz", self._gz, prec=prec) if self._gz is not None else "",
-            Hamiltonian.fmt("dlt", self._dlt, prec=prec) if self._dlt is not None else "",
-            Hamiltonian.fmt("hz", self._hz, prec=prec) if self._hz is not None else "",
-            Hamiltonian.fmt("hy", self._hy, prec=prec) if self._hy is not None else "",
-            Hamiltonian.fmt("hx", self._hx, prec=prec) if self._hx is not None else "",
+            Hamiltonian.fmt("Kx",   self._kx,   prec=prec),
+            Hamiltonian.fmt("Ky",   self._ky,   prec=prec),
+            Hamiltonian.fmt("Kz",   self._kz,   prec=prec),
+            Hamiltonian.fmt("J",    self._j,    prec=prec)  if self._j      is not None else "",
+            Hamiltonian.fmt("Gx",   self._gx,   prec=prec)  if self._gx     is not None else "",
+            Hamiltonian.fmt("Gy",   self._gy,   prec=prec)  if self._gy     is not None else "",
+            Hamiltonian.fmt("Gz",   self._gz,   prec=prec)  if self._gz     is not None else "",
+            Hamiltonian.fmt("dlt",  self._dlt,  prec=prec)  if self._dlt    is not None else "",
+            Hamiltonian.fmt("hz",   self._hz,   prec=prec)  if self._hz     is not None else "",
+            Hamiltonian.fmt("hy",   self._hy,   prec=prec)  if self._hy     is not None else "",
+            Hamiltonian.fmt("hx",   self._hx,   prec=prec)  if self._hx     is not None else "",
         ]
         # handle impurities
         if len(self._impurities) > 0:
@@ -383,17 +383,17 @@ class HeisenbergKitaev(Hamiltonian):
 
     def set_couplings(
         self,
-        hx: Union[List[float], None, float] = None,
-        hy: Union[List[float], None, float] = None,
-        hz: Union[List[float], None, float] = None,
-        kx: Union[List[float], None, float] = None,
-        ky: Union[List[float], None, float] = None,
-        kz: Union[List[float], None, float] = None,
-        j: Union[List[float], None, float] = None,
-        gx: Union[List[float], None, float] = None,
-        gy: Union[List[float], None, float] = None,
-        gz: Union[List[float], None, float] = None,
-        dlt: Union[List[float], None, float] = None,
+        hx  : Union[List[float], None, float] = None,
+        hy  : Union[List[float], None, float] = None,
+        hz  : Union[List[float], None, float] = None,
+        kx  : Union[List[float], None, float] = None,
+        ky  : Union[List[float], None, float] = None,
+        kz  : Union[List[float], None, float] = None,
+        j   : Union[List[float], None, float] = None,
+        gx  : Union[List[float], None, float] = None,
+        gy  : Union[List[float], None, float] = None,
+        gz  : Union[List[float], None, float] = None,
+        dlt : Union[List[float], None, float] = None,
     ):
         """
         Sets the couplings based on their initial value (list, string, value)
@@ -595,22 +595,14 @@ class HeisenbergKitaev(Hamiltonian):
                 if lattice.wrong_nei(nei):
                     continue
 
-                wx, wy, wz = lattice.bond_winding(i, nei)
-                phase = lattice.boundary_phase_from_winding(wx, wy, wz)
+                wx, wy, wz  = lattice.bond_winding(i, nei)
+                phase       = lattice.boundary_phase_from_winding(wx, wy, wz)
 
                 #! Heisenberg - value of SzSz, SxSx, SySy (multipliers)
                 if True:
-                    sz_sz = (
-                        phase * CORR_TERM_MULT * self._j[i] * self._dlt[i]
-                        if self._j is not None
-                        else 0.0
-                    )  # Heisenberg - value of SzSz (multiplier)
-                    sx_sx = (
-                        phase * CORR_TERM_MULT * self._j[i] if self._j is not None else 0.0
-                    )  # Heisenberg - value of SxSx (multiplier)
-                    sy_sy = (
-                        phase * CORR_TERM_MULT * self._j[i] if self._j is not None else 0.0
-                    )  # Heisenberg - value of SySy (multiplier)
+                    sz_sz   = phase * CORR_TERM_MULT * self._j[i] * self._dlt[i] if self._j is not None else 0.0    # Heisenberg - value of SzSz (multiplier)
+                    sx_sx   = phase * CORR_TERM_MULT * self._j[i] if self._j is not None else 0.0                   # Heisenberg - value of SxSx (multiplier)
+                    sy_sy   = phase * CORR_TERM_MULT * self._j[i] if self._j is not None else 0.0                   # Heisenberg - value of SySy (multiplier)
 
                 #! check the directional bond contributions - Kitaev (they are subtracted - ferromagnetic)
                 if True:
@@ -683,9 +675,7 @@ class HeisenbergKitaev(Hamiltonian):
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl=2, log=log)
 
         self._log(f"Total NN elements added: {elems}", color="red", lvl=3, verbose=self._verbose)
-        self._log(
-            "Successfully set local energy operators...", lvl=1, log="info", verbose=self._verbose
-        )
+        self._log("Successfully set local energy operators...", lvl=1, log="info", verbose=self._verbose)
 
 
 ##########################################################################################

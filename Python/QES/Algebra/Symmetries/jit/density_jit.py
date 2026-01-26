@@ -1,4 +1,7 @@
-""" """
+""" 
+This module implements the reduced density matrix rhoA for subsystem A
+directly from symmetry-reduced state vectors, using JIT compilation for performance.
+"""
 
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
@@ -8,7 +11,8 @@ import numpy as np
 try:
     # public physics imports
 
-    from .symmetry_container_jit import _NUMBA_OVERHEAD_SIZE, apply_group_element_fast
+    from .symmetry_container_jit                    import _NUMBA_OVERHEAD_SIZE, apply_group_element_fast
+    from ....general_python.physics.density_matrix  import rho_spectrum
 except Exception:
     raise RuntimeError("Couldn't import symmetries correctly...")
 
@@ -19,15 +23,12 @@ if TYPE_CHECKING:
 # Hash-map cache for columns v_b
 # -----------------------------
 
-
 @numba.njit(cache=True)
 def _hash64(x: np.int64) -> np.int64:
     # Knuth-ish multiplicative hash
     return np.int64(x * np.int64(11400714819323198485))
 
-
 # -----------------------------
-
 
 @numba.njit(cache=True)
 def _cache_find_or_insert(keys, used, vals, b_key, dimA):
@@ -55,9 +56,7 @@ def _cache_find_or_insert(keys, used, vals, b_key, dimA):
             if idx == K:
                 idx = 0
 
-
 # -----------------------------
-
 
 @numba.njit(cache=True, fastmath=True)
 def _flush_cache_into_rhoA(rhoA, used, vals):
@@ -65,8 +64,8 @@ def _flush_cache_into_rhoA(rhoA, used, vals):
     rhoA += sum_{active rows i} vals[i] vals[i]^†
     then clears used/vals.
     """
-    K = vals.shape[0]
-    dimA = vals.shape[1]
+    K       = vals.shape[0]
+    dimA    = vals.shape[1]
 
     for i in range(K):
         if used[i] == 0:
@@ -79,7 +78,7 @@ def _flush_cache_into_rhoA(rhoA, used, vals):
             if vp != 0.0j:
                 for q in range(dimA):
                     rhoA[p, q] += vp * np.conj(vals[i, q])
-
+                    
     # clear
     for i in range(K):
         used[i] = 0
@@ -91,18 +90,17 @@ def _flush_cache_into_rhoA(rhoA, used, vals):
 # rhoA from reduced-basis vector c_red
 # ---------------------------------------------
 
-
 @numba.njit(cache=True, fastmath=True)
 def _rho_symmetries(
-    c_red: np.ndarray,  # (n_rep,) complex128 - states
-    basis_args: Tuple,  # (rep_list, rep_norm)
-    ns: np.int64,
-    local_dim: np.int64,
-    va: np.int64,
-    cg_args: Tuple,  # (n_group, ...)
-    tb_args: Tuple,  # (tables...)
-    cache_size: np.int64,  # number of b-columns to cache
-    flush_load_factor: np.float64 = 0.5,  # e.g. 0.5
+    c_red               : np.ndarray,   # (n_rep,) complex128 - states
+    basis_args          : Tuple,        # (rep_list, rep_norm)
+    ns                  : np.int64,
+    local_dim           : np.int64,
+    va                  : np.int64,
+    cg_args             : Tuple,        # (n_group, ...)
+    tb_args             : Tuple,        # (tables...)
+    cache_size          : np.int64,     # number of b-columns to cache
+    flush_load_factor   : np.float64    = 0.5, # e.g. 0.5
 ) -> np.ndarray:
     """
     Build reduced density matrix rhoA of subsystem A (first va sites)
@@ -110,39 +108,39 @@ def _rho_symmetries(
 
     Parameters
     ----------
-    c_red               : np.ndarray
+    c_red : np.ndarray
         Symmetry-reduced state vector (complex128) of shape (n_rep,).
-    basis_args          : Tuple
+    basis_args : Tuple
         Tuple containing (rep_list, rep_norm):
             rep_list : np.ndarray
                 List of representative states (int64) of shape (n_rep,).
             rep_norm : np.ndarray
                 Normalization factors (float64) of shape (n_rep,).
-    ns                  : np.int64
+    ns : np.int64
         Number of sites in the full system.
-    local_dim           : np.int64
+    local_dim : np.int64
         Local Hilbert space dimension per site.
-    va                  : np.int64
+    va : np.int64
         Number of sites in subsystem A.
-    cg_args             : Tuple
+    cg_args : Tuple
 
     """
 
-    rep_list, rep_norm = basis_args
-    dimA = np.int64(local_dim**va)
-    rhoA = np.zeros((dimA, dimA), dtype=np.complex128)
+    rep_list, rep_norm          = basis_args
+    dimA                        = np.int64(local_dim**va)
+    rhoA                        = np.zeros((dimA, dimA), dtype=np.complex128)
 
     # Unpack cg
-    n_group, _, _, _, _, chi = cg_args
+    n_group, _, _, _, _, chi    = cg_args
 
     # cache structures
-    K = int(cache_size)
-    keys = np.empty(K, dtype=np.int64)
-    used = np.zeros(K, dtype=np.uint8)
-    vals = np.zeros((K, dimA), dtype=np.complex128)
+    K                           = int(cache_size)
+    keys                        = np.empty(K, dtype=np.int64)
+    used                        = np.zeros(K, dtype=np.uint8)
+    vals                        = np.zeros((K, dimA), dtype=np.complex128)
 
-    filled = 0
-    limit = int(flush_load_factor * K)
+    filled                      = 0
+    limit                       = int(flush_load_factor * K)
     inv_sqrt_G = 1.0 / np.sqrt(n_group)
     if limit < 1:
         limit = 1
@@ -169,9 +167,9 @@ def _rho_symmetries(
             if amp == 0.0j:
                 continue
 
-            a = np.int64(s % dimA)  # index in subsystem A, this is given by taking mod
-            b = np.int64(s // dimA)  # index in subsystem B, this is given by integer division
-            slot, inserted = _cache_find_or_insert(keys, used, vals, b, dimA)
+            a               = np.int64(s % dimA)    # index in subsystem A, this is given by taking mod
+            b               = np.int64(s // dimA)   # index in subsystem B, this is given by integer division
+            slot, inserted  = _cache_find_or_insert(keys, used, vals, b, dimA)
 
             if inserted:
                 filled += 1
@@ -183,7 +181,6 @@ def _rho_symmetries(
             vals[slot, a] += amp
     _flush_cache_into_rhoA(rhoA, used, vals)
     return rhoA
-
 
 @numba.njit(cache=True, fastmath=True)
 def _rho_symmetries_mask(
@@ -311,7 +308,6 @@ def _rho_symmetries_mask(
 # ---------------------------------------------
 #! Public function
 # ---------------------------------------------
-
 
 def rho_symmetries(
     state,
