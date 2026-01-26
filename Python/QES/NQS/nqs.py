@@ -1758,15 +1758,18 @@ class NQS(MonteCarloSolver):
         )
 
         # ! Infer shapes safely
-        shapes, sizes, iscpx = self._sample_for_shapes(
-            ansatz_fn,
-            apply_fn,
-            local_loss_fn,
-            flat_grad_fn,
-            compute_grad_f,
-            batch_size=batch_size,
-            t=0,
-        )
+        # shapes, sizes, iscpx = self._sample_for_shapes(
+        #     ansatz_fn,
+        #     apply_fn,
+        #     local_loss_fn,
+        #     flat_grad_fn,
+        #     compute_grad_f,
+        #     batch_size=batch_size,
+        #     t=0,
+        # )
+        
+        # Use pre-computed shapes from initialization
+        shapes, sizes, iscpx = self._params_shapes, self._params_sizes, self._params_iscpx
 
         # Pre-compute tree definition for flattening/unflattening parameters
         tree_def, flat_size, slices = (
