@@ -377,6 +377,8 @@ class NQS(MonteCarloSolver):
         self._initialized           = False
         self._seed                  = seed
         self._nthstate              = nthstate
+        self._symmetrize            = symmetrize
+        self._base_dir              = self._dir
 
         self._modifier_wrapper      : Optional[AnsatzModifier] = None
         self._modifier_source       : Optional[Union[Operator, Callable]] = None
@@ -628,10 +630,13 @@ class NQS(MonteCarloSolver):
         It ensures that the directory exists and is ready for use.
         """
 
-        base = Directories(self._dir)
+        base = Directories(self._base_dir)
         #! symmeties summary
-        if self._model.hilbert.has_sym:
-            base = base.join(f"{self._model.hilbert.symmetry_directory_name}", create=False)
+        if self._model.hilbert.has_sym and self._symmetrize:
+            sym_name = f"{self._model.hilbert.symmetry_directory_name}"
+            # Check if base directory already ends with this name to avoid duplication
+            if base.path.name != sym_name:
+                base = base.join(sym_name, create=False)
 
         detailed = base.join(str(self._model), create=False)
 
@@ -645,9 +650,9 @@ class NQS(MonteCarloSolver):
         #   e.g. "RBM_shape=12_dtype=complex128"
         #   Note: seed is NOT included here (saved in metadata/stats instead)
 
-        net_cls = str(self._net)
-        net_folder = net_cls
-        final_dir = detailed.join(net_folder, create=False)
+        net_cls             = str(self._net)
+        net_folder          = net_cls
+        final_dir           = detailed.join(net_folder, create=False)
 
         #! actually mkdir them all
         #    create intermediate parents automatically
@@ -655,10 +660,10 @@ class NQS(MonteCarloSolver):
         final_dir.mkdir()
 
         #! store for later use
-        self._dir = base
-        self._dir_detailed = final_dir
-        self.defdir = self._dir_detailed
-        self.defdirpar = self._dir_detailed.parent().resolve()
+        self._dir           = base
+        self._dir_detailed  = final_dir
+        self.defdir         = self._dir_detailed
+        self.defdirpar      = self._dir_detailed.parent().resolve()
 
     # ---
 
@@ -1638,53 +1643,47 @@ class NQS(MonteCarloSolver):
         """
         if not self._isjax:
             # Fallback for NumPy backend
-            old_chains = self._sampler.numchains
+            old_chains  = self._sampler.numchains
             old_samples = self._sampler.numsamples
             try:
                 self._sampler.set_numchains(1)
                 self._sampler.set_numsamples(1)
 
-                params = self.get_params()
+                params  = self.get_params()
                 (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(params)
-                result = NQS._single_step(
-                    params,
-                    configs,
-                    configs_ansatze,
-                    probabilities,
-                    ansatz_fn=ansatz_fn,
-                    apply_fn=apply_fn,
-                    local_loss_fn=loss_fn,
-                    flat_grad_fn=flat_grad_fn,
-                    compute_grad_f=compute_grad_f,
-                    batch_size=batch_size,
-                    t=t,
-                    use_jax=False,
-                )
+                result  = NQS._single_step(
+                            params,
+                            configs,
+                            configs_ansatze,
+                            probabilities,
+                            ansatz_fn=ansatz_fn,
+                            apply_fn=apply_fn,
+                            local_loss_fn=loss_fn,
+                            flat_grad_fn=flat_grad_fn,
+                            compute_grad_f=compute_grad_f,
+                            batch_size=batch_size,
+                            t=t,
+                            use_jax=False,
+                        )
                 return result.params_shapes, result.params_sizes, result.params_cpx
             finally:
                 self._sampler.set_numchains(old_chains)
                 self._sampler.set_numsamples(old_samples)
 
         # JAX Optimization: Abstract Evaluation
-        params = self.get_params()
+        params              = self.get_params()
 
         # Construct abstract inputs
         # Configs shape: (num_samples, n_particles) or similar depending on sampler
         # We assume 1 sample for shape inference is enough
         # We need to respect the dtype of sampler states
-        sample_dtype = self._sampler._statetype
+        sample_dtype        = self._sampler._statetype
 
         # Abstract arrays
-        abstract_configs = jax.ShapeDtypeStruct((1, self._nvisible), sample_dtype)
-        abstract_ansatze = jax.ShapeDtypeStruct(
-            (1,), self._dtype
-        )  # Log ansatz is complex/float depending on net
-        prob_dtype = (
-            self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else self._dtype
-        )
-        abstract_probs = jax.ShapeDtypeStruct(
-            (1,), prob_dtype
-        )  # Probs are real, use precision policy
+        abstract_configs    = jax.ShapeDtypeStruct((1, self._nvisible), sample_dtype)   # Single config sample
+        abstract_ansatze    = jax.ShapeDtypeStruct((1,), self._dtype)                   # Log ansatz is complex/float depending on net
+        prob_dtype          = self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else self._dtype
+        abstract_probs      = jax.ShapeDtypeStruct((1,), prob_dtype)                    # Probs are real, use precision policy
 
         # Use eval_shape on the static single_step function
         # We need to partial the static args first
@@ -1697,10 +1696,10 @@ class NQS(MonteCarloSolver):
 
         single_step_partial = partial(
             nqs_kernels._single_step,
-            ansatz_fn=ansatz_fn,
-            apply_fn=apply_fn,
-            local_loss_fn=loss_fn,
-            flat_grad_fn=flat_grad_fn,
+            ansatz_fn       =   ansatz_fn,
+            apply_fn        =   apply_fn,
+            local_loss_fn   =   loss_fn,
+            flat_grad_fn    =   flat_grad_fn,
             compute_grad_f=compute_grad_f,
             batch_size=batch_size,
             t=t,
@@ -1719,7 +1718,8 @@ class NQS(MonteCarloSolver):
                 result_abstract.params_cpx,
             )
         except Exception as e:
-            
+            self._log(f"Exception during abstract shape inference. Falling back to real data evaluation: {e}", lvl=2, color="red")
+                        
             # Fallback: Run it once with real data
             old_chains  = self._sampler.numchains
             old_samples = self._sampler.numsamples
@@ -1742,34 +1742,34 @@ class NQS(MonteCarloSolver):
         Snapshotting: Captures the current state of ansatz functions (including modifiers).
         """
 
-        batch_size = batch_size if batch_size is not None else self._batch_size
+        batch_size          = batch_size if batch_size is not None else self._batch_size
         self._set_batch_size(batch_size)
 
         # ! Snapshot the current functions
         # This guarantees that the trainer uses exactly what was active when wrapped
-        ansatz_fn = self._ansatz_func
-        local_loss_fn = self._loss_func
-        flat_grad_fn = self._flat_grad_func
-        apply_fn = self._apply_func
-        compute_grad_f = (
-            net_utils.jaxpy.compute_gradients_batched
-            if not self._analytic
-            else self._analytic_grad_func
-        )
+        ansatz_fn           = self._ansatz_func
+        local_loss_fn       = self._loss_func
+        flat_grad_fn        = self._flat_grad_func
+        apply_fn            = self._apply_func
+        compute_grad_f      = (
+                                net_utils.jaxpy.compute_gradients_batched
+                                if not self._analytic
+                                else self._analytic_grad_func
+                            )
 
         # ! Infer shapes safely
-        # shapes, sizes, iscpx = self._sample_for_shapes(
-        #     ansatz_fn,
-        #     apply_fn,
-        #     local_loss_fn,
-        #     flat_grad_fn,
-        #     compute_grad_f,
-        #     batch_size=batch_size,
-        #     t=0,
-        # )
+        shapes, sizes, iscpx = self._sample_for_shapes(
+                                ansatz_fn,
+                                apply_fn,
+                                local_loss_fn,
+                                flat_grad_fn,
+                                compute_grad_f,
+                                batch_size=batch_size,
+                                t=0,
+                            )
         
         # Use pre-computed shapes from initialization
-        shapes, sizes, iscpx = self._params_shapes, self._params_sizes, self._params_iscpx
+        # shapes, sizes, iscpx = self._params_shapes, self._params_sizes, self._params_iscpx
 
         # Pre-compute tree definition for flattening/unflattening parameters
         tree_def, flat_size, slices = (
@@ -1780,9 +1780,7 @@ class NQS(MonteCarloSolver):
 
         # ! Bind the static arguments via partial
         # This helps JAX identify them as non-differentiable configuration
-        accum_real_dtype = (
-            self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
-        )
+        accum_real_dtype    = self._precision_policy.accum_real_dtype if hasattr(self, "_precision_policy") else None
         accum_complex_dtype = (
             self._precision_policy.accum_complex_dtype
             if hasattr(self, "_precision_policy")
@@ -1791,15 +1789,15 @@ class NQS(MonteCarloSolver):
 
         single_step_jax = partial(
             nqs_kernels._single_step,
-            ansatz_fn=ansatz_fn,
-            local_loss_fn=local_loss_fn,
-            flat_grad_fn=flat_grad_fn,
-            apply_fn=apply_fn,
-            batch_size=batch_size,
-            compute_grad_f=compute_grad_f,
-            accum_real_dtype=accum_real_dtype,
-            accum_complex_dtype=accum_complex_dtype,
-            use_jax=self._isjax,
+            ansatz_fn           =   ansatz_fn,
+            local_loss_fn       =   local_loss_fn,
+            flat_grad_fn        =   flat_grad_fn,
+            apply_fn            =   apply_fn,
+            batch_size          =   batch_size,
+            compute_grad_f      =   compute_grad_f,
+            accum_real_dtype    =   accum_real_dtype,
+            accum_complex_dtype =   accum_complex_dtype,
+            use_jax             =   self._isjax,
         )
 
         # ! Create the JIT-compiled wrapper

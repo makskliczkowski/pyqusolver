@@ -198,7 +198,7 @@ class SpecialOperator(Operator, ABC):
                 if self._verbose:
                     self._log(
                         f"Using provided HilbertSpace: ns={self._ns}, lattice={'yes' if self._lattice else 'no'}",
-                        lvl=3,
+                        lvl=1,
                         color="green",
                     )
             return
@@ -1305,11 +1305,16 @@ class SpecialOperator(Operator, ABC):
         module = self.operators
 
         # Get the catalog of all operator codes and the composition function
-        # _lookup_codes: Dict[str, int] - maps operator names to integer codes
-        # _instr_function: Callable - JIT-compiled composition function
-        self._lookup_codes, self._instr_function = module.get_codes(
-            is_complex=(self._iscpx or self._dtype == np.complex128)
-        )
+        # _lookup_codes     : Dict[str, int]    - maps operator names to integer codes
+        # _instr_function   : Callable          - JIT-compiled composition function
+        
+        is_complex = getattr(self, "_iscpx", False)
+        if not is_complex and self._dtype is not None:
+            try:
+                is_complex = np.issubdtype(np.dtype(self._dtype), np.complexfloating)
+            except Exception:
+                pass
+        self._lookup_codes, self._instr_function = module.get_codes(is_complex=is_complex)
 
         # Set maximum output buffer size:
         # - Each operator in _instr_codes produces at most 1 off-diagonal state

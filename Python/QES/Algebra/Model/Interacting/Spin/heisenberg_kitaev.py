@@ -86,30 +86,30 @@ class HeisenbergKitaev(Hamiltonian):
 
     def __init__(
         self,
-        lattice: Lattice,
-        K: Union[List[float], None, float] = 1.0,
+        lattice         : Lattice,
+        K               : Union[List[float], None, float] = 1.0,
         *,
-        hilbert_space: Optional[HilbertSpace] = None,
+        hilbert_space   : Optional[HilbertSpace] = None,
         # Heisenberg couplings
-        J: Union[List[float], None, float] = None,
-        dlt: Union[List[float], None, float] = 1.0,
+        J               : Union[List[float], None, float] = None,
+        dlt             : Union[List[float], None, float] = 1.0,
         # Gamma interactions
-        Gamma: Union[List[float], None, float] = None,
+        Gamma           : Union[List[float], None, float] = None,
         # Magnetic fields
-        hx: Union[List[float], None, float] = None,
-        hy: Union[List[float], None, float] = None,
-        hz: Union[List[float], None, float] = None,
+        hx              : Union[List[float], None, float] = None,
+        hy              : Union[List[float], None, float] = None,
+        hz              : Union[List[float], None, float] = None,
         # Classical impurities
         # Format: List of tuples, either:
         #   - (site, amplitude)                     -> z-polarized impurity: amplitude * sig^z_i
         #   - (site, phi, theta, amplitude)         -> arbitrary direction using spherical coordinates:
         #       sin(theta)*cos(phi)*ampl * sig^x_i + sin(theta)*sin(phi)*ampl * sig^y_i + cos(theta)*ampl * sig^z_i
         #     where theta is polar angle from z-axis, phi is azimuthal angle in xy-plane
-        impurities: List[Tuple] = [],
+        impurities      : List[Tuple] = [],
         # other parameters
-        dtype: type = np.float64,
-        backend: str = "default",
-        use_forward: bool = True,
+        dtype           : type = np.float64,
+        backend         : str = "default",
+        use_forward     : bool = True,
         **kwargs,
     ):
         r"""
@@ -355,10 +355,12 @@ class HeisenbergKitaev(Hamiltonian):
             for site, phi, theta, ampl in self._impurities:
                 phi_i = phi % (2 * np.pi)
                 theta_i = theta % np.pi
+                # Concise format for directory naming: s{site}_p{phi}_t{theta}_a{ampl}
+                # using .2f precision to keep it short
                 imp_strs.append(
-                    f"{site}:phi={phi_i:.{prec}f}:theta={theta_i:.{prec}f}:ampl={ampl:.{prec}f}"
+                    f"s{site}_p{phi_i:.2f}_t{theta_i:.2f}_a{ampl:.2f}"
                 )
-            parts.append(f"impurities[{' ; '.join(imp_strs)}]")
+            parts.append(f"Imps[{'-'.join(imp_strs)}]")
 
         parts = [p for p in parts if p]
         return sep.join(parts) + ")"
@@ -465,11 +467,12 @@ class HeisenbergKitaev(Hamiltonian):
         Model: Heisenberg-Kitaev-Gamma with external fields and impurities.
 
         \\[
-            H_hei = \\sum_{\\langle i,j \rangle} J (S_i^x S_j^x + S_i^y S_j^y + \\Delta S_i^z S_j^z)
-            H_kit = -\\sum_{\\langle i,j \rangle_\\gamma} K_\\gamma S_i^\\gamma S_j^\\gamma
-            H_gam = -\\sum_{\\langle i,j \rangle_\\gamma} \\Gamma^\\gamma (S_i^\alpha S_j^\beta + S_i^\beta S_j^\alpha)
-            H_mag = -\\sum_{i} (h_x S_i^x + h_y S_i^y + h_z S_i^z)
-            H_all = H_hei + H_kit + H_gam + H_mag
+            H_hei = \\sum_{\\langle i,j \rangle} J (S_i^x S_j^x + S_i^y S_j^y + \\Delta S_i^z S_j^z)                        # Heisenberg term with positive sign convention (antiferromagnetic)
+            H_kit = -\\sum_{\\langle i,j \rangle_\\gamma} K_\\gamma S_i^\\gamma S_j^\\gamma                                 # Kitaev term with negative sign convention (ferromagnetic)
+            H_gam = \\sum_{\\langle i,j \rangle_\\gamma} \\Gamma^\\gamma (S_i^\alpha S_j^\beta + S_i^\beta S_j^\alpha)      # positive sign convention (antiferromagnetic)
+            H_mag = -\\sum_{i} (h_x S_i^x + h_y S_i^y + h_z S_i^z)                                                          # Magnetic field terms with negative sign convention
+            H_imp = -\\sum_{i} \\vec{h}_{imp,i} \\cdot \\vec{S}_i                                                           # Impurity terms with negative sign convention
+            H_all = H_hei + H_kit + H_gam + H_mag + H_imp
         \\]
 
         Note:
@@ -483,46 +486,46 @@ class HeisenbergKitaev(Hamiltonian):
             raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
 
         #! define the operators beforehand - to avoid multiple creations
-        op_sx_l = operators_spin_module.sig_x(
+        op_sx_l     = operators_spin_module.sig_x(
             lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
         )
-        op_sy_l = operators_spin_module.sig_y(
+        op_sy_l     = operators_spin_module.sig_y(
             lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
         )
-        op_sz_l = operators_spin_module.sig_z(
+        op_sz_l     = operators_spin_module.sig_z(
             lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
         )
 
         # Kitaev and Heisenberg terms - correlation operators (two-site)
-        op_sx_sx_c = operators_spin_module.sig_x(
+        op_sx_sx_c  = operators_spin_module.sig_x(
             lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation
         )
-        op_sy_sy_c = operators_spin_module.sig_y(
+        op_sy_sy_c  = operators_spin_module.sig_y(
             lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation
         )
-        op_sz_sz_c = operators_spin_module.sig_z(
+        op_sz_sz_c  = operators_spin_module.sig_z(
             lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation
         )
 
         # Create Gamma operators as products of correlation operators
-        op_sx_sy_c = operators_spin_module.sig_xy(lattice=lattice, spin_value=0.5)
-        op_sy_sx_c = operators_spin_module.sig_yx(lattice=lattice, spin_value=0.5)
+        op_sx_sy_c  = operators_spin_module.sig_xy(lattice=lattice, spin_value=0.5)
+        op_sy_sx_c  = operators_spin_module.sig_yx(lattice=lattice, spin_value=0.5)
 
-        op_sz_sx_c = operators_spin_module.sig_zx(lattice=lattice, spin_value=0.5)
-        op_sx_sz_c = operators_spin_module.sig_xz(lattice=lattice, spin_value=0.5)
+        op_sz_sx_c  = operators_spin_module.sig_zx(lattice=lattice, spin_value=0.5)
+        op_sx_sz_c  = operators_spin_module.sig_xz(lattice=lattice, spin_value=0.5)
 
-        op_sy_sz_c = operators_spin_module.sig_yz(lattice=lattice, spin_value=0.5)
-        op_sz_sy_c = operators_spin_module.sig_zy(lattice=lattice, spin_value=0.5)
-        nn_nums = (
+        op_sy_sz_c  = operators_spin_module.sig_yz(lattice=lattice, spin_value=0.5)
+        op_sz_sy_c  = operators_spin_module.sig_zy(lattice=lattice, spin_value=0.5)
+        nn_nums     = (
             [lattice.get_nn_forward_num(i) for i in range(self.ns)]
             if self._use_forward
             else [lattice.get_nn_num(i) for i in range(self.ns)]
         )
 
         #! iterate over all the sites
-        elems = 0
+        elems       = 0
         # log             =   'info'
-        log = "debug"
+        log         = "debug"
         for i in range(self.ns):
             self._log(f"Starting i: {i}", lvl=1, log=log)
 
@@ -551,13 +554,13 @@ class HeisenbergKitaev(Hamiltonian):
             for imp_site, phi, theta, ampl in self._impurities:
                 if imp_site == i and Hamiltonian._ADD_CONDITION(ampl):
                     # Compute spherical coordinate components
-                    sin_theta = np.sin(theta)
-                    cos_theta = np.cos(theta)
-                    sin_phi = np.sin(phi)
-                    cos_phi = np.cos(phi)
+                    sin_theta   = np.sin(theta)
+                    cos_theta   = np.cos(theta)
+                    sin_phi     = np.sin(phi)
+                    cos_phi     = np.cos(phi)
 
                     # Z-component: cos(theta) * amplitude
-                    imp_z = SINGLE_TERM_MULT * ampl * cos_theta
+                    imp_z       = -SINGLE_TERM_MULT * ampl * cos_theta
                     if Hamiltonian._ADD_CONDITION(imp_z):
                         self.add(op_sz_l, multiplier=imp_z, modifies=False, sites=[i])
                         self._log(
@@ -565,7 +568,7 @@ class HeisenbergKitaev(Hamiltonian):
                         )
 
                     # X-component: sin(theta) * cos(phi) * amplitude
-                    imp_x = SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
+                    imp_x       = -SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
                     if Hamiltonian._ADD_CONDITION(imp_x):
                         self.add(op_sx_l, multiplier=imp_x, modifies=True, sites=[i])
                         self._log(
@@ -573,7 +576,7 @@ class HeisenbergKitaev(Hamiltonian):
                         )
 
                     # Y-component: sin(theta) * sin(phi) * amplitude
-                    imp_y = SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
+                    imp_y       = -SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
                     if Hamiltonian._ADD_CONDITION(imp_y):
                         self.add(op_sy_l, multiplier=imp_y, modifies=True, sites=[i])
                         self._log(
@@ -613,70 +616,54 @@ class HeisenbergKitaev(Hamiltonian):
                     elif nn == HEI_KIT_X_BOND_NEI:
                         sx_sx -= phase * CORR_TERM_MULT * self._kx if self._kx is not None else 0.0
 
+                #! Now add the Heisenberg-Kitaev terms
                 if True:
                     if Hamiltonian._ADD_CONDITION(sz_sz):
                         self.add(op_sz_sz_c, sites=[i, nei], multiplier=sz_sz, modifies=False)
-                        self._log(
-                            f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl=2, log=log
-                        )
+                        self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl=2, log=log)
                         elems += 1
                     if Hamiltonian._ADD_CONDITION(sx_sx):
                         self.add(op_sx_sx_c, sites=[i, nei], multiplier=sx_sx, modifies=True)
-                        self._log(
-                            f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl=2, log=log
-                        )
+                        self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl=2, log=log)
                         elems += 1
                     if Hamiltonian._ADD_CONDITION(sy_sy):
                         self.add(op_sy_sy_c, sites=[i, nei], multiplier=sy_sy, modifies=True)
-                        self._log(
-                            f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl=2, log=log
-                        )
+                        self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl=2, log=log)
                         elems += 1
 
                 #! Gamma terms - these are off-diagonal couplings, they are added - antiferromagnetic
+                # NOTE: The definition is H_gam = - sum Gamma * (S_a S_b + S_b S_a)
+                # Therefore we apply -Gamma as multiplier
                 if True:
                     # ? Gamma_x terms
                     if Hamiltonian._ADD_CONDITION(self._gx) and nn == HEI_KIT_X_BOND_NEI:
-                        val = self._gx * phase * CORR_TERM_MULT
+                        val     = self._gx * phase * CORR_TERM_MULT
+                        elems  += 2
                         self.add(op_sy_sz_c, sites=[i, nei], multiplier=val, modifies=True)
                         self.add(op_sz_sy_c, sites=[i, nei], multiplier=val, modifies=True)
-                        self._log(
-                            f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}",
-                            lvl=2,
-                            log=log,
-                        )
-                        elems += 2
+                        self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl=2, log=log)
 
                     # #? Gamma_y terms
                     if Hamiltonian._ADD_CONDITION(self._gy) and nn == HEI_KIT_Y_BOND_NEI:
-                        val = self._gy * phase * CORR_TERM_MULT
+                        val     = self._gy * phase * CORR_TERM_MULT
+                        elems  += 2
                         self.add(op_sz_sx_c, sites=[i, nei], multiplier=val, modifies=True)
                         self.add(op_sx_sz_c, sites=[i, nei], multiplier=val, modifies=True)
-                        self._log(
-                            f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}",
-                            lvl=2,
-                            log=log,
-                        )
-                        elems += 2
+                        self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl=2, log=log)
 
                     # #? Gamma_z terms
                     if Hamiltonian._ADD_CONDITION(self._gz) and nn == HEI_KIT_Z_BOND_NEI:
-                        val = self._gz * phase * CORR_TERM_MULT
+                        val     = self._gz * phase * CORR_TERM_MULT
+                        elems  += 2
                         self.add(op_sx_sy_c, sites=[i, nei], multiplier=val, modifies=True)
                         self.add(op_sy_sx_c, sites=[i, nei], multiplier=val, modifies=True)
-                        self._log(
-                            f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}",
-                            lvl=2,
-                            log=log,
-                        )
-                        elems += 2
+                        self._log(f"Adding Gamma_z(SxSy + SySx) at {i},{nei} with value {val:.2f}", lvl=2, log=log)
 
                 #! Finalize the operator addition for this neighbor
                 self._log(f"Finished processing neighbor {nei} of site {i}", lvl=2, log=log)
 
         self._log(f"Total NN elements added: {elems}", color="red", lvl=3, verbose=self._verbose)
         self._log("Successfully set local energy operators...", lvl=1, log="info", verbose=self._verbose)
-
 
 ##########################################################################################
 #! EOF

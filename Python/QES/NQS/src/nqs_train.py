@@ -315,50 +315,48 @@ class NQSTrainer:
         nqs: NQS,
         *,
         # Solvers
-        lin_solver: Union[str, Callable] = SolverType.SCIPY_CG,  # Linear Solver
-        lin_force_mat: bool = False,  # Force forming full matrix
-        pre_solver: Union[str, Callable] = None,  # Preconditioner
-        ode_solver: Union[IVP, str] = "Euler",  # ODE Solver or preset
-        tdvp: Optional[TDVP] = None,  # Setup TDVP engine
+        lin_solver          : Union[str, Callable] = SolverType.SCIPY_CG,  # Linear Solver
+        lin_force_mat       : bool = False,  # Force forming full matrix
+        pre_solver          : Union[str, Callable] = None,  # Preconditioner
+        ode_solver          : Union[IVP, str] = "Euler",  # ODE Solver or preset
+        tdvp                : Optional[TDVP] = None,  # Setup TDVP engine
         # Configuration
-        n_batch: int = 1000,  # Batch size for sampling
-        phases: Union[str, tuple] = "default",  # e.g., "kitaev" or (lr_sched, reg_sched)
+        n_batch             : int = 256,  # Batch size for sampling
+        phases              : Union[str, tuple] = "default",  # e.g., "kitaev" or (lr_sched, reg_sched)
         # Utilities
-        timing_mode: NQSTimeModes = NQSTimeModes.LAST,  # Timing mode
-        early_stopper: Any = None,  # Callable or EarlyStopping
-        logger: Optional[Logger] = None,  # Logger instance
-        lower_states: List[NQS] = None,  # For excited states - list of lower NQS
-        background: bool = False,  # Quiet/background mode (no pbar/log spam)
+        timing_mode         : NQSTimeModes = NQSTimeModes.LAST,  # Timing mode
+        early_stopper       : Any = None,  # Callable or EarlyStopping
+        logger              : Optional[Logger] = None,  # Logger instance
+        lower_states        : List[NQS] = None,  # For excited states - list of lower NQS
+        background          : bool = False,  # Quiet/background mode (no pbar/log spam)
         # --------------------------------------------------------------
-        lr_scheduler: Optional[Callable] = None,  # Direct LR scheduler injection
-        reg_scheduler: Optional[
-            Callable
-        ] = None,  # Direct Reg scheduler injection (for future L2 reg)
-        diag_scheduler: Optional[Callable] = None,  # Direct diag_shift scheduler injection
+        lr_scheduler        : Optional[Callable] = None,  # Direct LR scheduler injection
+        reg_scheduler       : Optional[Callable] = None,  # Direct Reg scheduler injection (for future L2 reg)
+        diag_scheduler      : Optional[Callable] = None,  # Direct diag_shift scheduler injection
         # --------------------------------------------------------------
-        lr: Optional[float] = None,  # Direct LR injection       (bypass scheduler)
-        reg: Optional[float] = None,  # Direct Reg injection      (bypass scheduler)
-        diag_shift: float = 1e-5,  # Initial diagonal shift    (bypass scheduler)
-        grad_clip: Optional[float] = None,  # Gradient clipping threshold (None = no clipping)
+        lr                  : Optional[float] = None,  # Direct LR injection       (bypass scheduler)
+        reg                 : Optional[float] = None,  # Direct Reg injection      (bypass scheduler)
+        diag_shift          : float = 1e-5,  # Initial diagonal shift    (bypass scheduler)
+        grad_clip           : Optional[float] = None,  # Gradient clipping threshold (None = no clipping)
         # --------------------------------------------------------------
         # Linear Solver + Preconditioner
         # --------------------------------------------------------------
-        lin_sigma: float = None,  # Linear solver sigma, inferred from diag_shift if None
-        lin_is_gram: bool = True,  # Is Gram matrix solver [(S^dagger S) x = b]
-        lin_type: SolverForm = SolverForm.GRAM,  # Solver form (gram, matvec, matrix)
+        lin_sigma           : float = None,  # Linear solver sigma, inferred from diag_shift if None
+        lin_is_gram         : bool = True,  # Is Gram matrix solver [(S^dagger S) x = b]
+        lin_type            : SolverForm = SolverForm.GRAM,  # Solver form (gram, matvec, matrix)
         # --------------------------------------------------------------
         # Auto-Tuner
         # --------------------------------------------------------------
-        auto_tune: bool = False,  # Enable adaptive auto-tuner
-        auto_tuner: Optional[Any] = None,  # Custom auto-tuner instance
+        auto_tune           : bool = False,  # Enable adaptive auto-tuner
+        auto_tuner          : Optional[Any] = None,  # Custom auto-tuner instance
         # --------------------------------------------------------------
         # TDVP arguments, if TDVP is created internally
         # --------------------------------------------------------------
-        use_sr: bool = True,  # Whether to use SR
-        use_minsr: bool = False,  # Whether to use MinSR
-        rhs_prefactor: float = -1.0,  # RHS prefactor
+        use_sr              : bool = True,  # Whether to use SR
+        use_minsr           : bool = False,  # Whether to use MinSR
+        rhs_prefactor       : float = -1.0,  # RHS prefactor
         # --------------------------------------------------------------
-        dtype: Any = None,  # Data type for internal computations
+        dtype               : Any = None,  # Data type for internal computations
         **kwargs,
     ):
         """

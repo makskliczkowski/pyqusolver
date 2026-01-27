@@ -6,10 +6,11 @@ It includes functions for sigma_x, sigma_y, sigma_z, sigma_plus (raising),
 sigma_minus (lowering), their products, and a Fourier-transformed sigma_k operator.
 The implementation is based on the provided C++ code and uses a general Operator class.
 
+----------------------------------------------------------------------------
 Author      : Maksymilian Kliczkowski, WUST, Poland
 Date        : February 2025
 Version     : 1.0
-
+----------------------------------------------------------------------------
 """
 
 from enum import IntEnum
@@ -22,15 +23,15 @@ import numpy as np
 
 try:
     # main imports
-    from QES.Algebra.Hilbert.hilbert_local import LocalOpKernels, LocalSpaceTypes
-    from QES.Algebra.Operator.catalog import register_local_operator
-    from QES.Algebra.Operator.operator import (
-        Operator,
-        OperatorTypeActing,
-        create_operator,
-        ensure_operator_output_shape_numba,
-    )
-    from QES.Algebra.Operator.special_operator import CUSTOM_OP_BASE
+    from QES.Algebra.Hilbert.hilbert_local      import LocalOpKernels, LocalSpaceTypes
+    from QES.Algebra.Operator.catalog           import register_local_operator
+    from QES.Algebra.Operator.operator          import (
+                                                    Operator,
+                                                    OperatorTypeActing,
+                                                    create_operator,
+                                                    ensure_operator_output_shape_numba,
+                                                )
+    from QES.Algebra.Operator.special_operator  import CUSTOM_OP_BASE
 except ImportError as e:
     raise ImportError(
         "Failed to import required modules. Ensure that the QES package is correctly installed."
@@ -39,11 +40,11 @@ except ImportError as e:
 ################################################################################
 
 try:
-    import QES.general_python.common.binary as _binary
-    from QES.general_python.algebra.utils import DEFAULT_NP_CPX_TYPE, DEFAULT_NP_FLOAT_TYPE
-    from QES.general_python.common.binary import BACKEND_DEF_SPIN
-    from QES.general_python.common.binary import BACKEND_REPR as _SPIN
-    from QES.general_python.lattices.lattice import Lattice
+    import QES.general_python.common.binary     as _binary
+    from QES.general_python.algebra.utils       import DEFAULT_NP_CPX_TYPE, DEFAULT_NP_FLOAT_TYPE
+    from QES.general_python.common.binary       import BACKEND_DEF_SPIN
+    from QES.general_python.common.binary       import BACKEND_REPR as _SPIN
+    from QES.general_python.lattices.lattice    import Lattice
 except ImportError as e:
     raise ImportError("Failed to import required QES general Python modules.") from e
 
@@ -133,19 +134,17 @@ _SIG_M = np.array([[0, 0], [1, 0]], dtype=float)
 #! Sigma-X (\sigma _x) operator
 # -----------------------------------------------------------------------------
 
-
 @numba.njit(inline="always")
 def _sigma_x_core(state, ns, sites, spin_value=_SPIN):
-    new_state = state
-    coeff = 1.0
+    new_state   = state
+    coeff       = 1.0
 
     for site in sites:
-        pos = ns - 1 - site
-        new_state = _binary.flip_int(new_state, pos)
-        coeff *= spin_value
+        pos         = ns - 1 - site
+        new_state   = _binary.flip_int(new_state, pos)
+        coeff      *= spin_value
 
     return new_state, coeff
-
 
 @numba.njit(inline="always")
 def sigma_x_int_np(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value=_SPIN):
@@ -155,7 +154,6 @@ def sigma_x_int_np(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value=_
     """
     s, c = _sigma_x_core(state, ns, sites, spin_value)
     return (s,), (c,)
-
 
 def sigma_x_int(state: int, ns: int, sites: Union[List[int], None], spin_value: float = _SPIN):
     r"""
@@ -178,13 +176,12 @@ def sigma_x_int(state: int, ns: int, sites: Union[List[int], None], spin_value: 
     """
     return sigma_x_int_np(state, ns, sites, BACKEND_DEF_SPIN, spin_value)
 
-
 @numba.njit(inline="always")
 def sigma_x_np(
-    state: np.ndarray,
-    sites: Union[List[int], None],
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    state       : np.ndarray,
+    sites       : Union[List[int], None],
+    spin        : bool = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ):
     r"""
     Apply the Pauli-X (\sigma _x) operator on the given sites.
@@ -204,10 +201,10 @@ def sigma_x_np(
     np.ndarray
         The state after applying the operator.
     """
-    coeff = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
-    out = state.copy()
+    coeff   = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
+    out     = state.copy()
     for site in sites:
-        out = (
+        out     = (
             _binary.flip_array_np_nspin(out, site)
             if not spin
             else _binary.flip_array_np_spin(out, site)
@@ -216,13 +213,12 @@ def sigma_x_np(
     return ensure_operator_output_shape_numba(out, coeff)
     # return out, coeff
 
-
 def sigma_x(
     state,
-    ns: int,
-    sites: Union[List[int], None],
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    ns          : int,
+    sites       : Union[List[int], None],
+    spin        : bool = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ):
     r"""
     Apply the Pauli-X (\sigma _x) operator on the given sites.
@@ -255,34 +251,31 @@ def sigma_x(
         return sigma_x_np(state, sites, spin, spin_value)
     return sigma_x_jnp(state, ns, sites, spin, spin_value)
 
-
 # -----------------------------------------------------------------------------
 #! Sigma-Y (\sigma _y) operator
 # -----------------------------------------------------------------------------
 
-
 @numba.njit(inline="always")
 def _sigma_y_core(state, ns, sites, spin_value=_SPIN):
-    new_state = state
-    coeff = 1.0 + 0.0j
+    new_state   = state
+    coeff       = 1.0 + 0.0j
 
     for site in sites:
-        pos = ns - 1 - site
-        bit = _binary.check_int(new_state, pos)
+        pos         = ns - 1 - site
+        bit         = _binary.check_int(new_state, pos)
         # Pauli Y logic: 1j * (1 if 0, -1 if 1)
-        factor = 1j * (1.0 - 2.0 * bit) * spin_value
-        coeff *= factor
-        new_state = _binary.flip_int(new_state, pos)
+        factor      = 1j * (1.0 - 2.0 * bit) * spin_value
+        coeff      *= factor
+        new_state   = _binary.flip_int(new_state, pos)
     return new_state, coeff
-
 
 @numba.njit(inline="always")
 def sigma_y_int_np_real(
     state,
     ns,
     sites,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    spin            : bool = BACKEND_DEF_SPIN,
+    spin_value      : float = _SPIN,
 ):
     r"""
     \sigma _y on an integer state.
@@ -291,7 +284,6 @@ def sigma_y_int_np_real(
     """
     s, c = _sigma_y_core(state, ns, sites, spin_value)
     return (s,), (c.real,)
-
 
 @numba.njit(inline="always")
 def sigma_y_int_np(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value=_SPIN):
@@ -302,7 +294,6 @@ def sigma_y_int_np(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value=_
     """
     s, c = _sigma_y_core(state, ns, sites, spin_value)
     return (s,), (c,)
-
 
 def sigma_y_int(state: int, ns: int, sites: Union[List[int], None], spin_value: float = _SPIN):
     r"""
@@ -330,13 +321,12 @@ def sigma_y_int(state: int, ns: int, sites: Union[List[int], None], spin_value: 
         return sigma_y_int_np(state, ns, sites, spin_value)
     return sigma_y_int_np_real(state, ns, sites, spin_value)
 
-
-@numba.njit
+@numba.njit(inline="always")
 def sigma_y_np_real(
-    state: np.ndarray,
-    sites: Union[List[int], None],
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    state       : np.ndarray,
+    sites       : Union[List[int], None],
+    spin        : bool  = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ):
     r"""
     \sigma _y on a NumPy array state.
@@ -358,9 +348,9 @@ def sigma_y_np_real(
     out = state.copy()
     for site in sites:
         # For NumPy arrays, we use the site index directly.
-        factor = (2.0 * _binary.check_arr_np(state, site) - 1.0) * 1.0j * spin_value
-        coeff *= factor
-        out = (
+        factor  = (2.0 * _binary.check_arr_np(state, site) - 1.0) * 1.0j * spin_value
+        coeff   *= factor
+        out     = (
             _binary.flip_array_np_nspin(out, site)
             if not spin
             else _binary.flip_array_np_spin(out, site)
@@ -368,13 +358,12 @@ def sigma_y_np_real(
     return ensure_operator_output_shape_numba(out, coeff.real)
     # return out, coeff.real
 
-
-@numba.njit
+@numba.njit(inline="always")
 def sigma_y_np(
-    state: np.ndarray,
-    sites: Union[List[int], None],
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    state       : np.ndarray,
+    sites       : Union[List[int], None],
+    spin        : bool = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ):
     r"""
     \sigma _y on a NumPy array state.
@@ -397,16 +386,15 @@ def sigma_y_np(
     coeff = np.ones(1, dtype=DEFAULT_NP_CPX_TYPE)
     out = state.copy()
     for site in sites:
-        bit = _binary.check_arr_np(state, site)
-        factor = (2.0 * bit - 1.0) * 1.0j * spin_value
-        coeff *= factor
-        out = (
-            _binary.flip_array_np_nspin(out, site)
-            if not spin
-            else _binary.flip_array_np_spin(out, site)
-        )
+        bit     = _binary.check_arr_np(state, site)
+        factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
+        coeff  *= factor
+        out     = (
+                    _binary.flip_array_np_nspin(out, site)
+                    if not spin
+                    else _binary.flip_array_np_spin(out, site)
+                )
     return ensure_operator_output_shape_numba(out, coeff)
-
 
 def sigma_y(
     state,
@@ -427,29 +415,26 @@ def sigma_y(
     else:
         return sigma_y_jnp(state, sites, spin_value)
 
-
 # -----------------------------------------------------------------------------
 #! Sigma-Z (\sum _z) operator
 # -----------------------------------------------------------------------------
-
 
 @numba.njit(inline="always")
 def _sigma_z_core(state, ns, sites, spin_value=_SPIN):
     coeff = 1.0
     for site in sites:
-        pos = ns - 1 - site
-        bit = _binary.check_int(state, pos)
-        coeff *= (1.0 - 2.0 * bit) * spin_value
+        pos     = ns - 1 - site
+        bit     = _binary.check_int(state, pos)
+        coeff  *= (1.0 - 2.0 * bit) * spin_value # 1 if 0, -1 if 1
     return state, coeff
-
 
 @numba.njit(inline="always")
 def sigma_z_int_np(
-    state: int,
-    ns: int,
-    sites: Union[List[int], None],
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: bool = _SPIN,
+    state       : int,
+    ns          : int,
+    sites       : Union[List[int], None],
+    spin        : bool  = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ):
     r"""
     \sum _z on an integer state.
@@ -475,7 +460,6 @@ def sigma_z_int_np(
     s, c = _sigma_z_core(state, ns, sites, spin_value)
     return (s,), (c,)
 
-
 def sigma_z_int(state: int, ns: int, sites: Union[List[int], None], spin_value: float = _SPIN):
     r"""
     \sum _z on an integer state.
@@ -486,13 +470,12 @@ def sigma_z_int(state: int, ns: int, sites: Union[List[int], None], spin_value: 
         return sigma_z_int_jnp(state, ns, sites, spin_value)
     return sigma_z_int_np(state, ns, sites, spin_value)
 
-
 @numba.njit(inline="always")
 def sigma_z_np(
-    state: np.ndarray,
-    sites: Union[List[int], None],
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    state       : np.ndarray,
+    sites       : Union[List[int], None],
+    spin        : bool  = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ):
     r"""
     \sum _z on a NumPy array state.
@@ -513,11 +496,10 @@ def sigma_z_np(
     """
     coeff = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
     for site in sites:
-        bit = _binary.check_arr_np(state, site)
-        coeff *= (2 * bit - 1.0) * spin_value
+        bit     = _binary.check_arr_np(state, site)
+        coeff  *= (2 * bit - 1.0) * spin_value # if spin, vectors are [-1, 1], then 2*bit-1 works correctly
     return ensure_operator_output_shape_numba(state, coeff)
     # return state, coeff
-
 
 def sigma_z(
     state,
@@ -555,19 +537,17 @@ def sigma_z(
         return sigma_z_np(state, sites, spin, spin_value)
     return sigma_z_jnp(state, ns, sites, spin, spin_value)
 
-
 # -----------------------------------------------------------------------------
 #! Sigma-Z total (\sum _z total) operator
 # -----------------------------------------------------------------------------
 
-
 @numba.njit(inline="always")
 def sigma_z_total_int_np(
-    state: int,
-    ns: int,
-    sites: Union[List[int], None],
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    state       : int,
+    ns          : int,
+    sites       : Union[List[int], None],
+    spin        : bool = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ):
     r"""
     \sum _z total on an integer state.
@@ -971,7 +951,6 @@ def sigma_mp(
 #! Sigma-K operator (Fourier-transformed spin operator)
 # -----------------------------------------------------------------------------
 
-
 @numba.njit
 def sigma_k_int_np(
     state: int,
@@ -1021,7 +1000,6 @@ def sigma_k_int_np(
     norm = np.sqrt(len(sites)) if sites else 1.0
     return (state,), (accum / norm,)
 
-
 @numba.njit
 def sigma_k_np(
     state: np.ndarray,
@@ -1042,7 +1020,6 @@ def sigma_k_np(
     return ensure_operator_output_shape_numba(state, accum / norm)
     # return state, accum / norm
 
-
 def sigma_k(
     state,
     ns: int,
@@ -1059,13 +1036,11 @@ def sigma_k(
         return sigma_k_np(state, sites, k, spin, spin_value)
     return sigma_k_jnp(state, ns, sites, k, spin, spin_value)
 
-
 ################################################################################
 #! Factory Functions: Wrap the elementary functions in Operator objects.
 ################################################################################
 
 # ? Lookup codes for NUMBA, as it's idiotically not hashable.
-
 
 class SpinLookupCodes(IntEnum):
     # globals
@@ -1144,13 +1119,11 @@ class SpinLookupCodes(IntEnum):
             "Smp/C": SpinLookupCodes.sig_mp_corr,
         }
 
-
 SPIN_LOOKUP_CODES = SpinLookupCodes
 
 # -----------------------------------------------------------------------------
 #! Factory function for sigma-x (\sigma _x)
 # -----------------------------------------------------------------------------
-
 
 def sig_x(
     lattice: Optional[Lattice] = None,
@@ -1204,11 +1177,9 @@ def sig_x(
         code=code,
     )
 
-
 # -----------------------------------------------------------------------------
 #! Factory function for sigma-y (\sigma _y)
 # -----------------------------------------------------------------------------
-
 
 def sig_y(
     lattice: Optional[Lattice] = None,
@@ -1267,11 +1238,9 @@ def sig_y(
         code=code,
     )
 
-
 # -----------------------------------------------------------------------------
 #! Factory function for sigma_z (\sum _z)
 # -----------------------------------------------------------------------------
-
 
 def sig_z(
     lattice: Optional[Lattice] = None,
@@ -1325,6 +1294,9 @@ def sig_z(
         code=code,
     )
 
+# -----------------------------------------------------------------------------
+#! Factory function for other spin operators
+# -----------------------------------------------------------------------------
 
 def sig_p(
     lattice: Optional[Lattice] = None,
@@ -1527,22 +1499,22 @@ def _apply_pauli_sequence_kernel(state, ns, sites, codes, spin_val=1.0):
 
     The codes and sites are from left to right but the operator application must be from right to left
     """
-    coeff = 1.0 + 0.0j
-    curr = state
-    n = len(codes)
+    coeff   = 1.0 + 0.0j
+    curr    = state
+    n       = len(codes)
 
     for i in range(n):
         c = codes[n - 1 - i]
         s = sites[n - 1 - i]
 
-        if c == 0:  # X
-            curr, cf = _sigma_x_core(curr, ns, (s,), spin_val)
-            coeff *= cf
-        elif c == 1:  # Y
-            curr, cf = _sigma_y_core(curr, ns, (s,), spin_val)
-            coeff *= cf
-        elif c == 2:  # Z
-            curr, cf = _sigma_z_core(curr, ns, (s,), spin_val)
+        if c == 0:      # X
+            curr, cf    = _sigma_x_core(curr, ns, (s,), spin_val)
+            coeff      *= cf
+        elif c == 1:    # Y
+            curr, cf    = _sigma_y_core(curr, ns, (s,), spin_val)
+            coeff      *= cf
+        elif c == 2:    # Z
+            curr, cf    = _sigma_z_core(curr, ns, (s,), spin_val)
             coeff *= cf
 
     return (curr,), (coeff,)
@@ -1576,11 +1548,11 @@ def _apply_pauli_sequence_kernel_np(state, sites, codes, spin_val=1.0):
 def pauli_string(
     op_codes,
     op_sites,
-    ns: int,
-    return_op: bool = False,
-    type_act: Optional[Union[str, OperatorTypeActing]] = None,
-    code: Optional[int] = None,
-    spin_value: float = 1.0,
+    ns              : int,
+    return_op       : bool = False,
+    type_act        : Optional[Union[str, OperatorTypeActing]] = None,
+    code            : Optional[int] = None,
+    spin_value      : float = 1.0,
 ) -> Union[Callable, Operator]:
     """
     Apply a general string of Pauli operators O_n ... O_1 to vecs.
@@ -1626,11 +1598,11 @@ def pauli_string(
             raise TypeError(f"Operator code must be str or int. Got: {type(c)}")
 
     # Prepare JIT arguments
-    op_codes_arr = np.array(op_codes_out, dtype=np.int32)
-    op_sites_arr = (
-        np.array(op_sites, dtype=np.int32) if op_sites is not None else np.array([], dtype=np.int32)
-    )
-    spin_val = spin_value if spin_value is not None else _SPIN
+    op_codes_arr    = np.array(op_codes_out, dtype=np.int32)
+    op_sites_arr    = (
+                        np.array(op_sites, dtype=np.int32) if op_sites is not None else np.array([], dtype=np.int32)
+                    )
+    spin_val        = spin_value if spin_value is not None else _SPIN
 
     if not return_op:
         return _apply_pauli_sequence_kernel, (ns, op_sites_arr, op_codes_arr, spin_val)
@@ -1646,16 +1618,16 @@ def pauli_string(
             type_act = OperatorTypeActing.from_string(type_act)
 
         return create_operator(
-            type_act=type_act,
-            op_func_int=_apply_pauli_sequence_kernel,
-            op_func_np=_apply_pauli_sequence_kernel_np,
-            op_func_jnp=apply_pauli_sequence_jnp if JAX_AVAILABLE else None,
-            ns=ns,
-            name="Pauli:" + ",".join(f"S_{c}" for c in op_codes),
-            modifies=True,
-            sites=op_sites if OperatorTypeActing.is_type_global(type_act) else None,
-            extra_args=(op_codes_arr, spin_val),
-            code=code,
+            type_act        =   type_act,
+            op_func_int     =   _apply_pauli_sequence_kernel,
+            op_func_np      =   _apply_pauli_sequence_kernel_np,
+            op_func_jnp     =   apply_pauli_sequence_jnp if JAX_AVAILABLE else None,
+            ns              =   ns,
+            name            =   "Pauli:" + ",".join(f"S_{c}" for c in op_codes),
+            modifies        =   True,
+            sites           =   op_sites if OperatorTypeActing.is_type_global(type_act) else None,
+            extra_args      =   (op_codes_arr, spin_val),
+            code            =   code,
         )
 
 
@@ -1893,12 +1865,12 @@ def make_sigma_mixed(
 
 
 def sig_xy(
-    lattice=None,
-    ns=None,
-    type_act="global",
-    sites=None,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    lattice     =   None,
+    ns          =   None,
+    type_act    =   "global",
+    sites       =   None,
+    spin        :   bool = BACKEND_DEF_SPIN,
+    spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _x \sigma _y operator."""
     return make_sigma_mixed(
@@ -1907,12 +1879,12 @@ def sig_xy(
 
 
 def sig_yx(
-    lattice=None,
-    ns=None,
-    type_act="global",
-    sites=None,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    lattice     =   None,
+    ns          =   None,
+    type_act    =   "global",
+    sites       =   None,
+    spin        :   bool = BACKEND_DEF_SPIN,
+    spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _y \sigma _x operator."""
     return make_sigma_mixed(
@@ -1921,12 +1893,12 @@ def sig_yx(
 
 
 def sig_yz(
-    lattice=None,
-    ns=None,
-    type_act="global",
-    sites=None,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    lattice     =   None,
+    ns          =   None,
+    type_act    =   "global",
+    sites       =   None,
+    spin        :   bool = BACKEND_DEF_SPIN,
+    spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _y \sigma _z operator."""
     return make_sigma_mixed(
@@ -1935,12 +1907,12 @@ def sig_yz(
 
 
 def sig_zy(
-    lattice=None,
-    ns=None,
-    type_act="global",
-    sites=None,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    lattice     =   None,
+    ns          =   None,
+    type_act    =   "global",
+    sites       =   None,
+    spin        :   bool = BACKEND_DEF_SPIN,
+    spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _z \sigma _y operator."""
     return make_sigma_mixed(
@@ -1949,12 +1921,12 @@ def sig_zy(
 
 
 def sig_zx(
-    lattice=None,
-    ns=None,
-    type_act="global",
-    sites=None,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    lattice     =   None,
+    ns          =   None,
+    type_act    =   "global",
+    sites       =   None,
+    spin        :   bool = BACKEND_DEF_SPIN,
+    spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _z \sigma _x operator."""
     return make_sigma_mixed(
@@ -1963,12 +1935,12 @@ def sig_zx(
 
 
 def sig_xz(
-    lattice=None,
-    ns=None,
-    type_act="global",
-    sites=None,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    lattice     =   None,
+    ns          =   None,
+    type_act    =   "global",
+    sites       =   None,
+    spin        :   bool = BACKEND_DEF_SPIN,
+    spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _x \sigma _z operator."""
     return make_sigma_mixed(
