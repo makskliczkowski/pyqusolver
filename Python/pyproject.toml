@@ -106,8 +106,12 @@ Repository = "https://github.com/makskliczkowski/QuantumEigenSolver"
 "Bug Tracker" = "https://github.com/makskliczkowski/QuantumEigenSolver/issues"
 
 [tool.setuptools]
-packages = ["QES"]
 include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["QES*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 QES = ["*.md", "*.txt", "*.rst", "log/*", "general_python/tests/data/*"]
