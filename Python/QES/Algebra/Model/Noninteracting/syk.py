@@ -8,18 +8,24 @@ Description
 Simple SYK model for non-interacting fermions.
 """
 
-from typing import Optional, Union
+from    typing import Any, Optional, Union, TYPE_CHECKING
+import  numpy as np
 
-import numpy as np
 
 # import the quadratic base
-from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
-from QES.general_python.algebra.ran_wrapper import RMT, random_matrix
+try:
+    from QES.Algebra.hamil_quadratic            import QuadraticHamiltonian
+    from QES.general_python.algebra.ran_wrapper import RMT, random_matrix
+    
+    if TYPE_CHECKING:
+        from QES.Algebra.hilbert                import HilbertSpace
+    
+except ImportError:
+    raise ImportError("Could not import QES module. Ensure that pyqusolver is installed and accessible.")
 
 # ---------------------------------------------------------------------
 #! HAMILTONIAN
 # ---------------------------------------------------------------------
-
 
 class SYK2(QuadraticHamiltonian):
     r"""
@@ -40,11 +46,11 @@ class SYK2(QuadraticHamiltonian):
 
     def __init__(
         self,
-        ns: int,
-        hilbert_space: Optional[Union[str, "HilbertSpace"]] = None,
-        dtype: type = np.float64,
-        backend: str = "default",
-        seed: Optional[int] = None,
+        ns              : int,
+        hilbert_space   : Optional[Union[str, "HilbertSpace"]] = None,
+        dtype           : np.dtype = np.dtype(np.float64),
+        backend         : str = "default",
+        seed            : Optional[int] = None,
         **kwargs,
     ):
         super().__init__(
@@ -64,19 +70,23 @@ class SYK2(QuadraticHamiltonian):
         """
         self._log("Building SYK2 Hamiltonian...", lvl=2, color="green")
         if self._iscpx:
-            self._hamil_sp = random_matrix(
-                shape=(self._ns, self._ns),
-                typek=RMT.GUE,
-                backend="np" if use_numpy else self._backend,
-                dtype=self._dtype,
-            )
+            mat = random_matrix(
+                    shape   =   (self._ns, self._ns),
+                    typek   =   RMT.GUE,
+                    backend =   "np" if use_numpy else self._backend,
+                    dtype   =   self._dtype,
+                )
         else:
-            self._hamil_sp = random_matrix(
-                shape=(self._ns, self._ns),
-                typek=RMT.GOE,
-                backend="np" if use_numpy else self._backend,
-                dtype=self._dtype,
-            )
+            mat = random_matrix(
+                    shape   =   (self._ns, self._ns),
+                    typek   =   RMT.GOE,
+                    backend =   "np" if use_numpy else self._backend,
+                    dtype   =   self._dtype,
+                )
+        # Ensure _hamil_sp is always a numpy ndarray
+        if not isinstance(mat, np.ndarray):
+            mat = np.array(mat, dtype=self._dtype)
+        self._hamil_sp = mat
 
     def add_term(self, *args, **kwargs):
         raise NotImplementedError("Add term not implemented for SYK2 model.")
@@ -90,7 +100,6 @@ class SYK2(QuadraticHamiltonian):
 
     def __str__(self):
         return self.__repr__()
-
 
 # ---------------------------------------------------------------------
 #! END OF HAMILTONIAN

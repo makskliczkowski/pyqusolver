@@ -22,7 +22,8 @@ import numpy as np
 import scipy as sp
 
 if TYPE_CHECKING:
-    from QES.general_python.common.flog import Logger
+    from QES.general_python.common.flog                     import Logger
+    from QES.general_python.lattices.lattice                import Lattice
 
 ###################################################################################################
 
@@ -34,7 +35,7 @@ try:
     from    QES.Algebra.Hilbert.matrix_builder              import build_operator_matrix
     from    QES.Algebra.Hamil.hamil_types                   import *
     from    QES.Algebra.Hamil.hamil_energy                  import local_energy_np_wrap
-    from    QES.Algebra.hamil_config                        import HamiltonianConfig, HAMILTONIAN_REGISTRY, register_hamiltonian
+    from    QES.Algebra.hamil_config                        import HamiltonianConfig, HAMILTONIAN_REGISTRY
     from    QES.Algebra.Hamil.hamil_diag_engine             import DiagonalizationEngine
     import  QES.Algebra.Hamil.hamil_jit_methods             as hjm
     from    QES.Algebra.hamil_cache                         import get_matrix_from_cache, store_matrix_in_cache, generate_cache_key
@@ -47,21 +48,18 @@ except ImportError as exc:
 ###################################################################################################
 
 try:
-    import jax.numpy as jnp
-    from jax import jit
-    from jax.experimental.sparse import BCOO, CSR
-
+    import jax.numpy                    as jnp
+    from jax.experimental.sparse        import BCOO
     from QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
 
-    JAX_AVAILABLE = True
+    JAX_AVAILABLE                       = True
 except ImportError:
-    jax = None
-    jnp = None
-    lax = None
-    BCOO = None
-    CSR = None
-    local_energy_jax_wrap = None
-    JAX_AVAILABLE = False
+    jax                                 = None
+    jnp                                 = None
+    lax                                 = None
+    BCOO                                = None
+    local_energy_jax_wrap               = None
+    JAX_AVAILABLE                       = False
 
 ####################################################################################################
 #! Hamiltonian class - abstract class
@@ -69,7 +67,7 @@ except ImportError:
 
 
 class Hamiltonian(BasisAwareOperator):
-    """
+    r"""
     A general Hamiltonian class. This class is used to define the Hamiltonian of a system. It may be
     either a Many-Body Quantum Mechanics Hamiltonian or a non-interacting system Hamiltonian. It may
     generate a Hamiltonian matrix but in addition it defines how an operator acts on a state. The
@@ -143,7 +141,7 @@ class Hamiltonian(BasisAwareOperator):
             int
         ] = None,  # Number of sites/modes (if not provided, will be inferred from hilbert_space or lattice)
         lattice: Optional[
-            Union[str, List[int]]
+            Union[str, List[int], 'Lattice']
         ] = None,  # Alternative way to specify ns and get the Hilbert space
         # concerns the matrix and computation
         is_sparse: bool = True,  # True for sparse matrix, False for dense matrix

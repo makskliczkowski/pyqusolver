@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 #! BasisAwareOperator Class
 # ---------------------------------------------------------------------------
 
-
 class BasisAwareOperator(SpecialOperator, ABC):
     """
     Intermediate class for operators that need basis representation tracking.
@@ -662,7 +661,6 @@ class BasisAwareOperator(SpecialOperator, ABC):
     def grid_transformed(self, value):
         """Set the transformation grid."""
         self._transformed_grid = value
-
 
 # ---------------------------------------------------------------------------
 #! End of file

@@ -150,7 +150,6 @@ class GlobalSymmetries(Enum):
 
 ####################################################################################################
 
-
 class Operator(GeneralMatrix):
     """
     A class to represent a general operator acting on a Hilbert space.
@@ -196,11 +195,11 @@ class Operator(GeneralMatrix):
         >>> op.diagonalize()  # Now available for all operators
     """
 
-    _INVALID_OPERATION_TYPE_ERROR = "Invalid type for function. Expected a callable function."
-    _INVALID_SYSTEM_SIZE_PROVIDED = (
+    _INVALID_OPERATION_TYPE_ERROR   = "Invalid type for function. Expected a callable function."
+    _INVALID_SYSTEM_SIZE_PROVIDED   = (
         "Invalid system size provided. Number of sites or a lattice object must be provided."
     )
-    _INVALID_FUNCTION_NONE = "Invalid number of necessary arguments for the operator function."
+    _INVALID_FUNCTION_NONE          = "Invalid number of necessary arguments for the operator function."
 
     #################################
 
@@ -933,8 +932,6 @@ class Operator(GeneralMatrix):
     #! Apply the operator
     #################################
 
-    # -------------------------------
-
     def _apply_global(self, states):
         """
         Applies a function to a given state or a collection of states.
@@ -1055,6 +1052,8 @@ class Operator(GeneralMatrix):
             raise NotImplementedError("Invalid operator acting type.")
         return [None], [0.0]
 
+    # -------------------------------
+    #! Operator call interface
     # -------------------------------
 
     def __call__(self, states: list | Array, *args):
@@ -1851,7 +1850,6 @@ class Operator(GeneralMatrix):
 
         print(f"Unknown topic '{topic}'. Available: {list(topics.keys())}")
         return f"Unknown topic '{topic}'. Available: {list(topics.keys())}"
-
 
 ####################################################################################################
 

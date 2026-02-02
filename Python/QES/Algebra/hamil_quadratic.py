@@ -17,589 +17,73 @@ date    : 2025-11-01
 ----------------------------------------------------------------------------
 """
 
-from collections import defaultdict
-from dataclasses import dataclass
-from enum import Enum, unique
-from itertools import combinations
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from dataclasses    import dataclass, field
+from typing         import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-import numpy as np
-import scipy as sp
-from scipy.special import comb
-from scipy.stats import unitary_group
-
-from QES.qes_globals import get_numpy_rng
-
-##############################################################################
-
-
-@unique
-class QuadraticTerm(Enum):
-    """
-    Types of terms to be added to the quadratic Hamiltonian
-    """
-
-    Onsite = 0
-    Hopping = 1
-    Pairing = 2
-
-    @property
-    def mode_num(self):
-        return 1 if self == QuadraticTerm.Onsite else 2
-
-
-##############################################################################
-
-
-@dataclass(frozen=True)
-class SolvabilityInfo:
-    """
-    Information about closed-form solvability of a quadratic Hamiltonian.
-
-    A Hamiltonian is considered 'solvable' if eigenvalues can be obtained
-    via a closed-form analytical method rather than requiring full matrix
-    diagonalization.
-
-    Attributes
-    ----------
-    is_solvable : bool
-        True if closed-form solution is available
-    method : str
-        Solution method:
-        - 'diagonal':
-            Direct eigenvalues from diagonal elements
-        - 'kspace':
-            Via k-space Fourier transform (translational symmetry)
-        - 'analytical':
-            Known analytical form for specific model
-        - 'standard':
-            Requires standard matrix diagonalization
-        - 'unknown':
-            Method unknown
-    description : str
-        Human-readable explanation of solvability status
-    eigenvalues : Optional[np.ndarray]
-        Pre-computed eigenvalues if directly available, else None
-    sparsity_pattern : Optional[str]
-        Description of matrix sparsity (e.g., 'band-diagonal', 'tridiagonal')
-    computation_cost : Optional[str]
-        Estimated computational complexity (e.g., 'O(n)', 'O(n log n)', 'O(n^3)')
-
-    Examples
-    --------
-    >>> # Diagonal Hamiltonian
-    >>> info = SolvabilityInfo(
-    ...     is_solvable         =   True,
-    ...     method              =   'diagonal',
-    ...     description         =   'Hamiltonian is diagonal in computational basis',
-    ...     eigenvalues         =   np.array([1.0, 2.0, 3.0]),
-    ...     sparsity_pattern    =   'full-diagonal',
-    ...     computation_cost    =   'O(n)'
-    ... )
-
-    >>> # Translational invariant system
-    >>> info = SolvabilityInfo(
-    ...     is_solvable         =   True,
-    ...     method              =   'kspace',
-    ...     description         =   'System has translational symmetry, solvable via FFT'
-    ... )
-    """
-
-    is_solvable: bool
-    method: str
-    description: str
-    eigenvalues: Optional[np.ndarray] = None
-    sparsity_pattern: Optional[str] = None
-    computation_cost: Optional[str] = None
-
-    def __str__(self) -> str:
-        """String representation."""
-        status = "SOLVABLE" if self.is_solvable else "NOT_SOLVABLE"
-        result = f"{status} ({self.method})\n{self.description}"
-        if self.computation_cost:
-            result += f"\n  Complexity: {self.computation_cost}"
-        if self.sparsity_pattern:
-            result += f"\n  Pattern: {self.sparsity_pattern}"
-        return result
-
+import numpy        as np
+import scipy        as sp
 
 ##############################################################################
 
 try:
-    from QES.Algebra.hamil import JAX_AVAILABLE, Hamiltonian, HilbertSpace
-    from QES.Algebra.hamil_config import HamiltonianConfig, register_hamiltonian
+    from QES.Algebra.hamil          import JAX_AVAILABLE, Hamiltonian, HilbertSpace
+    from QES.Algebra.hamil_config   import HamiltonianConfig, register_hamiltonian
 
     if TYPE_CHECKING:
-        from QES.general_python.algebra.utils import Array
-        from QES.general_python.common.flog import Logger
-        from QES.general_python.lattices.lattice import Lattice
+        from QES.general_python.algebra.utils           import Array
+        from QES.general_python.common.flog             import Logger
+        from QES.general_python.lattices.lattice        import Lattice
 
-    from QES.Algebra.Hilbert.hilbert_jit_states import (
-        bogolubov_decompose,
-        calculate_bogoliubov_amp,
-        calculate_bogoliubov_amp_exc,
-        calculate_bosonic_gaussian_amp,
-        calculate_permanent,
-        calculate_slater_det,
-        many_body_state_closure,
-        many_body_state_full,
-        many_body_state_mapping,
-        nrg_bdg,
-        nrg_particle_conserving,
-        pairing_matrix,
-    )
+    if TYPE_CHECKING:
+        from QES.Algebra.Quadratic.hamil_quadratic_utils import QuadraticBlockDiagonalInfo, QuadraticSelection, QuadraticTerm, SolvabilityInfo
+        
+    from QES.Algebra.Hilbert.hilbert_jit_states     import (
+                                                        bogolubov_decompose,
+                                                        calculate_bogoliubov_amp,
+                                                        calculate_bogoliubov_amp_exc,
+                                                        calculate_bosonic_gaussian_amp,
+                                                        calculate_permanent,
+                                                        calculate_slater_det,
+                                                        many_body_state_closure,
+                                                        many_body_state_full,
+                                                        many_body_state_mapping,
+                                                        nrg_bdg,
+                                                        nrg_particle_conserving,
+                                                        pairing_matrix,
+                                                    )
 except ImportError as e:
-    raise ImportError(
-        "QES.Algebra.hamil and QES.Algebra.Hilbert.hilbert_jit_states modules are required but not found."
-    ) from e
+    raise ImportError("QES.Algebra.hamil and QES.Algebra.Hilbert.hilbert_jit_states modules are required but not found.") from e
 
 # JAX interoperability
 
 try:
     if JAX_AVAILABLE:
-        import jax
-        import jax.numpy as jnp
-        from jax.experimental.sparse import BCOO
-
-        from QES.Algebra.Hilbert.hilbert_jit_states_jax import (
-            calculate_bcs_amp_jax,  # for calculating BCS-like states
-            calculate_permament_jax,  # for calculating permanent states
-            calculate_slater_det_jax,  # for calculating fermionic states
-        )
+        import  jax.numpy as jnp
+        from    QES.Algebra.Hilbert.hilbert_jit_states_jax import (
+                                                        calculate_bcs_amp_jax,      # for calculating BCS-like states
+                                                        calculate_permament_jax,    # for calculating permanent states
+                                                        calculate_slater_det_jax,   # for calculating fermionic states
+                                                    )
     else:
         raise ImportError("JAX is not available.")
 except ImportError:
-    jax = None
-    jnp = np
-    BCOO = None
-    calculate_slater_det_jax = None
-    calculate_bcs_amp_jax = None
-    calculate_permament_jax = None
+    jax                         = None
+    jnp                         = np
+    calculate_slater_det_jax    = None
+    calculate_bcs_amp_jax       = None
+    calculate_permament_jax     = None
 
-# Common utilities
+##############################################################################
+#! Common utilities
+##############################################################################
 
 try:
-    from QES.general_python.common import complement_indices, indices_from_mask
-    from QES.general_python.common.binary import base2int, int2base
-    from QES.general_python.common.binary import extract as Extractor
+    from QES.general_python.common          import complement_indices, indices_from_mask
+    from QES.general_python.common.binary   import base2int, int2base
 except ImportError:
     raise ImportError("QES.general_python.common module is required but not found.")
 
 ##############################################################################
-
-
-@dataclass(frozen=True)
-class QuadraticBlockDiagonalInfo:
-    """
-    Information for a single k-space block (or cell) of a quadratic Hamiltonian.
-
-    Stores the diagonalized eigenvalues and eigenvectors for a small block
-    (typically Nbtimes Nb for particle-conserving or 2Nbtimes 2Nb for BdG), along with
-    the k-point coordinate. Useful for band structure analysis and
-    sector-specific computations.
-
-    Attributes
-    ----------
-    point : np.ndarray
-        The k-vector or cell index for this block. Shape (3,).
-        For k-space: physical k-vector in reciprocal space.
-        For real-space blocks: cell coordinates or index.
-    frac_point : Optional[np.ndarray]
-        The fractional k-vector (e.g., [kx/2pi, ky/2pi, kz/2pi]). Shape (3,).
-    en : np.ndarray
-        Eigenvalues of this block, sorted in ascending order. Shape (M,) where
-        M is the block dimension (Nb for particle-conserving, 2Nb for BdG).
-    ev : np.ndarray
-        Eigenvectors of this block as columns. Shape (M, M) where ev[:, i] is
-        the eigenvector for eigenvalue en[i].
-    block_index : Optional[Tuple[int, int, int]]
-        Index (ix, iy, iz) in the lattice momentum grid. Useful for indexing
-        back into the original Bloch blocks. None if not from k-space.
-    is_bdg : bool
-        True if this is a BdG block (2Nb x 2Nb), False if particle-conserving (Nb x Nb).
-    label : Optional[str]
-        Optional label for this block (e.g., "Gamma", "M", "X" for special k-points).
-
-    Examples
-    --------
-    >>> # From band structure calculation
-    >>> info = QuadraticBlockDiagonalInfo(
-    ...     point=np.array([0.0, 0.0, 0.0]),
-    ...     en=np.array([-1.0, 0.0, 1.0]),
-    ...     ev=np.eye(3),
-    ...     block_index=(0, 0, 0),
-    ...     is_bdg=False,
-    ...     label="Gamma"
-    ... )
-    """
-
-    point: np.ndarray
-    frac_point: Optional[np.ndarray]  # Fractional k-point vector
-    en: np.ndarray
-    ev: np.ndarray
-    block_index: Optional[Tuple[int, int, int]] = None
-    is_bdg: bool = False
-    label: Optional[str] = None
-
-    def __post_init__(self):
-        """Validate dimensions."""
-        if self.point.shape != (3,):
-            raise ValueError(f"point must have shape (3,), got {self.point.shape}")
-
-        if len(self.en) != self.ev.shape[0] or self.ev.shape[0] != self.ev.shape[1]:
-            raise ValueError(f"ev shape {self.ev.shape} inconsistent with en shape {self.en.shape}")
-
-    def __str__(self) -> str:
-        """String representation."""
-        block_type = "BdG" if self.is_bdg else "PC"
-        idx_str = f" (idx={self.block_index})" if self.block_index else ""
-        label_str = f" [{self.label}]" if self.label else ""
-        frac_str = f" (frac={self.frac_point})" if self.frac_point is not None else ""
-        return (
-            f"QuadraticBlockDiagonalInfo({block_type}){label_str}{idx_str}{frac_str}\n"
-            f"  q-point: {self.point}\n"
-            f"  eigenvalues: {self.en}\n"
-            f"  eigenvector shape: {self.ev.shape}"
-        )
-
-
-##############################################################################
-
-
-class QuadraticSelection:
-    """Orbital selection utilities."""
-
-    def all_orbitals_size(n, k):
-        """Binomial coefficient C(n, k)."""
-        return comb(n, k, exact=True)
-
-    def all_orbitals(n, k):
-        """Generate all combinations of k orbitals from n."""
-        if isinstance(n, (int, np.integer)):
-            arange = np.arange(0, n, dtype=np.int64)
-            return arange, combinations(arange, k)
-        else:
-            return n, combinations(n, k)
-
-    def ran_orbitals(n, k, rng=None):
-        """Randomly select k orbitals from n."""
-        if isinstance(n, (int, np.integer)):
-            arange = np.arange(0, n, dtype=np.int64)
-        else:
-            arange = np.array(n, dtype=np.int64)
-        if rng is None:
-            rng = get_numpy_rng()
-        selected = rng.choice(arange, k, replace=False)
-        return arange, selected
-
-    def mask_orbitals(
-        ns: int,
-        n_occupation: Union[int, float] = 0.5,
-        *,
-        ordered: bool = True,
-        rng: Optional[np.random.Generator] = None,
-        return_b: bool = False,
-    ) -> dict:
-        """
-        Generate a mask of occupied orbitals based on the number of orbitals and the occupation fraction.
-        Parameters
-        ----------
-        n : int
-            Total number of orbitals.
-        n_occupation : int or float
-            Number of occupied orbitals or fraction of occupied orbitals.
-            If `n_occupation` is a float, it should be in the range [0, 1].
-        ordered : bool
-            If True, the mask will be ordered (0s followed by 1s).
-            If False, the mask will be randomly shuffled.
-        rng : numpy.random.Generator or None
-            Random number generator for shuffling the mask.
-            If None, uses the default random generator.
-        Returns
-            dict
-                Dictionary with keys 'mask_a' (occupied orbitals in subsystem a)
-                and 'mask_b' (occupied orbitals in subsystem b - if applicable).
-        """
-        if n_occupation < 0:
-            raise ValueError("`n_occupation` must be non-negative.")
-        elif n_occupation > ns:
-            raise ValueError("`n_occupation` must be less than or equal to `ns`.")
-        elif 0 < n_occupation < 1:
-            n_occupation = int(n_occupation * ns)
-            ordered = True
-
-        out_dict = {}
-        if ordered:
-            mask_a = np.arange(n_occupation)
-        else:
-            mask_a = np.sort(rng.choice(np.arange(ns), n_occupation, replace=False))
-
-        out_dict["mask_a"] = mask_a
-        out_dict["mask_a_1h"] = Extractor.to_one_hot(mask_a, ns)
-        out_dict["mask_a_int"] = base2int(out_dict["mask_a_1h"], spin=False, spin_value=1)
-        if return_b:
-            mask_b = np.setdiff1d(np.arange(ns), mask_a)
-            out_dict["mask_b"] = mask_b
-            out_dict["mask_b_1h"] = Extractor.to_one_hot(mask_b, ns)
-            out_dict["mask_b_int"] = base2int(out_dict["mask_b_1h"], spin=False, spin_value=1)
-            out_dict["order"] = tuple(mask_a) + tuple(mask_b)
-        return out_dict
-
-    # ------------------------------------------------------------------------
-    #! Haar random coefficients
-    # ------------------------------------------------------------------------
-
-    def haar_random_coeff(
-        gamma: int, *, rng: np.random.Generator | None = None, dtype=np.complex128
-    ) -> np.ndarray:
-        r"""
-        Return a length-gamma complex vector distributed with the **Haar
-        measure** on the unit sphere (i.e. what you get from the first
-        column of a Haar-random unitary).
-
-        Parameters
-        ----------
-        gamma : int
-            Dimension of states to mix.
-        rng : numpy.random.Generator, optional
-            Random-number generator to use. `np.random.default_rng()` is the
-            default; pass your own for reproducibility.
-        dtype : np.dtype, default=np.complex128
-            Precision of the returned coefficients.
-
-        Notes
-        -----
-        * **Mathematical equivalence** - Drawing
-        $$\psi_i = x_i + i y_i \\ (x_i,y_i\\sim N(0,1))$$
-        and normalising,
-        $$\\psi/\\lVert\\psi\\rVert$$
-        gives exactly the same distribution as the first column of a Haar
-        unitary (see, e.g., Mezzadri 2006).
-        * If SciPy >= 1.4 is available we use `scipy.stats.unitary_group.rvs`
-        (QR-based) instead, but the Gaussian trick is used as a fallback and
-        is typically faster.
-
-        Examples
-        --------
-        >>> gen_random_state_coefficients(4) # doctest: +ELLIPSIS
-        array([ 0.44...+0.05...j, -0.40...-0.11...j,  0.63...+0.48...j,
-                0.16...+0.29...j])
-        """
-        if gamma < 1:
-            raise ValueError("`gamma` must be at least 1.")
-        if gamma == 1:
-            return np.ones(1, dtype=dtype)
-
-        rng = get_numpy_rng() if rng is None else rng
-
-        #! fast path: SciPy's true Haar unitary, if available
-        try:
-            from scipy.stats import unitary_group
-
-            return unitary_group.rvs(gamma, random_state=rng).astype(dtype)[:, 0]
-        except Exception:
-            # fall back to Gaussian normalise trick  (still Haar-correct)
-            z = rng.normal(size=gamma) + 1j * rng.normal(size=gamma)
-            z = z.astype(dtype, copy=False)
-            z /= np.linalg.norm(z)
-            return z
-
-    def haar_random_unitary(
-        gamma: int, *, rng: np.random.Generator | None = None, dtype=np.complex128
-    ) -> np.ndarray:
-        r"""
-        Generate a Haar-random unitary matrix of shape (gamma, gamma).
-
-        Parameters
-        ----------
-        gamma : int
-            Dimension of the unitary matrix.
-        rng : numpy.random.Generator, optional
-            Random number generator (default: np.random.default_rng()).
-        dtype : np.dtype, default=np.complex128
-            Desired complex dtype.
-
-        Returns
-        -------
-        np.ndarray
-            Haar-distributed unitary matrix of shape (gamma, gamma).
-
-        Notes
-        -----
-        If SciPy >= 1.4 is available, uses `scipy.stats.unitary_group.rvs`,
-        which samples unitaries via QR decomposition with Haar measure
-        (Mezzadri 2006). Otherwise, performs the QR-based method manually.
-
-        Reference
-        ---------
-        Mezzadri, F. (2006). How to generate random matrices from the classical groups.
-        Notices of the AMS, 54(5), 592-604.
-
-        Examples
-        --------
-        >>> U = haar_random_unitary(4)
-        >>> np.allclose(U.conj().T @ U, np.eye(4))
-        True
-        """
-
-        if gamma < 1:
-            raise ValueError("`gamma` must be at least 1.")
-
-        rng = get_numpy_rng() if rng is None else rng
-
-        try:
-            return unitary_group.rvs(gamma, random_state=rng).astype(dtype)
-        except Exception:
-            # Fallback: generate complex Ginibre matrix and QR-decompose
-            z = rng.normal(size=(gamma, gamma)) + 1j * rng.normal(size=(gamma, gamma))
-            z = z.astype(dtype, copy=False)
-            q, r = np.linalg.qr(z)
-            # Normalize phases to ensure uniqueness
-            d = np.diag(r)
-            ph = d / np.abs(d)
-            q *= ph[np.newaxis, :]
-            return q
-
-    def haar_random_coeff_real(
-        gamma: int, *, rng: np.random.Generator | None = None, dtype=np.float64
-    ) -> np.ndarray:
-        r"""
-        Return a length-gamma real vector distributed with the Haar measure
-        on the unit sphere (i.e. what you get from the first column of a Haar
-        random orthogonal matrix).
-
-        Parameters
-        ----------
-        gamma : int
-            Dimension of states to mix.
-        rng : numpy.random.Generator, optional
-            Random-number generator to use. `np.random.default_rng()` is the
-            default; pass your own for reproducibility.
-        dtype : np.dtype, default=np.float64
-            Precision of the returned coefficients.
-
-        Returns
-        -------
-        np.ndarray
-            A real vector of length `gamma` sampled from the Haar measure.
-
-        Notes
-        -----
-        Uses Gaussian normalisation trick to sample from the Haar measure.
-
-        Examples
-        --------
-        >>> haar_random_coeff_real(4) # doctest: +ELLIPSIS
-        array([ 0.44..., -0.40...,  0.63...,  0.16...])
-        """
-
-        if gamma < 1:
-            raise ValueError("`gamma` must be at least 1.")
-        if gamma == 1:
-            return np.ones(1, dtype=dtype)
-
-        rng = get_numpy_rng() if rng is None else rng
-        # Generate normally distributed real numbers - normalize to unit sphere
-        z = rng.normal(size=gamma)
-        z = z.astype(dtype, copy=False)
-        z /= np.linalg.norm(z)
-        return z
-
-    def haar_random_unitary_real(
-        gamma: int, *, rng: np.random.Generator | None = None, dtype=np.float64
-    ) -> np.ndarray:
-        r"""
-        Generate a Haar-random real orthogonal matrix of shape (gamma, gamma).
-        Parameters
-        ----------
-        gamma : int
-            Dimension of the orthogonal matrix.
-        rng : numpy.random.Generator, optional
-            Random number generator (default: np.random.default_rng()).
-        dtype : np.dtype, default=np.float64
-            Desired real dtype.
-
-        Returns
-        -------
-        np.ndarray
-            Haar-distributed orthogonal matrix of shape (gamma, gamma).
-
-        Notes
-        -----
-        Uses QR decomposition of a Gaussian matrix to sample from the Haar measure.
-
-        Examples
-        --------
-        >>> U = haar_random_unitary_real(4)
-        >>> np.allclose(U.T @ U, np.eye(4))
-        True
-        """
-
-        if gamma < 1:
-            raise ValueError("`gamma` must be at least 1.")
-
-        rng = get_numpy_rng() if rng is None else rng
-
-        # Generate a random real orthogonal matrix using QR decomposition
-        A = rng.normal(size=(gamma, gamma))
-        Q, R = np.linalg.qr(A)
-        d = np.diag(R)
-        Q *= np.sign(d)
-
-        # Return the first column as the Haar-random real vector
-        return Q.astype(dtype, copy=False)
-
-    # ------------------------------------------------------------------------
-    #! Energy concerned
-    # ------------------------------------------------------------------------
-
-    def bin_energies(sorted_energies, digits: int = 10):
-        """
-        Groups indices of sorted energies by their rounded values.
-
-        Args:
-            sorted_energies (list[tuple[int, float]]):
-                A list of (index, energy) pairs, sorted by energy.
-            digits (int):
-                Number of decimal digits for rounding - used for
-                binning the energies to avoid floating point errors.
-
-        Returns:
-            dict[float, list[int]]:
-                Dictionary mapping rounded energy to list of indices.
-        """
-        binned = defaultdict(list)
-        for idx, energy in sorted_energies:
-            key = round(energy, digits)
-            binned[key].append(idx)
-        return dict(binned)
-
-    def man_energies(binned_energies, dtype: np.dtype = np.int32):
-        """
-        Calculates the number of elements in each energy manifold from a dictionary of binned energies.
-        Args:
-            binned_energies (dict):
-                A dictionary where keys represent energy bins and values are lists of items in each bin.
-            dtype (np.dtype, optional):
-                The desired data type for the output array of manifold sizes. Defaults to np.int32.
-        Returns:
-            tuple:
-                - energy_manifolds (dict): A dictionary mapping each energy bin to the number of items in that bin.
-                - energy_manifold_values (np.ndarray): An array containing the number of items in each energy bin, in the order of iteration.
-        """
-
-        energy_manifolds = {}
-        energy_manifold_values = []
-        for k, v in binned_energies.items():
-            n = len(v)
-            energy_manifolds[k] = n
-            energy_manifold_values.append(n)
-        energy_manifold_values = np.array(energy_manifold_values, dtype=dtype)
-        return energy_manifolds, energy_manifold_values
-
-
-##############################################################################
-
 
 class QuadraticHamiltonian(Hamiltonian):
     r"""
@@ -674,19 +158,19 @@ class QuadraticHamiltonian(Hamiltonian):
 
     def __init__(
         self,
-        ns: Optional[int] = None,  # Ns is mandatory
-        particle_conserving: bool = True,
-        dtype: Optional[np.dtype] = None,
-        backend: str = "default",
-        is_sparse: bool = False,
-        constant_offset: float = 0.0,
-        particles: str = "fermions",
+        ns                          : Optional[int] = None,  # Ns is mandatory
+        particle_conserving         : bool = True,
+        dtype                       : Optional[np.dtype] = None,
+        backend                     : str = "default",
+        is_sparse                   : bool = False,
+        constant_offset             : float = 0.0,
+        particles                   : str = "fermions",
         *,
         # Allow passing lattice/logger
-        hilbert_space: Optional[HilbertSpace] = None,
-        lattice: Optional["Lattice"] = None,
-        logger: Optional["Logger"] = None,
-        seed: Optional[int] = None,
+        hilbert_space               : Optional[HilbertSpace] = None,
+        lattice                     : Optional["Lattice"] = None,
+        logger                      : Optional["Logger"] = None,
+        seed                        : Optional[int] = None,
         **kwargs,
     ):
         """
@@ -733,21 +217,17 @@ class QuadraticHamiltonian(Hamiltonian):
         )
 
         # setup the arguments first
-        self._particle_conserving = particle_conserving
-        self._constant_offset = constant_offset
-        self._isfermions = particles.lower() == "fermions"
-        self._isbosons = not self._isfermions
+        self._particle_conserving   = particle_conserving
+        self._constant_offset       = constant_offset
+        self._isfermions            = particles.lower() == "fermions"
+        self._isbosons              = not self._isfermions
         if (
             self._hilbert_space is not None
             and getattr(self._hilbert_space, "particle_conserving", None) is not None
             and self._hilbert_space.particle_conserving != particle_conserving
         ):
             # Hilbert space indicates different particle-conserving mode; warn and continue.
-            self._log(
-                "Hilbert space particle_conserving flag differs from requested mode; continuing and trusting matrices.",
-                lvl=1,
-                log="warning",
-            )
+            self._log("Hilbert space particle_conserving flag differs from requested mode; continuing and trusting matrices.", lvl=1, log="warning",)
 
         # Determine single-particle dimension and allocate storage.
         # Prefer an explicit dtype if given, otherwise inherit from Hilbert space
@@ -755,37 +235,36 @@ class QuadraticHamiltonian(Hamiltonian):
         if self._dtype is None:
             if self._hilbert_space is not None:
                 try:
-                    self._dtype = (
-                        getattr(self._hilbert_space, "dtype", None) or self._backend.complex128
-                    )
+                    self._dtype = (getattr(self._hilbert_space, "dtype", None) or self._backend.complex128)
                 except Exception:
                     self._dtype = self._backend.complex128
             else:
                 self._dtype = self._backend.complex128
-        self._hamil_sp_size = self.ns
-        self._hamil_sp_shape = (self._hamil_sp_size, self._hamil_sp_size)
-        self._dtypeint = self._backend.int32 if self.ns < 2**32 - 1 else self._backend.int64
+                
+        # Set sizes and allocate matrices
+        self._hamil_sp_size     = self._ns
+        self._hamil_sp_shape    = (self._hamil_sp_size, self._hamil_sp_size)
+        self._dtypeint          = self._backend.int32 if self._ns < 2**32 - 1 else self._backend.int64
 
         # Initialize matrices as zero arrays instead of None for immediate usability
-        xp = self._backend
-        self._hamil_sp = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
-        self._delta_sp = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        xp                      = self._backend
+        self._hamil_sp          = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        self._delta_sp          = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
         if not particle_conserving:
-            self._log(
-                "Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.",
-                lvl=2,
-                log="info",
-            )
+            self._log("Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.", lvl=2, log="info")
 
-        self._name = f"QuadraticHamiltonian(Ns={self._ns},{'BdG' if not self._particle_conserving else 'N-conserving'})"
-        self._occupied_orbitals_cached = None
+        self._name                      = f"QuadraticHamiltonian(Ns={self._ns},{'BdG' if not self._particle_conserving else 'N-conserving'})"
+        self._occupied_orbitals_cached  = None
         self._diagonalization_requested = False
-        self._F = None
-        self._G = None
-        self._U = None
-        self._V = None
-        self._mb_calculator = None
-
+        self._F                         = None
+        self._G                         = None
+        self._U                         = None
+        self._V                         = None
+        
+        # Lazy many-body state/energy calculator
+        self._mb_calculator             = None
+        
+        
     ##########################################################################
     #! Class methods for direct matrix initialization
     ##########################################################################
@@ -793,11 +272,11 @@ class QuadraticHamiltonian(Hamiltonian):
     @classmethod
     def from_hermitian_matrix(
         cls,
-        hermitian_part: "Array",
-        constant: float = 0.0,
-        particles: str = "fermions",
-        dtype: Optional[np.dtype] = None,
-        backend: str = "default",
+        hermitian_part                  : "Array",
+        constant                        : float = 0.0,
+        particles                       : str = "fermions",
+        dtype                           : Optional[np.dtype] = None,
+        backend                         : str = "default",
         **kwargs,
     ) -> "QuadraticHamiltonian":
         """
@@ -825,10 +304,13 @@ class QuadraticHamiltonian(Hamiltonian):
         QuadraticHamiltonian
             Initialized quadratic Hamiltonian
         """
+        
+        # Validate input matrix
         hermitian_part = np.asarray(hermitian_part)
         if hermitian_part.ndim != 2 or hermitian_part.shape[0] != hermitian_part.shape[1]:
             raise ValueError("hermitian_part must be a square matrix")
 
+        # Check Hermiticity
         ns = hermitian_part.shape[0]
 
         # Create instance
@@ -850,12 +332,13 @@ class QuadraticHamiltonian(Hamiltonian):
     @classmethod
     def from_bdg_matrices(
         cls,
-        hermitian_part: "Array",
-        antisymmetric_part: "Array",
-        constant: float = 0.0,
-        particles: str = "fermions",
-        dtype: Optional[np.dtype] = None,
-        backend: str = "default",
+        hermitian_part      : "Array",
+        *,
+        antisymmetric_part  : Optional["Array"],
+        constant            : float = 0.0,
+        particles           : str = "fermions",
+        dtype               : Optional[np.dtype] = None,
+        backend             : str = "default",
         **kwargs,
     ) -> "QuadraticHamiltonian":
         """
@@ -886,30 +369,42 @@ class QuadraticHamiltonian(Hamiltonian):
         QuadraticHamiltonian
             Initialized quadratic Hamiltonian
         """
-        hermitian_part = np.asarray(hermitian_part)
-        antisymmetric_part = np.asarray(antisymmetric_part)
+        
+        # Fallback to particle-conserving if no antisymmetric part given
+        if antisymmetric_part is None:
+            return cls.from_hermitian_matrix(
+                hermitian_part=hermitian_part,
+                constant=constant,
+                particles=particles,
+                dtype=dtype,
+                backend=backend,
+                **kwargs,
+            )
+        
+        hermitian_part      = np.asarray(hermitian_part)
+        antisymmetric_part  = np.asarray(antisymmetric_part)
 
         if hermitian_part.shape != antisymmetric_part.shape:
             raise ValueError("hermitian_part and antisymmetric_part must have the same shape")
         if hermitian_part.ndim != 2 or hermitian_part.shape[0] != hermitian_part.shape[1]:
             raise ValueError("Matrices must be square")
 
-        ns = hermitian_part.shape[0]
+        ns                  = hermitian_part.shape[0]
 
         # Auto-detect particle conservation
-        delta_norm = np.linalg.norm(antisymmetric_part)
-        particle_conserving = delta_norm < 1e-12
+        delta_norm          = np.linalg.norm(antisymmetric_part)
+        particle_conserving = bool(delta_norm < 1e-12)
 
         # Create instance
-        instance = cls(
-            ns=ns,
-            particle_conserving=particle_conserving,
-            constant_offset=constant,
-            particles=particles,
-            dtype=dtype,
-            backend=backend,
-            **kwargs,
-        )
+        instance            = cls(
+                                ns=ns,
+                                particle_conserving=particle_conserving,
+                                constant_offset=constant,
+                                particles=particles,
+                                dtype=dtype,
+                                backend=backend,
+                                **kwargs,
+                            )
 
         if particle_conserving:
             # Set as single particle matrix
@@ -921,28 +416,27 @@ class QuadraticHamiltonian(Hamiltonian):
         return instance
 
     ##########################################################################
-    #! Build the Hamiltonian
+    #! Build the Hamiltonian - adding terms to onsite/hopping/pairing matrices
     ##########################################################################
 
     def _invalidate_cache(self):
         """Wipe eigenvalues, eigenvectors, cached many-body calculator."""
-        self._eig_val = None
-        self._eig_vec = None
-        self._mb_calculator = None  # Lazy: will be recomputed when needed
+        super()._invalidate_cache()
+        self._mb_calculator = None
 
     def add_term(
         self,
-        term_type: QuadraticTerm,
-        sites: tuple[int, ...] | list[int] | int,
-        value: complex,
-        remove: bool = False,
+        term_typ    : Union['QuadraticTerm', str],
+        sites       : tuple[int, ...] | list[int] | int,
+        value       : tuple[complex, ...] | list[complex] | complex,
+        remove      : bool = False,
     ):
-        """
+        r"""
         Adds a quadratic term to the Hamiltonian or pairing matrix.
 
         Parameters
         ----------
-        term_type : QuadraticTerm
+        term_type : QuadraticTerm or str
             The type of quadratic term to add. Must be one of QuadraticTerm.Onsite,
             QuadraticTerm.Hopping, or QuadraticTerm.Pairing.
         sites : tuple[int, ...] | list[int] | int
@@ -969,54 +463,71 @@ class QuadraticHamiltonian(Hamiltonian):
 
         if isinstance(sites, int):
             sites = (sites,)
-
-        val = -value if remove else value
-        valc = val.conjugate() if isinstance(val, complex) or hasattr(val, "conjugate") else val
+        
+        if isinstance(value, (complex, float, int)):
+            value = (value,)
+            
+        if len(sites) == 0 or len(value) == 0:
+            raise ValueError("Sites and value must be non-empty")
+            
+        val         = [-v if remove else v for v in value]
+        valc        = [v.conjugate() if isinstance(v, complex) or hasattr(v, "conjugate") else v for v in val]
+        term_type   = QuadraticTerm.from_str(term_typ) if isinstance(term_typ, str) else term_typ
 
         if term_type is QuadraticTerm.Onsite:
-            if len(sites) != 1:
-                raise ValueError("Onsite term needs one index")
-            i = sites[0]
-            if self._is_numpy:
-                self._hamil_sp[i, i] += val
-            else:
-                self._hamil_sp = self._hamil_sp.at[i, i].add(val)
+
+            for site in sites:
+                i = site
+                if self._is_numpy:
+                    self._hamil_sp[i, i] += val
+                else:
+                    self._hamil_sp = self._hamil_sp.at[i, i].add(val)
 
         elif term_type is QuadraticTerm.Hopping:
-            if len(sites) != 2:
-                raise ValueError("Hopping term needs two indices")
-            i, j = sites
-            if self._is_numpy:
-                self._hamil_sp[i, j] += val
-                self._hamil_sp[j, i] += valc
-            else:
-                self._hamil_sp = self._hamil_sp.at[i, j].add(val)
-                self._hamil_sp = self._hamil_sp.at[j, i].add(valc)
+
+            if len(sites) % 2 != 0:
+                raise ValueError("Hopping term needs pairs of indices")
+            
+            for idx in range(0, len(sites), 2):
+                i, j = sites[idx], sites[idx + 1]
+                
+                if self._is_numpy:
+                    self._hamil_sp[i, j] += val
+                    self._hamil_sp[j, i] += valc
+                else:
+                    self._hamil_sp = self._hamil_sp.at[i, j].add(val)
+                    self._hamil_sp = self._hamil_sp.at[j, i].add(valc)
 
         elif term_type is QuadraticTerm.Pairing:
+            
             if self._particle_conserving:
                 self._log("Pairing ignored: particle_conserving=True", lvl=2, log="warning")
                 return
-            if len(sites) != 2:
-                raise ValueError("Pairing term needs two indices")
-            i, j = sites
-            if self._isfermions:  # antisymmetric
-                if self._is_numpy:
-                    self._delta_sp[i, j] += value
-                    self._delta_sp[j, i] -= value
-                else:
-                    self._delta_sp = self._delta_sp.at[i, j].add(value)
-                    self._delta_sp = self._delta_sp.at[j, i].add(-value)
-            else:  # bosons: symmetric
-                if self._is_numpy:
-                    self._delta_sp[i, j] += value
-                    self._delta_sp[j, i] += value
-                else:
-                    self._delta_sp = self._delta_sp.at[i, j].add(value)
-                    self._delta_sp = self._delta_sp.at[j, i].add(value)
+            
+            if len(sites) % 2 != 0:
+                raise ValueError("Pairing term needs pairs of indices")
+
+            for idx in range(0, len(sites), 2):
+                i, j = sites[idx], sites[idx + 1]
+
+                if self._isfermions:  # antisymmetric
+                    if self._is_numpy:
+                        self._delta_sp[i, j] += value
+                        self._delta_sp[j, i] -= value
+                    else:
+                        self._delta_sp = self._delta_sp.at[i, j].add(value)
+                        self._delta_sp = self._delta_sp.at[j, i].add(-value)
+                else:  # bosons: symmetric
+                    if self._is_numpy:
+                        self._delta_sp[i, j] += value
+                        self._delta_sp[j, i] += value
+                    else:
+                        self._delta_sp = self._delta_sp.at[i, j].add(value)
+                        self._delta_sp = self._delta_sp.at[j, i].add(value)
 
         else:
             raise TypeError(term_type)
+        
         self._invalidate_cache()
         self._log(f"add_term: {term_type.name} {sites} {str(value)}", lvl=3, log="debug")
 
@@ -1034,9 +545,9 @@ class QuadraticHamiltonian(Hamiltonian):
 
     def reset_terms(self):
         """Clear onsite/hopping/pairing matrices."""
-        xp = self._backend
-        self._hamil_sp = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
-        self._delta_sp = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        xp              = self._backend
+        self._hamil_sp  = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
+        self._delta_sp  = xp.zeros(self._hamil_sp_shape, dtype=self._dtype)
         self._invalidate_cache()
 
     # ########################################################################
@@ -1045,13 +556,13 @@ class QuadraticHamiltonian(Hamiltonian):
         """Return a lightweight dictionary describing the current quadratic model."""
         has_pairing = bool(np.any(np.asarray(self._delta_sp)))
         return {
-            "Ns": self._ns,
-            "particle_conserving": self._particle_conserving,
-            "particles": "fermions" if self._isfermions else "bosons",
-            "backend": getattr(self._backend, "__name__", str(self._backend)),
-            "dtype": str(self._dtype),
-            "has_pairing": has_pairing,
-            "constant_offset": self._constant_offset,
+            "Ns"                    : self._ns,
+            "particle_conserving"   : self._particle_conserving,
+            "particles"             : "fermions" if self._isfermions else "bosons",
+            "backend"               : getattr(self._backend, "__name__", str(self._backend)),
+            "dtype"                 : str(self._dtype),
+            "has_pairing"           : has_pairing,
+            "constant_offset"       : self._constant_offset,
         }
 
     # ########################################################################
@@ -1327,22 +838,11 @@ class QuadraticHamiltonian(Hamiltonian):
         )
         return xp.array(bdg) if copy else bdg
 
-    ############################################################################
-
-    def _hamiltonian_quadratic(self, use_numpy: bool = False):
-        """
-        Assemble the quadratic Hamiltonian matrix prior to diagonalization.
-        """
-        if self._particle_conserving:
-            self._hamil = self._hamil_sp
-        else:
-            self._hamil = self.build_bdg_matrix(copy=False)
-
     ###########################################################################
     #! Solvability Detection
     ###########################################################################
 
-    def solvable(self) -> SolvabilityInfo:
+    def solvable(self) -> 'SolvabilityInfo':
         """
         Determine if this quadratic Hamiltonian admits a closed-form solution.
 
@@ -1381,15 +881,22 @@ class QuadraticHamiltonian(Hamiltonian):
         but this method detects **computational** solvability - can we find eigenvalues
         faster than O(n^3) full diagonalization?
         """
+        
+        try:
+            from QES.Algebra.Quadratic.hamil_quadratic_utils import SolvabilityInfo
+        except ImportError:
+            raise ImportError("SolvabilityInfo class not found. Ensure QES.Algebra.Quadratic.hamil_quadratic_utils is available.")
+        
         # Check if already diagonalized
         if self._eig_val is not None and self._eig_vec is not None:
+            
             offset_str = f" (offset={self._constant_offset})" if self._constant_offset != 0 else ""
             return SolvabilityInfo(
-                is_solvable=True,
-                method="analytical",
-                description=f"Eigenvalues already computed via prior diagonalization{offset_str}",
-                eigenvalues=self._eig_val.copy(),
-                computation_cost="O(1) - cached",
+                is_solvable         =   True,
+                method              =   "analytical",
+                description         =   f"Eigenvalues already computed via prior diagonalization{offset_str}",
+                eigenvalues         =   self._eig_val.copy(),
+                computation_cost    =   "O(1) - cached",
             )
 
         # Get matrix for analysis
@@ -1398,48 +905,48 @@ class QuadraticHamiltonian(Hamiltonian):
             H = self._hamil
         except Exception:
             return SolvabilityInfo(
-                is_solvable=False,
-                method="unknown",
-                description="Could not assemble Hamiltonian matrix for analysis",
-                computation_cost="O(n^3) - standard diagonalization",
+                is_solvable         =   False,
+                method              =   "unknown",
+                description         =   "Could not assemble Hamiltonian matrix for analysis",
+                computation_cost    =   "O(n^3) - standard diagonalization",
             )
 
         if H is None:
             return SolvabilityInfo(
-                is_solvable=False,
-                method="unknown",
-                description="Hamiltonian matrix not available",
-                computation_cost="O(n^3) - standard diagonalization",
+                is_solvable         =   False,
+                method              =   "unknown",
+                description         =   "Hamiltonian matrix not available",
+                computation_cost    =   "O(n^3) - standard diagonalization",
             )
 
         # Convert to dense if sparse for analysis
-        H_dense = H.toarray() if sp.sparse.issparse(H) else np.asarray(H)
-        n = H_dense.shape[0]
+        H_dense         = H.toarray() if sp.sparse.issparse(H) else np.asarray(H)
+        n               = H_dense.shape[0]
 
         # Check if diagonal (or nearly diagonal)
-        off_diag_norm = np.linalg.norm(H_dense - np.diag(np.diag(H_dense)))
-        is_diagonal = (
-            off_diag_norm < 1e-10 * np.linalg.norm(H_dense)
-            if np.linalg.norm(H_dense) > 1e-10
-            else off_diag_norm < 1e-14
-        )
+        off_diag_norm   = np.linalg.norm(H_dense - np.diag(np.diag(H_dense)))
+        is_diagonal     = (
+                            off_diag_norm < 1e-10 * np.linalg.norm(H_dense)
+                            if np.linalg.norm(H_dense) > 1e-10
+                            else off_diag_norm < 1e-14
+                        )
 
         if is_diagonal:
             eigenvalues = np.diag(H_dense) + self._constant_offset
             return SolvabilityInfo(
-                is_solvable=True,
-                method="diagonal",
-                description="Hamiltonian is diagonal in current basis; eigenvalues = diagonal elements",
-                eigenvalues=eigenvalues,
-                sparsity_pattern="full-diagonal",
-                computation_cost="O(n)",
+                is_solvable         =   True,
+                method              =   "diagonal",
+                description         =   "Hamiltonian is diagonal in current basis; eigenvalues = diagonal elements",
+                eigenvalues         =   eigenvalues,
+                sparsity_pattern    =   "full-diagonal",
+                computation_cost    =   "O(n)",
             )
 
         # Check if tridiagonal (or nearly tridiagonal)
-        upper_off_diag = np.triu(H_dense, 2)
-        lower_off_diag = np.tril(H_dense, -2)
-        band_norm = np.linalg.norm(upper_off_diag) + np.linalg.norm(lower_off_diag)
-        is_tridiagonal = (
+        upper_off_diag  = np.triu(H_dense, 2)
+        lower_off_diag  = np.tril(H_dense, -2)
+        band_norm       = np.linalg.norm(upper_off_diag) + np.linalg.norm(lower_off_diag)
+        is_tridiagonal  = (
             band_norm < 1e-10 * np.linalg.norm(H_dense)
             if np.linalg.norm(H_dense) > 1e-10
             else band_norm < 1e-14
@@ -1447,22 +954,22 @@ class QuadraticHamiltonian(Hamiltonian):
 
         if is_tridiagonal:
             return SolvabilityInfo(
-                is_solvable=True,
-                method="kspace",
-                description="Hamiltonian is tridiagonal; can be solved via specialized eigensolvers",
-                sparsity_pattern="tridiagonal",
-                computation_cost="O(n^2)",
+                is_solvable         =   True,
+                method              =   "kspace",
+                description         =   "Hamiltonian is tridiagonal; can be solved via specialized eigensolvers",
+                sparsity_pattern    =   "tridiagonal",
+                computation_cost    =   "O(n^2)",
             )
 
         # Check sparsity level
         sparsity = 1.0 - np.count_nonzero(H_dense) / H_dense.size
         if sparsity > 0.9:
             return SolvabilityInfo(
-                is_solvable=True,
-                method="kspace",
-                description=f"Hamiltonian is highly sparse ({100*sparsity:.1f}%); Krylov subspace methods efficient",
-                sparsity_pattern="highly-sparse",
-                computation_cost="O(n^2) - sparse iterative methods",
+                is_solvable         =   True,
+                method              =   "kspace",
+                description         =   f"Hamiltonian is highly sparse ({100*sparsity:.1f}%); Krylov subspace methods efficient",
+                sparsity_pattern    =   "highly-sparse",
+                computation_cost    =   "O(n^2) - sparse iterative methods",
             )
 
         # Check for band structure (common in lattice models)
@@ -1474,11 +981,11 @@ class QuadraticHamiltonian(Hamiltonian):
 
         if max_band_width < 0.3 * n:  # Narrow band
             return SolvabilityInfo(
-                is_solvable=True,
-                method="kspace",
-                description=f"Hamiltonian has band structure (bandwidth ^ {max_band_width}); efficient via structured methods",
-                sparsity_pattern=f"band-diagonal (width={max_band_width})",
-                computation_cost="O(n^2) - band solver",
+                is_solvable         =   True,
+                method              =   "kspace",
+                description         =   f"Hamiltonian has band structure (bandwidth ^ {max_band_width}); efficient via structured methods",
+                sparsity_pattern    =   f"band-diagonal (width={max_band_width})",
+                computation_cost    =   "O(n^2) - band solver",
             )
 
         # Check for Hermitian structure (all quadratic Hamiltonians should be Hermitian)
@@ -1486,25 +993,38 @@ class QuadraticHamiltonian(Hamiltonian):
 
         if is_hermitian:
             return SolvabilityInfo(
-                is_solvable=True,
-                method="standard",
-                description="Quadratic system is Hermitian; solvable via standard eigendecomposition",
-                sparsity_pattern="generic-hermitian" if sparsity < 0.1 else "sparse-hermitian",
-                computation_cost="O(n^3) - dense" if sparsity < 0.1 else "O(n^2) - sparse methods",
+                is_solvable         =   True,
+                method              =   "standard",
+                description         =   "Quadratic system is Hermitian; solvable via standard eigendecomposition",
+                sparsity_pattern    =   "generic-hermitian" if sparsity < 0.1 else "sparse-hermitian",
+                computation_cost    =   "O(n^3) - dense" if sparsity < 0.1 else "O(n^2) - sparse methods",
             )
 
         # Fallback
         return SolvabilityInfo(
-            is_solvable=True,
-            method="standard",
-            description="Quadratic Hamiltonian requires standard matrix diagonalization",
-            sparsity_pattern="generic",
-            computation_cost="O(n^3)",
+            is_solvable         =   True,
+            method              =   "standard",
+            description         =   "Quadratic Hamiltonian requires standard matrix diagonalization",
+            sparsity_pattern    =   "generic",
+            computation_cost    =   "O(n^3)",
         )
 
     ###########################################################################
     #! Diagonalization
     ###########################################################################
+
+    def _hamiltonian_quadratic(self, use_numpy: bool = False):
+        r"""
+        Assemble the quadratic Hamiltonian matrix prior to diagonalization.
+        """
+        if self._particle_conserving:
+            self._hamil = self._hamil_sp
+        else:
+            self._hamil = self.build_bdg_matrix(copy=False)
+
+    def build(self):
+        """Build the quadratic Hamiltonian matrix."""
+        self._hamiltonian_quadratic()
 
     def diagonalize(self, verbose: bool = False, force: bool = False, **kwargs):
         """
@@ -1529,7 +1049,6 @@ class QuadraticHamiltonian(Hamiltonian):
                 if self._hamil is None or force:
                     self._hamiltonian_quadratic()
             except Exception:
-                # best-effort; if build fails, let base class handle errors
                 pass
 
             # Calls base diagonalize on self.hamil (which is _hamil_sp or BdG)
@@ -1538,28 +1057,30 @@ class QuadraticHamiltonian(Hamiltonian):
             # Apply constant offset after diagonalization
             if self._eig_val is not None and self._constant_offset != 0.0:
                 if verbose:
-                    self._log(
-                        f"Adding constant offset {self._constant_offset} to eigenvalues.",
-                        lvl=2,
-                        log="debug",
-                    )
+                    self._log(f"Adding constant offset {self._constant_offset} to eigenvalues.", lvl=2, log="debug",)
+                    
+                # Apply offset
                 self._eig_val += self._constant_offset
+                
                 # Recalculate energy stats if offset was applied
                 self._calculate_av_en()
+                
                 return
+        
         elif verbose:
             self._log("Using cached diagonalization results.", lvl=2, log="debug")
+        
         self._log("Diagonalization was used and it was not forced...", lvl=3, log="warning")
 
     @property
-    def eig_val(self):
+    def eig_val(self) -> np.ndarray:
         """Eigenvalues (triggers diagonalization if not yet performed)."""
         if self._eig_val is None:
             self.diagonalize()
         return self._eig_val
 
     @property
-    def eig_vec(self):
+    def eig_vec(self) -> np.ndarray:
         """Eigenvectors (triggers diagonalization if not yet performed)."""
         if self._eig_vec is None:
             self.diagonalize()
@@ -1678,7 +1199,7 @@ class QuadraticHamiltonian(Hamiltonian):
     #! Block Diagonal Analysis (Band Structure)
     ###########################################################################
 
-    def block_diagonal_bdg(self) -> Tuple[List[QuadraticBlockDiagonalInfo], np.ndarray]:
+    def block_diagonal_bdg(self) -> Tuple[List['QuadraticBlockDiagonalInfo'], np.ndarray]:
         r"""
         Extract and diagonalize each k-space block as a BdG system.
 
@@ -1735,6 +1256,12 @@ class QuadraticHamiltonian(Hamiltonian):
           at the whole-system level. For per-block independent diagonalization,
           that happens internally here.
         """
+        
+        try:
+            from QES.Algebra.Quadratic.hamil_quadratic_utils import QuadraticBlockDiagonalInfo
+        except ImportError as e:
+            raise ImportError("Could not import QuadraticBlockDiagonalInfo. Ensure QES is properly installed.") from e    
+        
         # Check that we're in k-space
         if self._hamil_transformed is None:
             raise RuntimeError("Hamiltonian not in k-space. Call to_basis('k-space') first.")
@@ -1804,24 +1331,51 @@ class QuadraticHamiltonian(Hamiltonian):
     #! Transformation Preparation
     ###########################################################################
 
-    @dataclass(frozen=True)
+    @dataclass
     class PCTransform:
         """Particle-conserving transformation handle."""
 
-        W: np.ndarray  # (Ns, Ns) single-particle eigenvectors (unitary)
-        occ_idx: np.ndarray  # (Na,)
-        unocc_idx: np.ndarray  # (Ns-Na,)
+        W           : np.ndarray  # (Ns, Ns)    # single-particle eigenvectors (unitary)
+        occ_mask    : np.uint32 | np.uint64     # occupied mask over Ns
+        _occ_idx    : np.ndarray  = field(default_factory=lambda: np.array([], dtype=np.int64)) # (Na,)       # subset of occupied indices
+        _unocc_idx  : np.ndarray  = field(default_factory=lambda: np.array([], dtype=np.int64)) # (Ns-Na,)    # complement of occupied indices
+        _WA         : np.ndarray | None = None                                                  # cache for W_A
+        _WA_CT      : np.ndarray | None = None                                                  # cache for W_A^dagger
 
         # on-demand helpers (allocate only when used)
 
+        def occ_idx(self) -> np.ndarray:
+            """Occupied indices (from mask)."""
+            try:
+                from QES.Algebra.Quadratic.hamil_quadratic_utils import indices_from_mask
+            except ImportError as e:
+                raise ImportError("Could not import indices_from_mask. Ensure QES is properly installed.") from e
+            if self._occ_idx is None or self._occ_idx.size == 0:
+                self._occ_idx = indices_from_mask(self.occ_mask)
+            return self._occ_idx
+        
+        def unocc_idx(self) -> np.ndarray:
+            """Unoccupied indices (from mask)."""
+            try:
+                from QES.Algebra.Quadratic.hamil_quadratic_utils import complement_indices
+            except ImportError as e:
+                raise ImportError("Could not import complement_indices. Ensure QES is properly installed.") from e
+            if self._unocc_idx is None or self._unocc_idx.size == 0:
+                Ns              = self.W.shape[0]
+                self._unocc_idx = complement_indices(Ns, self.occ_idx())
+            return self._unocc_idx
+        
         def W_A(self) -> np.ndarray:
             """Form columns W[:, occ_idx]. NOTE: column gather copies."""
-            return np.take(self.W, self.occ_idx, axis=1)
+            if self._WA is None:
+                self._WA = self.W[:, self.occ_idx]
+            return self._WA
 
         def W_A_CT(self) -> np.ndarray:
             """Conjugate transpose of W_A (allocates as above)."""
-            WA = np.take(self.W, self.occ_idx, axis=1)
-            return WA.conj().T
+            if self._WA_CT is None:
+                self._WA_CT = self.W_A().conj().T
+            return self._WA_CT
 
         def order_occ_then_unocc(self) -> np.ndarray:
             """Permutation indices [occ, unocc]."""
@@ -1831,10 +1385,10 @@ class QuadraticHamiltonian(Hamiltonian):
     class BdGTransform:
         """BdG/Nambu transform handle, avoids big temporaries."""
 
-        W: np.ndarray  # (2N, 2N) quasiparticle eigenvectors in Nambu basis
-        N: int  # single-particle dimension
-        occ_idx: np.ndarray  # subset in physical modes (0..N-1)
-        unocc_idx: np.ndarray  # complement in physical modes
+        W           : np.ndarray                # (2N, 2N) quasiparticle eigenvectors in Nambu basis
+        N           : int                       # single-particle dimension
+        occ_idx     : np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))  # subset in physical modes (0..N-1)
+        unocc_idx   : np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))  # complement in physical modes
 
         # Block views (no copies): U= W[:N,:N], V= W[:N,N:]
         @property
@@ -1845,7 +1399,7 @@ class QuadraticHamiltonian(Hamiltonian):
         def V(self) -> np.ndarray:
             return self.W[: self.N, self.N :]
 
-        # ---- Prefer row slicing (views) when projecting to a *mode subset* ----
+        # Prefer row slicing (views) when projecting to a *mode subset*
 
         def U_rows_A(self) -> np.ndarray:
             """Rows of U restricted to A (view). Shape (|A|, N)."""
@@ -1864,8 +1418,8 @@ class QuadraticHamiltonian(Hamiltonian):
             """Columns of V for A (copy; unavoidable). Shape (N, |A|)."""
             return np.take(self.V, self.occ_idx, axis=1)
 
-    def prepare_transformation(self, occ, *, bdg: bool | None = None):
-        """
+    def prepare_transformation(self, occ, *, bdg: bool | None = None) -> Union['QuadraticHamiltonian.PCTransform', 'QuadraticHamiltonian.BdGTransform']:
+        r"""
         Memory-conscious preparation of subspace transforms.
 
         Parameters
@@ -1890,32 +1444,42 @@ class QuadraticHamiltonian(Hamiltonian):
         - Column gathers (W_A, U_cols_A, V_cols_A) allocate only when invoked.
         - Row slices (U_rows_A, V_rows_A) are views.
         """
+        
+        try:
+            from QES.Algebra.Quadratic.hamil_quadratic_utils import occ_to_indices, complement_indices, occ_to_mask
+        except ImportError as e:
+            raise ImportError("Could not import utility functions. Ensure QES is properly installed.") from e
+        
+        # Determine bdg mode
         if bdg is None:
             bdg = not self._particle_conserving
 
+        # Process occ into index array
         W = self._eig_vec
         if W is None:
             raise RuntimeError("Eigenvectors not available. Call diagonalize() first.")
 
+        # Process occ into index array
         if bdg:
             # BdG / Nambu path
             if W.ndim != 2 or W.shape[0] != W.shape[1] or (W.shape[0] % 2 != 0):
                 raise ValueError(f"Expect square (2N,2N) BdG eigenvector matrix; got {W.shape}")
 
-            twoN = W.shape[0]
-            N = twoN // 2
+            twoN        = W.shape[0]
+            N           = twoN // 2
 
-            occ_idx = indices_from_mask(occ, N)
-            unocc_idx = complement_indices(N, occ_idx)
+            occ_idx     = occ_to_indices(occ, N)
+            unocc_idx   = complement_indices(N, occ_idx)
             return self.BdGTransform(W=W, N=N, occ_idx=occ_idx, unocc_idx=unocc_idx)
 
         # Particle-conserving path
         if W.ndim != 2 or W.shape[0] != W.shape[1]:
             raise ValueError(f"Expect square (Ns,Ns) eigenvector matrix; got {W.shape}")
-        Ns = W.shape[1]
-        occ_idx = indices_from_mask(occ, Ns)
-        unocc_idx = complement_indices(Ns, occ_idx)
-        return self.PCTransform(W=W, occ_idx=occ_idx, unocc_idx=unocc_idx)
+        
+        Ns          = W.shape[1]
+        occ_idx     = occ_to_mask(occ, Ns)
+        
+        return self.PCTransform(W=W, occ_mask=occ_idx)
 
     ###########################################################################
     #! Many-Body Energy Calculation
@@ -2023,6 +1587,14 @@ class QuadraticHamiltonian(Hamiltonian):
         representations of occupied orbitals.
         - The function uses the many_body_energy method to calculate the energy
         """
+        
+        try:
+            from QES.Algebra.Quadratic.hamil_quadratic_utils import QuadraticSelection
+        except ImportError as e:
+            raise ImportError(
+                "QuadraticSelection module is required for many_body_energies. "
+                "Please ensure it is available."
+            ) from e
 
         if 0 < n_occupation < 1:
             n_occupation = int(self._ns * n_occupation)
@@ -2703,6 +2275,25 @@ class QuadraticHamiltonian(Hamiltonian):
 
     ##########################################################################
 
+    @property
+    def selection_utils(self) -> "QuadraticSelection":
+        """
+        Access selection utilities for quadratic Hamiltonians.
+
+        Returns
+        -------
+        QuadraticSelection
+            Utility class for selecting orbitals and configurations.
+        """
+        try:
+            from QES.Algebra.Quadratic.hamil_quadratic_utils import QuadraticSelection
+        except ImportError as e:
+            raise ImportError(
+                "QuadraticSelection module is required for selection utilities. "
+                "Please ensure it is available."
+            ) from e
+
+        return QuadraticSelection
 
 # ---------------------------------------------------------------------------
 #! Registry integration
@@ -2710,7 +2301,6 @@ class QuadraticHamiltonian(Hamiltonian):
 
 # Register the quadratic Hamiltonian in the global registry so that users
 # can instantiate it via `HamiltonianConfig(kind="quadratic", ...)`.
-
 
 def _build_quadratic_hamiltonian(config: HamiltonianConfig, params: Dict[str, Any]) -> Hamiltonian:
     """
@@ -2756,7 +2346,6 @@ def _build_quadratic_hamiltonian(config: HamiltonianConfig, params: Dict[str, An
 
     params.setdefault("particles", "fermions")
     return QuadraticHamiltonian(**params)
-
 
 register_hamiltonian(
     "quadratic",

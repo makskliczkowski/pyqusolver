@@ -23,7 +23,6 @@ def _handler_kspace_to_real(self, enforce=False, **kwargs):
     """Handler for KSPACE -> REAL transformation."""
     return self._transform_kspace_to_real(**kwargs)
 
-
 # ----------------------------------------------------------------------------
 #! EOF
 # ----------------------------------------------------------------------------

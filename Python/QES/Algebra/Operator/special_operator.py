@@ -60,19 +60,16 @@ if TYPE_CHECKING:
 #! Constants for custom operator codes
 # ---------------------------------------------------------------------------
 
-CUSTOM_OP_BASE = 1000  # Custom operators start from this code
-CUSTOM_OP_MAX = 9999  # Maximum custom operator code
-
+CUSTOM_OP_BASE  = 1000  # Custom operators start from this code
+CUSTOM_OP_MAX   = 9999  # Maximum custom operator code
 
 def is_custom_code(code: int) -> bool:
     """Check if an instruction code represents a custom operator."""
     return CUSTOM_OP_BASE <= code <= CUSTOM_OP_MAX
 
-
 # ---------------------------------------------------------------------------
 #! SpecialOperator Base Class
 # ---------------------------------------------------------------------------
-
 
 class SpecialOperator(Operator, ABC):
     """
@@ -115,25 +112,25 @@ class SpecialOperator(Operator, ABC):
     """
 
     # Error messages
-    _ERR_CUSTOM_OP_NO_INT = "Custom operator '{}' must have an 'int' function (numba-compatible) to be used in instruction-based composition."
-    _ERR_COUP_VEC_SIZE = "Invalid coupling vector size. Coupling must be a scalar, a string, or a list/array of length ns."
+    _ERR_CUSTOM_OP_NO_INT           = "Custom operator '{}' must have an 'int' function (numba-compatible) to be used in instruction-based composition."
+    _ERR_COUP_VEC_SIZE              = "Invalid coupling vector size. Coupling must be a scalar, a string, or a list/array of length ns."
     _ERR_HILBERT_SPACE_NOT_PROVIDED = (
         "Hilbert space is not provided or is invalid. Please supply a valid HilbertSpace object."
     )
-    _ERR_NS_NOT_PROVIDED = (
+    _ERR_NS_NOT_PROVIDED            = (
         "'ns' (number of sites/modes) must be provided, e.g., via 'ns' kwarg or a Lattice object."
     )
-    _ERR_NEED_LATTICE = "Lattice information is required but not provided. Please specify a lattice or number of sites."
-    _ERR_MODE_MISMATCH = "Operation not supported for the current Hamiltonian mode (Many-Body/Quadratic). Check 'is_manybody' flag."
+    _ERR_NEED_LATTICE               = "Lattice information is required but not provided. Please specify a lattice or number of sites."
+    _ERR_MODE_MISMATCH              = "Operation not supported for the current Hamiltonian mode (Many-Body/Quadratic). Check 'is_manybody' flag."
 
-    _ERRORS = {
-        "custom_op_no_int": _ERR_CUSTOM_OP_NO_INT,
-        "coupling_vector_size": _ERR_COUP_VEC_SIZE,
-        "hilbert_space_not_provided": _ERR_HILBERT_SPACE_NOT_PROVIDED,
-        "ns_not_provided": _ERR_NS_NOT_PROVIDED,
-        "need_lattice": _ERR_NEED_LATTICE,
-        "mode_mismatch": _ERR_MODE_MISMATCH,
-    }
+    _ERRORS                         = {
+                                        "custom_op_no_int"              : _ERR_CUSTOM_OP_NO_INT,
+                                        "coupling_vector_size"          : _ERR_COUP_VEC_SIZE,
+                                        "hilbert_space_not_provided"    : _ERR_HILBERT_SPACE_NOT_PROVIDED,
+                                        "ns_not_provided"               : _ERR_NS_NOT_PROVIDED,
+                                        "need_lattice"                  : _ERR_NEED_LATTICE,
+                                        "mode_mismatch"                 : _ERR_MODE_MISMATCH,
+                                    }
 
     ################################################################################################
     #! Initialization
@@ -1971,7 +1968,6 @@ class SpecialOperator(Operator, ABC):
 
         print(f"Unknown topic '{topic}'. Available: {list(topics.keys())}")
         return f"Unknown topic '{topic}'. Available: {list(topics.keys())}"
-
 
 # ---------------------------------------------------------------------------
 #! END OF FILE

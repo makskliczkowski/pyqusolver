@@ -16,24 +16,22 @@ Description     : Generic matrix class for operators and Hamiltonians.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
+from typing     import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
 
-import numpy as np
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
+import numpy                as np
+import scipy.sparse         as sp
+import scipy.sparse.linalg  as spla
 
 try:
     if TYPE_CHECKING:
-        from QES.general_python.algebra.utils import Array
-        from QES.general_python.common.flog import Logger
+        from QES.general_python.algebra.utils   import Array
+        from QES.general_python.common.flog     import Logger
 
     import QES.Algebra.Hamil.hamil_diag_helpers as diag_helpers
-    from QES.Algebra.Hamil.hamil_diag_engine import DiagonalizationEngine
+    from QES.Algebra.Hamil.hamil_diag_engine    import DiagonalizationEngine
 
 except ImportError as exc:
-    raise ImportError(
-        "QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed."
-    ) from exc
+    raise ImportError("QES.general_python.algebra.utils could not be imported. Ensure QES is properly installed.") from exc
 
 # --------------------------------------------------------------------------------
 
@@ -59,6 +57,20 @@ class DummyVector:
     """
     Constant vector of length `ns` with all entries == `val`.
     A thin dummy so scalar couplings can be broadcast like arrays.
+    
+    Parameters
+    ----------
+    val : scalar
+        The constant value for all entries in the vector.
+    ns : int, optional
+        The number of sites (length of the vector). Defaults to 1.
+    backend : module, optional
+        The backend module to use (e.g., `numpy`, `jax.numpy`). Defaults to `numpy`.
+    Notes
+    -----
+    This class mimics a full array without actually storing all elements,
+    enabling efficient operations and type casting.
+    
     """
 
     #! construction
@@ -74,9 +86,9 @@ class DummyVector:
                 The backend module to use. If not provided, defaults to 'numpy'.
         """
 
-        self.val = val
-        self.ns = int(ns) if ns is not None else 1
-        self._backend = backend or __import__("numpy")
+        self.val        = val
+        self.ns         = int(ns) if ns is not None else 1
+        self._backend   = backend or __import__("numpy")
 
     # ---------------------------------------------------------------------------
 
@@ -134,6 +146,12 @@ class DummyVector:
 
     def __array_priority__(self):
         return 100.0
+    
+    def _invalidate_cache(self):
+        """Wipe eigenvalues, eigenvectors, cached many-body calculator."""
+        self._eig_val       = None
+        self._eig_vec       = None
+        self._krylov        = None
 
     # ---------------------------------------------------------------------------
 
@@ -237,9 +255,9 @@ class GeneralMatrix(spla.LinearOperator):
     inheriting the common matrix infrastructure.
     """
 
-    _ERR_MATRIX_NOT_BUILT = "Matrix representation has not been built. Call build() first."
-    _ERR_INVALID_BACKEND = "Invalid backend specified."
-    _ERR_UNSUPPORTED_OPERATION = "The requested operation is not supported for this matrix type."
+    _ERR_MATRIX_NOT_BUILT       = "Matrix representation has not been built. Call build() first."
+    _ERR_INVALID_BACKEND        = "Invalid backend specified."
+    _ERR_UNSUPPORTED_OPERATION  = "The requested operation is not supported for this matrix type."
 
     # -------------------------------------------------------
 
@@ -282,10 +300,10 @@ class GeneralMatrix(spla.LinearOperator):
             Data type for matrix elements.
         """
 
-        logger = GeneralMatrix._check_logger(logger)
+        logger      = GeneralMatrix._check_logger(logger)
         self._shape = tuple(shape) if shape is not None else (0, 0)
-        self._dim = self._shape[0]
-        self._ns = ns  # Number of sites/modes (optional, for physical systems)
+        self._dim   = self._shape[0]
+        self._ns    = ns  # Number of sites/modes (optional, for physical systems)
 
         if backend_components is not None:
             self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k) = (
@@ -296,40 +314,39 @@ class GeneralMatrix(spla.LinearOperator):
                 GeneralMatrix._set_backend(backend, seed)
             )
 
-        self._seed = seed
-        self._is_jax = JAX_AVAILABLE and self._backend is not np
-        self._is_numpy = not self._is_jax
-        self._is_sparse = is_sparse
-        self._dtypeint = self._backend.int64
-        self._name = "GeneralMatrix"
+        self._seed          = seed
+        self._is_jax        = JAX_AVAILABLE and self._backend is not np
+        self._is_numpy      = not self._is_jax
+        self._is_sparse     = is_sparse
+        self._dtypeint      = self._backend.int64
+        self._name          = "GeneralMatrix"
         self._custom_matvec = matvec
 
-        self._matrix: Optional[Union[np.ndarray, Any]] = None
-        self._is_built = False
+        self._is_built      = False
+        self._matrix: Optional[Union[np.ndarray, Any]]  = None
         self._eig_vec: Optional[Union[np.ndarray, Any]] = None
-        self._eig_val: Optional[Union[np.ndarray, Any]] = None
-        self._krylov: Optional[Any] = None
-        self._max_local_ch: int = 1
-        self._max_local_ch_o: int = 1
+        self._eig_val: Optional[np.ndarray]             = None
+        self._krylov: Optional[Any]                     = None
+        self._max_local_ch: int                         = 1
+        self._max_local_ch_o: int                       = 1
 
-        self._diag_engine: Optional[DiagonalizationEngine] = None
-        self._diag_method: str = "exact"
+        self._diag_engine: Optional[DiagonalizationEngine]  = None
+        self._diag_method: str                              = "exact"
 
-        self._original_basis: Optional[Any] = None
-        self._current_basis: Optional[Any] = None
-        self._basis_metadata: dict = {}
-        self._is_transformed: bool = False
-        self._transformed_grid: Optional[Any] = None
-        self._symmetry_info: dict = {}
+        self._original_basis: Optional[Any]             = None
+        self._current_basis: Optional[Any]              = None
+        self._basis_metadata: dict                      = {}
+        self._is_transformed: bool                      = False
+        self._transformed_grid: Optional[Any]           = None
+        self._symmetry_info: dict                       = {}
 
         # -----------------------
 
-        self._av_en_idx = 0
-        self._av_en = 0.0
-        self._std_en = 0.0
-        self._min_en = 0.0
-        self._max_en = 0.0
-
+        self._av_en_idx     = 0
+        self._av_en         = 0.0
+        self._std_en        = 0.0
+        self._min_en        = 0.0
+        self._max_en        = 0.0
         self._handle_dtype(dtype)
         super().__init__(dtype=self._dtype, shape=self._shape)
 
