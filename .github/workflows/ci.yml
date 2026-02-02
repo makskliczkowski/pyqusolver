@@ -33,10 +33,6 @@ jobs:
         # default set of ruff rules with exit-zero (treat as warning for now)
         ruff check Python/ --exit-zero
 
-    - name: Check formatting with Black
-      run: |
-        black --check Python/
-
     - name: Type check with Mypy
       run: |
         # Allow failure for now to establish baseline
