@@ -24,12 +24,13 @@ __all__: list[str] = [
 ]
 
 _LAZY_MODULES: dict[str, str] = {
-    'Conserving': '.Conserving',
-    'aubry_andre': '.Conserving.aubry_andre',
-    'free_fermions': '.Conserving.free_fermions',
-    'syk': '.syk',
-    'plrb': '.plrb',
-    'rpm': '.rpm',
+    'nonconserving'     : '.nonconserving',
+    'conserving'        : '.conserving',
+    'aubry_andre'       : '.conserving.aubry_andre',
+    'free_fermions'     : '.conserving.free_fermions',
+    'syk'               : '.syk',
+    'plrb'              : '.plrb',
+    'rpm'               : '.rpm',
 }
 
 def __getattr__(name: str):
