@@ -68,7 +68,7 @@ class SYK2(QuadraticHamiltonian):
         """
         Create the Hamiltonian matrix for the SYK model.
         """
-        self._log("Building SYK2 Hamiltonian...", lvl=2, color="green")
+        self._log("Building SYK2 Hamiltonian...", lvl=2, color="green", log='debug')
         if self._iscpx:
             mat = random_matrix(
                     shape   =   (self._ns, self._ns),

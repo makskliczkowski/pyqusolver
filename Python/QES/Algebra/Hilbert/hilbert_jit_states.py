@@ -259,7 +259,7 @@ def _slater_from_vec(U, occ, vec, ns, use_eigen=_USE_EIGEN):
     return np.linalg.det(M)
 
 
-@njit(cache=True, inline="always")
+@njit(cache=True)
 def calculate_slater_det(
     sp_eigvecs: np.ndarray,
     occupied_orbitals: np.ndarray,
@@ -337,12 +337,14 @@ def calculate_slater_det(
         ``org_basis_state`` differs from ``len(occupied_orbitals)``;
         returns ``1.0`` for the vacuum state.
     """
-
-    if isinstance(org_basis_state, (int, np.integer)):
-        return _slater_from_mask(sp_eigvecs, occupied_orbitals, org_basis_state, ns, use_eigen)
-    elif isinstance(org_basis_state, np.ndarray):
+    # Numba-compatible type check: use np.isscalar or check ndim
+    # np.integer is not allowed in Numba, so we check if it's an integer type by checking ndim
+    if not hasattr(org_basis_state, 'ndim') or org_basis_state.ndim == 0:
+        # It's a scalar (Python int or numpy scalar)
+        return _slater_from_mask(sp_eigvecs, occupied_orbitals, np.int64(org_basis_state), ns, use_eigen)
+    else:
+        # It's an array
         return _slater_from_vec(sp_eigvecs, occupied_orbitals, org_basis_state, ns, use_eigen)
-    return 0.0
 
 
 #############################################################################
@@ -888,14 +890,14 @@ def many_body_state_closure(
     if matrix_arg is not None:
         const = matrix_arg
 
-        # @njit(inline='always')
+        @njit(cache=True)
         def closure(U: Array, state: int, ns: int):
             return calculator_func(U, const, state, ns)
 
         return closure
 
     # no extra constant
-    @njit(inline="always", cache=True)
+    @njit(cache=True)
     def closure(U: Array, state: int, ns: int):
         return calculator_func(U, state, ns)
 

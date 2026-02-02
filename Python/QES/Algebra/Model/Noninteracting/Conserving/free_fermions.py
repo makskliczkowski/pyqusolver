@@ -178,7 +178,9 @@ class FreeFermions(QuadraticHamiltonian):
             self._has_analytic_spectrum = False
         
         # check if t and t2 are uniform
-        if (np.diff(self._t).max() != 0.0) or (np.diff(self._t2).max() != 0.0):
+        t_diff  = np.diff(self._t) if hasattr(self._t, '__len__') and len(self._t) > 1 else np.array([0.0])
+        t2_diff = np.diff(self._t2) if hasattr(self._t2, '__len__') and len(self._t2) > 1 else np.array([0.0])
+        if (t_diff.size > 0 and t_diff.max() != 0.0) or (t2_diff.size > 0 and t2_diff.max() != 0.0):
             self._log(
                 "FreeFermions: Non-uniform hopping amplitudes break translational invariance. "
                 "Falling back to numerical diagonalization.",

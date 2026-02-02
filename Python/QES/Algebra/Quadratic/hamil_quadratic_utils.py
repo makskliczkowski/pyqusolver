@@ -7,33 +7,76 @@ Author          : Maksymilian Kliczkowski
 Date            : 2026-02-01
 ----------------
 
+Provides:
+- Orbital occupation representation conversions (occ_to_indices, occ_to_mask, to_one_hot)
+- Energy computation from orbital masks
+- Orbital selection utilities (QuadraticSelection class)
+- Haar random coefficient generation
+- Solvability detection (SolvabilityInfo)
 
+For low-level bit operations (ctz64, popcount64, mask_from_indices, indices_from_mask),
+see QES.general_python.common.binary.
 '''
 
 from dataclasses    import dataclass
 from collections    import defaultdict
-from typing         import Optional, Sequence, Sequence, Tuple, List, Union, Dict, Iterable
+from typing         import Optional, Sequence, Tuple, List, Union, Dict, Iterable
 from enum           import Enum, auto, unique
 import numpy        as np
+
+__all__ = [
+    # Energy computation
+    'energy_from_mask', 'energies_from_masks_batch',
+    # Conversion helpers (high-level, orbital-specific)
+    'to_one_hot', 'occ_to_indices', 'occ_to_mask',
+    # Classes
+    'QuadraticSelection', 'QuadraticBlockDiagonalInfo',
+    'QuadraticTerm', 'SolvabilityInfo',
+]
+
+# ----------------------------------------------------------------------------
+#! Numba setup
+# ----------------------------------------------------------------------------
 
 try:
     import numba
     numba_njit      = numba.njit
+    HAS_NUMBA       = True
 except ImportError:
-    def numba_njit(func):
+    HAS_NUMBA       = False
+    def numba_njit(*args, **kwargs):
         """Fallback decorator if Numba is not available."""
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-        return wrapper
+        def decorator(func):
+            return func
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return decorator
+
+# ----------------------------------------------------------------------------
+#! Import core bit operations from binary.py (single source of truth)
+# ----------------------------------------------------------------------------
 
 try:
-    from QES.qes_globals                    import get_numpy_rng
-    from QES.general_python.common.binary   import base2int
+    from QES.general_python.common.binary   import (
+                                                ctz64       as _ctz64,
+                                                popcount64  as _popcount64,
+                                                base2int,
+                                                mask_from_indices,
+                                                indices_from_mask,
+                                                complement_indices,
+                                                complement_mask,
+                                            )
+except ImportError:
+    raise ImportError("Could not import bit operations from QES.general_python.common.binary. Ensure that pyqusolver is properly installed.")
+
+try:
+    from QES.qes_globals                        import get_numpy_rng
 except ImportError:
     def get_numpy_rng():
-        """Fallback RNG getter if QES.qes_globals is not available."""
         return np.random.default_rng()
 
+##############################################################################
+#! One-hot encoding
 ##############################################################################
 
 def to_one_hot(positions    : Iterable[int],
@@ -67,42 +110,30 @@ def to_one_hot(positions    : Iterable[int],
         y[idx]          = 1
         return y
 
-@numba_njit
-def mask_from_indices(idxs: np.ndarray) -> np.uint64:
-    ''' Convert a list of indices to a bitmask (uint64). '''
-    m = np.uint64(0)
-    for i in idxs:
-        m |= np.uint64(1) << np.uint64(i)
-    return m
+# ----------------------------------------------------------------------------
+#! Energy computation from orbital masks
+# ----------------------------------------------------------------------------
 
-@numba_njit
-def indices_from_mask(mask: np.uint64) -> np.ndarray:
-    # fast enough for occasional decode
-    out     = []
-    m       = int(mask)
-    while m:
-        lsb     = m & -m
-        out.append((lsb.bit_length() - 1))
-        m      ^= lsb # clear the least significant bit
+@numba_njit(cache=True, parallel=False)
+def energies_from_masks_batch(masks: np.ndarray, eps: np.ndarray) -> np.ndarray:
+    """
+    Compute energies for a batch of bitmasks.
+    
+    Args:
+        masks (np.ndarray): Array of bitmasks (uint64).
+        eps (np.ndarray): Array of single-particle energies.
         
-    return np.array(out, dtype=np.int64)
-
-def complement_indices(n: int, indices: np.ndarray) -> np.ndarray:
-    """
-    Return indices in [0..n) not in indices. O(n) boolean scratch, minimal & fast.
-
-    Parameters:
-    - n (int):
-        The upper bound of the range (exclusive).
-    - indices (np.ndarray):
-        The input indices to exclude.
-
     Returns:
-    - np.ndarray: The complementary indices.
+        np.ndarray: Array of total energies for each mask.
     """
-    mark            = np.zeros(n, dtype=np.bool_)
-    mark[indices]   = True
-    return np.nonzero(~mark)[0].astype(np.int64, copy=False)
+    n = masks.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        out[i] = energy_from_mask(masks[i], eps)
+    return out
+
+# Note: complement_indices is defined locally above to avoid circular imports
+# with general_python (which is a submodule and cannot import from QES)
 
 def occ_to_indices(occ, Ns: int) -> np.ndarray:
     """
@@ -167,20 +198,23 @@ def occ_to_mask(occ, Ns: int) -> np.uint64:
     if occ.dtype == np.bool_:
         if occ.ndim != 1 or occ.shape[0] != Ns:
             raise ValueError("bool occ mask must have shape (Ns,)")
-        return occ_to_mask(np.nonzero(occ)[0].astype(np.int64, copy=False), Ns)
+        # Convert bool mask to indices, then to bitmask
+        return mask_from_indices(np.nonzero(occ)[0].astype(np.int64, copy=False))
 
-    # assume indices
+    # assume indices - use mask_from_indices directly (NOT recursive call)
     if occ.ndim != 1:
         raise ValueError("occ indices must be 1D")
-    return occ_to_mask(occ.astype(np.int64, copy=False), Ns)
+    return mask_from_indices(occ.astype(np.int64, copy=False))
 
 
-@numba_njit
-def energy_from_mask(mask: int, eps: np.ndarray) -> float:
+@numba_njit(cache=True)
+def energy_from_mask(mask: np.uint64, eps: np.ndarray) -> float:
     '''
     Compute the total energy for a given bitmask of occupied orbitals.
+    Numba-safe: uses _ctz64 instead of .bit_length().
+    
     Args:
-        mask (int):
+        mask (np.uint64):
             Bitmask representing occupied orbitals.
         eps (np.ndarray):
             Array of single-particle energies for each orbital.
@@ -190,11 +224,11 @@ def energy_from_mask(mask: int, eps: np.ndarray) -> float:
     '''
     e = 0.0
     m = mask
-    while m:
-        lsb = m & -m
-        idx = (lsb.bit_length() - 1)
+    while m != 0:
+        idx = _ctz64(m)
         e += eps[idx]
-        m ^= lsb
+        # Clear the least significant bit
+        m &= m - np.uint64(1)
     return e
 
 ##############################################################################
@@ -749,39 +783,80 @@ class QuadraticSelection:
     def sample_cfgs(ns: int, filling: int, rng: np.random.Generator, batch: int, sort: bool = True) -> np.ndarray:
         ''' 
         Take random samples of configurations with given filling. The samples
-        are returned as sorted arrays of orbital indices.
-        '''
+        are returned as arrays of orbital indices.
         
-        # returns (batch, filling) sorted int32
-        s = np.empty((batch, filling), dtype=np.int32)
-        for b in range(batch):
-            x       = rng.choice(ns, size=filling, replace=False).astype(np.int32, copy=False)
-            s[b]    = np.sort(x) if sort else x
+        Uses vectorized sampling when possible for better performance.
+        
+        Args:
+            ns (int): Number of orbitals.
+            filling (int): Number of occupied orbitals per configuration.
+            rng (np.random.Generator): Random number generator.
+            batch (int): Number of samples to generate.
+            sort (bool): If True, sort each configuration (default True).
+            
+        Returns:
+            np.ndarray: Array of shape (batch, filling) with orbital indices (dtype=int32).
+        '''
+        # Use uint16 for indices if ns <= 65535 (saves memory for large batches)
+        idx_dtype   = np.uint16 if ns <= 65535 else np.int32
+        
+        # Vectorized approach: generate permutations and take first `filling` elements
+        # This is faster than per-row rng.choice for large batches
+        s           = np.empty((batch, filling), dtype=idx_dtype)
+        
+        # For small ns, can do fully vectorized with argsort trick
+        if ns <= 256 and batch > 100:
+            # Generate random keys for all positions, argsort gives permutation
+            keys    = rng.random((batch, ns))
+            perms   = np.argsort(keys, axis=1)[:, :filling]
+            if sort:
+                perms = np.sort(perms, axis=1)
+            s[:] = perms.astype(idx_dtype, copy=False)
+        else:
+            # Fallback to per-row sampling
+            for b in range(batch):
+                x = rng.choice(ns, size=filling, replace=False)
+                if sort:
+                    x = np.sort(x)
+                s[b] = x.astype(idx_dtype, copy=False)
         return s
 
     @staticmethod
-    def pack_masks(samples: np.ndarray) -> np.ndarray:
+    def pack_masks(samples: np.ndarray, *, ns: int = 64) -> np.ndarray:
         '''
         Convert sampled configurations (orbital indices) to bitmask representation.
+        
         Args:
             samples (np.ndarray):
                 Array of shape (B, k) with B samples of k occupied orbital indices.
+            ns (int):
+                Number of orbitals (determines dtype: uint32 if ns<=32, else uint64).
+                
         Returns:
             np.ndarray:
                 Array of shape (B,) with bitmask representation of each sample.
         '''
+        # Choose appropriate dtype based on ns
+        if ns <= 32:
+            mask_dtype = np.uint32
+            one = np.uint32(1)
+        else:
+            mask_dtype = np.uint64
+            one = np.uint64(1)
         
-        # samples: (B, k) int32 -> masks: (B,) uint32
-        masks = np.zeros(samples.shape[0], dtype=np.uint32)
+        masks = np.zeros(samples.shape[0], dtype=mask_dtype)
+        samples_cast = samples.astype(mask_dtype, copy=False)
+        
+        # Vectorized bit setting
         for j in range(samples.shape[1]):
-            masks |= (np.uint32(1) << samples[:, j].astype(np.uint32, copy=False))
+            masks |= (one << samples_cast[:, j])
         return masks
 
     @staticmethod
     def gosper_masks(ns: int, k: int):
         '''
         Generator for all bitmasks of size `ns` with `k` bits set (1s). The
-        masks are yielded in ascending order.
+        masks are yielded in ascending order (Gosper's hack).
         
         Args:
             ns (int):
@@ -796,11 +871,19 @@ class QuadraticSelection:
         --------
         >>> list(QuadraticSelection.gosper_masks(5, 3))
         [7, 11, 13, 14, 19, 21, 22, 25, 26, 28]
+        >>> list(QuadraticSelection.gosper_masks(4, 4))
+        [15]
+        >>> list(QuadraticSelection.gosper_masks(4, 0))
+        [0]
         '''
         if k < 0 or k > ns:
             return
-        elif k == 0 or k == ns:
+        if k == 0:
             yield 0
+            return
+        if k == ns:
+            # Full mask: all bits set
+            yield (1 << ns) - 1
             return
         
         x       = (1 << k) - 1
@@ -810,35 +893,35 @@ class QuadraticSelection:
             c   = x & -x
             r   = x + c
             x   = (((r ^ x) >> 2) // c) | r
+    
+    # ------------------------------------------------------------------------
+    #! Energy binning / manifolds
+    # ------------------------------------------------------------------------
 
-        # ------------------------------------------------------------------------
-        #! Energy binning / manifolds
-        # ------------------------------------------------------------------------
+    @staticmethod
+    def bin_energies(sorted_energies: np.ndarray, digits: int = 10):
+        """
+        Groups indices of sorted energies by their rounded values.
 
-        @staticmethod
-        def bin_energies(sorted_energies: np.ndarray, digits: int = 10):
-            """
-            Groups indices of sorted energies by their rounded values.
+        Args:
+            sorted_energies (list[tuple[int, float]]):
+                A list of (index, energy) pairs, sorted by energy.
+            digits (int):
+                Number of decimal digits for rounding - used for
+                binning the energies to avoid floating point errors.
 
-            Args:
-                sorted_energies (list[tuple[int, float]]):
-                    A list of (index, energy) pairs, sorted by energy.
-                digits (int):
-                    Number of decimal digits for rounding - used for
-                    binning the energies to avoid floating point errors.
+        Returns:
+            dict[float, list[int]]:
+                Dictionary mapping rounded energy to list of indices.
+        """
+        binned = defaultdict(list)
+        for idx, energy in sorted_energies:
+            key = round(energy, digits)
+            binned[key].append(idx)
+        return dict(binned)
 
-            Returns:
-                dict[float, list[int]]:
-                    Dictionary mapping rounded energy to list of indices.
-            """
-            binned = defaultdict(list)
-            for idx, energy in sorted_energies:
-                key = round(energy, digits)
-                binned[key].append(idx)
-            return dict(binned)
-
-        @staticmethod
-        def man_energies(binned_energies: dict, dtype = np.int32) -> Tuple[dict, np.ndarray]:
+    @staticmethod
+    def man_energies(binned_energies: dict, dtype = np.int32) -> Tuple[dict, np.ndarray]:
             """
             Calculates the number of elements in each energy manifold from a dictionary of binned energies.
             Args:

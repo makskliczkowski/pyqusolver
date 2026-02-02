@@ -1022,7 +1022,7 @@ class QuadraticHamiltonian(Hamiltonian):
         else:
             self._hamil = self.build_bdg_matrix(copy=False)
 
-    def build(self):
+    def build(self, **kwargs):
         """Build the quadratic Hamiltonian matrix."""
         self._hamiltonian_quadratic()
 
@@ -1368,7 +1368,7 @@ class QuadraticHamiltonian(Hamiltonian):
         def W_A(self) -> np.ndarray:
             """Form columns W[:, occ_idx]. NOTE: column gather copies."""
             if self._WA is None:
-                self._WA = self.W[:, self.occ_idx]
+                self._WA = self.W[:, self.occ_idx()]
             return self._WA
 
         def W_A_CT(self) -> np.ndarray:
