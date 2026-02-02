@@ -49,13 +49,13 @@ def get_exact_impl(nqs_instance: "NQS", **kwargs) -> Optional["NQSTrainStats"]:
         if not stats.has_exact:
             if nqs_instance.model.eig_val is None:
                 nqs_instance.model.diagonalize(
-                    method="lanczos",
-                    k=kwargs.get("k", 6),
-                    store_basis=False,
-                    verbose=kwargs.get("verbose", True),
-                    use_scipy=kwargs.get("use_scipy", True),
-                    tol=kwargs.get("tol", 1e-7),
-                    maxiter=kwargs.get("max_iter", 200),
+                    method      =   "lanczos",
+                    k           =   kwargs.get("k", 6),
+                    store_basis =   False,
+                    verbose     =   kwargs.get("verbose", True),
+                    use_scipy   =   kwargs.get("use_scipy", True),
+                    tol         =   kwargs.get("tol", 1e-7),
+                    maxiter     =   kwargs.get("max_iter", 200),
                 )
 
             # Get predictions
@@ -63,12 +63,12 @@ def get_exact_impl(nqs_instance: "NQS", **kwargs) -> Optional["NQSTrainStats"]:
             if stats is not None:
                 stats.exact_predictions = pred
 
-            nstate = nqs_instance._nthstate
-            nqs_instance.exact = {
-                "exact_predictions": nqs_instance.model.eigenvalues,
-                "exact_method": "scipy_lanczos",
-                "exact_energy": float(pred) if np.ndim(pred) == 0 else pred[nstate],
-            }
+            nstate              = nqs_instance._nthstate
+            nqs_instance.exact  = {
+                                    "exact_predictions" : nqs_instance.model.eigenvalues,
+                                    "exact_method"      : "scipy_lanczos",
+                                    "exact_energy"      : float(pred) if np.ndim(pred) == 0 else pred[nstate],
+                                }
             # Log results
             if nstate == 0:
                 logfun(
@@ -129,13 +129,13 @@ def load_exact_impl(nqs_instance: "NQS", filepath: str, *, key: str = "energy_va
         exact_values = np.loadtxt(filepath)
 
     nqs_instance.exact = {
-        "exact_predictions": np.array(exact_values),
-        "exact_method": f"loaded_from_{os.path.basename(filepath)}",
-        "exact_energy": (
-            float(exact_values)
-            if np.ndim(exact_values) == 0
-            else exact_values[nqs_instance._nthstate]
-        ),
+        "exact_predictions"     : np.array(exact_values),
+        "exact_method"          : f"loaded_from_{os.path.basename(filepath)}",
+        "exact_energy"          : (
+                                    float(exact_values)
+                                    if np.ndim(exact_values) == 0
+                                    else exact_values[nqs_instance._nthstate]
+                                ),
     }
 
     # Log results

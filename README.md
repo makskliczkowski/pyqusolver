@@ -1,130 +1,98 @@
 # Quantum EigenSolver (QES)
 
-**QES** is a high-performance, modular Python framework for simulating quantum many-body systems. It unifies **Exact Diagonalization (ED)** and **Variational Monte Carlo (VMC)** with **Neural Quantum States (NQS)** into a single consistent API.
+**Quantum EigenSolver (QES)** is a flexible and high-performance framework designed for the simulation of quantum many-body systems. We built it to bridge the gap between rigorous, exact methods and modern neural network-based approaches, giving researchers a unified environment for exploration.
 
-Designed for computational physicists and quantum researchers, QES leverages **JAX** for GPU-accelerated neural networks and automatic differentiation, while maintaining a robust **NumPy/SciPy** backend for exact methods and small-scale prototyping.
+At its core, QES uses a dual-backend architecture. We leverage **C++** for computationally intensive tasks and **Python (JAX/NumPy)** to provide a user-friendly, flexible interface that integrates seamlessly with modern machine learning workflows.
 
----
+## Why QES?
 
-## Key Concepts
-
-- **Backend Agnostic**: Switch between `numpy` (CPU, exact) and `jax` (GPU/TPU, AD-enabled) with a single configuration flag.
-- **Global State**: Managed via `QES.qes_globals` to ensure consistent logging, random number generation (reproducibility), and backend configuration across modules.
-- **Hybrid Workflow**: Seamlessly transition from solving a 10-site system exactly (to benchmark) to optimizing a variational ansatz on a 100-site system using the same Hamiltonian definitions.
+*   **Hybrid Workflow:** You can easily transition from running exact benchmarks on small systems to performing large-scale variational simulations on the same Hamiltonian definitions.
+*   **Best of Both Worlds:**
+    *   **NumPy Backend:** Perfect for rapid prototyping, debugging, and exact diagonalization on CPUs.
+    *   **JAX Backend:** Unlocks GPU acceleration and automatic differentiation, essential for training Neural Quantum States.
+*   **Neural Quantum States (NQS):** We provide built-in support for Variational Monte Carlo (VMC) using various architectures like RBMs, CNNs, and Transformers.
+*   **Robust Utilities:** The framework includes `general_python`, a comprehensive suite of physics and math tools available for any scientific computing task.
 
 ## Installation
 
-Requires Python 3.10+.
+We recommend installing QES in a dedicated virtual environment. You will need Python 3.10 or newer.
 
-### Quick Install
+### Standard Installation
+
 ```bash
+git clone https://github.com/makskliczkowski/QuantumEigenSolver.git
+cd QuantumEigenSolver/pyqusolver
 pip install .
 ```
 
-### For Developers (Editable)
+### Development Installation
+
+If you plan to contribute or run the test suite, install the development dependencies:
+
 ```bash
-git clone https://github.com/makskliczkowski/pyqusolver.git
-cd pyqusolver
-pip install -e "Python/[all]"
+pip install -e "Python/[all,dev]"
 ```
 
----
+## Quick Start
 
-## Quickstart
+Here is how you can get started with QES in just a few lines of code.
 
-### 1. Minimal Exact Diagonalization (ED)
-Solve for the ground state of a free fermion chain (Quadratic Hamiltonian).
+### 1. Exact Diagonalization
+Let's calculate the ground state energy of a Heisenberg model on a $4 \times 4$ square lattice using the exact solver.
 
 ```python
 import QES
-from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
+from QES.Algebra.Model.Interacting.Spin import Heisenberg
+from QES.general_python.lattices import SquareLattice
 
-# Start a session (manages precision and backend)
+# Initialize a session using the NumPy backend for exact calculations
 with QES.run(backend='numpy'):
-
-    # Define Hamiltonian: 10 sites
-    H = QuadraticHamiltonian(ns=10)
-
-    # Add hopping terms: -t * (c_i^dag c_{i+1} + h.c.)
-    for i in range(9):
-        H.add_hopping(i, i+1, -1.0)
-
-    # Diagonalize (O(N^3) for quadratic)
+    # Define a 4x4 square lattice and the Heisenberg Hamiltonian
+    lat = SquareLattice(dim=2, lx=4, ly=4)
+    H = Heisenberg(lattice=lat, J=1.0)
+    
+    # Diagonalize the Hamiltonian
     H.diagonalize()
-
-    print(f"Ground State Energy: {sum(val for val in H.eig_val if val < 0):.6f}")
+    print(f"Ground State Energy: {H.E0}")
 ```
 
-### 2. Minimal Neural Quantum State (VMC)
-Train a Neural Network (RBM) to find the ground state of a Transverse Field Ising Model.
+### 2. Neural Quantum States
+Now, let's train a Restricted Boltzmann Machine (RBM) to find the ground state of a Transverse Field Ising Model using the JAX backend.
 
 ```python
 import QES
-from QES.Algebra.Model.Interacting.Spin.transverse_ising import TransverseFieldIsing
-from QES.general_python.lattices.square import SquareLattice
+from QES.Algebra.Model.Interacting.Spin import TransverseFieldIsing
 from QES.NQS import NQS
 
-# Use JAX for GPU acceleration and gradients
+# Initialize a session with JAX for GPU acceleration
 with QES.run(backend='jax', seed=42):
-
-    # 1. Define Model (TFIM) on a 1D chain
-    lat = SquareLattice(dim=1, lx=20, bc='pbc')
-    H = TransverseFieldIsing(lattice=lat, j=1.0, hx=0.5)
-
-    # 2. Initialize Solver (RBM Ansatz + Metropolis Sampler)
-    psi = NQS(
-        logansatz='rbm',
-        model=H,
-        alpha=1,             # Hidden layer density
-        batch_size=1024
-    )
-
-    # 3. Train using Stochastic Reconfiguration (SR)
-    stats = psi.train(n_epochs=100, lr=0.01)
-
-    print(f"Final Variational Energy: {stats.loss_mean[-1]:.6f}")
+    # Define the model on a chain of 20 sites
+    H = TransverseFieldIsing(lx=20, J=1.0, hx=0.5)
+    
+    # Initialize the Variational Solver with an RBM ansatz
+    solver = NQS(model=H, ansatz="rbm", alpha=2)
+    
+    # Train the model
+    stats = solver.train(epochs=200, learning_rate=0.01)
+    print(f"Final Variational Energy: {stats.energy_mean[-1]}")
 ```
-
----
-
-## Project Structure
-
-The package is located in `Python/QES`. Key submodules:
-
-- **`QES.Algebra`**: The physics engine. Defines `Hamiltonian`, `HilbertSpace`, and `Operator`. Handles symmetries and matrix construction.
-- **`QES.NQS`**: The variational engine. Implements `NQS` solver, neural networks (RBM, CNN, Transformers), and VMC logic.
-- **`QES.Solver`**: Abstract simulation backends. Includes `MonteCarloSolver` and samplers (`VMCSampler`).
-- **`QES.general_python`**: Shared utilities. Contains the `backend_manager` (JAX/NumPy dispatch), `flog` (logging), and `lattices` (geometry).
 
 ## Documentation
 
-Full documentation is available in `Python/docs`. To build it locally:
+We believe in good documentation. You can build the full API reference locally to explore all available modules and methods.
 
 ```bash
-cd Python/docs
+cd pyqusolver/Python/docs
+pip install -r requirements.txt
 make html
 ```
 
-## Reproducibility
+Once built, open `_build/html/index.html` in your web browser.
 
-QES enforces reproducibility through its `QESSession` and global state manager.
+## Contributing
 
-```python
-# Guaranteed reproducible run across backend resets
-with QES.run(seed=123, precision='float64'):
-    ...
-```
+We welcome contributions from the community! Whether it's fixing a bug, adding a new feature, or improving documentation, your help is appreciated. Please check our [Contributing Guide](CONTRIBUTING.md) for details.
 
-## Performance Notes
+## License
 
-- **JAX**: When using `backend='jax'`, the first call to functions (like `train_step`) will trigger JIT compilation, which may take a few seconds. Subsequent calls are highly optimized.
-- **Batching**: For NQS, ensure `batch_size` is large enough to saturate your GPU but small enough to fit in VRAM.
-- **Precision**: Use `precision='float32'` for NQS training (standard deep learning practice) and `precision='float64'` for high-precision ED.
-
-## Citation & License
-
-This project is licensed under CC-BY-4.0.
-
-Author: Maksymilian Kliczkowski
-Email: maksymilian.kliczkowski@pwr.edu.pl
-Copyright 2025
+This project is open-sourced under the **CC-BY-4.0** License.
