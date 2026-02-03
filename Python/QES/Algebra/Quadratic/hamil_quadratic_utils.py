@@ -774,6 +774,76 @@ class QuadraticSelection:
             return QuadraticSelection._haar_random_coeff_cpx(gamma, rng=rng, dtype=dtype)
         else:
             return QuadraticSelection._haar_random_coeff_real(gamma, rng=rng, dtype=dtype)
+    
+    @staticmethod
+    def haar_random_coeff_batch(
+        batch: int, gamma: int, *, rng: np.random.Generator | None = None, dtype=np.complex128
+    ) -> np.ndarray:
+        r"""
+        Generate multiple Haar-random coefficient vectors (batch generation).
+        
+        Vectorized version of haar_random_coeff for generating many coefficient
+        sets at once. Uses the same Gaussian normalization algorithm but processes
+        all vectors simultaneously for better performance.
+        
+        Parameters
+        ----------
+        batch : int
+            Number of coefficient vectors to generate.
+        gamma : int
+            Dimension of each coefficient vector (number of states to mix).
+        rng : numpy.random.Generator, optional
+            Random-number generator to use. If None, uses default RNG.
+        dtype : np.dtype, default=np.complex128
+            Precision of the returned coefficients. If complex dtype, returns
+            complex coefficients; if real dtype, returns real coefficients.
+        
+        Returns
+        -------
+        np.ndarray
+            Array of shape (batch, gamma) with Haar-distributed coefficient vectors.
+            Each row is independently sampled from the Haar measure on the unit sphere.
+        
+        Notes
+        -----
+        * Uses vectorized Gaussian normalization (same algorithm as haar_random_coeff):
+          - Sample from N(0,1) for all batch x gamma elements
+          - Normalize each row to unit sphere
+          - Result is Haar-distributed (Mezzadri 2006)
+        * Much faster than calling haar_random_coeff in a loop (~batch times speedup)
+        * Memory: O(batch x gamma x dtype_size)
+        
+        Examples
+        --------
+        >>> coeffs = haar_random_coeff_batch(3, 4, dtype=np.complex128)
+        >>> coeffs.shape
+        (3, 4)
+        >>> np.allclose(np.sum(np.abs(coeffs)**2, axis=1), 1.0)  # All normalized
+        True
+        """
+        
+        if batch < 1:
+            raise ValueError("`batch` must be at least 1.")
+        if gamma < 1:
+            raise ValueError("`gamma` must be at least 1.")
+        
+        rng = get_numpy_rng() if rng is None else rng
+        
+        # Vectorized generation for all batch x gamma coefficients at once
+        if np.issubdtype(dtype, np.complexfloating):
+            # Complex: real + imaginary parts
+            real_part   = rng.standard_normal((batch, gamma))
+            imag_part   = rng.standard_normal((batch, gamma))
+            all_coeffs  = (real_part + 1j * imag_part).astype(dtype, copy=False)
+        else:
+            # Real only
+            all_coeffs  = rng.standard_normal((batch, gamma)).astype(dtype, copy=False)
+        
+        # Vectorized normalization: normalize each row to unit sphere
+        norms_sq        = np.sum(np.abs(all_coeffs)**2, axis=1, keepdims=True)
+        all_coeffs     /= np.sqrt(norms_sq)
+        
+        return all_coeffs
         
     # ------------------------------------------------------------------------
     #! Energy concerned

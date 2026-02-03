@@ -42,27 +42,26 @@ top-level `QES` package remains lightweight. The first call to
 !lightweight sentinels; heavy initialization is deferred until first access.
 """
 
-from __future__ import annotations
+from    __future__ import annotations
 
-import threading
-from typing import Any, List, Union
+import  threading
+from    typing import Any, List, Union
 
 try:
     from numpy.random import Generator
 except ImportError:
-    Generator = Any
+    Generator   = Any
 
 # Thread-local storage for singletons
-_LOCK = threading.Lock()
+_LOCK           = threading.Lock()
 
 # Internal storage for singletons
-_LOGGER: Any = None
-_BACKEND_MGR: Any = None
+_LOGGER         : Any = None
+_BACKEND_MGR    : Any = None
 
 # ----------------------------------------------------------------
 #! Global logger accessor
 # ----------------------------------------------------------------
-
 
 def get_logger(**kwargs) -> Any:
     """
@@ -89,11 +88,9 @@ def get_logger(**kwargs) -> Any:
             _LOGGER = get_global_logger(**kwargs)
     return _LOGGER
 
-
 # ----------------------------------------------------------------
 #! Global backend manager accessor
 # ----------------------------------------------------------------
-
 
 def get_backend_manager() -> Any:
     """
@@ -117,11 +114,9 @@ def get_backend_manager() -> Any:
             _BACKEND_MGR = backend_mgr
     return _BACKEND_MGR
 
-
 # ----------------------------------------------------------------
 #! RNG accessors
 # ----------------------------------------------------------------
-
 
 def get_numpy_rng() -> Generator:
     """
@@ -137,7 +132,6 @@ def get_numpy_rng() -> Generator:
     """
     mgr = get_backend_manager()
     return mgr.default_rng
-
 
 def reseed_all(seed: int) -> Any:
     """
@@ -156,9 +150,7 @@ def reseed_all(seed: int) -> Any:
     mgr = get_backend_manager()
     return mgr.reseed(seed)
 
-
 # ----------------------------------------------------------------
-
 
 def next_jax_key() -> Any:
     """
@@ -171,7 +163,6 @@ def next_jax_key() -> Any:
     """
     mgr = get_backend_manager()
     return mgr.next_key()
-
 
 def split_jax_keys(n: int) -> Union[Any, List[None]]:
     """
@@ -189,7 +180,6 @@ def split_jax_keys(n: int) -> Union[Any, List[None]]:
     """
     mgr = get_backend_manager()
     return mgr.split_keys(n)
-
 
 # ----------------------------------------------------------------
 

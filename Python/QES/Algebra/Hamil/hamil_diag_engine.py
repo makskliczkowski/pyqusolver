@@ -27,31 +27,25 @@ Date        : 2025-10-26
 ----------------------------------------
 """
 
-from enum import Enum
-from typing import Any, Callable, Literal, Optional, Union
+from enum   import Enum
+from typing import Any, Callable, Literal, Optional, Union, TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 
 # Import eigensolvers from the general_python module
 try:
-    from QES.general_python.algebra.eigen.factory import choose_eigensolver, decide_method
-    from QES.general_python.algebra.eigen.result import EigenResult
+    from QES.general_python.algebra.eigen.factory   import choose_eigensolver, decide_method
+    from QES.general_python.algebra.eigen.result    import EigenResult
 
     EIGEN_SOLVERS_AVAILABLE = True
 except ImportError as e:
     raise ImportError(
         "Failed to import eigenvalue solvers from QES.general_python.algebra.eigen. Ensure that the module is properly installed and accessible."
     ) from e
-
-# JAX support
-try:
-    import jax.numpy as jnp
-
-    JAX_AVAILABLE = True
-except ImportError:
-    JAX_AVAILABLE = False
-    jnp = None
+    
+if TYPE_CHECKING:
+    from QES.general_python.common.flog import Logger
 
 # ----------------------------------------------------------------------------------------
 #! Diagonalization Engine
@@ -59,18 +53,18 @@ except ImportError:
 
 
 class DiagonalizationMethods(Enum):
-    AUTO = "auto"
-    EXACT = "exact"
-    LANCZOS = "lanczos"
-    BLOCK_LANCZOS = "block_lanczos"
-    ARNOLDI = "arnoldi"
-    SHIFT_INVERT = "shift-invert"
-    SCIPY_EIGH = "scipy-eigh"
-    SCIPY_EIG = "scipy-eig"
-    SCIPY_EIGS = "scipy-eigs"
-    LOBPCG = "lobpcg"
-    JAX_EIGH = "jax-eigh"
-
+    AUTO            = "auto"
+    EXACT           = "exact"
+    LANCZOS         = "lanczos"
+    BLOCK_LANCZOS   = "block_lanczos"
+    ARNOLDI         = "arnoldi"
+    SHIFT_INVERT    = "shift-invert"
+    SCIPY_EIGH      = "scipy-eigh"
+    SCIPY_EIG       = "scipy-eig"
+    SCIPY_EIGS      = "scipy-eigs"
+    LOBPCG          = "lobpcg"
+    JAX_EIGH        = "jax-eigh"
+    
     def __str__(self) -> str:
         return self.value
 
@@ -143,24 +137,23 @@ class DiagonalizationEngine:
                 "Eigenvalue solvers not available. Ensure QES.general_python.algebra.eigen module is properly installed."
             )
 
-        self.method = method
-        self.backend = backend
-        self.use_scipy = use_scipy
-        self.verbose = verbose
+        self.method     = method
+        self.backend    = backend
+        self.use_scipy  = use_scipy
+        self.verbose    = verbose
         if not logger:
             from QES.qes_globals import get_logger as get_global_logger
+            logger      = get_global_logger()
 
-            logger = get_global_logger()
-
-        self.logger = logger
+        self.logger: 'Logger' = logger
 
         # Storage for diagonalization results and basis information
-        self._result: Optional[EigenResult] = None
-        self._krylov_basis: Optional[NDArray] = None
-        self._method_used: Optional[str] = None
-        self._n: Optional[int] = None  # Original dimension
-        self._k: Optional[int] = None  # Number of eigenvalues computed
-
+        self._result        : Optional[EigenResult] = None
+        self._krylov_basis  : Optional[NDArray]     = None
+        self._method_used   : Optional[str]         = None
+        self._n             : Optional[int]         = None  # Original dimension
+        self._k             : Optional[int]         = None  # Number of eigenvalues computed
+        
     # ------------------------------------------------------------------------------------
     #! Main Diagonalization Method
     # ------------------------------------------------------------------------------------
@@ -283,10 +276,10 @@ class DiagonalizationEngine:
             if (
                 self._result.converged
                 and self._result.iterations is not None
-                and self._result.iterations > 0
+                and self._result.iterations > 1
             ):
                 self.logger.info(f"Converged in {self._result.iterations} iterations", lvl=2)
-            elif self._result.iterations is not None and self._result.iterations > 0:
+            elif self._result.iterations is not None and self._result.iterations > 1:
                 self.logger.warning(
                     f"  Warning: Did not converge after {self._result.iterations} iterations", lvl=2
                 )

@@ -83,30 +83,32 @@ class Hamiltonian(BasisAwareOperator):
     """
 
     # Error messages for Hamiltonian class
-    _ERR_EIGENVALUES_NOT_AVAILABLE = (
+    _ERR_EIGENVALUES_NOT_AVAILABLE  = (
         "Eigenvalues are not available. Please diagonalize the Hamiltonian first."
     )
-    _ERR_HAMILTONIAN_NOT_AVAILABLE = (
+    _ERR_HAMILTONIAN_NOT_AVAILABLE  = (
         "Hamiltonian matrix is not available. Please build or initialize the Hamiltonian."
     )
     _ERR_HAMILTONIAN_INITIALIZATION = (
         "Failed to initialize the Hamiltonian matrix. Check Hilbert space, lattice, and parameters."
     )
-    _ERR_HAMILTONIAN_BUILD = (
+    _ERR_HAMILTONIAN_BUILD          = (
         "Failed to build the Hamiltonian matrix. Ensure all operators and spaces are properly set."
     )
 
     # Dictionary of error messages
     _ERRORS = {
-        "eigenvalues_not_available": _ERR_EIGENVALUES_NOT_AVAILABLE,
-        "hamiltonian_not_available": _ERR_HAMILTONIAN_NOT_AVAILABLE,
-        "hamiltonian_initialization": _ERR_HAMILTONIAN_INITIALIZATION,
-        "hamiltonian_build": _ERR_HAMILTONIAN_BUILD,
+        "eigenvalues_not_available"     : _ERR_EIGENVALUES_NOT_AVAILABLE,
+        "hamiltonian_not_available"     : _ERR_HAMILTONIAN_NOT_AVAILABLE,
+        "hamiltonian_initialization"    : _ERR_HAMILTONIAN_INITIALIZATION,
+        "hamiltonian_build"             : _ERR_HAMILTONIAN_BUILD,
     }
 
     _ADD_TOLERANCE = 1e-10
 
     def _ADD_CONDITION(x, *args):
+        import numbers
+        
         if x is None:
             return False
         if args:
@@ -118,7 +120,15 @@ class Hamiltonian(BasisAwareOperator):
             y = x
         if y is None:
             return False
-        return not np.isclose(y, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
+        
+        # Ensure y is a numeric type or array
+        if isinstance(y, (numbers.Number, float, int, complex, np.generic)):
+            return not np.isclose(y, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
+        elif isinstance(y, (np.ndarray, list, tuple)):
+            y_arr = np.asarray(y)
+            return not np.all(np.isclose(y_arr, 0.0, rtol=Hamiltonian._ADD_TOLERANCE))
+        else:
+            return False
 
     # ----------------------------------------------------------------------------------------------
 

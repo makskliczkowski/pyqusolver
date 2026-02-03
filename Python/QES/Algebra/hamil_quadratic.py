@@ -1022,9 +1022,16 @@ class QuadraticHamiltonian(Hamiltonian):
         else:
             self._hamil = self.build_bdg_matrix(copy=False)
 
-    def build(self, **kwargs):
+    def build(self, verbose: bool = False, use_numpy: bool = True, force: bool = True):
         """Build the quadratic Hamiltonian matrix."""
-        self._hamiltonian_quadratic()
+        
+        self._log("Building quadratic Hamiltonian matrix...", lvl=2, log="info", verbose=verbose)
+            
+        if force or self._hamil is None:
+            self._hamiltonian_quadratic(use_numpy=use_numpy)
+            
+        else:
+            self._log("Using cached Hamiltonian matrix.", lvl=2, log="debug", verbose=verbose)
 
     def diagonalize(self, verbose: bool = False, force: bool = False, **kwargs):
         """
@@ -1339,6 +1346,7 @@ class QuadraticHamiltonian(Hamiltonian):
         occ_mask    : np.uint32 | np.uint64     # occupied mask over Ns
         _occ_idx    : np.ndarray  = field(default_factory=lambda: np.array([], dtype=np.int64)) # (Na,)       # subset of occupied indices
         _unocc_idx  : np.ndarray  = field(default_factory=lambda: np.array([], dtype=np.int64)) # (Ns-Na,)    # complement of occupied indices
+        _W_CT       : np.ndarray | None = None                                                  # cache for W^dagger
         _WA         : np.ndarray | None = None                                                  # cache for W_A
         _WA_CT      : np.ndarray | None = None                                                  # cache for W_A^dagger
 
@@ -1376,6 +1384,12 @@ class QuadraticHamiltonian(Hamiltonian):
             if self._WA_CT is None:
                 self._WA_CT = self.W_A().conj().T
             return self._WA_CT
+        
+        def W_CT(self) -> np.ndarray:
+            """Conjugate transpose of W (allocates if needed)."""
+            if self._W_CT is None:
+                self._W_CT = self.W.conj().T
+            return self._W_CT
 
         def order_occ_then_unocc(self) -> np.ndarray:
             """Permutation indices [occ, unocc]."""

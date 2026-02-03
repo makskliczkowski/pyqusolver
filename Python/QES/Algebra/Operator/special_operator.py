@@ -480,6 +480,16 @@ class SpecialOperator(Operator, ABC):
     # -------------------------------------------------------------------------
 
     @property
+    def is_complex(self) -> bool:
+        """Whether the operator is complex-valued."""
+        return getattr(self, "_iscpx", False)
+    
+    @property
+    def iscpx(self) -> bool:
+        """Whether the operator is complex-valued."""
+        return getattr(self, "_iscpx", False)
+
+    @property
     def has_custom_operators(self) -> bool:
         """Whether custom operators have been registered."""
         return self._has_custom_ops
@@ -1346,8 +1356,8 @@ class SpecialOperator(Operator, ABC):
         Callable or None
             The hybrid composition function.
         """
-        physics_type = self._physics_type or self._detect_physics_type()
-        is_complex = getattr(self, "_iscpx", False) or self._dtype == np.complex128
+        physics_type    = self._physics_type or self._detect_physics_type()
+        is_complex      = getattr(self, "_iscpx", False) or self._dtype == np.complex128
         try:
             return self.operators.get_composition(
                 is_cpx=is_complex,
