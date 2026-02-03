@@ -41,7 +41,7 @@ try:
     # Import Hamiltonians
     from QES.Algebra.Model.Interacting.Spin.transverse_ising import TransverseFieldIsing
     from QES.Algebra.Operator.operator import OperatorTypeActing, SymmetryGenerators
-    from QES.Algebra.Operator.operators_spin import (
+    from QES.Algebra.Operator.impl.operators_spin import (
         sig_k,
         sig_m,
         sig_mp,

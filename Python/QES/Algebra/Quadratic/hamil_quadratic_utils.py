@@ -20,8 +20,8 @@ see QES.general_python.common.binary.
 
 from dataclasses    import dataclass
 from collections    import defaultdict
-from typing         import Optional, Sequence, Tuple, List, Union, Dict, Iterable
-from enum           import Enum, auto, unique
+from typing         import Optional, Sequence, Tuple, List, Union, Iterable
+from enum           import Enum, unique
 import numpy        as np
 
 __all__ = [
@@ -339,8 +339,8 @@ class QuadraticSelection:
         k : int
             Number of orbitals to choose.
         """
-        from scipy.special import comb
-        return comb(n, k, exact=True)
+        from math import comb
+        return comb(n, k)
 
     @staticmethod
     def all_orbitals(n: Union[int, list], k: int, *, as_array: bool = False, dtype=np.int64) -> Tuple[Union[np.ndarray, List[int], range], object]:
