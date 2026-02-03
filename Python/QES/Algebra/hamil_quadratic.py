@@ -1429,18 +1429,21 @@ class QuadraticHamiltonian(Hamiltonian):
                 self._unocc_idx = complement_indices(Ns, self.occ_idx())
             return self._unocc_idx
         
+        @property
         def W_A(self) -> np.ndarray:
             """Form columns W[:, occ_idx]. NOTE: column gather copies."""
             if self._WA is None:
-                self._WA = self.W[:, self.occ_idx()]
+                self._WA = self.W[self.occ_idx(), :].T
             return self._WA
 
+        @property
         def W_A_CT(self) -> np.ndarray:
             """Conjugate transpose of W_A (allocates as above)."""
             if self._WA_CT is None:
-                self._WA_CT = self.W_A().conj().T
+                self._WA_CT = self.W_A.conj().T
             return self._WA_CT
         
+        @property
         def W_CT(self) -> np.ndarray:
             """Conjugate transpose of W (allocates if needed)."""
             if self._W_CT is None:
@@ -1930,7 +1933,7 @@ class QuadraticHamiltonian(Hamiltonian):
         Notes
         -----
         - **Caching**: First call computes and caches the calculator function.
-          Subsequent calls reuse the cached function without recompilation.
+            Subsequent calls reuse the cached function without recompilation.
         - **For BdG systems**: occupied_orbitals is ignored; computes vacuum.
         """
         

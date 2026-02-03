@@ -810,6 +810,7 @@ def fill_many_body_state(
             else:
                 result[i] = calculator_func(matrix_arg, state, ns)
 
+@njit(cache=True, parallel=False)
 def _fill_full_space_sequential(
     matrix_arg  : np.ndarray,
     calculator  : Callable[[np.ndarray, int, int], complex],
