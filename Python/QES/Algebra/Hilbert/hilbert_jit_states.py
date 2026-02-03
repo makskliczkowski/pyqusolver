@@ -821,8 +821,8 @@ def _fill_full_space(
     """
     nh = result.size
     for st in range(nh):
-        st = np.int64(st)
-        result[st] = calculator(matrix_arg, st, ns)
+        st          = np.int64(st)
+        result[st]  = calculator(matrix_arg, st, ns)
 
 
 def many_body_state_full(

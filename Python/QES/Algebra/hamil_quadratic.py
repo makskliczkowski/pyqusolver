@@ -1145,7 +1145,7 @@ class QuadraticHamiltonian(Hamiltonian):
             # transformation matrix of shape (N, 2N) where each row k is
             # [u_k^T, v_k^T] such that b_k^^dagger = sum_j u_kj a_j^^dagger + v_kj a_j.
             # This follows the convention used in Qiskit Nature tutorials.
-            N = self._ns
+            N   = self._ns
 
             # Build BdG matrix as NumPy array for diagonalization
             bdg = np.asarray(self.build_bdg_matrix(copy=True))
