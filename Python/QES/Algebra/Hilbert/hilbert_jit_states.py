@@ -13,44 +13,46 @@ Version : 1.0.0
 ----------------------------------------------------
 """
 
-from typing import Callable, Optional, Tuple, Union
+from    typing import Callable, Optional, Tuple, Union
 
-import numba
-import numpy as np
-from numba import njit, prange
+import  numba
+import  numpy as np
+from    numba import njit, prange
 
 #! jax (optional)
 try:
     from QES.Algebra.Hilbert import hilbert_jit_states_jax as jnp
+    JAX_AVAILABLE   = True
 except Exception:
     # JAX-based optimized implementations are optional. If unavailable,
     # fall back to None and continue using NumPy/Numba implementations.
-    jnp = None
+    jnp             = None
+    JAX_AVAILABLE   = False
 
 # ----------------------------------------------------
 
 # Defer importing some potentially circular modules until needed. If they
 # are unavailable at import time due to package init ordering, we'll attempt
 # to import them lazily inside the functions that need them.
-pfaffian = None
-hafnian = None
-int2binstr = None
+pfaffian    = None
+hafnian     = None
+int2binstr  = None
 check_int_l = None
-Array = None
+Array       = None
 
 # Signature: pfaff(A, n)    (antisymmetric, even n) -> float/complex
-PfFunc = Callable[[Array, int], Union[float, complex]]
+PfFunc      = Callable[[Array, int], Union[float, complex]]
 # Signature: hafnian(A)     (symmetric,     even n) -> float/complex
-HfFunc = Callable[[Array], Union[float, complex]]
+HfFunc      = Callable[[Array], Union[float, complex]]
 # Signature: callable for $\Psi$
 CallableCoefficient = Callable[[Array, Array, Union[int, np.ndarray], int], Union[float, complex]]
 
-_TOLERANCE = 1e-10
-_USE_EIGEN = False
+_TOLERANCE   = 1e-10
+_USE_EIGEN   = False
+
 ####################################################################################################
 #! NUMBA METHODS
 ####################################################################################################
-
 
 @njit(cache=True, inline="always")
 def _popcount(x: int) -> int:
@@ -72,7 +74,6 @@ def _popcount(x: int) -> int:
         x &= x - 1
         cnt += 1
     return cnt
-
 
 @njit(cache=True)
 def _extract_occupied(ns: int, basis: Union[int, np.ndarray]) -> Array:
@@ -101,8 +102,9 @@ def _extract_occupied(ns: int, basis: Union[int, np.ndarray]) -> Array:
     - If `basis` is an integer, its binary representation is used to determine occupied sites (bits set to 1).
     - If `basis` is a NumPy array, nonzero entries are considered occupied.
     """
-
-    if isinstance(basis, (int, np.integer)):
+    # Numba-compatible type check: use ndim check instead of isinstance with np.integer
+    # (np.integer triggers NumPy 2.0+ compatibility issues in Numba)
+    if not hasattr(basis, 'ndim') or basis.ndim == 0:
         x = int(basis)
         occ = np.empty(_popcount(x), dtype=np.int64)
         k = 0
@@ -120,16 +122,13 @@ def _extract_occupied(ns: int, basis: Union[int, np.ndarray]) -> Array:
     else:
         return np.where(basis > 0)[0].astype(np.int64)
 
-
 #############################################################################
 #! Slater determinants
 #############################################################################
 
-
 @njit(cache=True, inline="always")
 def _bit_check(mask, bit):
     return (mask >> bit) & 1
-
 
 @njit(cache=True, inline="always")
 def _slater_from_mask(U, occ, mask, ns, use_eigen=False):
@@ -203,7 +202,6 @@ def _slater_from_mask(U, occ, mask, ns, use_eigen=False):
 
     return np.linalg.det(M)
 
-
 @njit(cache=True, inline="always")
 def _slater_from_vec(U, occ, vec, ns, use_eigen=_USE_EIGEN):
     r"""
@@ -258,14 +256,13 @@ def _slater_from_vec(U, occ, vec, ns, use_eigen=_USE_EIGEN):
     #! determinant
     return np.linalg.det(M)
 
-
 @njit(cache=True)
 def calculate_slater_det(
-    sp_eigvecs: np.ndarray,
-    occupied_orbitals: np.ndarray,
-    org_basis_state: Union[int, np.ndarray],
-    ns: int,
-    use_eigen: bool = False,
+    sp_eigvecs          : np.ndarray,
+    occupied_orbitals   : np.ndarray,
+    org_basis_state     : Union[int, np.ndarray],
+    ns                  : int,
+    use_eigen           : bool = False,
 ):
     r"""
     Compute the amplitude of an $N$-fermion Slater determinant that
@@ -346,7 +343,6 @@ def calculate_slater_det(
         # It's an array
         return _slater_from_vec(sp_eigvecs, occupied_orbitals, org_basis_state, ns, use_eigen)
 
-
 #############################################################################
 #! Bogolubov - de'Gennes - no particle number conservation
 #############################################################################
@@ -354,7 +350,6 @@ def calculate_slater_det(
 # ---------------------------------------------------------------------------
 # a) Pairing matrices  F = V\cdot U^{-1}   (fermions)   /   G = V\cdot U^{-1} (bosons)
 # ---------------------------------------------------------------------------
-
 
 @njit(cache=True)
 def bogolubov_decompose(eig_val, eig_vec, tol=_TOLERANCE) -> Tuple[Array, Array, Array]:
@@ -410,7 +405,6 @@ def bogolubov_decompose(eig_val, eig_vec, tol=_TOLERANCE) -> Tuple[Array, Array,
 
     return U, V, eig_val_pos
 
-
 @njit(cache=True)
 def pairing_matrix(u_mat: Array, v_mat: Array) -> Array:
     r"""
@@ -426,11 +420,9 @@ def pairing_matrix(u_mat: Array, v_mat: Array) -> Array:
     # Equivalent to v_mat @ np.linalg.inv(u_mat)
     return np.linalg.solve(u_mat.T, v_mat.T).T
 
-
 # ---------------------------------------------------------------------------
 # b) Fermions :  Psi(x) = Pf[ F_{ij} ] (x has an *even* length)
 # ---------------------------------------------------------------------------
-
 
 def calculate_bogoliubov_amp(
     F: Array, basis: Union[int, np.ndarray], ns: int, enforce=True  # pairing  (ns, ns)
@@ -479,7 +471,6 @@ def calculate_bogoliubov_amp(
     if enforce:
         sub[:] = 0.5 * (sub - sub.T)
     return pfaffian.Pfaffian._pfaffian_parlett_reid(sub, m)
-
 
 def calculate_bogoliubov_amp_exc(
     F: Array,  # (ns, ns)
@@ -543,11 +534,9 @@ def calculate_bogoliubov_amp_exc(
     # lower-right k \times k = 0
     return pfaffian.Pfaffian._pfaffian_parlett_reid(M, dim)
 
-
 # ---------------------------------------------------------------------------
 # c)  Bosons :  Psi(x) = Hf[ G_{ij} ] (x has an *even* length)
 # ---------------------------------------------------------------------------
-
 
 def calculate_bosonic_gaussian_amp(G: Array, basis: Union[int, Array], ns: int):  # (ns, ns)
     """
@@ -590,11 +579,9 @@ def calculate_bosonic_gaussian_amp(G: Array, basis: Union[int, Array], ns: int):
             sub[p, q] = G[ip, occ[q]]
     return hafnian.Hafnian._hafnian_recursive(sub)
 
-
 #############################################################################
 #! Permanents
 #############################################################################
-
 
 @njit(cache=True)
 def _calculate_permanent_core_np(M: np.ndarray):
@@ -607,18 +594,18 @@ def _calculate_permanent_core_np(M: np.ndarray):
 
     total_sum = 0.0 + 0.0j
     for k in range(1, 1 << n):
-        sum_prod = 1
-        popcount_k = 0
+        sum_prod    = 1.0 + 0.0j
+        popcount_k  = 0
         # Calculate product over rows of sum over columns in S
         for i in range(n):  # Rows
-            row_sum = 0.0 + 0.0j
+            row_sum     = 0.0 + 0.0j
             temp_k_cols = k
-            col_idx = 0
+            col_idx     = 0
             while temp_k_cols > 0:
                 if temp_k_cols & 1:  # Check if col_idx is in subset S
                     row_sum += M[i, col_idx]
                 temp_k_cols >>= 1
-                col_idx += 1
+                col_idx     += 1
             sum_prod *= row_sum
 
         # Calculate popcount |S|
@@ -628,10 +615,9 @@ def _calculate_permanent_core_np(M: np.ndarray):
             popcount_k += 1
 
         # Sign (-1)^(n - |S|)
-        sign = -1.0 if (n - popcount_k) % 2 else 1.0
-        total_sum += sign * sum_prod
+        sign        = -1.0 if (n - popcount_k) % 2 else 1.0
+        total_sum  += sign * sum_prod
     return total_sum
-
 
 @njit(cache=True)
 def calculate_permanent(
@@ -660,7 +646,9 @@ def calculate_permanent(
     """
     # --- Input processing and particle number check (Identical to Slater) ---
     n_particles = occupied_orbitals.shape[0]
-    if isinstance(org_basis_state, (int, np.integer)):
+    # Numba-compatible type check: use ndim check instead of isinstance with np.integer
+    # (np.integer triggers NumPy 2.0+ compatibility issues in Numba)
+    if not hasattr(org_basis_state, 'ndim') or org_basis_state.ndim == 0:
         occupied_modes = np.empty(n_particles, dtype=np.int64)
         n_particles_fock = 0
         idx_count = 0
@@ -672,7 +660,7 @@ def calculate_permanent(
                 if idx_count < n_particles:
                     occupied_modes[idx_count] = i
                 idx_count += 1
-    elif isinstance(org_basis_state, np.ndarray):
+    elif hasattr(org_basis_state, 'ndim') and org_basis_state.ndim == 1:
         if org_basis_state.ndim == 1 and org_basis_state.size == ns:
             basis_state = (
                 org_basis_state.astype(np.bool_)
@@ -704,23 +692,21 @@ def calculate_permanent(
     perm_val = _calculate_permanent_core_np(M)
     return perm_val
 
-
 #############################################################################
 #! Many body state through summation
 #############################################################################
 
-
 # @njit(cache=True, parallel=True)
 def _fill_batched_space(
-    matrix_arg: np.ndarray,
-    occupied_orbitals: Optional[np.ndarray],
-    calculator_func: CallableCoefficient,
-    target_basis_states: Array,
-    target_basis_states_idx: Array,
-    result_vector_slice: Array,
-    ns: int,
+    matrix_arg              : np.ndarray,
+    occupied_orbitals       : Optional[np.ndarray],
+    calculator_func         : CallableCoefficient,
+    target_basis_states     : Array,
+    target_basis_states_idx : Array,
+    result_vector_slice     : Array,
+    ns                      : int,
 ):
-    """
+    r"""
     Numba-jitted loop to compute amplitudes for many-body state construction.
 
     Args:
@@ -768,11 +754,11 @@ def _fill_batched_space(
 
 
 def many_body_state_mapping(
-    matrix_arg: Array,
-    calculator_func: CallableCoefficient,
-    mapping_array: Array,
-    ns: int,
-    dtype=np.complex128,
+    matrix_arg      :   Array,
+    calculator_func :   CallableCoefficient,
+    mapping_array   :   Array,
+    ns              :   int,
+    dtype           =   np.complex128,
 ) -> Array:
     r"""
     Given ``mapping_array[j] = bitstring of Hilbert basis state j``,
@@ -797,11 +783,9 @@ def many_body_state_mapping(
     )
     return result_vec
 
-
 # ###########################################################################
 #! Full Hilbert-space version (loops over all integers)
 # ###########################################################################
-
 
 # @njit(cache=True, fastmath=True)
 def _fill_full_space(
@@ -824,13 +808,12 @@ def _fill_full_space(
         st          = np.int64(st)
         result[st]  = calculator(matrix_arg, st, ns)
 
-
 def many_body_state_full(
-    matrix_arg: Array,
-    calculator: Callable[[Array, int, int], complex],
-    ns: int,
-    resulting_s: Optional[Array] = None,
-    dtype=np.complex128,
+    matrix_arg  :   Array,
+    calculator  :   Callable[[Array, int, int], complex],
+    ns          :   int,
+    resulting_s :   Optional[Array] = None,
+    dtype       =   np.complex128,
 ) -> Array:
     """
     Generates the full many-body quantum state vector for a system with `ns` sites.
@@ -906,7 +889,6 @@ def many_body_state_closure(
 
 ############################################################################
 
-
 @numba.njit(cache=True, inline="always")
 def nrg_particle_conserving(eigvals: np.ndarray, occ: np.ndarray) -> float:
     """
@@ -925,7 +907,6 @@ def nrg_particle_conserving(eigvals: np.ndarray, occ: np.ndarray) -> float:
     for k in occ:
         tot += eigvals[k]
     return tot
-
 
 @numba.njit(cache=True, inline="always")
 def nrg_bdg(eigvals: np.ndarray, Ns: int, occ: np.ndarray) -> float:
@@ -952,7 +933,6 @@ def nrg_bdg(eigvals: np.ndarray, Ns: int, occ: np.ndarray) -> float:
     for i in occ:  # i = 0 … Ns-1   (positive branch)
         tot += eigvals[mid + i + 1] - eigvals[mid - i]
     return tot
-
 
 ############################################################################
 #! Test function

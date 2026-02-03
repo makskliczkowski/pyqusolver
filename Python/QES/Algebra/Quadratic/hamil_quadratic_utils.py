@@ -231,6 +231,25 @@ def energy_from_mask(mask: np.uint64, eps: np.ndarray) -> float:
         m &= m - np.uint64(1)
     return e
 
+@numba_njit(cache=True)
+def energy_from_indices(indices: np.ndarray, eps: np.ndarray) -> float:
+    '''
+    Compute the total energy for a given list of occupied orbital indices.
+    
+    Args:
+        indices (np.ndarray):
+            Array of occupied orbital indices.
+        eps (np.ndarray):
+            Array of single-particle energies for each orbital.
+    Returns:
+        float:
+            Total energy for the occupied orbitals.
+    '''
+    e = 0.0
+    for idx in indices:
+        e += eps[idx]
+    return e
+
 ##############################################################################
 
 @dataclass(frozen=True)

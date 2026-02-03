@@ -23,23 +23,36 @@ jobs:
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -e "Python/[all,dev]"
+        python -m pip install --upgrade pip setuptools wheel
+        cd Python
+        pip install -e ".[all,dev]"
+        cd ..
+
+    - name: Verify QES installation
+      run: |
+        python -c "import QES; print(f'QES version: {QES.__version__}')"
+        python -c "from QES.general_python import algebra, common, lattices; print('Submodule imports OK')"
 
     - name: Lint with Ruff
       run: |
+        cd Python
         # stop the build if there are Python syntax errors
-        ruff check Python/ --select=E9,F63,F7 --target-version=py310
+        ruff check QES test --select=E9,F63,F7 --target-version=py310
         # default set of ruff rules with exit-zero (treat as warning for now)
-        ruff check Python/ --exit-zero
+        ruff check QES test --exit-zero
+        cd ..
 
     - name: Type check with Mypy
       run: |
+        cd Python
         # Allow failure for now to establish baseline
-        mypy Python/ || true
+        mypy QES || true
+        cd ..
 
     - name: Test with pytest
       env:
-        PYTHONPATH: Python:Python/QES
+        PYTHONPATH: Python:${{ github.workspace }}/Python
       run: |
-        pytest Python/test
+        cd Python
+        pytest test/ -v --tb=short
+        cd ..

@@ -1,16 +1,22 @@
-from functools import partial
-from typing import Callable, Union
+'''
+Module providing JIT-compiled functions for Hilbert space state amplitudes using JAX.
 
-import numpy as np
+------------
+Author      : Maksymilian Kliczkowski
+Date        : 2026-01-15
+------------
+'''
 
-from QES.general_python.algebra.utils import JAX_AVAILABLE
+from    functools import partial
+from    typing import Callable, Union
+import  numpy as np
 
-if JAX_AVAILABLE:
+try:
     import jax
     import jax.numpy as jnp
-else:
-    jax = None
-    jnp = np
+    JAX_AVAILABLE   = True
+except ImportError:
+    JAX_AVAILABLE   = False
 
 #######################################################################
 

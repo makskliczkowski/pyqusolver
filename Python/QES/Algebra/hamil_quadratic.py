@@ -17,12 +17,90 @@ date    : 2025-11-01
 ----------------------------------------------------------------------------
 """
 
+from __future__     import annotations
+
 from dataclasses    import dataclass, field
 from typing         import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy        as np
 import scipy        as sp
 
+##############################################################################
+#! Lazy import infrastructure
+##############################################################################
+
+# Cache for lazily imported modules/functions
+_lazy_cache: Dict[str, Any] = {}
+
+def _get_hilbert_jit_states():
+    """Lazily import hilbert_jit_states module."""
+    if 'hilbert_jit_states' not in _lazy_cache:
+        from QES.Algebra.Hilbert import hilbert_jit_states_refactored
+        _lazy_cache['hilbert_jit_states'] = hilbert_jit_states_refactored
+    return _lazy_cache['hilbert_jit_states']
+
+def _get_jax_states():
+    """Lazily import JAX-based state calculations."""
+    if 'jax_states' not in _lazy_cache:
+        try:
+            from QES.Algebra.Hilbert import hilbert_jit_states_jax
+            _lazy_cache['jax_states'] = hilbert_jit_states_jax
+        except ImportError:
+            _lazy_cache['jax_states'] = None
+    return _lazy_cache['jax_states']
+
+# Lazy function accessors - import only when first used
+def _get_calculate_slater_det():
+    return _get_hilbert_jit_states().calculate_slater_det
+
+def _get_calculate_permanent():
+    return _get_hilbert_jit_states().calculate_permanent
+
+def _get_calculate_bogoliubov_amp():
+    return _get_hilbert_jit_states().calculate_bogoliubov_amp
+
+def _get_calculate_bogoliubov_amp_exc():
+    return _get_hilbert_jit_states().calculate_bogoliubov_amp_exc
+
+def _get_calculate_bosonic_gaussian_amp():
+    return _get_hilbert_jit_states().calculate_bosonic_gaussian_amp
+
+def _get_bogolubov_decompose():
+    return _get_hilbert_jit_states().bogolubov_decompose
+
+def _get_pairing_matrix():
+    return _get_hilbert_jit_states().pairing_matrix
+
+def _get_many_body_state_full():
+    return _get_hilbert_jit_states().many_body_state_full
+
+def _get_many_body_state_mapping():
+    return _get_hilbert_jit_states().many_body_state_mapping
+
+def _get_many_body_state_closure():
+    return _get_hilbert_jit_states().many_body_state_closure
+
+def _get_nrg_particle_conserving():
+    return _get_hilbert_jit_states().nrg_particle_conserving
+
+def _get_nrg_bdg():
+    return _get_hilbert_jit_states().nrg_bdg
+
+# JAX functions (only load if JAX available)
+def _get_calculate_slater_det_jax():
+    jax_mod = _get_jax_states()
+    return jax_mod.calculate_slater_det_jax if jax_mod else None
+
+def _get_calculate_permanent_jax():
+    jax_mod = _get_jax_states()
+    return jax_mod.calculate_permament_jax if jax_mod else None
+
+def _get_calculate_bcs_amp_jax():
+    jax_mod = _get_jax_states()
+    return jax_mod.calculate_bcs_amp_jax if jax_mod else None
+
+##############################################################################
+#! Core imports (required at module load)
 ##############################################################################
 
 try:
@@ -34,54 +112,23 @@ try:
         from QES.general_python.common.flog             import Logger
         from QES.general_python.lattices.lattice        import Lattice
 
+    # Import QuadraticTerm and SolvabilityInfo for use
+    from QES.Algebra.Quadratic.hamil_quadratic_utils    import QuadraticTerm, SolvabilityInfo
+    
     if TYPE_CHECKING:
-        from QES.Algebra.Quadratic.hamil_quadratic_utils import QuadraticBlockDiagonalInfo, QuadraticSelection, QuadraticTerm, SolvabilityInfo
-        
-    from QES.Algebra.Hilbert.hilbert_jit_states     import (
-                                                        bogolubov_decompose,
-                                                        calculate_bogoliubov_amp,
-                                                        calculate_bogoliubov_amp_exc,
-                                                        calculate_bosonic_gaussian_amp,
-                                                        calculate_permanent,
-                                                        calculate_slater_det,
-                                                        many_body_state_closure,
-                                                        many_body_state_full,
-                                                        many_body_state_mapping,
-                                                        nrg_bdg,
-                                                        nrg_particle_conserving,
-                                                        pairing_matrix,
-                                                    )
+        from QES.Algebra.Quadratic.hamil_quadratic_utils    import QuadraticBlockDiagonalInfo, QuadraticSelection
+
 except ImportError as e:
-    raise ImportError("QES.Algebra.hamil and QES.Algebra.Hilbert.hilbert_jit_states modules are required but not found.") from e
+    raise ImportError("QES.Algebra.hamil and core modules are required but not found.") from e
 
-# JAX interoperability
-
+# JAX numpy fallback
 try:
     if JAX_AVAILABLE:
-        import  jax.numpy as jnp
-        from    QES.Algebra.Hilbert.hilbert_jit_states_jax import (
-                                                        calculate_bcs_amp_jax,      # for calculating BCS-like states
-                                                        calculate_permament_jax,    # for calculating permanent states
-                                                        calculate_slater_det_jax,   # for calculating fermionic states
-                                                    )
+        import jax.numpy as jnp
     else:
-        raise ImportError("JAX is not available.")
+        jnp = np
 except ImportError:
-    jax                         = None
-    jnp                         = np
-    calculate_slater_det_jax    = None
-    calculate_bcs_amp_jax       = None
-    calculate_permament_jax     = None
-
-##############################################################################
-#! Common utilities
-##############################################################################
-
-try:
-    from QES.general_python.common          import complement_indices, indices_from_mask
-    from QES.general_python.common.binary   import base2int, int2base
-except ImportError:
-    raise ImportError("QES.general_python.common module is required but not found.")
+    jnp = np
 
 ##############################################################################
 
@@ -244,7 +291,8 @@ class QuadraticHamiltonian(Hamiltonian):
         # Set sizes and allocate matrices
         self._hamil_sp_size     = self._ns
         self._hamil_sp_shape    = (self._hamil_sp_size, self._hamil_sp_size)
-        self._dtypeint          = self._backend.int32 if self._ns < 2**32 - 1 else self._backend.int64
+        # Use concrete dtypes for Numba compatibility - use dtype instances, not type classes
+        self._dtypeint          = np.dtype(np.int32) if self._ns < 2**31 - 1 else np.dtype(np.int64)
 
         # Initialize matrices as zero arrays instead of None for immediate usability
         xp                      = self._backend
@@ -261,8 +309,11 @@ class QuadraticHamiltonian(Hamiltonian):
         self._U                         = None
         self._V                         = None
         
-        # Lazy many-body state/energy calculator
-        self._mb_calculator             = None
+        # Cached calculator and state computations for performance
+        self._calculator_cache          = {}    # Dict[(backend, particle_type, mode)] -> (calc_fn, precomputed_matrices)
+        self._cached_many_body_state    = None  # Cached many-body state array
+        self._compiled_funcs            = {}    # Numba/JAX compiled functions cache
+        self._last_occupation_key       = None  # Track last occupation for cache efficiency
         
         
     ##########################################################################
@@ -420,9 +471,12 @@ class QuadraticHamiltonian(Hamiltonian):
     ##########################################################################
 
     def _invalidate_cache(self):
-        """Wipe eigenvalues, eigenvectors, cached many-body calculator."""
-        super()._invalidate_cache()
-        self._mb_calculator = None
+        """Wipe eigenvalues, eigenvectors, and cached state calculators."""
+        # Don't call super() - parent doesn't have this method
+        # Just clear our own caches
+        self._calculator_cache.clear()
+        self._compiled_funcs.clear()
+        self._last_occupation_key = None
 
     def add_term(
         self,
@@ -1358,6 +1412,8 @@ class QuadraticHamiltonian(Hamiltonian):
                 from QES.Algebra.Quadratic.hamil_quadratic_utils import indices_from_mask
             except ImportError as e:
                 raise ImportError("Could not import indices_from_mask. Ensure QES is properly installed.") from e
+            
+            # Lazy compute occ_idx
             if self._occ_idx is None or self._occ_idx.size == 0:
                 self._occ_idx = indices_from_mask(self.occ_mask)
             return self._occ_idx
@@ -1513,34 +1569,39 @@ class QuadraticHamiltonian(Hamiltonian):
             The total energy E = sum_{alpha in occupied} epsilon_alpha (or E = sum_{gamma in occupied} E_gamma for BdG).
             Result includes the constant_offset.
         """
+        
+        try:
+            from QES.general_python.common.binary import int2base
+        except ImportError as e:
+            raise ImportError("Could not import int2base. Ensure QES is properly installed.") from e
 
         if self.eig_val is None:
-            raise ValueError(
-                "Single-particle eigenvalues not calculated. Call diagonalize() first."
-            )
+            raise ValueError("Single-particle eigenvalues not calculated. Call diagonalize() first.")
+        
         if isinstance(occupied_orbitals, int):
-            occupied_orbitals = int2base(
-                occupied_orbitals, self._ns, spin=False, spin_value=1, backend=self._backend
-            ).astype(self._dtypeint)
+            occupied_orbitals = int2base(occupied_orbitals, self._ns, spin=False, spin_value=1, backend=self._backend).astype(self._dtypeint)
 
+        # Convert to NumPy array for processing
         occ = np.asarray(occupied_orbitals, dtype=self._dtypeint)
         if occ.shape[0] == 0:
             return 0.0
 
         if occ.ndim != 1:
             raise ValueError("occupied_orbitals must be 1-D")
+        
         e = 0.0
-
+        
+        # Go with energy calculation functions
         if self._is_jax:
-            occ = jnp.asarray(occ, dtype=self._dtypeint)
-            vmax = self._eig_val.shape[0]
+            occ     = jnp.asarray(occ, dtype=self._dtypeint)
+            vmax    = self._eig_val.shape[0]
 
             def _check_bounds(x):
                 if int(jnp.min(x)) < 0 or int(jnp.max(x)) >= vmax:
                     raise IndexError("orbital index out of bounds")
                 return x
 
-            occ = _check_bounds(occ)
+            occ     = _check_bounds(occ)
 
             if self._particle_conserving:
                 e = jnp.sum(self._eig_val[occ])
@@ -1550,25 +1611,27 @@ class QuadraticHamiltonian(Hamiltonian):
                 mid = self._ns - 1
                 e = jnp.sum(self._eig_val[mid + occ + 1] - self._eig_val[mid - occ])
         else:
-            vmax = self._eig_val.shape[0]
+            vmax    = self._eig_val.shape[0]
             if occ.min() < 0 or occ.max() >= vmax:
                 raise IndexError("orbital index out of bounds")
 
             if self._particle_conserving:
-                e = nrg_particle_conserving(self._eig_val, occ)
+                nrg_pc      = _get_nrg_particle_conserving()
+                e           = nrg_pc(self._eig_val, occ)
             else:
                 if occ.max() >= self._ns:
                     raise IndexError("BdG index must be in 0...Ns-1 (positive branch)")
-                e = nrg_bdg(self._eig_val, self._ns, occ)
+                nrg_bdg_fn  = _get_nrg_bdg()
+                e           = nrg_bdg_fn(self._eig_val, self._ns, occ)
         return self._backend.real(e) + self._constant_offset
 
     def many_body_energies(
         self,
-        n_occupation: Union[float, int] = 0.5,
-        nh: Optional[int] = None,
-        use_combinations: bool = False,
+        n_occupation        : Union[float, int] = 0.5,
+        nh                  : Optional[int] = None,
+        use_combinations    : bool = False,
     ) -> dict[int, float]:
-        """
+        r"""
         Returns a dictionary of many-body energies for all possible
         configurations of occupied orbitals.
 
@@ -1583,7 +1646,7 @@ class QuadraticHamiltonian(Hamiltonian):
             The number of occupied orbitals. If a float, it is interpreted as a fraction
             of the total number of sites (ns). If an int, it is the exact number of
             occupied orbitals.
-        nh : int, optional
+        nh : Optional[int] = None
             The number of configurations to consider. If None, it defaults to 2^ns.
         use_combinations : bool
             If True, use combinations to generate occupied orbitals.
@@ -1603,7 +1666,8 @@ class QuadraticHamiltonian(Hamiltonian):
         """
         
         try:
-            from QES.Algebra.Quadratic.hamil_quadratic_utils import QuadraticSelection
+            from QES.Algebra.Quadratic.hamil_quadratic_utils    import QuadraticSelection
+            from QES.general_python.common.binary               import int2base
         except ImportError as e:
             raise ImportError(
                 "QuadraticSelection module is required for many_body_energies. "
@@ -1645,136 +1709,513 @@ class QuadraticHamiltonian(Hamiltonian):
     #! Many-Body State Calculation
     ###########################################################################
 
+    def _get_pairing_matrices(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """
+        Lazily compute and cache pairing matrices (U, V, F, G) for BdG calculations.
+        
+        Returns
+        -------
+        Tuple[Optional[np.ndarray], Optional[np.ndarray]]
+            (F_matrix, G_matrix) for particle-conserving vs BdG modes
+        """
+        bogolubov_decompose = _get_bogolubov_decompose()
+        pairing_matrix      = _get_pairing_matrix()
+        
+        if self._U is None or self._V is None:
+            self._U, self._V, _ = bogolubov_decompose(self._eig_val, self._eig_vec)
+        
+        if self._isfermions:
+            if self._F is None:
+                self._F = pairing_matrix(self._U, self._V)
+            return self._F, None
+        else:  # bosons
+            if self._G is None:
+                self._G = pairing_matrix(self._eig_val, self._eig_vec)
+            return None, self._G
+
+    def _make_calculator(self) -> Tuple[callable, np.ndarray]:
+        """
+        Create or retrieve cached calculator function and matrix argument.
+        
+        This method:
+        1. Checks cache to avoid recompilation
+        2. Pre-computes pairing matrices once for BdG
+        3. Returns a re-usable calculator function
+        
+        Returns
+        -------
+        Tuple[callable, np.ndarray]
+            (calculator_function, matrix_argument)
+        
+        Notes
+        -----
+        The calculator function has signature:
+            psi_coeff = calc(matrix_arg, basis_state_int, ns)
+        
+        For particle-conserving systems, the occupation is baked into the closure.
+        For BdG systems, the pairing matrix is used directly.
+        """
+        if self._eig_vec is None:
+            raise RuntimeError("Eigenvectors not available. Call diagonalize() first.")
+        
+        # Build cache key: (is_numpy, is_fermion, is_particle_conserving, occupation_hash)
+        # Include occupation hash only for particle-conserving systems
+        if self._particle_conserving and self._occupied_orbitals_cached is not None:
+            occ_hash    = hash(self._occupied_orbitals_cached.tobytes())
+        else:
+            occ_hash    = None
+        cache_key       = (self._is_numpy, self._isfermions, self._particle_conserving, occ_hash)
+        
+        # Return cached result if available
+        if cache_key in self._calculator_cache:
+            calc_fn, matrix_arg = self._calculator_cache[cache_key]
+            return calc_fn, matrix_arg
+        
+        # Lazy import the needed functions
+        calculate_slater_det            = _get_calculate_slater_det()
+        many_body_state_closure         = _get_many_body_state_closure()
+        calculate_slater_det_jax        = _get_calculate_slater_det_jax()
+        calculate_bogoliubov_amp        = _get_calculate_bogoliubov_amp()
+        calculate_permanent             = _get_calculate_permanent()
+        calculate_permanent_jax         = _get_calculate_permanent_jax()
+        calculate_bosonic_gaussian_amp  = _get_calculate_bosonic_gaussian_amp()
+        
+        # FERMION + PARTICLE CONSERVING
+        if self._isfermions and self._particle_conserving:
+            if self._occupied_orbitals_cached is None:
+                raise RuntimeError(
+                    "Occupied orbitals not cached. Call many_body_state(...) with "
+                    "occupied_orbitals argument first."
+                )
+            occ = self._occupied_orbitals_cached
+            
+            if self._is_numpy:
+                # Use the Numba-optimized closure from hilbert_jit_states
+                calc_fn         = many_body_state_closure(calculator_func=calculate_slater_det, matrix_arg=occ)
+            else:
+                # JAX version: create closure that captures occupation
+                captured_occ    = occ  # capture in closure
+                calc_fn         = lambda U, st, _ns: calculate_slater_det_jax(U, captured_occ, st, _ns)
+                
+            matrix_arg = self._eig_vec
+        
+        # FERMION + BdG (NON-PARTICLE-CONSERVING) 
+        elif self._isfermions and not self._particle_conserving:
+            F_matrix, _ = self._get_pairing_matrices()
+            
+            if self._is_numpy:
+                # Bogoliubov amplitude calculation (3-arg interface)
+                calc_fn = lambda F, st, _ns: calculate_bogoliubov_amp(F, st, _ns)
+            else:
+                raise NotImplementedError("JAX Bogoliubov vacuum not yet implemented.")
+            
+            matrix_arg = F_matrix
+        
+        # BOSON + PARTICLE CONSERVING
+        elif self._isbosons and self._particle_conserving:
+            if self._occupied_orbitals_cached is None:
+                raise RuntimeError(
+                    "Occupied orbitals not cached. Call many_body_state(...) with "
+                    "occupied_orbitals argument first."
+                )
+            occ = self._occupied_orbitals_cached
+            
+            if self._is_numpy:
+                # Permanent needs occupation; create closure
+                captured_occ    = occ
+                calc_fn         = lambda G, st, _ns: calculate_permanent(G, captured_occ, st, _ns)
+            else:
+                captured_occ    = occ
+                calc_fn         = lambda G, st, _ns: calculate_permanent_jax(G, captured_occ, st, _ns)
+            
+            matrix_arg = self._eig_vec
+        
+        # BOSON + BdG (NON-PARTICLE-CONSERVING)
+        else:  # self._isbosons and not self._particle_conserving
+            _, G_matrix = self._get_pairing_matrices()
+            
+            if self._is_numpy:
+                calc_fn = lambda G, st, _ns: calculate_bosonic_gaussian_amp(G, st, _ns)
+            else:
+                raise NotImplementedError("JAX Bosonic Gaussian state not yet implemented.")
+            
+            matrix_arg = G_matrix
+        
+        # Cache for future calls
+        self._calculator_cache[cache_key] = (calc_fn, matrix_arg)
+        return calc_fn, matrix_arg
+
     def _many_body_state_calculator(self):
         r"""
-        Return a function object that implements:
+        Return a cached calculator function for many-body state computation.
+        
+        **DEPRECATED**: Use _make_calculator() instead. Kept for backwards compatibility.
+        
+        Returns a function object that implements:
             psi = calc(matrix_arg, basis_state_int, ns)
-
-        together with the constant matrix_arg it needs.
-
-        The closure is JIT-compatible with Numba (nopython=True) when
-        self._is_numpy is True; otherwise the returned function calls the
-        JAX variant of the same kernel.
-
-        The function is used to calculate the many-body state vector
-        in the Fock basis (or other specified basis) from the single-particle
-        eigenvectors and the occupied orbitals.
+        
+        The function is optimized for repeated calls and avoids recompilation.
+        
+        Returns
+        -------
+        Tuple[callable, np.ndarray]
+            (calculator_function, matrix_argument)
         """
-
-        #! Fermions
-        if self._isfermions:
-            if self._particle_conserving:
-                #! Slater determinant needs (U, \alpha_k) - U is the matrix of eigenvectors
-                if not hasattr(self, "_occupied_orbitals_cached"):
-                    raise RuntimeError(
-                        "call many_body_state(...) with " "`occupied_orbitals` first."
-                    )
-                occ = self._occupied_orbitals_cached
-
-                if self._is_numpy:
-                    calc = many_body_state_closure(
-                        calculator_func=calculate_slater_det, matrix_arg=occ
-                    )
-                else:
-                    calc = lambda U, st, _ns: calculate_slater_det_jax(U, occ, st, _ns)
-                return calc, self._eig_vec
-            else:
-                #! Bogoliubov vacuum / Pfaffian
-                if self._is_numpy:
-                    if self._F is None:
-                        if self._U is None or self._V is None:
-                            self._U, self._V, _ = bogolubov_decompose(self._eig_val, self._eig_vec)
-                        self._F = pairing_matrix(self._U, self._V)
-                    calc = lambda F, st, _ns: calculate_bogoliubov_amp(F, st, _ns)
-                else:
-                    raise NotImplementedError("JAX Bogoliubov vacuum calculation not implemented.")
-                    # calc = lambda F, st, _ns: calculate_bogoliubov_amp_jax(F, st, _ns)
-                return calc, self._F
-
-        #! Bosons
-        if self._isbosons:
-            if self._particle_conserving:
-                #! Permanent / Gaussian state
-                if self._is_numpy:
-                    calc = lambda G, st, _ns: calculate_permanent(G, st, _ns)
-                else:
-                    calc = lambda G, st, _ns: calculate_permament_jax(G, st, _ns)
-                return calc, self._eig_vec
-            else:
-                #! Gaussian squeezed vacuum / Hafnian
-                if self._is_numpy:
-                    if self._G is None:
-                        if self._U is None or self._V is None:
-                            self._U, self._V, _ = bogolubov_decompose(self._eig_val, self._eig_vec)
-                        self._G = pairing_matrix(self._eig_val, self._eig_vec)
-
-                    calc = lambda G, st, _ns: calculate_bosonic_gaussian_amp(G, st, _ns)
-                else:
-                    raise NotImplementedError(
-                        "JAX Bosonic Gaussian state calculation not implemented."
-                    )
-                return calc, self._G
+        return self._make_calculator()
 
     def many_body_state(
         self,
-        occupied_orbitals: Union[list[int], np.ndarray] | None = None,
-        target_basis: str = "sites",
-        many_body_hs: Optional[HilbertSpace] = None,
-        resulting_state: Optional[np.ndarray] = None,
-    ):
-        """
+        occupied_orbitals   : Union[list[int], np.ndarray, None]    = None,
+        target_basis        : str                                   = "sites",
+        *,
+        many_body_hs        : Optional[HilbertSpace]                = None,
+        resulting_state     : Optional[np.ndarray]                  = None,
+        cache_state         : bool                                  = True,
+        **kwargs,
+    ) -> np.ndarray:
+        r"""
         Return the coefficient vector |Psi> in the computational basis.
-
+        Computes the many-body state corresponding to the specified
+        occupied single-particle orbitals (or quasiparticle orbitals for BdG).
+        
         Parameters
         ----------
-        occupied_orbitals
-            For particle-conserving fermions/bosons: list/array of alpha_k.
-            Ignored otherwise.
-        target_basis
-            Currently only "sites" is supported.
-        many_body_hs
-            If provided, must expose mapping -> 1-D np.ndarray.
-            The output vector is ordered according to that mapping.
-            If None, a full vector of length 2**ns is produced.
-        batch_size
-            If >0, the Fock space is processed in slices of that length
-            to keep peak memory low. 0 (default) disables batching.
-
+        occupied_orbitals : Union[list[int], np.ndarray, None]
+            For particle-conserving fermions/bosons: indices of occupied orbitals.
+            Can be:
+            - int: 
+                single configuration encoded as integer
+            - 1D array: 
+                binary occupation mask [n1, n2, ..., nNs]
+            - list: 
+                occupation indices
+            Ignored for BdG systems.
+        target_basis : str
+            Only "sites" (Fock basis) is currently supported.
+        many_body_hs : Optional[HilbertSpace]
+            If provided, uses custom mapping for state ordering.
+            If None, generates full 2^Ns state vector.
+        resulting_state : Optional[np.ndarray]
+            Pre-allocated output array. If None, creates new array.
+            Shape must be (2^Ns,) or (len(mapping),) for custom HS.
         Returns
         -------
         np.ndarray
-            Coefficient vector psi(x).
+            Coefficient vector psi(x) with dtype matching computation precision.
+
+        Raises
+        ------
+        RuntimeError
+            If eigenvalues/eigenvectors not computed.
+        NotImplementedError
+            If target_basis is not "sites".
+
+        Examples
+        --------
+        >>> ham = QuadraticHamiltonian(ns=4)
+        >>> ham.add_hopping(0, 1, -1.0)
+        >>> ham.diagonalize()
+        
+        # Single state from occupation indices
+        >>> psi = ham.many_body_state([0, 1, 0, 0])  # sites 0,1 occupied
+        
+        # Single state from integer encoding
+        >>> psi = ham.many_body_state(3)  # binary: 0011 (sites 0,1 occupied)
+        
+        # With pre-allocated array for batch computation
+        >>> states = np.zeros((10, 2**4), dtype=complex)
+        >>> for i, occ in enumerate(occupations):
+        ...     ham.many_body_state(occ, resulting_state=states[i])
+        
+        Notes
+        -----
+        - **Caching**: First call computes and caches the calculator function.
+          Subsequent calls reuse the cached function without recompilation.
+        - **For BdG systems**: occupied_orbitals is ignored; computes vacuum.
         """
+        
         if target_basis != "sites":
             raise NotImplementedError("Only the site/bitstring basis is implemented for now.")
 
-        # If new occupied_orbitals are provided, or the cached state is missing (e.g., after cache invalidation)
-        if occupied_orbitals is not None or self._occupied_orbitals_cached is None:
-            if isinstance(occupied_orbitals, (list, np.integer)):
-                # transform to array
-                self._occupied_orbitals_cached = int2base(
-                    occupied_orbitals, self._ns, spin=False, backend=self._backend
-                ).astype(self._dtypeint)
+        if self._eig_vec is None:
+            raise RuntimeError("Eigenvectors not computed. Call diagonalize() first.")
+
+        try:
+            from QES.Algebra.Quadratic.hamil_quadratic_utils import indices_from_mask
+        except ImportError as e:
+            raise ImportError("Could not import indices_from_mask. Ensure QES is properly installed.") from e        
+
+        # Update cache (only for particle-conserving systems)
+        if self._particle_conserving and occupied_orbitals is not None:
+            if isinstance(occupied_orbitals, int):
+                # Convert integer bitmask to array of occupied orbital indices
+                self._occupied_orbitals_cached = indices_from_mask(np.uint64(occupied_orbitals)).astype(self._dtypeint)
+            
+            elif isinstance(occupied_orbitals, (list, tuple)):
+                # Convert list to contiguous numpy array (assumed to be orbital indices)
+                self._occupied_orbitals_cached = np.ascontiguousarray(occupied_orbitals, dtype=self._dtypeint)
+            
             else:
-                self._occupied_orbitals_cached = np.ascontiguousarray(
-                    occupied_orbitals, dtype=self._dtypeint
-                )
+                # Assume numpy array of orbital indices; make contiguous
+                self._occupied_orbitals_cached = np.ascontiguousarray(occupied_orbitals, dtype=self._dtypeint)
 
-        #! obtain (calculator, matrix_arg)
-        calculator, matrix_arg = self._many_body_state_calculator()
-
-        #! choose mapping / dimensions
-        ns = self._ns
-        dtype = getattr(self, "_dtype", np.result_type(matrix_arg))
+        # Get resulting calculator and matrix argument, this avoids recompilation on repeated calls
+        calculator, matrix_arg = self._make_calculator()
+        ns                      = self._ns
+        # Ensure complex dtype since Slater determinants return complex values
+        base_dtype              = getattr(self, "_dtype", np.result_type(matrix_arg))
+        dtype                   = np.result_type(base_dtype, np.complex128)
         if resulting_state is not None:
-            dtype = np.result_type(resulting_state, dtype)
+            dtype   = np.result_type(resulting_state, dtype)
+        
+        # Try to use cached resulting_state if requested
+        if cache_state and resulting_state is None:
+            # Cache the resulting state array for future calls
+            if many_body_hs is None or not many_body_hs.modifies:
+                resulting_state = np.zeros((2**ns,), dtype=dtype)
+            else:
+                resulting_state = np.zeros((len(many_body_hs.mapping),), dtype=dtype)
+            self._cached_many_body_state = resulting_state
+        elif self._cached_many_body_state is not None and resulting_state is None:
+            # Reuse cached state array
+            resulting_state     = self._cached_many_body_state
 
+        # COMPUTE STATE, use custom mapping if provided, else full Fock space
+        # Lazy import the state computation functions
+        many_body_state_full_fn     = _get_many_body_state_full()
+        many_body_state_mapping_fn  = _get_many_body_state_mapping()
+        
         if many_body_hs is None or not many_body_hs.modifies:
-            return many_body_state_full(matrix_arg, calculator, ns, resulting_state, dtype=dtype)
+            return many_body_state_full_fn(matrix_arg, calculator, ns, resulting_state, dtype=dtype)
         else:
             mapping = many_body_hs.mapping
-            return many_body_state_mapping(matrix_arg, calculator, mapping, ns, dtype)
-        return None  # should not be reached
+            return many_body_state_mapping_fn(matrix_arg, calculator, mapping, ns, dtype)
+
+    def many_body_states(
+        self,
+        occupations     : Union[List[int], np.ndarray],
+        return_dict     : bool = False,
+    ) -> Union[np.ndarray, Dict[int, np.ndarray]]:
+        r"""
+        Efficiently compute multiple many-body states at once.
+        
+        **Optimized for performance**: Computes multiple states while reusing:
+        - Cached calculator function (avoids recompilation)
+        - Pre-computed eigenvectors
+        
+        This is dramatically faster than calling many_body_state() in a loop.
+
+        Parameters
+        ----------
+        occupations : Union[List[int], np.ndarray]
+            Array of occupation configurations:
+            - List of integers (binary-encoded states)
+            - List of arrays (occupation masks)
+            - 2D array where each row is an occupation configuration
+        return_dict : bool
+            If True, returns dict {occupation_int: state_vector}.
+            If False, returns stacked 2D array (faster).
+
+        Returns
+        -------
+        Union[np.ndarray, Dict[int, np.ndarray]]
+            If return_dict=False: shape (n_states, 2**ns)
+            If return_dict=True: dict mapping occupation to state vector
+
+        Examples
+        --------
+        >>> ham = QuadraticHamiltonian(ns=4)
+        >>> ham.add_hopping(0, 1, -1.0)
+        >>> ham.diagonalize()
+        
+        # Compute 10 states at once
+        >>> occupations = np.random.randint(0, 16, 10)
+        >>> states = ham.many_body_states(occupations)
+        >>> print(states.shape)  # (10, 16)
+        
+        # With dictionary return
+        >>> states_dict = ham.many_body_states([1, 3, 5], return_dict=True)
+        >>> psi_1 = states_dict[1]  # state from occupation 1
+        """
+        
+        # Convert to list if needed
+        if isinstance(occupations, np.ndarray):
+            if occupations.ndim == 1:
+                # 1D array of integers
+                occ_list = occupations.tolist()
+            else:
+                # 2D array: each row is occupation
+                occ_list = [occupations[i] for i in range(occupations.shape[0])]
+        else:
+            occ_list = list(occupations)
+
+        if not occ_list:
+            raise ValueError("occupations list cannot be empty")
+
+        # Import utility
+        try:
+            from QES.Algebra.Quadratic.hamil_quadratic_utils import indices_from_mask
+        except ImportError as e:
+            raise ImportError("Could not import indices_from_mask. Ensure QES is properly installed.") from e
+
+        # Pre-compute parameters
+        ns          = self._ns
+        # Ensure complex dtype since Slater determinants return complex values
+        dtype       = np.result_type(self._dtype, np.complex128)
+        
+        # Lazy import
+        many_body_state_full_fn = _get_many_body_state_full()
+        
+        # Compute all states
+        states_dict = {} if return_dict else []
+        
+        for i, occ in enumerate(occ_list):
+            # Update occupation cache FIRST (before calling _make_calculator)
+            if isinstance(occ, int):
+                # Integer is a bitmask: extract indices of set bits
+                self._occupied_orbitals_cached = indices_from_mask(np.uint64(occ)).astype(self._dtypeint)
+                occ_int = occ
+            else:
+                # Array input: assumed to be orbital indices already
+                self._occupied_orbitals_cached = np.ascontiguousarray(occ, dtype=self._dtypeint)
+                # Convert occupation indices to integer bitmask for dict key
+                occ_arr = np.asarray(occ, dtype=self._dtypeint)
+                occ_int = sum(1 << int(idx) for idx in occ_arr)
+            
+            # Get calculator with updated occupation
+            calculator, matrix_arg = self._make_calculator()
+            
+            # Compute state (many_body_state_full uses positional arg for resulting_state)
+            state = many_body_state_full_fn(matrix_arg, calculator, ns, None, dtype)
+            
+            if return_dict:
+                states_dict[occ_int] = state
+            else:
+                states_dict.append(state)
+        
+        if return_dict:
+            return states_dict
+        else:
+            return np.asarray(states_dict)
+
+    def compute_ground_state(self, symmetry_sector: Optional[int] = None) -> Tuple[float, np.ndarray]:
+        r"""
+        Compute the ground state and energy for particle-conserving systems.
+        
+        For particle-conserving systems, the ground state is the Slater determinant
+        (or permanent) formed by the lowest-energy occupied orbitals.
+        
+        For BdG systems, computes the Bogoliubov vacuum.
+
+        Parameters
+        ----------
+        symmetry_sector : Optional[int]
+            For particle-conserving systems: number of occupied orbitals.
+            If None, fills the lowest ceil(Ns/2) orbitals.
+
+        Returns
+        -------
+        Tuple[float, np.ndarray]
+            (ground_state_energy, ground_state_vector)
+
+        Examples
+        --------
+        >>> ham = QuadraticHamiltonian(ns=4)
+        >>> ham.add_hopping(0, 1, -1.0)
+        >>> ham.diagonalize()
+        >>> E0, psi0 = ham.compute_ground_state()
+        >>> print(f"Ground state energy: {E0:.6f}")
+        """
+        if self._eig_val is None:
+            self.diagonalize()
+        
+        # For BdG systems
+        if not self._particle_conserving:
+            # Bogoliubov vacuum: fill all negative energy states
+            occupied                        = np.where(self._eig_val < 0)[0]
+            energy                          = self.many_body_energy(occupied)
+            # For BdG, ground state is vacuum (automatic)
+            self._occupied_orbitals_cached  = None
+            state                           = self.many_body_state(resulting_state=None)
+            return energy, state
+        
+        # For particle-conserving systems
+        if symmetry_sector is None:
+            symmetry_sector                 = self._ns // 2
+        
+        # Ground state: fill lowest energy orbitals
+        occupied    = np.argsort(self._eig_val)[:symmetry_sector]
+        energy      = self.many_body_energy(occupied)
+        state       = self.many_body_state(occupied)
+        
+        return energy, state
+
+    def compute_excited_states(
+        self,
+        n_excitations   : int = 1,
+        symmetry_sector : Optional[int] = None,
+    ) -> List[Tuple[float, np.ndarray]]:
+        r"""
+        Compute low-lying excited states for particle-conserving systems.
+        
+        Uses configuration interaction: excited states are created by removing
+        an electron from occupied orbitals and promoting to unoccupied orbitals.
+
+        Parameters
+        ----------
+        n_excitations : int
+            Number of excited states to compute. Default: 1 (first excited state).
+        symmetry_sector : Optional[int]
+            Number of particles. If None, uses ceil(Ns/2).
+
+        Returns
+        -------
+        List[Tuple[float, np.ndarray]]
+            List of (energy, state_vector) tuples, sorted by energy.
+
+        Notes
+        -----
+        - Only works for particle-conserving systems
+        - For Ns=10, number of states grows combinatorially: limit n_excitations
+        """
+        if not self._particle_conserving:
+            raise ValueError("Excited states only for particle-conserving systems. Use BdG excitations.")
+        
+        if self._eig_val is None:
+            self.diagonalize()
+        
+        if symmetry_sector is None:
+            symmetry_sector = self._ns // 2
+        
+        # Ground state
+        gs_occupied = np.argsort(self._eig_val)[:symmetry_sector]
+        gs_energy   = self.many_body_energy(gs_occupied)
+        
+        # Generate excitations: hole-particle pairs
+        excitations = []
+        for hole_idx in gs_occupied:
+            for particle_idx in np.arange(self._ns)[~np.isin(np.arange(self._ns), gs_occupied)]:
+                occ_excited                             = np.copy(gs_occupied)
+                occ_excited[occ_excited == hole_idx]    = particle_idx
+                
+                E_exc   = self.many_body_energy(occ_excited)
+                psi_exc = self.many_body_state(occ_excited)
+                excitations.append((E_exc, psi_exc))
+        
+        # Sort by energy and return top n_excitations
+        excitations.sort(key=lambda x: x[0])
+        return excitations[:n_excitations]
+
+    def invalidate_state_cache(self):
+        """
+        Clear all cached calculator functions and state matrices.
+        
+        Call this after modifying the Hamiltonian or changing diagonalization.
+        """
+        self._calculator_cache.clear()
+        self._compiled_funcs.clear()
+        self._last_occupation_key = None
+        self._log("State calculator cache cleared.", lvl=3, log="debug")
 
     ###########################################################################
     #! Thermal Properties
@@ -1869,7 +2310,7 @@ class QuadraticHamiltonian(Hamiltonian):
     ###########################################################################
 
     def time_evolution_operator(self, time: float, backend: str = "auto") -> "Array":
-        """
+        r"""
         Compute the time evolution operator exp(-i H t) for the quadratic Hamiltonian.
 
         For quadratic Hamiltonians, time evolution can be performed efficiently
@@ -1942,12 +2383,8 @@ class QuadraticHamiltonian(Hamiltonian):
 
                 return jnp.asarray(evo_full)
             except Exception:
-                self._log(
-                    "Failed to convert BdG time evolution to JAX array; returning NumPy array",
-                    lvl=1,
-                    log="warning",
-                )
-
+                self._log("Failed to convert BdG time evolution to JAX array; returning NumPy array", lvl=1, log="warning")
+                
         return evo_full
 
     ###########################################################################
@@ -2096,9 +2533,9 @@ class QuadraticHamiltonian(Hamiltonian):
 
     def __repr__(self) -> str:
         """Enhanced string representation."""
-        pc_status = "particle-conserving" if self._particle_conserving else "BdG"
-        particles = "fermions" if self._isfermions else "bosons"
-        backend = "JAX" if self._is_jax else "NumPy"
+        pc_status   = "particle-conserving" if self._particle_conserving else "BdG"
+        particles   = "fermions" if self._isfermions else "bosons"
+        backend     = "JAX" if self._is_jax else "NumPy"
         diag_status = "diagonalized" if self._eig_val is not None else "not diagonalized"
 
         return (
