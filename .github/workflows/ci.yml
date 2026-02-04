@@ -31,7 +31,7 @@ jobs:
     - name: Verify QES installation
       run: |
         python -c "import QES; print(f'QES version: {QES.__version__}')"
-        python -c "from QES.general_python import algebra, common, lattices; print('Submodule imports OK')"
+        python -c "import QES.general_python.algebra; import QES.general_python.common; import QES.general_python.lattices; print('Submodule imports OK')"
 
     - name: Lint with Ruff
       run: |
