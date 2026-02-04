@@ -105,7 +105,6 @@ _LAZY_IMPORTS = {
     "Algebra": (".Algebra", None),
     "NQS": (".NQS", None),
     "Solver": (".Solver", None),
-    "general_python": (".general_python", None),
     # Core classes from QES.Algebra
     "HilbertSpace": (".Algebra.hilbert", "HilbertSpace"),
     "Hamiltonian": (".Algebra.hamil", "Hamiltonian"),
