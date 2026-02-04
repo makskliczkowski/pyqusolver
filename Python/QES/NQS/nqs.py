@@ -1124,6 +1124,13 @@ class NQS(MonteCarloSolver):
                 self._backend.ones_like(ansatze), dtype=prob_dtype
             )
 
+        # reshape for apply_callable_jax expectations (N, 1)
+        # jax.vmap expects (N, 1) to slice into (1,) which allows [0] indexing
+        if hasattr(ansatze, 'ndim') and ansatze.ndim == 1:
+            ansatze = ansatze.reshape(-1, 1)
+        if hasattr(probabilities, 'ndim') and probabilities.ndim == 1:
+            probabilities = probabilities.reshape(-1, 1)
+
         # handle op_args being (None,)
         if isinstance(op_args, tuple) and len(op_args) == 1 and op_args[0] is None:
             op_args = ()
@@ -1840,7 +1847,9 @@ class NQS(MonteCarloSolver):
         """
 
         # try to reset batch size
-        self._set_batch_size(kwargs.get("batch_size", self._batch_size))
+        # Pop batch_size from kwargs to avoid multiple values error when calling _single_step
+        batch_size_arg = kwargs.pop("batch_size", self._batch_size)
+        self._set_batch_size(batch_size_arg)
 
         # check if the parameters are provided
         params = self.get_params() if params is None else params
@@ -1854,8 +1863,8 @@ class NQS(MonteCarloSolver):
 
         # check if the configurations are provided
         if configs is None or configs_ansatze is None or probabilities is None:
-            num_samples = kwargs.get("num_samples", self._sampler.numsamples)
-            num_chains = kwargs.get("num_chains", self._sampler.numchains)
+            num_samples = kwargs.pop("num_samples", self._sampler.numsamples)
+            num_chains = kwargs.pop("num_chains", self._sampler.numchains)
             (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(
                 parameters=params, num_samples=num_samples, num_chains=num_chains
             )

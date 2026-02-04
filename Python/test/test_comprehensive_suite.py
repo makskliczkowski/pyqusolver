@@ -116,7 +116,7 @@ class TestMatrixConstructionMethods:
         v_matrix = np.array([[0, 0.5], [0.5, 0]], dtype=complex)
 
         try:
-            qh = QuadraticHamiltonian.from_bdg_matrices(h_matrix, v_matrix, constant=1.5)
+            qh = QuadraticHamiltonian.from_bdg_matrices(h_matrix, antisymmetric_part=v_matrix, constant=1.5)
             qh.diagonalize(verbose=False)
             assert qh.eig_val.size == 4
         except (AttributeError, NotImplementedError):

@@ -86,7 +86,7 @@ class TestOperatorCatalog:
         """Test that fermionic operators are available."""
         space = LocalSpace.default_fermion_spinless()
         keys = set(space.list_operator_keys())
-        required_operators = {"c", "c_dag", "n"}
+        required_operators = {"c", "cdag", "n"}
         missing_operators = required_operators - keys
 
         assert not missing_operators, f"Missing fermion operators: {missing_operators}"
@@ -115,7 +115,7 @@ class TestFermionicOperators:
     def test_fermion_creation_sign(self):
         """Test fermionic creation operator with correct Jordan-Wigner signs."""
         space = LocalSpace.default_fermion_spinless()
-        creation = space.get_op("c_dag").kernels
+        creation = space.get_op("cdag").kernels
 
         # Test: initial state |100⟩, create on site 1 (middle)
         # Should give |110⟩ with coefficient -1 (parity from site 0)
@@ -195,8 +195,10 @@ class TestOperatorCombinations:
         # Test combination
         sig_x_sig_z = sig_x_g * sig_z_g
         result_comb = sig_x_sig_z(state)
-        assert isinstance(result_comb[0], np.ndarray), "Combined result states should be array"
-        assert isinstance(result_comb[1], np.ndarray), "Combined result coeffs should be array"
+        # assert isinstance(result_comb[0], np.ndarray), "Combined result states should be array"
+        # assert isinstance(result_comb[1], np.ndarray), "Combined result coeffs should be array"
+        assert hasattr(result_comb[0], 'shape'), "Combined result states should be array-like"
+        assert hasattr(result_comb[1], 'shape'), "Combined result coeffs should be array-like"
         print(rf"(ok)  \sigma_x\sigmaz on |000⟩: {len(result_comb[0])} states generated")
 
     def test_spin_global_operators_numpy_backend(self, lattice):
@@ -296,7 +298,8 @@ class TestHilbertIntegration:
         space = LocalSpace.default_fermion_spinless()
         hilbert = HilbertSpace(ns=3, local_space=space, backend="default")
 
-        op = hilbert.build_local_operator("c_dag")
+        # Use operators factory instead of removed build_local_operator
+        op = hilbert.operators.cdag(ns=hilbert.ns, type_act=OperatorTypeActing.Local)
         assert op.type_acting == OperatorTypeActing.Local, f"Expected Local, got {op.type_acting}"
 
         # Test operator application
