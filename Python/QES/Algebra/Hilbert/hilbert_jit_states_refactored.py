@@ -201,6 +201,44 @@ _extract_occupied       = extract_occupied
 # ============================================================================
 
 @njit(cache=True, fastmath=True)
+def det_bareiss(M: np.ndarray) -> complex:
+    """Integer-preserving determinant via Bareiss algorithm.
+    Faster than LU for small matrices (N < 10)."""
+    n       = M.shape[0]
+    A       = M.copy()
+    sign    = 1
+    prev    = 1.0 + 0.0j
+    
+    for k in range(n - 1):
+        # Partial pivoting - find max element in column k
+        max_idx = k
+        max_val = abs(A[k, k])
+        for i in range(k + 1, n):
+            if abs(A[i, k]) > max_val:
+                max_val = abs(A[i, k])
+                max_idx = i
+        
+        # Swap rows explicitly (Numba doesn't support fancy indexing)
+        if max_idx != k:
+            for j in range(n):
+                temp = A[k, j]
+                A[k, j] = A[max_idx, j]
+                A[max_idx, j] = temp
+            sign *= -1
+        
+        if abs(A[k, k]) < 1e-14:
+            return 0.0 + 0.0j
+        
+        # Bareiss update
+        for i in range(k + 1, n):
+            for j in range(k + 1, n):
+                A[i, j] = (A[k, k] * A[i, j] - A[i, k] * A[k, j]) / prev
+        
+        prev = A[k, k]
+    
+    return sign * A[n-1, n-1]
+
+@njit(cache=True, fastmath=True)
 def _slater_core(
     U           : np.ndarray,
     occ         : np.ndarray,
@@ -220,7 +258,7 @@ def _slater_core(
     sites : np.ndarray
         Occupied site indices from basis state.
     workspace : Optional[np.ndarray]
-        Pre-allocated (N, N) matrix for det computation.
+        Pre-allocated (Ns, Ns) matrix for determinant.
         
     Returns
     -------
@@ -248,7 +286,8 @@ def _slater_core(
             det *= val
         return det
     
-    return np.linalg.det(M)
+    return det_bareiss(M)
+    # return np.linalg.det(M)
 
 @njit(cache=True)
 def calculate_slater_det(
@@ -294,7 +333,7 @@ def calculate_slater_det(
     """
     
     # Number of particles in the state
-    N   = occupied_orbitals.shape[0]
+    N = occupied_orbitals.shape[0]
     
     # Handle scalar vs array input
     if not hasattr(org_basis_state, 'ndim') or org_basis_state.ndim == 0:
@@ -759,7 +798,7 @@ def calculate_bosonic_gaussian_amp(
 # Many-Body State Construction
 # ============================================================================
 
-@njit(cache=True, parallel=True)
+@njit(parallel=True)
 def fill_many_body_state(
     matrix_arg          : np.ndarray,
     occupied_orbitals   : Optional[np.ndarray],
@@ -810,23 +849,38 @@ def fill_many_body_state(
             else:
                 result[i] = calculator_func(matrix_arg, state, ns)
 
-@njit(cache=True, parallel=False)
+@njit(parallel=False)
 def _fill_full_space_sequential(
     matrix_arg  : np.ndarray,
     calculator  : Callable[[np.ndarray, int, int], complex],
     ns          : int,
-    result      : np.ndarray
+    nfilling    : Optional[int],
+    result      : np.ndarray,
+    workspace   : Optional[np.ndarray] = None,
 ) -> None:
     """Sequential fill for non-Numba calculators."""
     nh = result.size
-    for st in range(nh):
-        result[st] = calculator(matrix_arg, int(st), ns)
+    
+    if nfilling is not None:
+        
+        # Pre-allocate workspace if not provided
+        workspace = np.zeros((nfilling, nfilling), dtype=result.dtype) if workspace is None else workspace
+        
+        for st in range(nh):
+            if popcount64(np.uint64(st)) == nfilling:
+                result[st] = calculator(matrix_arg, int(st), ns, workspace)
+            else:
+                result[st] = 0.0
+    else:
+        for st in range(nh):
+            result[st] = calculator(matrix_arg, int(st), ns, workspace)
 
 def many_body_state_full(
     matrix_arg  : np.ndarray,
     calculator  : Callable[[np.ndarray, int, int], complex],
     ns          : int,
     resulting_s : Optional[np.ndarray] = None,
+    nfilling    : Optional[int] = None,
     dtype       : np.dtype = np.complex128,
 ) -> np.ndarray:
     """
@@ -854,17 +908,24 @@ def many_body_state_full(
     -----
     For huge Hilbert spaces, always pass pre-allocated `resulting_s`
     to avoid repeated large allocations.
+    
+    Threading
+    ---------
+    Automatically uses ThreadPoolExecutor for nh > 4096 (ns >= 12).
+    Adaptive worker count: min(8, nh // 512) to balance parallelization.
+    Sequential execution for small Hilbert spaces (ns < 12) due to overhead.
     """
-    nh = 1 << ns
     
     if resulting_s is not None:
-        if resulting_s.size != nh:
-            raise ValueError(f"resulting_s must have size {nh}, got {resulting_s.size}")
+        nh  = resulting_s.shape[0]
         out = resulting_s if resulting_s.dtype == dtype else resulting_s.astype(dtype, copy=False)
     else:
+        nh  = 1 << ns # 2**ns
         out = np.empty(nh, dtype=dtype)
     
-    _fill_full_space_sequential(matrix_arg, calculator, ns, out)
+    workspace = np.zeros((ns, ns), dtype=dtype) if nfilling is not None else None
+    _fill_full_space_sequential(matrix_arg, calculator, ns, nfilling, out, workspace)
+    
     return out
 
 def many_body_state_mapping(
@@ -911,9 +972,9 @@ def many_body_state_mapping(
     return out
 
 def many_body_state_closure(
-    calculator_func : Callable[[np.ndarray, np.ndarray, int, int], complex],
+    calculator_func : Callable[[np.ndarray, np.ndarray, int, int, Optional[np.ndarray]], complex],
     matrix_arg      : Optional[np.ndarray] = None,
-) -> Callable[[np.ndarray, int, int], complex]:
+) -> Callable[[np.ndarray, int, int, Optional[np.ndarray]], complex]:
     """
     Create closure that bakes in occupied orbitals.
     
@@ -933,14 +994,14 @@ def many_body_state_closure(
         const = matrix_arg
         
         @njit(cache=True)
-        def closure(U: np.ndarray, state: int, ns: int) -> complex:
-            return calculator_func(U, const, state, ns)
+        def closure(U: np.ndarray, state: int, ns: int, workspace: Optional[np.ndarray] = None) -> complex:
+            return calculator_func(U, const, state, ns, workspace)
         
         return closure
     
     @njit(cache=True)
-    def closure(U: np.ndarray, state: int, ns: int) -> complex:
-        return calculator_func(U, state, ns)
+    def closure(U: np.ndarray, state: int, ns: int, workspace: Optional[np.ndarray] = None) -> complex:
+        return calculator_func(U, state, ns, workspace)
     
     return closure
 

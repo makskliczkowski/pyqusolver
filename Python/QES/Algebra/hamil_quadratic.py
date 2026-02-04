@@ -1963,8 +1963,9 @@ class QuadraticHamiltonian(Hamiltonian):
                 self._occupied_orbitals_cached = np.ascontiguousarray(occupied_orbitals, dtype=self._dtypeint)
 
         # Get resulting calculator and matrix argument, this avoids recompilation on repeated calls
-        calculator, matrix_arg = self._make_calculator()
+        calculator, matrix_arg  = self._make_calculator()
         ns                      = self._ns
+        nfilling                = len(self._occupied_orbitals_cached) if self._occupied_orbitals_cached is not None else None
         # Ensure complex dtype since Slater determinants return complex values
         base_dtype              = getattr(self, "_dtype", np.result_type(matrix_arg))
         dtype                   = np.result_type(base_dtype, np.complex128)
@@ -1989,117 +1990,10 @@ class QuadraticHamiltonian(Hamiltonian):
         many_body_state_mapping_fn  = _get_many_body_state_mapping()
         
         if many_body_hs is None or not many_body_hs.modifies:
-            return many_body_state_full_fn(matrix_arg, calculator, ns, resulting_state, dtype=dtype)
+            return many_body_state_full_fn(matrix_arg, calculator, ns, resulting_state, nfilling=nfilling, dtype=dtype)
         else:
             mapping = many_body_hs.mapping
             return many_body_state_mapping_fn(matrix_arg, calculator, mapping, ns, dtype)
-
-    def many_body_states(
-        self,
-        occupations     : Union[List[int], np.ndarray],
-        return_dict     : bool = False,
-    ) -> Union[np.ndarray, Dict[int, np.ndarray]]:
-        r"""
-        Efficiently compute multiple many-body states at once.
-        
-        **Optimized for performance**: Computes multiple states while reusing:
-        - Cached calculator function (avoids recompilation)
-        - Pre-computed eigenvectors
-        
-        This is dramatically faster than calling many_body_state() in a loop.
-
-        Parameters
-        ----------
-        occupations : Union[List[int], np.ndarray]
-            Array of occupation configurations:
-            - List of integers (binary-encoded states)
-            - List of arrays (occupation masks)
-            - 2D array where each row is an occupation configuration
-        return_dict : bool
-            If True, returns dict {occupation_int: state_vector}.
-            If False, returns stacked 2D array (faster).
-
-        Returns
-        -------
-        Union[np.ndarray, Dict[int, np.ndarray]]
-            If return_dict=False: shape (n_states, 2**ns)
-            If return_dict=True: dict mapping occupation to state vector
-
-        Examples
-        --------
-        >>> ham = QuadraticHamiltonian(ns=4)
-        >>> ham.add_hopping(0, 1, -1.0)
-        >>> ham.diagonalize()
-        
-        # Compute 10 states at once
-        >>> occupations = np.random.randint(0, 16, 10)
-        >>> states = ham.many_body_states(occupations)
-        >>> print(states.shape)  # (10, 16)
-        
-        # With dictionary return
-        >>> states_dict = ham.many_body_states([1, 3, 5], return_dict=True)
-        >>> psi_1 = states_dict[1]  # state from occupation 1
-        """
-        
-        # Convert to list if needed
-        if isinstance(occupations, np.ndarray):
-            if occupations.ndim == 1:
-                # 1D array of integers
-                occ_list = occupations.tolist()
-            else:
-                # 2D array: each row is occupation
-                occ_list = [occupations[i] for i in range(occupations.shape[0])]
-        else:
-            occ_list = list(occupations)
-
-        if not occ_list:
-            raise ValueError("occupations list cannot be empty")
-
-        # Import utility
-        try:
-            from QES.Algebra.Quadratic.hamil_quadratic_utils import indices_from_mask
-        except ImportError as e:
-            raise ImportError("Could not import indices_from_mask. Ensure QES is properly installed.") from e
-
-        # Pre-compute parameters
-        ns          = self._ns
-        # Ensure complex dtype since Slater determinants return complex values
-        dtype       = np.result_type(self._dtype, np.complex128)
-        
-        # Lazy import
-        many_body_state_full_fn = _get_many_body_state_full()
-        
-        # Compute all states
-        states_dict = {} if return_dict else []
-        
-        for i, occ in enumerate(occ_list):
-            # Update occupation cache FIRST (before calling _make_calculator)
-            if isinstance(occ, int):
-                # Integer is a bitmask: extract indices of set bits
-                self._occupied_orbitals_cached = indices_from_mask(np.uint64(occ)).astype(self._dtypeint)
-                occ_int = occ
-            else:
-                # Array input: assumed to be orbital indices already
-                self._occupied_orbitals_cached = np.ascontiguousarray(occ, dtype=self._dtypeint)
-                # Convert occupation indices to integer bitmask for dict key
-                occ_arr = np.asarray(occ, dtype=self._dtypeint)
-                occ_int = sum(1 << int(idx) for idx in occ_arr)
-            
-            # Get calculator with updated occupation
-            calculator, matrix_arg = self._make_calculator()
-            
-            # Compute state (many_body_state_full uses positional arg for resulting_state)
-            state = many_body_state_full_fn(matrix_arg, calculator, ns, None, dtype)
-            
-            if return_dict:
-                states_dict[occ_int] = state
-            else:
-                states_dict.append(state)
-        
-        if return_dict:
-            return states_dict
-        else:
-            return np.asarray(states_dict)
 
     def compute_ground_state(self, symmetry_sector: Optional[int] = None) -> Tuple[float, np.ndarray]:
         r"""
