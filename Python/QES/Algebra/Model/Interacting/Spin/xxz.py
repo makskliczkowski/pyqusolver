@@ -123,7 +123,7 @@ class XXZ(hamil_module.Hamiltonian):
             hilbert_space=hilbert_space,
             lattice=lattice,
             is_sparse=True,
-            dtype=dtype,
+            dtype=np.complex128,  # enforce complex dtype to support Sy operations safely
             backend=backend,
             **kwargs,
         )
@@ -148,6 +148,7 @@ class XXZ(hamil_module.Hamiltonian):
 
         # Build the Hamiltonian
         self._set_local_energy_operators()
+        self.setup_instruction_codes()
         self._set_local_energy_functions()
         self._log(f"XXZ Hamiltonian initialized for {self.ns} sites.", lvl=1, log="debug")
 

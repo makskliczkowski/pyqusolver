@@ -50,7 +50,7 @@ class TestXXZSymmetries:
         # Full spectrum (no symmetry)
         h_full = HilbertSpace(lattice=small_chain)
         xxz_full = XXZ(lattice=small_chain, hilbert_space=h_full, jxy=1.0, jz=0.5, hx=0.0, hz=0.0)
-        E_full = np.linalg.eigvalsh(xxz_full.matrix.toarray())
+        E_full = np.linalg.eigvalsh(xxz_full.matrix().toarray())
         E_full_sorted = np.sort(E_full)
 
         # Collect eigenvalues from all k-sectors
@@ -59,7 +59,7 @@ class TestXXZSymmetries:
             h_k = HilbertSpace(lattice=small_chain, sym_gen={"translation": k})
             xxz_k = XXZ(lattice=small_chain, hilbert_space=h_k, jxy=1.0, jz=0.5, hx=0.0, hz=0.0)
 
-            H_k = xxz_k.matrix.toarray()
+            H_k = xxz_k.matrix().toarray()
             E_k = np.linalg.eigvalsh(H_k)
             E_all_sectors.extend(E_k)
 
@@ -87,7 +87,7 @@ class TestXXZSymmetries:
         h_k0 = HilbertSpace(lattice=small_chain, sym_gen={"translation": 0})
         xxz = XXZ(lattice=small_chain, hilbert_space=h_k0, jxy=1.0, jz=0.5, hx=0.0, hz=0.0)
 
-        H = xxz.matrix.toarray()
+        H = xxz.matrix().toarray()
 
         # Check Hermiticity
         assert np.allclose(H, H.conj().T), "Hamiltonian not Hermitian at k=0"
@@ -113,7 +113,7 @@ class TestXXZSymmetries:
             lattice=small_chain, hilbert_space=h_parity_even, jxy=1.0, jz=0.5, hx=0.0, hz=0.0
         )  # hx=0 crucial!
 
-        H_even = xxz_even.matrix.toarray()
+        H_even = xxz_even.matrix().toarray()
         E_even = np.linalg.eigvalsh(H_even)
 
         # Odd parity sector
@@ -122,7 +122,7 @@ class TestXXZSymmetries:
             lattice=small_chain, hilbert_space=h_parity_odd, jxy=1.0, jz=0.5, hx=0.0, hz=0.0
         )
 
-        H_odd = xxz_odd.matrix.toarray()
+        H_odd = xxz_odd.matrix().toarray()
         E_odd = np.linalg.eigvalsh(H_odd)
 
         # Check Hermiticity
@@ -158,7 +158,7 @@ class TestXXZSymmetries:
         # Full spectrum
         h_full = HilbertSpace(lattice=small_chain)
         xxz_full = XXZ(lattice=small_chain, hilbert_space=h_full, jxy=1.0, jz=0.5, hx=0.0, hz=0.0)
-        E_full = np.linalg.eigvalsh(xxz_full.matrix.toarray())
+        E_full = np.linalg.eigvalsh(xxz_full.matrix().toarray())
         E_full_sorted = np.sort(E_full)
 
         # Collect eigenvalues from all particle number sectors
@@ -175,7 +175,7 @@ class TestXXZSymmetries:
 
             xxz_N = XXZ(lattice=small_chain, hilbert_space=h_N, jxy=1.0, jz=0.5, hx=0.0, hz=0.0)
 
-            H_N = xxz_N.matrix.toarray()
+            H_N = xxz_N.matrix().toarray()
             E_N = np.linalg.eigvalsh(H_N)
             E_all_N.extend(E_N)
 
@@ -205,7 +205,7 @@ class TestXXZSymmetries:
         # Full spectrum
         h_full = HilbertSpace(lattice=small_chain)
         xxz_full = XXZ(lattice=small_chain, hilbert_space=h_full, jxy=1.0, jz=0.5, hx=0.0, hz=0.0)
-        E_full = np.linalg.eigvalsh(xxz_full.matrix.toarray())
+        E_full = np.linalg.eigvalsh(xxz_full.matrix().toarray())
         E_full_sorted = np.sort(E_full)
 
         # Collect from all (k, parity) sectors
@@ -219,7 +219,7 @@ class TestXXZSymmetries:
                     lattice=small_chain, hilbert_space=h_kp, jxy=1.0, jz=0.5, hx=0.0, hz=0.0
                 )
 
-                H_kp = xxz_kp.matrix.toarray()
+                H_kp = xxz_kp.matrix().toarray()
                 E_kp = np.linalg.eigvalsh(H_kp)
                 E_all_sectors.extend(E_kp)
 
@@ -245,7 +245,7 @@ class TestXXZSymmetries:
         # Full spectrum
         h_full = HilbertSpace(lattice=small_chain)
         xxz_full = XXZ(lattice=small_chain, hilbert_space=h_full, jxy=1.0, jz=0.5, hx=0.0, hz=0.0)
-        E_full = np.linalg.eigvalsh(xxz_full.matrix.toarray())
+        E_full = np.linalg.eigvalsh(xxz_full.matrix().toarray())
         E_full_sorted = np.sort(E_full)
 
         # Collect from all (k, N) sectors
@@ -264,7 +264,7 @@ class TestXXZSymmetries:
                     lattice=small_chain, hilbert_space=h_kN, jxy=1.0, jz=0.5, hx=0.0, hz=0.0
                 )
 
-                H_kN = xxz_kN.matrix.toarray()
+                H_kN = xxz_kN.matrix().toarray()
                 E_kN = np.linalg.eigvalsh(H_kN)
                 E_all_sectors.extend(E_kN)
 
@@ -292,7 +292,7 @@ class TestXXZSymmetries:
             lattice=small_chain, hilbert_space=h_k0, jxy=1.0, delta=1.0, hx=0.0, hz=0.0
         )  # Delta=1 => XXX
 
-        H = xxz.matrix.toarray()
+        H = xxz.matrix().toarray()
         E = np.linalg.eigvalsh(H)
 
         # Check for degeneracies (SU(2) multiplets)
@@ -313,7 +313,7 @@ class TestXXZSymmetries:
             lattice=small_chain, hilbert_space=h_k0, jxy=1.0, delta=0.0, hx=0.0, hz=0.0
         )  # Delta=0 => XY
 
-        H = xxz.matrix.toarray()
+        H = xxz.matrix().toarray()
         E = np.linalg.eigvalsh(H)
 
         print("\nXY model (Δ=0) at k=0:")
@@ -330,7 +330,7 @@ class TestXXZSymmetries:
             lattice=small_chain, hilbert_space=h_k0, jxy=0.0, jz=1.0, hx=0.0, hz=0.0
         )  # Jxy=0 => Ising
 
-        H = xxz.matrix.toarray()
+        H = xxz.matrix().toarray()
         E = np.linalg.eigvalsh(H)
 
         print("\nIsing limit (Jxy=0) at k=0:")

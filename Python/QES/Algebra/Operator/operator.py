@@ -1172,6 +1172,13 @@ class Operator(GeneralMatrix):
             The matrix representation (scipy.sparse.csr_matrix or numpy/jax array).
         """
 
+        # Check if the operator instance has attached Hilbert space (e.g. from Hamiltonian)
+        if hilbert_1 is None and hilbert_2 is None:
+            if hasattr(self, "hilbert_space") and self.hilbert_space is not None:
+                hilbert_1 = self.hilbert_space
+            elif hasattr(self, "_hilbert_space") and self._hilbert_space is not None:
+                hilbert_1 = self._hilbert_space
+
         # check the dimension of the matrix
         dim1, dim2 = None, None
         matrix_hilbert = "None"
