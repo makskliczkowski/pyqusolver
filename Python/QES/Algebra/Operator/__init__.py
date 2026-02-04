@@ -1,52 +1,14 @@
-r"""
-QES Operator Module
-===================
+"""
+Operator Module
+===============
 
-This module provides quantum mechanical operators for various particle types,
-including spin systems, spinless fermions, hardcore bosons, and anyons.
+Operator classes and concrete operators (spin, fermions) with matrix builders.
 
-**Lazy Loading**: Submodules are loaded on-demand to minimize import time.
-Use ``hamil.operators`` for automatic operator selection based on Hilbert space,
-or import specific modules directly when needed.
+This module provides the core `Operator` class and a collection of concrete operator implementations
+for various physical systems (spin-1/2, spin-1, fermions, etc.).
 
-Submodules
-----------
-operator : Base classes
-    Core ``Operator`` class and ``SymmetryGenerators`` for building quantum operators.
-
-operators_spin : Spin-1/2 operators
-    Pauli matrices (sigma_x, sigma_y, sigma_z), raising/lowering (sigma_+, sigma_-), and spin correlators.
-    Supports local, global, and correlation operator types.
-
-operators_spin_1 : Spin-1 operators
-    Spin-1 matrices (S_x, S_y, S_z), raising/lowering (S_+, S_-), and correlators.
-    3-dimensional local Hilbert space with states |+1⟩, |0⟩, |-1⟩.
-    Includes quadrupole operators for higher-order observables.
-
-operators_spinless_fermions : Fermionic operators
-    Creation (c†), annihilation (c), number (n), and hopping operators.
-    Handles fermionic sign (Jordan-Wigner) automatically.
-
-operators_hardcore : Hardcore boson operators
-    Bosonic operators with hard-core constraint (max 1 per site).
-
-operators_anyon : Anyonic operators
-    Operators for systems with fractional statistics.
-
-jax/ : JAX-accelerated operators subpackage
-    GPU-accelerated versions using JAX. Contains:
-    - jax.operators_spin                : Spin-1/2 operators
-    - jax.operators_spin_1              : Spin-1 operators
-    - jax.operators_spinless_fermions   : Spinless fermion operators
-
-catalog : Operator catalog
-    Registry of available operators with metadata.
-
-phase_utils : Phase utilities
-    Fermionic parity, bit counting, and sign calculation utilities.
-
-Examples
---------
+Usage
+-----
 **Via Hamiltonian (recommended - automatic operator selection)**::
 
     >>> from QES.Algebra.Model.Interacting.Spin import HeisenbergXXZ
@@ -58,58 +20,14 @@ Examples
     >>> # Create local operators
     >>> sig_z = ops.sig_z(lattice=lattice, type_act='local')
     >>> sig_x = ops.sig_x(lattice=lattice, type_act='local')
-    >>>
-    >>> # Apply to states
-    >>> new_state = sig_z.matvec(psi, site=0, hilbert=hamil.hilbert_space)
 
 **Direct import for spin operators**::
 
-    >>> from QES.Algebra.Operator.impl.operators_spin import sig_x, sig_y, sig_z
-    >>> from QES.Algebra.Operator.impl.operators_spin import sig_plus, sig_minus
+    >>> from QES.Algebra.Operator import operators_spin
+    >>> from QES.Algebra.Operator.impl.operators_spin import sig_z
     >>>
     >>> # Create spin-z operator for all sites
-    >>> Sz_total = sig_z(lattice=lattice, type_act='global')
-    >>>
-    >>> # Create correlation operator for sites i,j
-    >>> Sz_Sz = sig_z(lattice=lattice, type_act='correlation')
-
-**Direct import for fermionic operators**::
-
-    >>> from QES.Algebra.Operator.impl.operators_spinless_fermions import cdag, c, n_op
-    >>>
-    >>> # Number operator
-    >>> n = n_op(ns=10, sites=[0, 1, 2])
-    >>>
-    >>> # Hopping: c†_i c_j
-    >>> hopping = cdag(ns=10, sites=[0]) @ c(ns=10, sites=[1])
-
-**Operator types**::
-
-    >>> # Local: acts on single site, returns modified state
-    >>> op_local = sig_z(lattice=lattice, type_act='local')
-    >>> result = op_local.matvec(psi, site=3, hilbert=hilbert)
-    >>>
-    >>> # Global: sum over all sites (e.g., total magnetization)
-    >>> op_global = sig_z(lattice=lattice, type_act='global')
-    >>> Sz_total = op_global.matrix  # Full matrix representation
-    >>>
-    >>> # Correlation: two-point correlator <sigma__i sigma__j>
-    >>> op_corr = sig_z(lattice=lattice, type_act='correlation')
-    >>> corr_ij = op_corr.expectation(psi, i=0, j=5)
-
-**Building custom operators**::
-
-    >>> from QES.Algebra.Operator import Operator
-    >>>
-    >>> # Compose operators
-    >>> Sx_Sy = sig_x(lattice) @ sig_y(lattice)  # Product
-    >>> H_field = 0.5 * sig_z(lattice)  # Scalar multiplication
-
-See Also
---------
-QES.Algebra.Operator.operator                       : Base Operator class documentation
-QES.Algebra.Operator.impl.operators_spin                 : Spin operator documentation
-QES.Algebra.Operator.impl.operators_spinless_fermions    : Fermion operator documentation
+    >>> Sz_total = operators_spin.sig_z(lattice=lattice, type_act='global')
 
 -----------------------------------------------------------
 File    : QES/Algebra/Operator/__init__.py
@@ -117,6 +35,9 @@ Author  : Maksymilian Kliczkowski
 Email   : maksymilian.kliczkowski@pwr.edu.pl
 -----------------------------------------------------------
 """
+
+import importlib
+from typing import TYPE_CHECKING, Any
 
 # A short, user-facing description used by QES.registry
 MODULE_DESCRIPTION = (
@@ -130,6 +51,18 @@ MODULE_DESCRIPTION = (
 # Only import lightweight base classes at module load time
 from .operator import Operator, SymmetryGenerators
 
+if TYPE_CHECKING:
+    from . import catalog, matrix, phase_utils, special_operator
+    from .impl import (
+        jax,
+        operators_anyon,
+        operators_hardcore,
+        operators_spin,
+        operators_spin_1,
+        operators_spinless_fermions,
+    )
+    from .operator import Operator, SymmetryGenerators
+
 # Available submodules (loaded on demand)
 _SUBMODULES = {
     "operator": "Base Operator class and SymmetryGenerators",
@@ -141,9 +74,6 @@ _SUBMODULES = {
     "operators_anyon": "Anyonic operators",
     # JAX backends (in jax/ subfolder)
     "jax": "JAX-accelerated operators subpackage",
-    "jax.operators_spin": "JAX-accelerated spin-1/2 operators",
-    "jax.operators_spin_1": "JAX-accelerated spin-1 operators",
-    "jax.operators_spinless_fermions": "JAX-accelerated fermion operators",
     # helpers
     "catalog": "Operator catalog and registry",
     "phase_utils": "Fermionic parity and sign utilities",
@@ -151,7 +81,23 @@ _SUBMODULES = {
     "matrix": "Matrix representation utilities",
 }
 
-# Operator types available in each submodule
+# Map public names to (module_path, attribute_name)
+# If attribute_name is None, return the module itself.
+_LAZY_IMPORTS = {
+    "operator": (".operator", None),
+    "operators_spin": (".impl.operators_spin", None),
+    "operators_spin_1": (".impl.operators_spin_1", None),
+    "operators_spinless_fermions": (".impl.operators_spinless_fermions", None),
+    "operators_hardcore": (".impl.operators_hardcore", None),
+    "operators_anyon": (".impl.operators_anyon", None),
+    "jax": (".impl.jax", None),
+    "phase_utils": (".phase_utils", None),
+    "catalog": (".catalog", None),
+    "special_operator": (".special_operator", None),
+    "matrix": (".matrix", None),
+}
+
+# Operator types available in each submodule (for help/introspection)
 _OPERATOR_TYPES = {
     "operators_spin": [
         "sig_x",
@@ -219,6 +165,22 @@ __all__ = [
 ]
 
 
+def __getattr__(name: str) -> Any:
+    """Lazily import submodules."""
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        module = importlib.import_module(module_path, package=__name__)
+        if attr_name:
+            return getattr(module, attr_name)
+        return module
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
+
+
 def help(verbose: bool = True) -> None:
     """
     Print help information about the Operator module.
@@ -234,7 +196,8 @@ def help(verbose: bool = True) -> None:
     >>> from QES.Algebra import Operator
     >>> Operator.help()
     """
-    print("""
+    print(
+        """
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                         QES Operator Module                                  ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -244,7 +207,8 @@ def help(verbose: bool = True) -> None:
 ║      >>> ops = model.operators                                               ║
 ║      >>> Sz = ops.sig_z(lattice=lattice, type_act='local')                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-""")
+"""
+    )
 
     print("Available Submodules:")
     print("-" * 60)

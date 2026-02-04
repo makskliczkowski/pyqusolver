@@ -96,6 +96,30 @@ except ImportError:
 class VMCSampler(Sampler):
     r"""
     Variational Markov Chain Monte Carlo sampler for quantum states.
+
+    This sampler performs Metropolis-Hastings sampling of a probability distribution
+    defined by a quantum wavefunction ansatz $\Psi(s)$.
+    The sampling probability is given by $P(s) \propto |\Psi(s)|^\mu$ (typically $\mu=2$ for Born rule).
+
+    Expected Network Interface
+    --------------------------
+    The `net` object passed to the sampler must provide one of the following callables:
+    1. `net.apply(params, x)`: Computes log-amplitudes for a batch of states `x`.
+    2. `net(params, x)`: Callable object.
+    3. `net.get_apply()`: Returns `(apply_fun, params)`.
+
+    Invariants
+    ----------
+    - **State Shape**: `(num_chains, *shape)`.
+    - **Log-Probabilities**: Maintained internally to avoid re-evaluation.
+      Re-evaluated only after updates or when `reset()` is called.
+    - **Fast Updates**: If `net` implements `log_psi_delta`, the sampler attempts to use
+      $O(1)$ or $O(N_{hidden})$ updates instead of full $O(N)$ re-evaluation.
+
+    Supported Backends
+    ------------------
+    - **JAX**: Fully JIT-compiled sampling kernels (`jax.lax.scan`).
+    - **NumPy**: Numba-accelerated sampling loops.
     """
 
     def __init__(
