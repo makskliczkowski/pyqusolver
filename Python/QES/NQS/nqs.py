@@ -131,6 +131,19 @@ class NQS(MonteCarloSolver):
     Implements a Monte Carlo-based training method for optimizing NQS models.
     Supports both NumPy and JAX backends for efficiency and flexibility.
 
+    The NQS represents the quantum wavefunction $\Psi(s)$ as a parameterized neural network.
+    The solver minimizes the energy expectation value $E = \langle \Psi | H | \Psi \rangle / \langle \Psi | \Psi \rangle$
+    using Variational Monte Carlo (VMC) and Stochastic Reconfiguration (SR) or Time-Dependent Variational Principle (TDVP).
+
+    Invariants & Shapes
+    -------------------
+    - **Input Shapes**: The network must accept inputs of shape `(batch_size, n_sites)`.
+    - **Output Shapes**: The network must return log-amplitudes of shape `(batch_size,)`.
+      Complex outputs are expected for general quantum states.
+    - **Dtypes**: `complex128` (or `complex64`) is strongly recommended for numerical stability,
+      especially for time evolution and phase-sensitive models.
+    - **Normalization**: The ansatz does not need to be normalized; VMC handles normalization via ratio estimators.
+
     Parallel Tempering (PT)
     -----------------------
     When `replica > 1` is passed, the sampler automatically enables Parallel Tempering:
