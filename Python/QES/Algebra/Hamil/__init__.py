@@ -68,6 +68,13 @@ _LAZY_IMPORTS = {
     "DummyVector": (".hamil_types", "DummyVector"),
 }
 
+# Submodule descriptions for help()
+_SUBMODULES = {
+    "hamil_energy": "Energy calculation methods for Hamiltonians (local energy)",
+    "hamil_energy_helper": "Helper functions for flattening/unpacking terms",
+    "hamil_jit_methods": "JIT-compiled analysis (level spacing, energy width)",
+    "hamil_types": "Hamiltonian enums and type checks",
+}
 
 def __getattr__(name: str) -> Any:
     """Lazily import functions/classes."""
@@ -83,7 +90,34 @@ def __dir__():
     return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
 
 
+def help(verbose: bool = True) -> None:
+    """
+    Print help information about the Hamiltonian module.
+    """
+    print("""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         QES Hamiltonian Module                               ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  Construction and energy evaluation for quantum Hamiltonians.                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+""")
+
+    print("Available Submodules:")
+    print("-" * 60)
+    for name, desc in _SUBMODULES.items():
+        print(f"  {name:32s} : {desc}")
+
+    if verbose:
+        print("\nKey Functions:")
+        print("-" * 60)
+        print("  - hamil_energy.local_energy_np_wrap  : Local energy estimator")
+        print("  - hamil_jit_methods.mean_level_spacing : Spectral statistics")
+        print("  - hamil_types.Hamiltonians           : Supported model types")
+
+
 __all__ = [
+    # Base
+    "help",
     # hamil_energy
     "process_mod_sites",
     "process_mod_nosites",
