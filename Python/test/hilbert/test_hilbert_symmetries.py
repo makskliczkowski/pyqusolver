@@ -910,7 +910,7 @@ class TestMatrixConstruction:
             hx=0.3,
             hz=0.0,  # No z-field -> has parity symmetry
         )
-        H_full = tfim_chain_full.matrix.todense()
+        H_full = tfim_chain_full.matrix().todense()
         evals_full = np.linalg.eigvalsh(H_full)
 
         print(f"{INDENT}  Full space: Nh={h_chain_full.Nh}, E0={evals_full[0]:.6f}")
@@ -949,7 +949,7 @@ class TestMatrixConstruction:
         tfim_sym = TransverseFieldIsing(
             lattice=lattice_chain, hilbert_space=h_combined, j=1.0, hx=0.3, hz=0.0
         )
-        H_sym = tfim_sym.matrix.todense()
+        H_sym = tfim_sym.matrix().todense()
         evals_sym = np.linalg.eigvalsh(H_sym)
         print(
             f"{INDENT}    Hamiltonian in symmetry sector: shape={H_sym.shape}, E_min={evals_sym[0]:.6f}"
@@ -969,7 +969,7 @@ class TestMatrixConstruction:
         tfim_sq_full = TransverseFieldIsing(
             lattice=lattice_square, hilbert_space=h_sq_full, j=1.0, hx=0.5, hz=0.0
         )
-        H_sq_full = tfim_sq_full.matrix.todense()
+        H_sq_full = tfim_sq_full.matrix().todense()
         evals_sq_full = np.linalg.eigvalsh(H_sq_full)
 
         print(f"{INDENT}  Full space: Nh={h_sq_full.Nh}, E0={evals_sq_full[0]:.6f}")
@@ -996,7 +996,7 @@ class TestMatrixConstruction:
             tfim_hc_full = TransverseFieldIsing(
                 lattice=lattice_hc, hilbert_space=h_hc_full, j=1.0, hx=0.4, hz=0.0
             )
-            H_hc_full = tfim_hc_full.matrix.todense()
+            H_hc_full = tfim_hc_full.matrix().todense()
             evals_hc_full = np.linalg.eigvalsh(H_hc_full)
 
             print(
@@ -1118,7 +1118,7 @@ class TestMatrixConstruction:
         tfim_full = TransverseFieldIsing(
             lattice=lattice_1d, hilbert_space=h_full, j=1.0, hx=0.0, hz=0.0
         )
-        H_full = tfim_full.matrix.todense()
+        H_full = tfim_full.matrix().todense()
         evals_full = np.linalg.eigvalsh(H_full)
 
         # All parity sectors
@@ -1130,7 +1130,7 @@ class TestMatrixConstruction:
             tfim_parity = TransverseFieldIsing(
                 lattice=lattice_1d, hilbert_space=h_parity, j=1.0, hx=0.0, hz=0.0
             )
-            H_parity = tfim_parity.matrix.todense()
+            H_parity = tfim_parity.matrix().todense()
             evals_parity = np.linalg.eigvalsh(H_parity)
             all_evals.extend(evals_parity)
             print(f"{INDENT}    Parity sector {parity_sector}: {len(evals_parity)} states")
@@ -1147,7 +1147,7 @@ class TestMatrixConstruction:
         tfim_full_2d = TransverseFieldIsing(
             lattice=lattice_2d, hilbert_space=h_full_2d, j=1.0, hx=0.0, hz=0.0
         )
-        H_full_2d = tfim_full_2d.matrix.todense()
+        H_full_2d = tfim_full_2d.matrix().todense()
         evals_full_2d = np.linalg.eigvalsh(H_full_2d)
 
         all_evals_2d = []
@@ -1158,7 +1158,7 @@ class TestMatrixConstruction:
             tfim_parity_2d = TransverseFieldIsing(
                 lattice=lattice_2d, hilbert_space=h_parity_2d, j=1.0, hx=0.0, hz=0.0
             )
-            H_parity_2d = tfim_parity_2d.matrix.todense()
+            H_parity_2d = tfim_parity_2d.matrix().todense()
             evals_parity_2d = np.linalg.eigvalsh(H_parity_2d)
             all_evals_2d.extend(evals_parity_2d)
             print(f"{INDENT}    Parity sector {parity_sector}: {len(evals_parity_2d)} states")
@@ -1176,7 +1176,7 @@ class TestMatrixConstruction:
             tfim_full_hc = TransverseFieldIsing(
                 lattice=lattice_hc, hilbert_space=h_full_hc, j=1.0, hx=0.0, hz=0.0
             )
-            H_full_hc = tfim_full_hc.matrix.todense()
+            H_full_hc = tfim_full_hc.matrix().todense()
             evals_full_hc = np.linalg.eigvalsh(H_full_hc)
 
             all_evals_hc = []
@@ -1187,7 +1187,7 @@ class TestMatrixConstruction:
                 tfim_parity_hc = TransverseFieldIsing(
                     lattice=lattice_hc, hilbert_space=h_parity_hc, j=1.0, hx=0.0, hz=0.0
                 )
-                H_parity_hc = tfim_parity_hc.matrix.todense()
+                H_parity_hc = tfim_parity_hc.matrix().todense()
                 evals_parity_hc = np.linalg.eigvalsh(H_parity_hc)
                 all_evals_hc.extend(evals_parity_hc)
                 print(f"{INDENT}    Parity sector {parity_sector}: {len(evals_parity_hc)} states")
@@ -1208,7 +1208,7 @@ class TestMatrixConstruction:
         tfim_full_trans = TransverseFieldIsing(
             lattice=lattice_1d, hilbert_space=h_full_trans, j=1.0, hx=0.5, hz=0.0
         )
-        H_full_trans = tfim_full_trans.matrix.todense()
+        H_full_trans = tfim_full_trans.matrix().todense()
         evals_full_trans = np.linalg.eigvalsh(H_full_trans)
 
         all_evals_trans_1d = []
@@ -1221,7 +1221,7 @@ class TestMatrixConstruction:
             tfim_trans = TransverseFieldIsing(
                 lattice=lattice_1d, hilbert_space=h_trans, j=1.0, hx=0.5, hz=0.0
             )
-            H_trans = tfim_trans.matrix.todense()
+            H_trans = tfim_trans.matrix().todense()
             evals_trans = np.linalg.eigvalsh(H_trans)
             all_evals_trans_1d.extend(evals_trans)
             print(f"{INDENT}    k={k}: {len(evals_trans)} states")
@@ -1250,7 +1250,7 @@ class TestMatrixConstruction:
         tfim_full_2d_trans = TransverseFieldIsing(
             lattice=lattice_2d, hilbert_space=h_full_2d_trans, j=1.0, hx=0.5, hz=0.0
         )
-        H_full_2d_trans = tfim_full_2d_trans.matrix.todense()
+        H_full_2d_trans = tfim_full_2d_trans.matrix().todense()
         evals_full_2d_trans = np.linalg.eigvalsh(H_full_2d_trans)
 
         all_evals_trans_2d = []
@@ -1266,7 +1266,7 @@ class TestMatrixConstruction:
                 tfim_trans_2d = TransverseFieldIsing(
                     lattice=lattice_2d, hilbert_space=h_trans_2d, j=1.0, hx=0.5, hz=0.0
                 )
-                H_trans_2d = tfim_trans_2d.matrix.todense()
+                H_trans_2d = tfim_trans_2d.matrix().todense()
                 evals_trans_2d = np.linalg.eigvalsh(H_trans_2d)
                 all_evals_trans_2d.extend(evals_trans_2d)
                 print(f"{INDENT}    (kx={kx}, ky={ky}): {len(evals_trans_2d)} states")
@@ -1295,7 +1295,7 @@ class TestMatrixConstruction:
 
         # print(f"\n{INDENT}3a: 1D Chain (L=4) ParityZ, hx=0, hz=0")
         # tfim_nofield = TransverseFieldIsing(lattice=lattice_1d, hilbert_space=h_full, j=1.0, hx=0.0, hz=0.0)
-        # H_nofield = tfim_nofield.matrix.todense()
+        # H_nofield = tfim_nofield.matrix().todense()
         # evals_nofield = np.linalg.eigvalsh(H_nofield)
         #
         # all_evals_nofield = []
@@ -1312,7 +1312,7 @@ class TestMatrixConstruction:
         #         hx=0.0,
         #         hz=0.0
         #     )
-        #     H_parity_nofield = tfim_parity_nofield.matrix.todense()
+        #     H_parity_nofield = tfim_parity_nofield.matrix().todense()
         #     evals_parity_nofield = np.linalg.eigvalsh(H_parity_nofield)
         #     all_evals_nofield.extend(evals_parity_nofield)
         #     print(f"{INDENT}    Parity sector {parity_sector}: {len(evals_parity_nofield)} states")
@@ -1331,7 +1331,7 @@ class TestMatrixConstruction:
         # # Full spectrum without field
         # h_full_u1 = HilbertSpace(lattice=lattice_u1)
         # tfim_full_u1 = TransverseFieldIsing(lattice=lattice_u1, hilbert_space=h_full_u1, j=1.0, hx=0.0, hz=0.0)
-        # H_full_u1 = tfim_full_u1.matrix.todense()
+        # H_full_u1 = tfim_full_u1.matrix().todense()
         # evals_full_u1 = np.linalg.eigvalsh(H_full_u1)
         #
         # # All U(1) sectors
@@ -1384,8 +1384,9 @@ class TestMatrixConstruction:
         sz_total_op = sig_z_total(ns=ns, sites=list(range(ns)))  # Total sigma_z
 
         # Build matrices in symmetry sector
-        H_x = build_operator_matrix(sx_op, hilbert_space=hilbert, sparse=True)
-        H_sz_total = build_operator_matrix(sz_total_op, hilbert_space=hilbert, sparse=True)
+        # Note: Must pass the jitted .int function, not the Operator object itself
+        H_x = build_operator_matrix(sx_op.int, hilbert_space=hilbert, sparse=True)
+        H_sz_total = build_operator_matrix(sz_total_op.int, hilbert_space=hilbert, sparse=True)
 
         # Basic validation
         assert H_x.shape == (hilbert.dim, hilbert.dim)

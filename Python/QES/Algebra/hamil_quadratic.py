@@ -526,6 +526,15 @@ class QuadraticHamiltonian(Hamiltonian):
             
         val         = [-v if remove else v for v in value]
         valc        = [v.conjugate() if isinstance(v, complex) or hasattr(v, "conjugate") else v for v in val]
+
+        # Extract scalar if possible to prevent broadcasting errors
+        if len(val) == 1:
+            val_scalar = val[0]
+            valc_scalar = valc[0]
+        else:
+            val_scalar = val
+            valc_scalar = valc
+
         term_type   = QuadraticTerm.from_str(term_typ) if isinstance(term_typ, str) else term_typ
 
         if term_type is QuadraticTerm.Onsite:
@@ -533,9 +542,9 @@ class QuadraticHamiltonian(Hamiltonian):
             for site in sites:
                 i = site
                 if self._is_numpy:
-                    self._hamil_sp[i, i] += val
+                    self._hamil_sp[i, i] += val_scalar
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, i].add(val)
+                    self._hamil_sp = self._hamil_sp.at[i, i].add(val_scalar)
 
         elif term_type is QuadraticTerm.Hopping:
 
@@ -546,11 +555,11 @@ class QuadraticHamiltonian(Hamiltonian):
                 i, j = sites[idx], sites[idx + 1]
                 
                 if self._is_numpy:
-                    self._hamil_sp[i, j] += val
-                    self._hamil_sp[j, i] += valc
+                    self._hamil_sp[i, j] += val_scalar
+                    self._hamil_sp[j, i] += valc_scalar
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, j].add(val)
-                    self._hamil_sp = self._hamil_sp.at[j, i].add(valc)
+                    self._hamil_sp = self._hamil_sp.at[i, j].add(val_scalar)
+                    self._hamil_sp = self._hamil_sp.at[j, i].add(valc_scalar)
 
         elif term_type is QuadraticTerm.Pairing:
             
@@ -566,18 +575,18 @@ class QuadraticHamiltonian(Hamiltonian):
 
                 if self._isfermions:  # antisymmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += value
-                        self._delta_sp[j, i] -= value
+                        self._delta_sp[i, j] += val_scalar
+                        self._delta_sp[j, i] -= val_scalar
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(-value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(val_scalar)
+                        self._delta_sp = self._delta_sp.at[j, i].add(-val_scalar)
                 else:  # bosons: symmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += value
-                        self._delta_sp[j, i] += value
+                        self._delta_sp[i, j] += val_scalar
+                        self._delta_sp[j, i] += val_scalar
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(val_scalar)
+                        self._delta_sp = self._delta_sp.at[j, i].add(val_scalar)
 
         else:
             raise TypeError(term_type)
