@@ -4,15 +4,22 @@ topological entanglement entropy (TEE) and mutual information,
 supporting both symmetric and non-symmetric many-body states.
 
 ------------------------------------------------------------------------------
-File        : Python/examples/example_entanglement_module.py
+File        : examples/example_entanglement.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-12-30
 ------------------------------------------------------------------------------
 """
+import sys
+import os
+
+# Ensure QES is in path if running from root
+current_dir = os.getcwd()
+if os.path.isdir(os.path.join(current_dir, "Python")):
+    sys.path.append(os.path.join(current_dir, "Python"))
 
 from typing import Dict, List, Tuple, Union
-
 import numpy as np
+import QES
 
 try:
     from QES.Algebra.hilbert import HilbertSpace
@@ -20,11 +27,10 @@ try:
     from QES.general_python.common.flog import Logger
     from QES.general_python.physics.entanglement_module import get_entanglement_module
 except ImportError:
-    raise ImportError("QES package is required to run this example.")
+    raise ImportError("QES package is required to run this example. Ensure 'Python/' is in PYTHONPATH.")
 
 # Initialize logger
-logger = Logger(name="EntanglementExample", verbose=True)
-
+logger = Logger(name="EntanglementExample")
 
 def get_entanglement_entropy(
     hamil: HeisenbergKitaev, hilbert: HilbertSpace, subsystem: Union[int, float]
@@ -35,10 +41,10 @@ def get_entanglement_entropy(
 
     Supports symmetry-reduced states automatically via the improved EntanglementModule.
     """
-    from QES.Algebra.Symmetries.jit.density_jit import (
-        mutual_information_symmetries,
-        rho_symmetries,
-        topological_entropy_symmetries,
+    from QES.Algebra.Symmetries.jit.density_jit import rho_symmetries
+    from QES.Algebra.Symmetries.jit.entropy_jit import (
+        mutual_information as mutual_information_symmetries,
+        topological_entropy as topological_entropy_symmetries,
     )
     from QES.general_python.physics.density_matrix import rho_spectrum
     from QES.general_python.physics.entanglement_module import MaskGenerator
@@ -74,7 +80,6 @@ def get_entanglement_entropy(
 
     logger.info(
         f"Computed entanglement entropy for {num_states} states on subsystem of size {va} sites.",
-        color="green",
         lvl=1,
     )
 
@@ -84,7 +89,6 @@ def get_entanglement_entropy(
     if has_sym:
         logger.info(
             "Computing mutual information with symmetries for all site pairs.",
-            color="green",
             lvl=1,
         )
         try:
@@ -95,7 +99,7 @@ def get_entanglement_entropy(
         except Exception as e:
             logger.error(f"Failed to compute symmetric mutual information: {e}", lvl=0)
     else:
-        logger.info("Computing mutual information for all site pairs.", color="green", lvl=1)
+        logger.info("Computing mutual information for all site pairs.", lvl=1)
         for i in range(ns):
             for j in range(i + 1, ns):
                 # Standard mutual information helper
@@ -108,7 +112,7 @@ def get_entanglement_entropy(
                     )
 
     logger.info(
-        "Successfully computed mutual information for all site pairs.", color="green", lvl=1
+        "Successfully computed mutual information for all site pairs.", lvl=1
     )
 
     # 3. Add topological entanglement entropy (TEE) computation
@@ -131,7 +135,7 @@ def get_entanglement_entropy(
                 topological = tee_results
 
             logger.info(
-                f"Computed topological entanglement entropy: γ = {gamma:.6f}", color="green", lvl=1
+                f"Computed topological entanglement entropy: gamma = {gamma:.6f}", lvl=1
             )
         except Exception as e:
             logger.error(f"Failed to compute TEE: {e}", lvl=0)
@@ -142,21 +146,31 @@ def get_entanglement_entropy(
     return entropies, mut_info, purity, topological
 
 
-if __name__ == "__main__":
+def main():
+    QES.qes_reseed(42)
     # Example usage with a small Honeycomb Kitaev model
     from QES.Algebra.Symmetries.symmetry_container import SymmetryContainer
     from QES.general_python.lattices.honeycomb import HoneycombLattice
+    from QES.Algebra.Operator.operator import SymmetryGenerators
+    from QES.Algebra.Symmetries.translation import TranslationSymmetry
 
     # Create 2x2x1 Honeycomb lattice (8 sites)
     lat = HoneycombLattice(lx=2, ly=2, bc="pbc")
 
     # Create Heisenberg-Kitaev model
-    model = HeisenbergKitaev(lattice=lat, K=1.0, J=0.1, hz=0.05)
+    # Use complex128 to ensure compatibility with all spin operators
+    model = HeisenbergKitaev(lattice=lat, K=1.0, J=0.1, hz=0.05, dtype=np.complex128)
 
     # Add symmetries (Translation)
-    sym = SymmetryContainer(lattice=lat)
-    sym.add_translation()
-    # sym.add_parity() # optionally add more
+    sym = SymmetryContainer(ns=lat.ns, lattice=lat)
+
+    # Add translation along X and Y (k=0 sector for ground state)
+    # Note: For Honeycomb 2x2, we have translations in both directions.
+    trans_x = TranslationSymmetry(lattice=lat, sector=0, ns=lat.ns, direction='x')
+    sym.add_generator(SymmetryGenerators.Translation_x, sector=0, operator=trans_x)
+
+    trans_y = TranslationSymmetry(lattice=lat, sector=0, ns=lat.ns, direction='y')
+    sym.add_generator(SymmetryGenerators.Translation_y, sector=0, operator=trans_y)
 
     # Create Hilbert space with symmetries
     hilbert = HilbertSpace(lattice=lat, symmetry_container=sym)
@@ -171,9 +185,15 @@ if __name__ == "__main__":
     print("\nResults:")
     print(f"Ground State EE: {entropies[0]:.6f}")
     print(f"Ground State Purity: {purity[0]:.6f}")
-    if gamma is not None:
-        print(f"Topological Entanglement Entropy γ: {gamma:.6f}")
+    if gamma is not None and isinstance(gamma, (float, int)):
+         print(f"Topological Entanglement Entropy gamma: {gamma:.6f}")
+    elif gamma:
+         print(f"Topological Entanglement Entropy gamma: {gamma}")
+
 
     print("\nMutual Information (first few pairs):")
     for k, v in list(mut_info.items())[:5]:
         print(f"  I({k[0]}, {k[1]}) = {v:.6f}")
+
+if __name__ == "__main__":
+    main()

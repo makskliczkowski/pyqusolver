@@ -7,15 +7,24 @@ This example shows:
 2. How to visualize region construction with overlaps and complements
 3. How to validate regions before entropy computation
 """
+import sys
+import os
+
+# Ensure QES is in path if running from root
+current_dir = os.getcwd()
+if os.path.isdir(os.path.join(current_dir, "Python")):
+    sys.path.append(os.path.join(current_dir, "Python"))
 
 import matplotlib.pyplot as plt
+import QES
 
-from QES.general_python.lattices.lattice import SquareLattice
+# Corrected import: SquareLattice is exposed in lattices, not lattices.lattice
+from QES.general_python.lattices import SquareLattice
 
 
 def create_kitaev_preskill_regions_3x3(lattice):
     """
-    Manually define Kitaev-Preskill regions A, B, C for a 3×3 lattice.
+    Manually define Kitaev-Preskill regions A, B, C for a 3x3 lattice.
 
     Kitaev-Preskill construction:
     - Region A: left portion
@@ -26,7 +35,7 @@ def create_kitaev_preskill_regions_3x3(lattice):
     Returns dict with region names and site indices.
     """
     # Get site indices (assuming row-major ordering: [0,0], [0,1], [0,2], [1,0], ...)
-    # 3×3 lattice has 9 sites total
+    # 3x3 lattice has 9 sites total
     # Site layout:
     # 0 1 2
     # 3 4 5
@@ -50,7 +59,7 @@ def validate_region_construction(lattice, regions):
     - Regions have overlaps (needed for MI calculation)
     - Coverage statistics
     """
-    n_sites = lattice.n
+    n_sites = lattice.ns
     all_sites = set()
     site_counts = {}
 
@@ -64,7 +73,7 @@ def validate_region_construction(lattice, regions):
         print(f"Region {name}: {n_in_region} sites ({coverage:.1f}% coverage)")
 
         if coverage >= 100:
-            print(f"  ⚠️  WARNING: Region {name} covers entire system!")
+            print(f"  Warning: Region {name} covers entire system!")
             print("      This will give S=0 (pure state)")
 
         for idx in indices:
@@ -82,7 +91,7 @@ def validate_region_construction(lattice, regions):
             regions_with_site = [name for name, indices in regions.items() if idx in indices]
             print(f"  Site {idx}: in {count} regions {regions_with_site}")
     else:
-        print("  ⚠️  WARNING: No overlaps detected!")
+        print("  Warning: No overlaps detected!")
         print("     Kitaev-Preskill TEE requires overlapping regions")
 
     # Check complement
@@ -166,14 +175,17 @@ def visualize_individual_regions(lattice, regions):
 
 def main():
     """Demonstrate region visualization for debugging TEE calculations."""
+    QES.qes_reseed(42)
 
     print("\n" + "=" * 60)
     print("KITAEV-PRESKILL REGION VISUALIZATION DEMO")
     print("=" * 60)
 
-    # Create 3×3 square lattice
-    lattice = SquareLattice(Lx=3, Ly=3, Lz=1, boundary="open")
-    print(f"\nLattice: {lattice.n} sites")
+    # Create 3x3 square lattice
+    # Use lowercase arguments (lx, ly, lz) and 'bc' for boundary conditions
+    # Must specify dim=2 explicitly to avoid initialization issues
+    lattice = SquareLattice(dim=2, lx=3, ly=3, lz=1, bc="obc")
+    print(f"\nLattice: {lattice.ns} sites")
 
     # Define Kitaev-Preskill regions
     regions = create_kitaev_preskill_regions_3x3(lattice)
@@ -184,9 +196,14 @@ def main():
     # Create visualizations
     print("\nGenerating visualizations...")
 
-    fig1 = visualize_regions_basic(lattice, regions)
-    fig2 = visualize_regions_enhanced(lattice, regions)
-    fig3 = visualize_individual_regions(lattice, regions)
+    # Visualization might require display backend
+    try:
+        fig1 = visualize_regions_basic(lattice, regions)
+        fig2 = visualize_regions_enhanced(lattice, regions)
+        fig3 = visualize_individual_regions(lattice, regions)
+        print("Visualizations generated.")
+    except Exception as e:
+        print(f"Visualization generation failed (possibly due to backend): {e}")
 
     print("\n" + "=" * 60)
     print("INTERPRETATION GUIDE")
@@ -205,12 +222,12 @@ For Kitaev-Preskill topological entanglement entropy:
    - Not required for basic KP construction
 
 3. COVERAGE:
-   - Should be < 100% (otherwise pure state → S=0)
+   - Should be < 100% (otherwise pure state -> S=0)
    - Each region should be a proper subsystem
    
 4. EXPECTED TEE VALUE:
-   - For Kitaev toric code ground state: ln(2) ≈ 0.693
-   - NOT sqrt(2) ≈ 1.414
+   - For Kitaev toric code ground state: ln(2) approx 0.693
+   - NOT sqrt(2) approx 1.414
    - Value of 0 indicates pure state or region issues
 
 If you get unexpected TEE values:
@@ -221,7 +238,11 @@ If you get unexpected TEE values:
     """)
     print("=" * 60)
 
-    plt.show()
+    # In CI/Headless, plt.show() might block or fail. Only call if interactive.
+    if os.environ.get("DISPLAY"):
+        plt.show()
+    else:
+        print("Skipping plt.show() (no DISPLAY)")
 
 
 if __name__ == "__main__":
