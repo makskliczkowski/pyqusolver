@@ -25,6 +25,7 @@ from typing import Tuple
 import numba
 import numpy as np
 import pytest
+import scipy.sparse as sp
 from scipy.sparse import csr_matrix
 
 # Import QES modules
@@ -872,7 +873,7 @@ class TestMatrixConstruction:
         print(f"{INDENT}(ok) TransverseFieldIsing construction validated")
 
         # Test matrix property - should build matrix automatically
-        matrix = hamiltonian.matrix
+        matrix = hamiltonian.matrix()
         assert matrix is not None
         assert hasattr(matrix, "shape")
         expected_dim = 2**ns  # For spin-1/2 systems
@@ -910,7 +911,7 @@ class TestMatrixConstruction:
             hx=0.3,
             hz=0.0,  # No z-field -> has parity symmetry
         )
-        H_full = tfim_chain_full.matrix.todense()
+        H_full = tfim_chain_full.matrix().todense()
         evals_full = np.linalg.eigvalsh(H_full)
 
         print(f"{INDENT}  Full space: Nh={h_chain_full.Nh}, E0={evals_full[0]:.6f}")
@@ -949,7 +950,7 @@ class TestMatrixConstruction:
         tfim_sym = TransverseFieldIsing(
             lattice=lattice_chain, hilbert_space=h_combined, j=1.0, hx=0.3, hz=0.0
         )
-        H_sym = tfim_sym.matrix.todense()
+        H_sym = tfim_sym.matrix().todense()
         evals_sym = np.linalg.eigvalsh(H_sym)
         print(
             f"{INDENT}    Hamiltonian in symmetry sector: shape={H_sym.shape}, E_min={evals_sym[0]:.6f}"
@@ -969,7 +970,7 @@ class TestMatrixConstruction:
         tfim_sq_full = TransverseFieldIsing(
             lattice=lattice_square, hilbert_space=h_sq_full, j=1.0, hx=0.5, hz=0.0
         )
-        H_sq_full = tfim_sq_full.matrix.todense()
+        H_sq_full = tfim_sq_full.matrix().todense()
         evals_sq_full = np.linalg.eigvalsh(H_sq_full)
 
         print(f"{INDENT}  Full space: Nh={h_sq_full.Nh}, E0={evals_sq_full[0]:.6f}")
@@ -996,7 +997,7 @@ class TestMatrixConstruction:
             tfim_hc_full = TransverseFieldIsing(
                 lattice=lattice_hc, hilbert_space=h_hc_full, j=1.0, hx=0.4, hz=0.0
             )
-            H_hc_full = tfim_hc_full.matrix.todense()
+            H_hc_full = tfim_hc_full.matrix().todense()
             evals_hc_full = np.linalg.eigvalsh(H_hc_full)
 
             print(
@@ -1118,7 +1119,7 @@ class TestMatrixConstruction:
         tfim_full = TransverseFieldIsing(
             lattice=lattice_1d, hilbert_space=h_full, j=1.0, hx=0.0, hz=0.0
         )
-        H_full = tfim_full.matrix.todense()
+        H_full = tfim_full.matrix().todense()
         evals_full = np.linalg.eigvalsh(H_full)
 
         # All parity sectors
@@ -1130,7 +1131,7 @@ class TestMatrixConstruction:
             tfim_parity = TransverseFieldIsing(
                 lattice=lattice_1d, hilbert_space=h_parity, j=1.0, hx=0.0, hz=0.0
             )
-            H_parity = tfim_parity.matrix.todense()
+            H_parity = tfim_parity.matrix().todense()
             evals_parity = np.linalg.eigvalsh(H_parity)
             all_evals.extend(evals_parity)
             print(f"{INDENT}    Parity sector {parity_sector}: {len(evals_parity)} states")
@@ -1147,7 +1148,7 @@ class TestMatrixConstruction:
         tfim_full_2d = TransverseFieldIsing(
             lattice=lattice_2d, hilbert_space=h_full_2d, j=1.0, hx=0.0, hz=0.0
         )
-        H_full_2d = tfim_full_2d.matrix.todense()
+        H_full_2d = tfim_full_2d.matrix().todense()
         evals_full_2d = np.linalg.eigvalsh(H_full_2d)
 
         all_evals_2d = []
@@ -1158,7 +1159,7 @@ class TestMatrixConstruction:
             tfim_parity_2d = TransverseFieldIsing(
                 lattice=lattice_2d, hilbert_space=h_parity_2d, j=1.0, hx=0.0, hz=0.0
             )
-            H_parity_2d = tfim_parity_2d.matrix.todense()
+            H_parity_2d = tfim_parity_2d.matrix().todense()
             evals_parity_2d = np.linalg.eigvalsh(H_parity_2d)
             all_evals_2d.extend(evals_parity_2d)
             print(f"{INDENT}    Parity sector {parity_sector}: {len(evals_parity_2d)} states")
@@ -1176,7 +1177,7 @@ class TestMatrixConstruction:
             tfim_full_hc = TransverseFieldIsing(
                 lattice=lattice_hc, hilbert_space=h_full_hc, j=1.0, hx=0.0, hz=0.0
             )
-            H_full_hc = tfim_full_hc.matrix.todense()
+            H_full_hc = tfim_full_hc.matrix().todense()
             evals_full_hc = np.linalg.eigvalsh(H_full_hc)
 
             all_evals_hc = []
@@ -1187,7 +1188,7 @@ class TestMatrixConstruction:
                 tfim_parity_hc = TransverseFieldIsing(
                     lattice=lattice_hc, hilbert_space=h_parity_hc, j=1.0, hx=0.0, hz=0.0
                 )
-                H_parity_hc = tfim_parity_hc.matrix.todense()
+                H_parity_hc = tfim_parity_hc.matrix().todense()
                 evals_parity_hc = np.linalg.eigvalsh(H_parity_hc)
                 all_evals_hc.extend(evals_parity_hc)
                 print(f"{INDENT}    Parity sector {parity_sector}: {len(evals_parity_hc)} states")
@@ -1208,7 +1209,7 @@ class TestMatrixConstruction:
         tfim_full_trans = TransverseFieldIsing(
             lattice=lattice_1d, hilbert_space=h_full_trans, j=1.0, hx=0.5, hz=0.0
         )
-        H_full_trans = tfim_full_trans.matrix.todense()
+        H_full_trans = tfim_full_trans.matrix().todense()
         evals_full_trans = np.linalg.eigvalsh(H_full_trans)
 
         all_evals_trans_1d = []
@@ -1221,7 +1222,7 @@ class TestMatrixConstruction:
             tfim_trans = TransverseFieldIsing(
                 lattice=lattice_1d, hilbert_space=h_trans, j=1.0, hx=0.5, hz=0.0
             )
-            H_trans = tfim_trans.matrix.todense()
+            H_trans = tfim_trans.matrix().todense()
             evals_trans = np.linalg.eigvalsh(H_trans)
             all_evals_trans_1d.extend(evals_trans)
             print(f"{INDENT}    k={k}: {len(evals_trans)} states")
@@ -1250,7 +1251,7 @@ class TestMatrixConstruction:
         tfim_full_2d_trans = TransverseFieldIsing(
             lattice=lattice_2d, hilbert_space=h_full_2d_trans, j=1.0, hx=0.5, hz=0.0
         )
-        H_full_2d_trans = tfim_full_2d_trans.matrix.todense()
+        H_full_2d_trans = tfim_full_2d_trans.matrix().todense()
         evals_full_2d_trans = np.linalg.eigvalsh(H_full_2d_trans)
 
         all_evals_trans_2d = []
@@ -1266,7 +1267,7 @@ class TestMatrixConstruction:
                 tfim_trans_2d = TransverseFieldIsing(
                     lattice=lattice_2d, hilbert_space=h_trans_2d, j=1.0, hx=0.5, hz=0.0
                 )
-                H_trans_2d = tfim_trans_2d.matrix.todense()
+                H_trans_2d = tfim_trans_2d.matrix().todense()
                 evals_trans_2d = np.linalg.eigvalsh(H_trans_2d)
                 all_evals_trans_2d.extend(evals_trans_2d)
                 print(f"{INDENT}    (kx={kx}, ky={ky}): {len(evals_trans_2d)} states")
@@ -1494,10 +1495,15 @@ class TestMatrixConstruction:
         # Basic checks
         expected_dim = ns  # For quadratic Hamiltonians, dimension is ns for fermions
         assert H_matrix.shape == (expected_dim, expected_dim)
-        assert H_matrix.nnz > 0
+
+        if sp.issparse(H_matrix):
+            assert H_matrix.nnz > 0
+            H_dense = H_matrix.toarray()
+        else:
+            assert np.count_nonzero(H_matrix) > 0
+            H_dense = H_matrix
 
         # Should be Hermitian
-        H_dense = H_matrix.toarray()
         assert np.allclose(H_dense, H_dense.T.conj())
 
         print(f"{INDENT}Matrix shape: {H_matrix.shape}")
@@ -1521,8 +1527,10 @@ class TestMatrixConstruction:
         print_subsection(f"Operator matrix properties (ns={ns})")
 
         # Use existing operators
-        sz_op = sig_z(ns=ns, sites=[0])
-        sx_op = sig_x(ns=ns, sites=[0])
+        # Note: Must use symmetric operators (sum over sites) for Hermitian check in symmetry basis
+        # because the projection of a non-symmetric operator is not necessarily Hermitian/well-defined via simple projection.
+        sz_op = sig_z_total(ns=ns, sites=list(range(ns)))
+        sx_op = sig_x(ns=ns, sites=list(range(ns))) # Sum over all sites makes it translation invariant
 
         H_z = build_operator_matrix(sz_op, hilbert_space=hilbert, sparse=True)
         H_x = build_operator_matrix(sx_op, hilbert_space=hilbert, sparse=True)
@@ -1608,9 +1616,11 @@ class TestSymmetryDiagnostics:
         Uses a numba-compiled function that implements sigma_x flips on all sites,
         equivalent to the library's sigma_x_int function but optimized for this use case.
         """
+        # Capture ns in a closure or partial, but numba handles closures carefully.
+        # simpler to just hardcode it or use a wrapper if build_operator_matrix passes only state.
 
         @numba.njit
-        def transverse_field_operator(state, ns):
+        def transverse_field_operator(state):
             """Sum of sigma_x over all sites (equivalent to library's sigma_x_int with all sites)."""
             new_states = np.empty(ns, dtype=np.int64)
             values = np.ones(ns, dtype=np.float64)
@@ -1625,16 +1635,22 @@ class TestSymmetryDiagnostics:
         """
         Create a sigma_z operator function for nearest-neighbor interactions.
         """
+        # We need to import sigma_z_int inside or ensure it's available globally.
+        # But for the test, we can implement it directly to avoid dependency issues in closure.
 
         @numba.njit
-        def sigma_zz_operator(state, ns):
+        def sigma_zz_operator(state):
             """Sum of sigma_z_i * sigma_z_{i+1} over all sites."""
             value = 0.0
             for i in range(ns):
-                # Apply sigma_z to sites i and (i+1)%ns
-                _, coeff_i = sigma_z_int(state, ns, [i])
-                _, coeff_ip1 = sigma_z_int(state, ns, [(i + 1) % ns])
-                value += coeff_i[0] * coeff_ip1[0]
+                # sigma_z on site i: if bit i is 1 -> -1, if 0 -> +1
+                sz_i = -1.0 if ((state >> i) & 1) else 1.0
+
+                # sigma_z on site i+1
+                j = (i + 1) % ns
+                sz_j = -1.0 if ((state >> j) & 1) else 1.0
+
+                value += sz_i * sz_j
             return np.array([state], dtype=np.int64), np.array([value], dtype=np.float64)
 
         return sigma_zz_operator

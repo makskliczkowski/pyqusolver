@@ -302,6 +302,40 @@ class QuadraticHamiltonian(Hamiltonian):
             self._log("Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.", lvl=2, log="info")
 
         self._name                      = f"QuadraticHamiltonian(Ns={self._ns},{'BdG' if not self._particle_conserving else 'N-conserving'})"
+
+    def matrix(
+        self,
+        *args,
+        dim=None,
+        matrix_type="sparse",
+        dtype=None,
+        hilbert_1=None,
+        hilbert_2=None,
+        use_numpy: bool = True,
+        **kwargs,
+    ):
+        """
+        Generates the matrix representation of the operator.
+        Overrides base method to use internal quadratic matrix construction.
+        """
+        # If no arguments provided that imply many-body construction, return the single-particle matrix
+        if not args and dim is None and hilbert_1 is None and hilbert_2 is None:
+            if self._particle_conserving:
+                return self.build_single_particle_matrix()
+            else:
+                return self.build_bdg_matrix()
+
+        # Otherwise delegate to parent
+        return super().matrix(
+            *args,
+            dim=dim,
+            matrix_type=matrix_type,
+            dtype=dtype,
+            hilbert_1=hilbert_1,
+            hilbert_2=hilbert_2,
+            use_numpy=use_numpy,
+            **kwargs
+        )
         self._occupied_orbitals_cached  = None
         self._diagonalization_requested = False
         self._F                         = None
@@ -315,6 +349,18 @@ class QuadraticHamiltonian(Hamiltonian):
         self._compiled_funcs            = {}    # Numba/JAX compiled functions cache
         self._last_occupation_key       = None  # Track last occupation for cache efficiency
         
+        # Process initialization terms
+        if "hopping" in kwargs:
+            for i, j, val in kwargs["hopping"]:
+                self.add_hopping(i, j, val)
+
+        if "onsite" in kwargs:
+            for i, val in kwargs["onsite"]:
+                self.add_onsite(i, val)
+
+        if "pairing" in kwargs:
+            for i, j, val in kwargs["pairing"]:
+                self.add_pairing(i, j, val)
         
     ##########################################################################
     #! Class methods for direct matrix initialization

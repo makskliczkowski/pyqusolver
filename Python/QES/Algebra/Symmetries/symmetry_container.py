@@ -890,6 +890,10 @@ class SymmetryContainer:
         if not self.generators:
             self.logger.info("No symmetry generators - empty group")
             self.symmetry_group = [()]  # Identity element
+            try:
+                self._compiled_group, self._tables = self.build_compiled_group()
+            except Exception as e:
+                raise RuntimeError(f"Couldn't create the precompiled symmetry groups. Error: {e}")
             return
 
         # Separate translations from other generators

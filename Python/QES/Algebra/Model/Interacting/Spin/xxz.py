@@ -148,6 +148,7 @@ class XXZ(hamil_module.Hamiltonian):
 
         # Build the Hamiltonian
         self._set_local_energy_operators()
+        self.setup_instruction_codes()
         self._set_local_energy_functions()
         self._log(f"XXZ Hamiltonian initialized for {self.ns} sites.", lvl=1, log="debug")
 
