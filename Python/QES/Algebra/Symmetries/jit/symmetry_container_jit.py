@@ -241,11 +241,13 @@ def scan_chunk_find_representatives(
                 proj += np.conj(chi[g]) * phase
 
         if np.abs(proj) > _SYM_NORM_THRESHOLD:
-            if min_state == state and min_g != _INVALID_REPR_IDX:
+            if min_state == state and min_g != -1:
                 repr_chunker[state - start_state] = True
 
-            repr_map[state] = min_state
-            phase_idx[state] = g_to_pidx[min_g]
+            if repr_map is not None:
+                repr_map[state] = min_state
+            if phase_idx is not None:
+                phase_idx[state] = g_to_pidx[min_g]
 
 
 # ---------------------------

@@ -1691,7 +1691,10 @@ class SymmetryContainer:
 
         representative_list = np.zeros((repr_counter,), dtype=np.int64)
         representative_norms = np.zeros((repr_counter,), dtype=np.float64)
-        fill_representatives(compact_repr_map, representative_list)
+
+        if compact_repr_map is not None:
+            fill_representatives(compact_repr_map, representative_list)
+
         if self.verbose:
             self.logger.info(
                 f"Filled representative list: D={len(representative_list)}. Took: {time.time() - t0:.2e}s",
