@@ -125,10 +125,15 @@ class DummyVector:
         backend = backend or self._backend
         tgt_dt = distinguish_type(dtype)
 
-        if backend.iscomplexobj(self.val) and not backend.iscomplexobj(dtype):
+        is_val_complex = backend.iscomplexobj(self.val)
+        # Use numpy.dtype to check if the target dtype is complex,
+        # as backend.iscomplexobj(dtype) can fail if dtype is a numpy.dtype instance (especially in JAX)
+        is_tgt_complex = np.dtype(tgt_dt).kind == 'c'
+
+        if is_val_complex and not is_tgt_complex:
             # If we're casting from complex to real, take the real part
             self.val = backend.real(self.val)
-        elif not backend.iscomplexobj(self.val) and backend.iscomplexobj(dtype):
+        elif not is_val_complex and is_tgt_complex:
             # If we're casting from real to complex, add a zero imaginary part
             self.val = backend.asarray(self.val, dtype=backend.complex128)
 

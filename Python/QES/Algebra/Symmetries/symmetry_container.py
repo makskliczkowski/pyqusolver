@@ -890,7 +890,6 @@ class SymmetryContainer:
         if not self.generators:
             self.logger.info("No symmetry generators - empty group")
             self.symmetry_group = [()]  # Identity element
-            return
 
         # Separate translations from other generators
         translations: Dict[str, Tuple[SymmetryOperator, SymmetrySpec]] = {} # direction -> (op, spec)

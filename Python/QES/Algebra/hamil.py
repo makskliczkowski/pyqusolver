@@ -1181,6 +1181,47 @@ class Hamiltonian(BasisAwareOperator):
         self._is_built = True
 
     # ----------------------------------------------------------------------------------------------
+
+    def matrix(
+        self,
+        *args,
+        dim=None,
+        matrix_type="sparse",
+        dtype=None,
+        hilbert_1=None,
+        hilbert_2=None,
+        use_numpy: bool = True,
+        **kwargs,
+    ) -> Optional["Array"]:
+        """
+        Generates the matrix representation.
+        Overrides Operator.matrix to supply default hilbert_space from self._hilbert_space if available.
+        """
+        if hilbert_1 is None:
+            hilbert_1 = getattr(self, "_hilbert_space", None)
+
+        # Fallback to internal dimension if available
+        if (
+            dim is None
+            and hilbert_1 is None
+            and hasattr(self, "_nh")
+            and self._nh is not None
+            and self._nh > 0
+        ):
+            dim = self._nh
+
+        return super().matrix(
+            *args,
+            dim=dim,
+            matrix_type=matrix_type,
+            dtype=dtype,
+            hilbert_1=hilbert_1,
+            hilbert_2=hilbert_2,
+            use_numpy=use_numpy,
+            **kwargs,
+        )
+
+    # ----------------------------------------------------------------------------------------------
     #! Local energy methods - Abstract methods
     # ----------------------------------------------------------------------------------------------
 

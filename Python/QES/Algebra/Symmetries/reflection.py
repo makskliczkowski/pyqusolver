@@ -138,6 +138,8 @@ class ReflectionSymmetry(SymmetryOperator):
         self.sector = sector
         self.ns = ns
         self.base = base
+        # Precompute permutation array (required by SymmetryContainer)
+        self.perm = np.arange(ns, dtype=np.int32)[::-1]
 
     def __call__(self, state: int, ns: int = None, **kwargs) -> Tuple[int, complex]:
         return self.apply_int(state, ns or self.ns, **kwargs)

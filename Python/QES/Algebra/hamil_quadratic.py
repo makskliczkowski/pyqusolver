@@ -546,8 +546,11 @@ class QuadraticHamiltonian(Hamiltonian):
                 i, j = sites[idx], sites[idx + 1]
                 
                 if self._is_numpy:
-                    self._hamil_sp[i, j] += val
-                    self._hamil_sp[j, i] += valc
+                    # Use .item() to ensure scalar addition and avoid deprecation warnings
+                    v = val[0] if isinstance(val, (list, tuple, np.ndarray)) else val
+                    vc = valc[0] if isinstance(valc, (list, tuple, np.ndarray)) else valc
+                    self._hamil_sp[i, j] += v
+                    self._hamil_sp[j, i] += vc
                 else:
                     self._hamil_sp = self._hamil_sp.at[i, j].add(val)
                     self._hamil_sp = self._hamil_sp.at[j, i].add(valc)
@@ -891,6 +894,51 @@ class QuadraticHamiltonian(Hamiltonian):
             ]
         )
         return xp.array(bdg) if copy else bdg
+
+    def matrix(
+        self,
+        *args,
+        dim=None,
+        matrix_type="sparse",
+        dtype=None,
+        hilbert_1=None,
+        hilbert_2=None,
+        use_numpy: bool = True,
+        **kwargs,
+    ) -> "Array" | None:
+        """
+        Get the Hamiltonian matrix.
+
+        If dim/hilbert are not provided, returns the single-particle (or BdG) matrix (Ns x Ns or 2Ns x 2Ns).
+        If dim/hilbert are provided, attempts to generate many-body matrix (not yet fully supported for QuadraticHamiltonian via this method).
+        """
+        # If looking for many-body matrix (arguments provided)
+        if dim is not None or hilbert_1 is not None:
+            return super().matrix(
+                *args,
+                dim=dim,
+                matrix_type=matrix_type,
+                dtype=dtype,
+                hilbert_1=hilbert_1,
+                hilbert_2=hilbert_2,
+                use_numpy=use_numpy,
+                **kwargs,
+            )
+
+        # Default: single-particle / BdG matrix
+        if self._particle_conserving:
+            mat = self.build_single_particle_matrix(copy=True)
+        else:
+            mat = self.build_bdg_matrix(copy=True)
+
+        # Handle format conversion if needed
+        is_sparse_mat = sp.sparse.issparse(mat)
+        if matrix_type == "sparse" and not is_sparse_mat:
+            return sp.sparse.csr_matrix(mat)
+        elif matrix_type == "dense" and is_sparse_mat:
+            return mat.toarray()
+
+        return mat
 
     ###########################################################################
     #! Solvability Detection

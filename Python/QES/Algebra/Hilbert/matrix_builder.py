@@ -117,13 +117,20 @@ def _determine_matrix_dtype(
 
     # Check operator output
     operator_returns_complex = False
-    if operator_func is not None and ns is not None:
+    if operator_func is not None:
         try:
             # Need a dummy state to call the operator_func
             # Using 0 is fine for most spin-1/2 operators.
             test_state = 0
-            # operator_func expects (state, ns)
-            _, test_values = operator_func(test_state, ns)  # Corrected call, pass ns
+            # Try to call with state and ns, fallback to state only
+            try:
+                if ns is not None:
+                    _, test_values = operator_func(test_state, ns)
+                else:
+                    _, test_values = operator_func(test_state)
+            except (TypeError, ValueError):
+                _, test_values = operator_func(test_state)
+
             if len(test_values) > 0 and np.iscomplexobj(test_values[0]):
                 operator_returns_complex = True
         except Exception:
@@ -895,6 +902,10 @@ def build_operator_matrix(
             max_local_changes,
             dtype,
         )
+
+    # Unwrap Operator objects (heuristic to avoid circular imports)
+    if hasattr(operator_func, "int") and hasattr(operator_func, "type_acting"):
+        operator_func = operator_func.int
 
     # Use provided or default values
     nh = nh or hilbert_space.dim

@@ -112,12 +112,15 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         # Set Hamiltonian attributes
         self._is_sparse = True
         self._is_manybody = True
-        self._max_local_ch = self.cardinality + 1  # Each site can be flipped (ns terms) + diagonal
-        # (1 - hx) + (n_neighbors - hz + (n_neighbors - J))
 
         #! Build the Hamiltonian Terms
         self.set_couplings(j=j, hx=hx, hz=hz)
         self._set_local_energy_operators()
+
+        # Update max local changes after adding terms (important for buffer size)
+        # Each site can be flipped by Sx (ns terms) + diagonal SzSz terms
+        self._max_local_ch = self.ns + 1
+
         self.setup_instruction_codes()  # automatic physics-based setup
         self._set_local_energy_functions()
         self._log(f"TFIM Hamiltonian initialized for {self.ns} sites.", lvl=1, log="debug")
@@ -236,7 +239,10 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
                 if lattice.wrong_nei(j_neighbor):
                     continue
 
-                wx, wy, wz = lattice.bond_winding(i, j_neighbor)
+                # Ensure neighbor index is integer (some lattices might return float)
+                j_neighbor_int = int(j_neighbor)
+
+                wx, wy, wz = lattice.bond_winding(i, j_neighbor_int)
                 phase = lattice.boundary_phase_from_winding(wx, wy, wz)
 
                 # Use the coupling J associated with site i (or average, depending on convention)
@@ -247,11 +253,11 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
                     self.add(
                         operator=op_sz_sz_c,
                         multiplier=-coupling_j,
-                        sites=[i, j_neighbor],
+                        sites=[i, j_neighbor_int],
                         modifies=False,
                     )
                     self._log(
-                        f"Adding SzSz between sites ({i}, {j_neighbor}) with multiplier {-coupling_j:.3f}",
+                        f"Adding SzSz between sites ({i}, {j_neighbor_int}) with multiplier {-coupling_j:.3f}",
                         lvl=2,
                         log="debug",
                     )

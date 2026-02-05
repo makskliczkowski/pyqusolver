@@ -244,8 +244,9 @@ def scan_chunk_find_representatives(
             if min_state == state and min_g != _INVALID_REPR_IDX:
                 repr_chunker[state - start_state] = True
 
-            repr_map[state] = min_state
-            phase_idx[state] = g_to_pidx[min_g]
+            if repr_map is not None:
+                repr_map[state] = min_state
+                phase_idx[state] = g_to_pidx[min_g]
 
 
 # ---------------------------
