@@ -208,6 +208,74 @@ def _build_sparse_same_sector_compact_jit(
     return data_idx
 
 
+def _build_sparse_same_sector_compact_py(
+    representative_list: np.ndarray,
+    normalization: np.ndarray,
+    repr_map: np.ndarray,
+    phase_idx: np.ndarray,
+    phase_table: np.ndarray,
+    operator_func: Callable,
+    ns: int,
+    rows: np.ndarray,
+    cols: np.ndarray,
+    data: np.ndarray,
+    data_idx: int,
+):
+    """
+    Python fallback for sparse matrix builder.
+    Used when operator_func is not JIT-compatible.
+    """
+    nh = len(representative_list)
+    # Ensure invalid_idx matches the type in repr_map (usually uint32)
+    invalid_idx = _INVALID_REPR_IDX_NB
+
+    for k in range(nh):
+        state = int(representative_list[k])
+        norm_k = normalization[k]
+
+        # Call operator - might be Python function
+        try:
+            # Check signature or try/except
+            # Most Operator.int methods take state and optional ns
+            # But operator_func here might be Operator.int bound method
+            new_states, values = operator_func(state)
+        except TypeError:
+             # Try with ns if it fails (e.g. some kernels require it)
+             # But usually Operator.int handles defaults
+             new_states, values = operator_func(state, ns=ns)
+
+        for i in range(len(new_states)):
+            new_state = int(new_states[i])
+            value = values[i]
+
+            if abs(value) < 1e-14:
+                continue
+
+            # Bounds check for lookup
+            if new_state >= len(repr_map):
+                continue
+
+            idx = repr_map[new_state]
+            if idx == invalid_idx:
+                continue
+
+            pidx = phase_idx[new_state]
+            phase = phase_table[pidx]
+            norm_idx = normalization[idx]
+            sym_factor = np.conj(phase) * norm_idx / norm_k
+
+            matrix_elem = value * sym_factor
+            if abs(matrix_elem) < 1e-14:
+                continue
+
+            rows[data_idx] = idx
+            cols[data_idx] = k
+            data[data_idx] = matrix_elem
+            data_idx += 1
+
+    return data_idx
+
+
 @numba.njit(parallel=True, nogil=True)
 def _build_dense_same_sector_compact_jit(
     representative_list: np.ndarray,
@@ -432,19 +500,35 @@ def _build_same_sector(
                     return matrix
 
                 # Fast path: O(1) lookups using compact structure (~5 bytes/state)
-                data_idx = _build_sparse_same_sector_compact_jit(
-                    compact_data.representative_list,
-                    compact_data.normalization,
-                    compact_data.repr_map,
-                    compact_data.phase_idx,
-                    compact_data.phase_table,
-                    operator_func,
-                    ns,
-                    rows,
-                    cols,
-                    data,
-                    0,  # initial data_idx
-                )
+                try:
+                    data_idx = _build_sparse_same_sector_compact_jit(
+                        compact_data.representative_list,
+                        compact_data.normalization,
+                        compact_data.repr_map,
+                        compact_data.phase_idx,
+                        compact_data.phase_table,
+                        operator_func,
+                        ns,
+                        rows,
+                        cols,
+                        data,
+                        0,  # initial data_idx
+                    )
+                except (numba.core.errors.TypingError, TypeError):
+                    # Fallback to Python implementation if operator_func is not compatible with Numba
+                    data_idx = _build_sparse_same_sector_compact_py(
+                        compact_data.representative_list,
+                        compact_data.normalization,
+                        compact_data.repr_map,
+                        compact_data.phase_idx,
+                        compact_data.phase_table,
+                        operator_func,
+                        ns,
+                        rows,
+                        cols,
+                        data,
+                        0,
+                    )
         else:
             raise ValueError(
                 "Compact symmetry data missing for symmetric Hilbert space in sparse build."

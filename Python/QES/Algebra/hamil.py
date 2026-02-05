@@ -293,6 +293,25 @@ class Hamiltonian(BasisAwareOperator):
 
     # ----------------------------------------------------------------------------------------------
 
+    def matrix(self, *args, **kwargs):
+        """
+        Generates the matrix representation.
+        Overrides Operator.matrix to provide default Hilbert space.
+        """
+        # Inject internal Hilbert space if not provided
+        # Operator.matrix(dim=None, matrix_type='sparse', dtype=None, hilbert_1=None, hilbert_2=None, use_numpy=True, **kwargs)
+
+        # Check if hilbert_1 is provided in kwargs
+        if "hilbert_1" not in kwargs:
+            # Check if it might be in args? Operator.matrix args are consumed before keywords.
+            # But checking args is hard without inspecting signature.
+            # Given standard usage, people pass hilbert_1 as kwarg or positional.
+            # If args is empty, safe to inject.
+            if not args and self._hilbert_space is not None:
+                kwargs["hilbert_1"] = self._hilbert_space
+
+        return super().matrix(*args, **kwargs)
+
     @property
     def signature(self):
         """Unique signature for the Hamiltonian configuration."""

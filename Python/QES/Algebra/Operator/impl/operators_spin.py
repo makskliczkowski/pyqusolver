@@ -2139,7 +2139,7 @@ def sigma_composition_integer(
     """
     dtype           = np.complex128 if is_complex else np.float64
 
-    @numba.njit(nogil=True) # compile separately for real/complex
+    @numba.njit(nogil=True, inline='always') # compile separately for real/complex
     def sigma_operator_composition_single_op(state: int, code: int, site1: int, site2: int, ns: int):
         ''' Applies a single operator based on the code. '''
 
@@ -2155,80 +2155,135 @@ def sigma_composition_integer(
 
         #! 2) LOCAL OPERATORS
         if code == SPIN_LOOKUP_CODES.sig_x_local:
-            s_arr, c_arr = _sigma_x_core(state, ns, sites=sites_1, spin_value=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = _sigma_x_core(state, ns, sites=sites_1, spin_value=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_y_local:
-            s_arr, c_arr = _sigma_y_core(state, ns, sites=sites_1, spin_value=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = _sigma_y_core(state, ns, sites=sites_1, spin_value=spin_value)
+            current_s = s_int
+            # Handle complex to float casting for Numba if dtype is float
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_z_local:
-            s_arr, c_arr = _sigma_z_core(state, ns, sites=sites_1, spin_value=spin_value)
+            s_int, c_s = _sigma_z_core(state, ns, sites=sites_1, spin_value=spin_value)
             is_diagonal = True
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_p_local:
-            s_arr, c_arr = sigma_plus_int_np(state, ns, sites=sites_1, spin_value=spin_value)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            s_tup, c_tup = sigma_plus_int_np(state, ns, sites=sites_1, spin_value=spin_value)
+            current_s = s_tup[0]
+            if not is_complex:
+                current_c = dtype(c_tup[0].real)
+            else:
+                current_c = dtype(c_tup[0])
         elif code == SPIN_LOOKUP_CODES.sig_m_local:
-            s_arr, c_arr = sigma_minus_int_np(state, ns, sites=sites_1, spin_value=spin_value)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            s_tup, c_tup = sigma_minus_int_np(state, ns, sites=sites_1, spin_value=spin_value)
+            current_s = s_tup[0]
+            if not is_complex:
+                current_c = dtype(c_tup[0].real)
+            else:
+                current_c = dtype(c_tup[0])
         #! 3) CORRELATION OPERATORS
         elif code == SPIN_LOOKUP_CODES.sig_x_corr:
-            s_arr, c_arr = _sigma_x_core(state, ns, sites=sites_2, spin_value=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = _sigma_x_core(state, ns, sites=sites_2, spin_value=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_y_corr:
-            s_arr, c_arr = _sigma_y_core(state, ns, sites=sites_2, spin_value=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = _sigma_y_core(state, ns, sites=sites_2, spin_value=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_z_corr:
-            s_arr, c_arr = _sigma_z_core(state, ns, sites=sites_2, spin_value=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = _sigma_z_core(state, ns, sites=sites_2, spin_value=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
             is_diagonal = True
         elif code == SPIN_LOOKUP_CODES.sig_p_corr:
-            s_arr, c_arr = sigma_plus_int_np(state, ns, sites=sites_2, spin_value=spin_value)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            s_tup, c_tup = sigma_plus_int_np(state, ns, sites=sites_2, spin_value=spin_value)
+            current_s = s_tup[0]
+            if not is_complex:
+                current_c = dtype(c_tup[0].real)
+            else:
+                current_c = dtype(c_tup[0])
         elif code == SPIN_LOOKUP_CODES.sig_m_corr:
-            s_arr, c_arr = sigma_minus_int_np(state, ns, sites=sites_2, spin_value=spin_value)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            s_tup, c_tup = sigma_minus_int_np(state, ns, sites=sites_2, spin_value=spin_value)
+            current_s = s_tup[0]
+            if not is_complex:
+                current_c = dtype(c_tup[0].real)
+            else:
+                current_c = dtype(c_tup[0])
         elif code == SPIN_LOOKUP_CODES.sig_xy_corr:
-            s_arr, c_arr = sigma_xy_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = sigma_xy_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_yx_corr:
-            s_arr, c_arr = sigma_yx_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = sigma_yx_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_xz_corr:
-            s_arr, c_arr = sigma_xz_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = sigma_xz_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_zx_corr:
-            s_arr, c_arr = sigma_zx_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = sigma_zx_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_yz_corr:
-            s_arr, c_arr = sigma_yz_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = sigma_yz_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_zy_corr:
-            s_arr, c_arr = sigma_zy_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = sigma_zy_mixed_int_core(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_int
+            if not is_complex:
+                current_c = dtype(c_s.real)
+            else:
+                current_c = dtype(c_s)
         elif code == SPIN_LOOKUP_CODES.sig_pm_corr:
-            s_arr, c_arr = sigma_pm_int_np(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            s_tup, c_tup = sigma_pm_int_np(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_tup[0]
+            if not is_complex:
+                current_c = dtype(c_tup[0].real)
+            else:
+                current_c = dtype(c_tup[0])
         elif code == SPIN_LOOKUP_CODES.sig_mp_corr:
-            s_arr, c_arr = sigma_mp_int_np(state, ns, sites=sites_2, spin_val=spin_value)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            s_tup, c_tup = sigma_mp_int_np(state, ns, sites=sites_2, spin_val=spin_value)
+            current_s = s_tup[0]
+            if not is_complex:
+                current_c = dtype(c_tup[0].real)
+            else:
+                current_c = dtype(c_tup[0])
         else:
             pass
 
@@ -2243,7 +2298,7 @@ def sigma_composition_integer(
     ):
         """Creates a combined operator based on this list of codes."""
         ptr = 0
-        diag_sum = 0.0
+        diag_sum = dtype(0.0)
 
         for k in range(nops):
             code = codes[k]
@@ -2367,7 +2422,7 @@ def sigma_composition_with_custom(
         Supports arbitrary arity for custom operators.
         """
         ptr = 0
-        diag_sum = 0.0
+        diag_sum = dtype(0.0)
 
         for k in range(nops):
             code = codes[k]

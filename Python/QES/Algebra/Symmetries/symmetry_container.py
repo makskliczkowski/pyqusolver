@@ -890,6 +890,10 @@ class SymmetryContainer:
         if not self.generators:
             self.logger.info("No symmetry generators - empty group")
             self.symmetry_group = [()]  # Identity element
+            try:
+                self._compiled_group, self._tables = self.build_compiled_group()
+            except Exception as e:
+                raise RuntimeError(f"Couldn't create the precompiled symmetry groups. Error: {e}")
             return
 
         # Separate translations from other generators
@@ -1687,7 +1691,10 @@ class SymmetryContainer:
 
         representative_list = np.zeros((repr_counter,), dtype=np.int64)
         representative_norms = np.zeros((repr_counter,), dtype=np.float64)
-        fill_representatives(compact_repr_map, representative_list)
+
+        if compact_repr_map is not None:
+            fill_representatives(compact_repr_map, representative_list)
+
         if self.verbose:
             self.logger.info(
                 f"Filled representative list: D={len(representative_list)}. Took: {time.time() - t0:.2e}s",

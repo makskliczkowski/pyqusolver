@@ -232,7 +232,7 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
 
             for nn_idx in range(nn_forward_num):
 
-                j_neighbor = lattice.get_nn_forward(i, num=nn_idx)
+                j_neighbor = int(lattice.get_nn_forward(i, num=nn_idx))
                 if lattice.wrong_nei(j_neighbor):
                     continue
 
