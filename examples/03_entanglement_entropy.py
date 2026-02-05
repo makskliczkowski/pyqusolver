@@ -1,30 +1,36 @@
 """
-Example script for computing entanglement properties, including
-topological entanglement entropy (TEE) and mutual information,
-supporting both symmetric and non-symmetric many-body states.
+Entanglement Entropy Example
+============================
 
-------------------------------------------------------------------------------
-File        : Python/examples/example_entanglement_module.py
-Author      : Maksymilian Kliczkowski
-Date        : 2025-12-30
-------------------------------------------------------------------------------
+Computes entanglement entropy, mutual information, and topological entanglement entropy (TEE)
+for a Heisenberg-Kitaev model on a honeycomb lattice.
+
+Demonstrates:
+- Using `EntanglementModule`
+- Handling symmetries
+- Computing TEE with Kitaev-Preskill construction
+
+To run:
+    python examples/03_entanglement_entropy.py
 """
 
 from typing import Dict, List, Tuple, Union
-
 import numpy as np
+import QES
+from QES.Algebra.hilbert import HilbertSpace
+from QES.Algebra.Model.Interacting.Spin.heisenberg_kitaev import HeisenbergKitaev
+from QES.general_python.physics.entanglement_module import get_entanglement_module, MaskGenerator
+from QES.general_python.lattices.honeycomb import HoneycombLattice
+from QES.general_python.physics.entropy import entropy, mutual_information
+from QES.general_python.physics.density_matrix import rho_spectrum
 
-try:
-    from QES.Algebra.hilbert import HilbertSpace
-    from QES.Algebra.Model.Interacting.Spin.heisenberg_kitaev import HeisenbergKitaev
-    from QES.general_python.common.flog import Logger
-    from QES.general_python.physics.entanglement_module import get_entanglement_module
-except ImportError:
-    raise ImportError("QES package is required to run this example.")
-
-# Initialize logger
-logger = Logger(name="EntanglementExample", verbose=True)
-
+# JIT-compiled functions
+# Updated imports for entropy functions
+from QES.Algebra.Symmetries.jit.density_jit import rho_symmetries
+from QES.Algebra.Symmetries.jit.entropy_jit import (
+    mutual_information as mutual_information_sym,
+    topological_entropy as topological_entropy_sym
+)
 
 def get_entanglement_entropy(
     hamil: HeisenbergKitaev, hilbert: HilbertSpace, subsystem: Union[int, float]
@@ -32,25 +38,15 @@ def get_entanglement_entropy(
     """
     Compute entanglement entropy for all eigenstates, mutual information for the ground state,
     and topological entanglement entropy (TEE).
-
-    Supports symmetry-reduced states automatically via the improved EntanglementModule.
     """
-    from QES.Algebra.Symmetries.jit.density_jit import (
-        mutual_information_symmetries,
-        rho_symmetries,
-        topological_entropy_symmetries,
-    )
-    from QES.general_python.physics.density_matrix import rho_spectrum
-    from QES.general_python.physics.entanglement_module import MaskGenerator
-    from QES.general_python.physics.entropy import entropy, mutual_information
-
+    logger = QES.get_logger()
     has_sym = hilbert.has_sym
     ns = hamil.lattice.ns
     fraction = subsystem if subsystem < 1.0 else subsystem / ns
     va = int(fraction * ns)
 
     entropies = []
-    mut_info = {}  # (i,j) -> mutual information between sites i and j
+    mut_info = {}
     purity = []
     topological = {}
     num_states = hamil.eig_val.shape[0]
@@ -59,7 +55,6 @@ def get_entanglement_entropy(
     for state_idx in range(num_states):
         psi = hamil.eig_vec[:, state_idx]
         try:
-            # rho_symmetries now handles mask if va is an array, but here it is a contiguous size
             rho = rho_symmetries(psi, va=va, hilbert=hilbert)
             vals = rho_spectrum(rho)
             purity.append(np.sum(vals**2))
@@ -90,7 +85,7 @@ def get_entanglement_entropy(
         try:
             for i in range(ns):
                 for j in range(i + 1, ns):
-                    info = mutual_information_symmetries(psi_gs, i, j, hilbert, q=1)
+                    info = mutual_information_sym(psi_gs, i, j, hilbert, q=1)
                     mut_info[(i, j)] = info
         except Exception as e:
             logger.error(f"Failed to compute symmetric mutual information: {e}", lvl=0)
@@ -98,7 +93,6 @@ def get_entanglement_entropy(
         logger.info("Computing mutual information for all site pairs.", color="green", lvl=1)
         for i in range(ns):
             for j in range(i + 1, ns):
-                # Standard mutual information helper
                 try:
                     info, _ = mutual_information(psi_gs, i, j, ns, q=1)
                     mut_info[(i, j)] = info
@@ -112,18 +106,17 @@ def get_entanglement_entropy(
     )
 
     # 3. Add topological entanglement entropy (TEE) computation
-    if ns >= 12:  # TEE typically requires larger systems for meaningful results
+    # Note: TEE requires larger systems, but we run the code path here for demonstration
+    if ns >= 8:
         try:
-            # Generate Kitaev-Preskill regions
             regions = MaskGenerator.kitaev_preskill(ns)
 
             if has_sym:
-                res_tee = topological_entropy_symmetries(psi_gs, regions, hilbert, q=1)
+                res_tee = topological_entropy_sym(psi_gs, regions, hilbert, q=1)
                 gamma = res_tee["gamma"]
                 topological = res_tee
             else:
                 ent_mod = get_entanglement_module(hamil)
-                # construction='kitaev_preskill' uses the regions A, B, C defined in Lattice or MaskGenerator
                 tee_results = ent_mod.topological_entropy(
                     state=psi_gs, regions=regions, construction="kitaev_preskill"
                 )
@@ -134,39 +127,39 @@ def get_entanglement_entropy(
                 f"Computed topological entanglement entropy: γ = {gamma:.6f}", color="green", lvl=1
             )
         except Exception as e:
-            logger.error(f"Failed to compute TEE: {e}", lvl=0)
+            logger.warning(f"Skipping TEE calculation (system possibly too small or regions invalid): {e}", lvl=1)
             topological = {"error": str(e)}
+            gamma = None
     else:
-        logger.info("System size too small for reliable TEE calculation.", lvl=1)
+        logger.info("System size too small for TEE calculation.", lvl=1)
+        gamma = None
 
-    return entropies, mut_info, purity, topological
-
+    return entropies, mut_info, purity, topological, gamma
 
 if __name__ == "__main__":
-    # Example usage with a small Honeycomb Kitaev model
-    from QES.Algebra.Symmetries.symmetry_container import SymmetryContainer
-    from QES.general_python.lattices.honeycomb import HoneycombLattice
+    logger = QES.get_logger()
 
     # Create 2x2x1 Honeycomb lattice (8 sites)
+    # This is the smallest honeycomb lattice
     lat = HoneycombLattice(lx=2, ly=2, bc="pbc")
 
     # Create Heisenberg-Kitaev model
-    model = HeisenbergKitaev(lattice=lat, K=1.0, J=0.1, hz=0.05)
+    # Use complex128 for stability
+    model = HeisenbergKitaev(lattice=lat, K=1.0, J=0.1, hz=0.05, dtype=np.complex128)
 
-    # Add symmetries (Translation)
-    sym = SymmetryContainer(lattice=lat)
-    sym.add_translation()
-    # sym.add_parity() # optionally add more
+    # Create Hilbert space with symmetries (Translation)
+    # Using sym_gen dictionary to define symmetries
+    # Sector kx=0, ky=0 (Gamma point)
+    sym_gen = {'translation': {'kx': 0, 'ky': 0}}
 
-    # Create Hilbert space with symmetries
-    hilbert = HilbertSpace(lattice=lat, symmetry_container=sym)
+    hilbert = HilbertSpace(lattice=lat, sym_gen=sym_gen, dtype=np.complex128)
 
     # Diagonalize
     logger.info(f"Diagonalizing {model.name} with symmetries...", color="blue")
-    model.diagonalize(k=10, method="exact")  # compute first 10 states
+    model.diagonalize(k=5, method="exact")  # compute first 5 states
 
     # Compute entanglement properties
-    entropies, mut_info, purity, gamma = get_entanglement_entropy(model, hilbert, subsystem=0.5)
+    entropies, mut_info, purity, topological, gamma = get_entanglement_entropy(model, hilbert, subsystem=0.5)
 
     print("\nResults:")
     print(f"Ground State EE: {entropies[0]:.6f}")

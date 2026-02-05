@@ -1,16 +1,26 @@
+"""
+Hamiltonian Caching Benchmark
+=============================
+
+Benchmarks the performance improvement from Hamiltonian caching.
+Shows how subsequent builds of the same Hamiltonian are instant.
+
+To run:
+    python examples/04_benchmark_hamiltonian_caching.py
+"""
 
 import time
 import numpy as np
 import QES
-from QES.Algebra.hamil import Hamiltonian
-from QES.Algebra.hilbert import HilbertSpace
-from QES.Algebra.Operator.operator_loader import get_operator_module
+from QES.Algebra import Hamiltonian, HilbertSpace
 from QES.Algebra.hamil_cache import generate_cache_key
 
 # Ensure reproducible run
 QES.qes_reseed(42)
 
 def benchmark():
+    print("Starting Hamiltonian Caching Benchmark...")
+
     # Setup
     ns = 8
     # Use complex dtype to avoid Numba compilation issues with spin operators
@@ -33,6 +43,7 @@ def benchmark():
     key1 = generate_cache_key(h1)
 
     # First build
+    print("Building H1 (first time)...")
     t0 = time.perf_counter()
     h1.build()
     t1 = time.perf_counter()
@@ -40,11 +51,11 @@ def benchmark():
 
     # Test matvec
     v = np.random.rand(hilbert.nh).astype(np.complex128)
-    # This uses Operator.matvec -> adapter -> Numba kernels
     res = h1.matvec(v, hilbert_in=hilbert)
-    print(f"Matvec result norm: {np.linalg.norm(res)}")
+    print(f"Matvec result norm: {np.linalg.norm(res):.6f}")
 
     # Second build (should be instant)
+    print("Building H1 (second time)...")
     t0 = time.perf_counter()
     h1.build()
     t1 = time.perf_counter()
@@ -65,6 +76,7 @@ def benchmark():
         print("Keys differ!")
 
     # Build H2 (should hit cache)
+    print("Building H2 (should hit cache)...")
     t0 = time.perf_counter()
     h2.build()
     t1 = time.perf_counter()
