@@ -17,9 +17,6 @@ from numpy.testing import assert_allclose, assert_array_equal
 try:
     from QES.general_python.algebra.backend_linalg import (
         change_basis_matrix,
-        eigh,
-        eigsh,
-        identity,
         inner,
         kron,
         outer,
@@ -32,7 +29,6 @@ except ImportError:
     LINALG_AVAILABLE = False
 
 try:
-    from QES.general_python.algebra.eigen.lanczos import LanczosEigensolver
     from QES.general_python.algebra.eigen.result import EigenResult
 
     LANCZOS_AVAILABLE = True
@@ -40,7 +36,7 @@ except ImportError:
     LANCZOS_AVAILABLE = False
 
 try:
-    from QES.Algebra.hamil_quadratic import QuadraticHamiltonian, QuadraticTerm
+    from QES.Algebra.hamil_quadratic import QuadraticTerm
 
     QH_AVAILABLE = True
 except ImportError:
@@ -99,13 +95,13 @@ def test_inner_product():
 
 @pytest.mark.skipif(not LINALG_AVAILABLE, reason="backend_linalg not available")
 def test_overlap_with_operator():
-    """Test matrix element <a|O|b>"""
+    """Test matrix element <a|Op|b>"""
     a = np.array([0, 1, 0], dtype=complex)
     b = np.array([0, 1, 0], dtype=complex)
-    O = np.array([[1, 0, 0], [0, 2, 0], [0, 0, 3]], dtype=complex)
+    Op = np.array([[1, 0, 0], [0, 2, 0], [0, 0, 3]], dtype=complex)
 
-    result = overlap(a, O, b, backend="default")
-    expected = 2.0  # <a|O|b> = a† O b
+    result = overlap(a, Op, b, backend="default")
+    expected = 2.0  # <a|Op|b> = a† Op b
 
     assert_allclose(result, expected)
     assert isinstance(result, (complex, np.complexfloating))
@@ -186,7 +182,11 @@ def test_spectral_function_type_safety():
     G = np.array([[1.0 / (1.0 + 1j * 0.1), 0], [0, 1.0 / (2.0 + 1j * 0.1)]], dtype=complex)
 
     # Spectral function should be real
-    A = spectral_function(G)
+    result = spectral_function(G)
+    if isinstance(result, tuple):
+        A = result[0]
+    else:
+        A = result
 
     # Verify type safety
     assert A.dtype in [np.float32, np.float64, float]
@@ -207,7 +207,11 @@ def test_spectral_function_with_identity_operator():
     )
 
     # Test that spectral function works with just Green's function
-    A = spectral_function(G)
+    result = spectral_function(G)
+    if isinstance(result, tuple):
+        A = result[0]
+    else:
+        A = result
 
     # Should be real and positive
     assert np.all(np.imag(A) == 0)
@@ -226,7 +230,11 @@ def test_spectral_function_with_diagonal_operator():
         dtype=complex,
     )
 
-    A = spectral_function(G)
+    result = spectral_function(G)
+    if isinstance(result, tuple):
+        A = result[0]
+    else:
+        A = result
 
     # Should be real and positive
     assert np.all(np.isreal(A) | (np.abs(np.imag(A)) < 1e-14))
@@ -258,7 +266,11 @@ def test_spectral_function_sum_rule():
     A_LDOS = np.zeros(len(omegas), dtype=float)
     for i, omega in enumerate(omegas):
         G_omega = evecs @ np.diag(1.0 / (omega + 1j * eta - evals)) @ evecs.T.conj()
-        A_i = spectral_function(G_omega)
+        result = spectral_function(G_omega)
+        if isinstance(result, tuple):
+            A_i = result[0]
+        else:
+            A_i = result
         A_LDOS[i] = np.trace(A_i)
 
     # Integrate: should be approximately N

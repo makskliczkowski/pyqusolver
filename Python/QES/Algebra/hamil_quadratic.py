@@ -2012,6 +2012,16 @@ class QuadraticHamiltonian(Hamiltonian):
 
         # Get resulting calculator and matrix argument, this avoids recompilation on repeated calls
         calculator, matrix_arg  = self._make_calculator()
+
+        # Ensure matrix_arg is complex (required for Numba functions)
+        # This fixes "Cannot unify array(float64, ...) and array(complex128, ...)" errors
+        if hasattr(matrix_arg, "dtype") and matrix_arg.dtype not in (np.complex128, np.complex64):
+            if self._is_jax:
+                import jax.numpy as jnp
+                matrix_arg = matrix_arg.astype(jnp.complex128)
+            else:
+                matrix_arg = matrix_arg.astype(np.complex128)
+
         ns                      = self._ns
         nfilling                = len(self._occupied_orbitals_cached) if self._occupied_orbitals_cached is not None else None
         # Ensure complex dtype since Slater determinants return complex values
@@ -2042,6 +2052,48 @@ class QuadraticHamiltonian(Hamiltonian):
         else:
             mapping = many_body_hs.mapping
             return many_body_state_mapping_fn(matrix_arg, calculator, mapping, ns, dtype)
+
+    def many_body_states(
+        self,
+        occupations: Union[List[int], List[List[int]], List[np.ndarray]],
+        return_dict: bool = False,
+        **kwargs,
+    ) -> Union[np.ndarray, Dict[int, np.ndarray]]:
+        """
+        Compute multiple many-body states efficiently.
+
+        Parameters
+        ----------
+        occupations : list
+            List of occupations. Each occupation can be an integer (bitmask)
+            or a list/array of occupied orbitals.
+        return_dict : bool
+            If True, returns a dictionary {occupation_key: state}.
+            Only works if occupations are hashable (e.g. integers).
+        **kwargs
+            Passed to many_body_state.
+
+        Returns
+        -------
+        np.ndarray
+            If return_dict=False. Shape (len(occupations), dim).
+        Dict[int, np.ndarray]
+            If return_dict=True.
+        """
+        results_list = []
+        results_dict = {}
+
+        for occ in occupations:
+            state = self.many_body_state(occ, **kwargs)
+            if return_dict:
+                results_dict[occ] = state
+            else:
+                results_list.append(state)
+
+        if return_dict:
+            return results_dict
+
+        return np.array(results_list)
 
     def compute_ground_state(self, symmetry_sector: Optional[int] = None) -> Tuple[float, np.ndarray]:
         r"""

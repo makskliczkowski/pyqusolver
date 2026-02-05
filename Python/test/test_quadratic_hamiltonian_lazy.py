@@ -72,11 +72,11 @@ class TestLazyImports:
         """Functions should be loaded on first use."""
         ham = tight_binding_4site
         ham.diagonalize()
-        
+
         # This should trigger lazy import
         occ = np.array([0, 1], dtype=np.int32)
         psi = ham.many_body_state(occ)
-        
+
         assert psi is not None
         assert psi.shape == (16,)
 
@@ -286,7 +286,7 @@ class TestGroundState:
         ham.diagonalize()
         
         E0, psi0 = ham.compute_ground_state(symmetry_sector=0)
-        
+
         assert np.isclose(E0, 0.0)
         # Vacuum state: only state 0 has amplitude 1
         assert np.isclose(psi0[0], 1.0)
@@ -303,45 +303,45 @@ class TestCaching:
         """Repeated calls with same occupation should use cache."""
         ham = tight_binding_4site
         ham.diagonalize()
-        
+
         occ = np.array([0, 1], dtype=np.int32)
-        
+
         # First call
         psi1 = ham.many_body_state(occ)
         cache_size_1 = len(ham._calculator_cache)
-        
+
         # Second call (should use cache)
         psi2 = ham.many_body_state(occ)
         cache_size_2 = len(ham._calculator_cache)
-        
+
         assert cache_size_2 == cache_size_1  # No new cache entries
         assert np.allclose(psi1, psi2)
-    
+
     def test_different_occupation_new_cache(self, tight_binding_4site):
         """Different occupation should create new cache entry."""
         ham = tight_binding_4site
         ham.diagonalize()
-        
+
         # First occupation
         ham.many_body_state([0, 1])
         cache_size_1 = len(ham._calculator_cache)
-        
+
         # Different occupation
         ham.many_body_state([0, 2])
         cache_size_2 = len(ham._calculator_cache)
-        
+
         assert cache_size_2 > cache_size_1
-    
+
     def test_cache_invalidation(self, tight_binding_4site):
         """Cache should be invalidated on relevant changes."""
         ham = tight_binding_4site
         ham.diagonalize()
-        
+
         ham.many_body_state([0, 1])
-        
+
         # Invalidate cache
         ham.invalidate_state_cache()
-        
+
         assert len(ham._calculator_cache) == 0
 
 
@@ -357,31 +357,31 @@ class TestEdgeCases:
         ham = QuadraticHamiltonian(ns=1, particle_conserving=True, particles='fermions')
         ham.add_onsite(0, 0.5)
         ham.diagonalize()
-        
+
         # Vacuum
         E0, psi0 = ham.compute_ground_state(symmetry_sector=0)
         assert np.isclose(E0, 0.0)
-        
+
         # One particle
         E1, psi1 = ham.compute_ground_state(symmetry_sector=1)
         assert np.isclose(E1, 0.5)
-    
+
     def test_full_occupation(self, tight_binding_4site):
         """All sites occupied."""
         ham = tight_binding_4site
         ham.diagonalize()
-        
+
         occ = np.arange(4, dtype=np.int32)
         psi = ham.many_body_state(occ)
-        
+
         # Full occupation: only state 0b1111 = 15 has amplitude
         assert np.isclose(np.abs(psi[15]), 1.0)
-    
+
     def test_no_terms_added(self):
         """Hamiltonian with no terms should still work."""
         ham = QuadraticHamiltonian(ns=4, particle_conserving=True, particles='fermions')
         ham.diagonalize()
-        
+
         # All eigenvalues should be zero
         assert np.allclose(ham.eig_val, 0.0)
 
@@ -399,21 +399,21 @@ class TestExactResults:
         t = -1.0
         ham.add_hopping(0, 1, t)
         ham.diagonalize()
-        
+
         # Eigenvalues: ±|t| = ±1
         expected_eigvals = np.array([-1.0, 1.0])
         assert np.allclose(np.sort(ham.eig_val), np.sort(expected_eigvals))
-        
+
         # Ground state with 1 particle: bonding orbital
         E0, psi0 = ham.compute_ground_state(symmetry_sector=1)
         assert np.isclose(E0, -1.0)
-        
+
         # State should be (|01⟩ + |10⟩)/√2 or similar
         # Non-zero at states 1 and 2
         amp_01 = psi0[1]  # state 0b01
         amp_10 = psi0[2]  # state 0b10
         assert np.isclose(np.abs(amp_01), np.abs(amp_10))
-    
+
     def test_three_site_chain_obc(self):
         """Three-site OBC chain."""
         ham = QuadraticHamiltonian(ns=3, particle_conserving=True, particles='fermions')
@@ -421,7 +421,7 @@ class TestExactResults:
         ham.add_hopping(0, 1, t)
         ham.add_hopping(1, 2, t)
         ham.diagonalize()
-        
+
         # For 3-site OBC: E = -√2, 0, +√2 (approximately)
         expected = np.array([-np.sqrt(2), 0.0, np.sqrt(2)])
         assert np.allclose(np.sort(ham.eig_val), np.sort(expected), atol=1e-10)
