@@ -19,6 +19,8 @@ except ImportError as e:
     sys.exit(1)
 
 def run_nqs_benchmarks(sizes=[4, 6], heavy=False):
+    np.random.seed(42)  # Deterministic seed
+
     if heavy:
         sizes = [4, 6, 8, 10]
 

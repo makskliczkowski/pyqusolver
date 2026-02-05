@@ -23,6 +23,8 @@ def run_hamil_benchmarks(sizes=[3, 4], heavy=False):
     Run Hamiltonian benchmarks.
     sizes: List of linear dimensions L for LxL square lattice.
     """
+    np.random.seed(42)  # Deterministic seed
+
     if heavy:
         sizes = [3, 4, 5]
 
@@ -35,8 +37,11 @@ def run_hamil_benchmarks(sizes=[3, 4], heavy=False):
         if Ns > 16 and not heavy:
             print(f"Skipping L={L} (Ns={Ns}) for standard benchmark (too large for matrix build). Use --heavy if sure.")
             continue
-        if Ns > 20:
-             print(f"Skipping L={L} (Ns={Ns}) - too large for exact matrix construction.")
+        if Ns > 20 and not heavy:
+             print(f"Skipping L={L} (Ns={Ns}) - too large for exact matrix construction (enable --heavy to run).")
+             continue
+        if Ns > 26:
+             print(f"Skipping L={L} (Ns={Ns}) - too large even for heavy benchmark.")
              continue
 
         _run_for_size(L)
