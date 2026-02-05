@@ -235,6 +235,7 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
                 j_neighbor = lattice.get_nn_forward(i, num=nn_idx)
                 if lattice.wrong_nei(j_neighbor):
                     continue
+                j_neighbor = int(j_neighbor)
 
                 wx, wy, wz = lattice.bond_winding(i, j_neighbor)
                 phase = lattice.boundary_phase_from_winding(wx, wy, wz)
