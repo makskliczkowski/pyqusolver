@@ -1731,7 +1731,8 @@ class Hamiltonian(BasisAwareOperator):
             raise RuntimeError(f"Diagonalization failed with method '{method}': {e}") from e
 
         # Store results in Hamiltonian
-        self._eig_val = result.eigenvalues
+        # Ensure eigenvalues are numpy array (safeguard against backend returning tuples/lists)
+        self._eig_val = np.asarray(result.eigenvalues) if result.eigenvalues is not None else None
         self._eig_vec = result.eigenvectors
 
         # Store Krylov basis if available

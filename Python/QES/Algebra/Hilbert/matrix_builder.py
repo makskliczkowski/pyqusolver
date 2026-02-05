@@ -954,6 +954,10 @@ def build_operator_matrix(
     >>> H_simple = build_operator_matrix(operator_func, nh=dim, ns=num_sites)
     """
 
+    # If operator_func is an Operator instance, extract the JIT-compatible function
+    if hasattr(operator_func, "int") and hasattr(operator_func, "fun"):
+        operator_func = operator_func.int
+
     if hilbert_space is None or hilbert_space.nh == hilbert_space.nhfull:
 
         # This is invalid if we are in the 'full space' or 'no space' case.

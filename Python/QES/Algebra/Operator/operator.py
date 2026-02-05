@@ -458,11 +458,11 @@ class Operator(GeneralMatrix):
         elif dim is None:
             raise ValueError("Either 'dim' or 'hilbert' must be provided to build the matrix.")
 
-        # Build the matrix using existing matrix() method
+        # Build the matrix using existing compute_matrix() method
         matrix_type = "sparse" if self._is_sparse else "dense"
         # Remove verbose from kwargs if present to avoid duplication
 
-        built_matrix = self.matrix(
+        built_matrix = self.compute_matrix(
             dim=dim, matrix_type=matrix_type, hilbert_1=hilbert, verbose=verbose, **kwargs
         )
 
@@ -1135,7 +1135,15 @@ class Operator(GeneralMatrix):
             )
         return matrix
 
-    def matrix(
+    @property
+    def matrix(self):
+        """
+        Return the stored matrix representation of the operator.
+        Requires build() to be called first.
+        """
+        return self._matrix
+
+    def compute_matrix(
         self,
         *args,
         dim=None,

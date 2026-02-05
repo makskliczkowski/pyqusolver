@@ -1,56 +1,55 @@
 # QES Benchmarks
 
-This directory contains performance benchmarks for key components of the Quantum Eigen Solver (QES).
+This directory contains a benchmark suite for the QES (Quantum Energy Solver) library. It measures the performance of key components such as Hamiltonian construction and Neural Quantum State (NQS) sampling/optimization.
 
 ## Structure
 
-*   `benchmarks/run_benchmarks.py`: The main entry point to run benchmarks.
-*   `benchmarks/vmc_benchmark.py`: Benchmarks VMC sampling throughput.
-*   `benchmarks/nqs_benchmark.py`: Benchmarks NQS optimization step (gradient computation + update).
-*   `benchmarks/hamil_benchmark.py`: Benchmarks Hamiltonian local energy evaluation.
+- `benchmarks/run.py`: The main entry point to run benchmarks.
+- `benchmarks/bench_hamil.py`: Benchmarks for `Hamiltonian` operations (build, matvec).
+- `benchmarks/bench_nqs.py`: Benchmarks for `NQS` operations (sample, step).
+- `benchmarks/utils.py`: Utility functions for timing and reporting.
 
-## Running Benchmarks
+## How to Run
 
-To run the full suite with default settings:
+Run the benchmarks from the root of the repository:
 
 ```bash
-python3 benchmarks/run_benchmarks.py
+python benchmarks/run.py
 ```
 
 ### Options
 
-*   `--heavy`: Run larger system sizes and more samples. Useful for testing scaling on powerful machines.
-    ```bash
-    python3 benchmarks/run_benchmarks.py --heavy
-    ```
-*   `--filter <name>`: Run only benchmarks matching the given name.
-    ```bash
-    python3 benchmarks/run_benchmarks.py --filter vmc
-    ```
-*   `--repeats <n>`: Number of times to repeat each measurement (default: 3).
-    ```bash
-    python3 benchmarks/run_benchmarks.py --repeats 5
-    ```
+- `--heavy`: Run benchmarks with larger system sizes. Warning: Hamiltonian construction for large sizes (e.g., 5x5 lattice) can be very slow or memory-intensive.
+- `--filter {hamil,nqs,all}`: Run only a specific subset of benchmarks. Default is `all`.
 
-## Benchmark Descriptions
+Example:
+```bash
+python benchmarks/run.py --filter nqs --heavy
+```
 
-### VMC Sampling
-Measures the throughput of the Variational Monte Carlo sampler (`VMCSampler`) with an RBM ansatz on a Square Lattice with Transverse Field Ising Model.
-*   **Metric**: Time to generate `N` samples.
-*   **Scaling**: Tested on L=4x4, L=6x6 (and larger in heavy mode).
+## What is Measured
 
-### NQS Optimization Step
-Measures the time to perform a single optimization step of a Neural Quantum State (`NQS`). This includes sampling, gradient calculation (SR/MinSR), and parameter update.
-*   **Metric**: Time per step.
-*   **Scaling**: Tested on L=4x4, L=6x6.
+### Hamiltonian (`bench_hamil.py`)
+1.  **Construction (`build`)**: Time taken to construct the full Hamiltonian matrix (sparse). Scales with $2^N$ where $N$ is the number of spins.
+2.  **Matrix-Vector Product (`matvec`)**: Time taken to apply the Hamiltonian to a random state vector. This is a critical operation for iterative diagonalization (e.g., Lanczos).
 
-### Hamiltonian Local Energy
-Measures the time to calculate local energy matrix elements ($H_{s,s'}$ and indices $s'$) for a batch of states.
-*   **Metric**: Time to process a batch of states.
-*   **Scaling**: Tested on L=4x4, L=6x6.
+### Neural Quantum States (`bench_nqs.py`)
+1.  **Sampling (`sample`)**: Throughput of the VMC sampler (samples per second logic, inferred from runtime for fixed batch). Uses an RBM ansatz on a Square Lattice TFIM.
+2.  **Optimization Step (`step`)**: Time taken for one full optimization step, which includes sampling, local energy evaluation, gradient computation, and parameter update logic.
 
-## Interpretation
+## Interpreting Results
 
-*   **VMC Sampling**: Lower time indicates faster sampling, which is crucial for convergence speed.
-*   **NQS Step**: Lower time indicates faster training loops.
-*   **Hamiltonian**: Lower time indicates faster energy estimation, which is the bottleneck in VMC.
+The output shows the mean runtime and standard deviation over multiple repeats.
+
+```
+TFIM Build (L=4x4, Ns=16)                         : 0.123456 s +/- 0.012345 s (N=5)
+```
+
+- **Build time**: Lower is better. Increases exponentially with system size for matrix-based Hamiltonians.
+- **Matvec time**: Lower is better. Critical for solver performance.
+- **NQS Sample**: Lower time (for fixed samples) means higher throughput.
+- **NQS Step**: Lower is better. Indicates faster training loops.
+
+## Backend
+
+Benchmarks try to use `jax` backend for NQS if available, falling back to `numpy`. The output will indicate which backend is being used. Hamiltonian benchmarks typically use `scipy.sparse` (via `numpy` backend logic) or `jax` if configured (defaulting to numpy/scipy logic for matrix build currently).
