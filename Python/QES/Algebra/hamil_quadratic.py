@@ -302,6 +302,40 @@ class QuadraticHamiltonian(Hamiltonian):
             self._log("Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.", lvl=2, log="info")
 
         self._name                      = f"QuadraticHamiltonian(Ns={self._ns},{'BdG' if not self._particle_conserving else 'N-conserving'})"
+
+    def matrix(
+        self,
+        *args,
+        dim=None,
+        matrix_type="sparse",
+        dtype=None,
+        hilbert_1=None,
+        hilbert_2=None,
+        use_numpy: bool = True,
+        **kwargs,
+    ):
+        """
+        Generates the matrix representation of the operator.
+        Overrides base method to use internal quadratic matrix construction.
+        """
+        # If no arguments provided that imply many-body construction, return the single-particle matrix
+        if not args and dim is None and hilbert_1 is None and hilbert_2 is None:
+            if self._particle_conserving:
+                return self.build_single_particle_matrix()
+            else:
+                return self.build_bdg_matrix()
+
+        # Otherwise delegate to parent
+        return super().matrix(
+            *args,
+            dim=dim,
+            matrix_type=matrix_type,
+            dtype=dtype,
+            hilbert_1=hilbert_1,
+            hilbert_2=hilbert_2,
+            use_numpy=use_numpy,
+            **kwargs
+        )
         self._occupied_orbitals_cached  = None
         self._diagonalization_requested = False
         self._F                         = None
@@ -315,6 +349,18 @@ class QuadraticHamiltonian(Hamiltonian):
         self._compiled_funcs            = {}    # Numba/JAX compiled functions cache
         self._last_occupation_key       = None  # Track last occupation for cache efficiency
         
+        # Process initialization terms
+        if "hopping" in kwargs:
+            for i, j, val in kwargs["hopping"]:
+                self.add_hopping(i, j, val)
+
+        if "onsite" in kwargs:
+            for i, val in kwargs["onsite"]:
+                self.add_onsite(i, val)
+
+        if "pairing" in kwargs:
+            for i, j, val in kwargs["pairing"]:
+                self.add_pairing(i, j, val)
         
     ##########################################################################
     #! Class methods for direct matrix initialization
@@ -526,6 +572,24 @@ class QuadraticHamiltonian(Hamiltonian):
             
         val         = [-v if remove else v for v in value]
         valc        = [v.conjugate() if isinstance(v, complex) or hasattr(v, "conjugate") else v for v in val]
+
+        # Extract scalar if possible to prevent broadcasting errors
+        if len(val) == 1:
+            val_scalar = val[0]
+            valc_scalar = valc[0]
+        else:
+            val_scalar = val
+            valc_scalar = valc
+
+        # Ensure JAX compatibility: avoid adding list to array scalar
+        if hasattr(val_scalar, "__len__") and len(val_scalar) == 1:
+            # Unwrap again if needed (e.g. list inside tuple)
+            try:
+                val_scalar = val_scalar[0]
+                valc_scalar = valc_scalar[0]
+            except (IndexError, TypeError):
+                pass
+
         term_type   = QuadraticTerm.from_str(term_typ) if isinstance(term_typ, str) else term_typ
 
         # JAX requires scalar values for scalar updates, but val is a list. Extract if single element.
@@ -547,9 +611,9 @@ class QuadraticHamiltonian(Hamiltonian):
             for site in sites:
                 i = site
                 if self._is_numpy:
-                    self._hamil_sp[i, i] += scalar_val
+                    self._hamil_sp[i, i] += val_scalar
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, i].add(scalar_val)
+                    self._hamil_sp = self._hamil_sp.at[i, i].add(val_scalar)
 
         elif term_type is QuadraticTerm.Hopping:
 
@@ -560,11 +624,11 @@ class QuadraticHamiltonian(Hamiltonian):
                 i, j = sites[idx], sites[idx + 1]
                 
                 if self._is_numpy:
-                    self._hamil_sp[i, j] += scalar_val
-                    self._hamil_sp[j, i] += scalar_valc
+                    self._hamil_sp[i, j] += val_scalar
+                    self._hamil_sp[j, i] += valc_scalar
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, j].add(scalar_val)
-                    self._hamil_sp = self._hamil_sp.at[j, i].add(scalar_valc)
+                    self._hamil_sp = self._hamil_sp.at[i, j].add(val_scalar)
+                    self._hamil_sp = self._hamil_sp.at[j, i].add(valc_scalar)
 
         elif term_type is QuadraticTerm.Pairing:
             
@@ -580,18 +644,18 @@ class QuadraticHamiltonian(Hamiltonian):
 
                 if self._isfermions:  # antisymmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += scalar_value
-                        self._delta_sp[j, i] -= scalar_value
+                        self._delta_sp[i, j] += val_scalar
+                        self._delta_sp[j, i] -= val_scalar
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(scalar_value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(-scalar_value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(val_scalar)
+                        self._delta_sp = self._delta_sp.at[j, i].add(-val_scalar)
                 else:  # bosons: symmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += scalar_value
-                        self._delta_sp[j, i] += scalar_value
+                        self._delta_sp[i, j] += val_scalar
+                        self._delta_sp[j, i] += val_scalar
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(scalar_value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(scalar_value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(val_scalar)
+                        self._delta_sp = self._delta_sp.at[j, i].add(val_scalar)
 
         else:
             raise TypeError(term_type)
@@ -1921,6 +1985,54 @@ class QuadraticHamiltonian(Hamiltonian):
             (calculator_function, matrix_argument)
         """
         return self._make_calculator()
+
+    def many_body_states(self, occupations, return_dict: bool = False, **kwargs):
+        """
+        Compute multiple many-body states for a list of occupations.
+
+        Parameters
+        ----------
+        occupations : list or array-like
+            List of occupations. Each element can be an integer (bitmask)
+            or a list/array of occupied orbital indices.
+        return_dict : bool, optional
+            If True, return a dictionary {occupation: state}.
+            Note: occupation must be hashable (int or tuple) for dict keys.
+            If occupations contains lists/arrays, keys will be their tuple representation.
+        **kwargs
+            Additional arguments passed to many_body_state.
+
+        Returns
+        -------
+        np.ndarray or dict
+            If return_dict=False: Array of shape (n_states, Hilbert_dim).
+            If return_dict=True: Dictionary mapping occupation to state vector.
+        """
+        results = []
+        keys = []
+
+        # Ensure occupations is iterable
+        if isinstance(occupations, (int, np.integer)):
+            occupations = [occupations]
+
+        for occ in occupations:
+            state = self.many_body_state(occupied_orbitals=occ, **kwargs)
+            results.append(state)
+
+            if return_dict:
+                # Create hashable key
+                if isinstance(occ, (int, np.integer)):
+                    key = int(occ)
+                elif isinstance(occ, (list, tuple, np.ndarray)):
+                    key = tuple(np.asarray(occ).tolist())
+                else:
+                    key = occ
+                keys.append(key)
+
+        if return_dict:
+            return dict(zip(keys, results))
+
+        return self._backend.stack(results)
 
     def many_body_state(
         self,

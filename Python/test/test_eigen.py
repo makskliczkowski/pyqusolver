@@ -9,7 +9,7 @@ Date        : 2025-10-30
 
 import numpy as np
 import pytest
-import scipy.sparse as sp
+from scipy import sparse as sp  # Fix import for test compatibility
 
 try:
     from QES.general_python.algebra.eigen.factory import choose_eigensolver

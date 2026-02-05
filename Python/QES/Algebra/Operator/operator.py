@@ -1180,6 +1180,13 @@ class Operator(GeneralMatrix):
             The matrix representation (scipy.sparse.csr_matrix or numpy/jax array).
         """
 
+        # Check if the operator instance has attached Hilbert space (e.g. from Hamiltonian)
+        if hilbert_1 is None and hilbert_2 is None:
+            if hasattr(self, "hilbert_space") and self.hilbert_space is not None:
+                hilbert_1 = self.hilbert_space
+            elif hasattr(self, "_hilbert_space") and self._hilbert_space is not None:
+                hilbert_1 = self._hilbert_space
+
         # check the dimension of the matrix
         dim1, dim2 = None, None
         matrix_hilbert = "None"
@@ -1220,7 +1227,16 @@ class Operator(GeneralMatrix):
         # wrap the function with necessary parameters
         dtype = dtype if dtype is not None else self._backend.complex128
         max_loc_upd = kwargs.get("max_loc_upd", 1)
+
+        if self._fun is None:
+             raise RuntimeError(f"Operator function is not initialized for '{self._name}'.")
+
         op_int_jit = self._fun._fun_int
+
+        if op_int_jit is None:
+            # If function is not available, we cannot proceed with JIT matrix building
+            # Try to see if we can use the python function? But matrix_builder requires JIT.
+            raise RuntimeError(f"Operator integer function (JIT) is None. Operator compilation likely failed for '{self._name}'. check logs for details.")
 
         # Check cache first
         cache_key = args if not any(isinstance(a, (np.ndarray, list, dict)) for a in args) else None

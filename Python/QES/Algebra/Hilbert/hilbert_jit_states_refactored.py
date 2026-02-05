@@ -270,7 +270,9 @@ def _slater_core(
     if workspace is not None:
         M = workspace[:N, :N]
     else:
-        M = np.empty((N, N), dtype=U.dtype)
+        # Default to complex to avoid Numba type unification errors
+        # when workspace is complex (usual case) but U is real.
+        M = np.empty((N, N), dtype=np.complex128)
     
     # Build M_{jk} = U_{site_j, occ_k}
     for j in range(N):
@@ -849,7 +851,7 @@ def fill_many_body_state(
             else:
                 result[i] = calculator_func(matrix_arg, state, ns)
 
-@njit(parallel=False)
+# Removed @njit because calculator might be a closure that Numba can't re-compile
 def _fill_full_space_sequential(
     matrix_arg  : np.ndarray,
     calculator  : Callable[[np.ndarray, int, int], complex],

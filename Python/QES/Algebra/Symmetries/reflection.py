@@ -139,6 +139,9 @@ class ReflectionSymmetry(SymmetryOperator):
         self.ns = ns
         self.base = base
 
+        # Add permutation for compiled group support - reflection is bit reversal
+        self.perm = np.arange(ns)[::-1]
+
     def __call__(self, state: int, ns: int = None, **kwargs) -> Tuple[int, complex]:
         return self.apply_int(state, ns or self.ns, **kwargs)
 

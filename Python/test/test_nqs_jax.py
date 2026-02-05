@@ -6,10 +6,6 @@ import jax.numpy as jnp
 import os
 import sys
 
-# Ensure pythonpath
-sys.path.append(os.getcwd())
-sys.path.append(os.path.join(os.getcwd(), 'Python'))
-
 from QES.general_python.lattices.honeycomb import HoneycombLattice
 from QES.Algebra.hilbert import HilbertSpace
 from QES.Algebra.Model.Interacting.Spin.heisenberg_kitaev import HeisenbergKitaev
