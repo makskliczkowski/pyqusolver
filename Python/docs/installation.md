@@ -4,16 +4,17 @@ QES requires Python 3.10 or later. It supports both CPU and GPU execution (via J
 
 ## Quick Install (Pip)
 
-If you have the package source, you can install it using pip:
+If you have the source tree, install from the `Python/` subdirectory:
 
 ```bash
-pip install .
+cd Python
+python -m pip install .
 ```
 
 To include all optional dependencies (docs, JAX, tests):
 
 ```bash
-pip install ".[all]"
+python -m pip install ".[all]"
 ```
 
 ## Developer Install (Editable)
@@ -28,22 +29,21 @@ For researchers and developers who modify the code:
 
 2. Install in editable mode:
    ```bash
-   pip install -e "Python/[all]"
+   cd Python
+   python -m pip install -e ".[all]"
    ```
 
-   Note: The `Python/` subdirectory contains the actual package.
+   Note: The `Python/` subdirectory contains the installable package.
 
 ## Dependencies
 
-Core dependencies:
-- `numpy`, `scipy`
-- `tqdm`, `colorama` (interface)
+Core dependencies are defined in `Python/pyproject.toml` and include:
+- `numpy`, `scipy`, `matplotlib`
+- `pandas`, `sympy`, `tqdm`, `numba`
 
-Optional but recommended:
+Optional but recommended (see `.[all]` extras):
 - `jax`, `jaxlib`, `flax`, `optax` (for NQS/VMC and GPU support)
-- `numba` (for optimized CPU operations)
 - `h5py` (for data storage)
-- `matplotlib` (for plotting)
 
 ## Verification
 

@@ -4,10 +4,17 @@ This page gives a minimal, reliable path to run QES locally.
 
 ## 1) Install from `pyproject.toml`
 
-From the repository root:
+From the pyqusolver repository root (the folder that contains `Python/`):
 
 ```bash
 cd Python
+python -m pip install -e .
+```
+
+If you are in the parent QuantumEigenSolver repository, use:
+
+```bash
+cd pyqusolver/Python
 python -m pip install -e .
 ```
 
@@ -51,7 +58,7 @@ python -c "import QES; print('QES import OK')"
 
 ## 4) Run tests
 
-From `Python/`:
+From `Python/` (inside the pyqusolver repo):
 
 ```bash
 pytest

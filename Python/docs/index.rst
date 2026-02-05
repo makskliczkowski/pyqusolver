@@ -18,17 +18,16 @@ Welcome to Quantum EigenSolver (QES)
 
    installation
    getting_started
-   quickstart
-   concepts
    design_principles
 
 .. toctree::
    :maxdepth: 2
    :caption: User Guide
 
-   modules
    examples
-   physics_background
+   tutorials
+   architecture
+   concept_density_matrix
 
 .. toctree::
    :maxdepth: 2
