@@ -9,6 +9,15 @@ recursive-include QES *.py
 recursive-include QES *.pyx
 recursive-include QES *.pxd
 
+# Explicitly include submodule __init__.py files to prevent namespace package issues
+include QES/general_python/__init__.py
+include QES/general_python/algebra/__init__.py
+include QES/general_python/common/__init__.py
+include QES/general_python/lattices/__init__.py
+include QES/general_python/maths/__init__.py
+include QES/general_python/physics/__init__.py
+include QES/general_python/ml/__init__.py
+
 # Include data files
 recursive-include QES *.txt
 recursive-include QES *.rst
