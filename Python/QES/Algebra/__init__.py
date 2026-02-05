@@ -38,49 +38,141 @@ Submodules
 - ``Operator``: Operator definitions.
 """
 
+import importlib
+from typing import TYPE_CHECKING, Any
+
 # A short, user-facing description used by QES.registry
 MODULE_DESCRIPTION = (
     "Algebra for quantum many-body: Hilbert spaces, Hamiltonians, operators, symmetries."
 )
 
-# Import main classes with explicit relative imports to avoid ambiguity
-try:
-    from . import Symmetries as _sym  # type: ignore
-    from .backends import identity, inner, kron, outer, overlap, trace  # type: ignore
-    from .hamil import Hamiltonian  # type: ignore
-    from .hamil_config import (  # type: ignore
+_LAZY_IMPORTS = {
+    # Core Classes
+    "HilbertSpace": (".hilbert", "HilbertSpace"),
+    "Hamiltonian": (".hamil", "Hamiltonian"),
+    "Operator": (".Operator", None),
+
+    # Config
+    "HilbertConfig": (".hilbert_config", "HilbertConfig"),
+    "SymmetrySpec": (".hilbert_config", "SymmetrySpec"),
+    "HamiltonianConfig": (".hamil_config", "HamiltonianConfig"),
+    "HAMILTONIAN_REGISTRY": (".hamil_config", "HAMILTONIAN_REGISTRY"),
+    "register_hamiltonian": (".hamil_config", "register_hamiltonian"),
+
+    # Submodules
+    "Hamil": (".Hamil", None),
+    "Hilbert": (".Hilbert", None),
+    "Symmetries": (".Symmetries", None),
+    "Model": (".Model", None),
+    "backends": (".backends", None),
+
+    # Backends utilities
+    "identity": (".backends", "identity"),
+    "inner": (".backends", "inner"),
+    "kron": (".backends", "kron"),
+    "outer": (".backends", "outer"),
+    "overlap": (".backends", "overlap"),
+    "trace": (".backends", "trace"),
+
+    # Symmetries re-exports (from Symmetries)
+    "TranslationSymmetry": (".Symmetries", "TranslationSymmetry"),
+    "ReflectionSymmetry": (".Symmetries", "ReflectionSymmetry"),
+    "InversionSymmetry": (".Symmetries", "InversionSymmetry"),
+    "ParitySymmetry": (".Symmetries", "ParitySymmetry"),
+    "SymmetryOperator": (".Symmetries", "SymmetryOperator"),
+    "SymmetryClass": (".Symmetries", "SymmetryClass"),
+    "MomentumSector": (".Symmetries", "MomentumSector"),
+    "SymmetryRegistry": (".Symmetries", "SymmetryRegistry"),
+    "choose": (".Symmetries", "choose"),
+    "get_available_symmetries": (".Symmetries", "get_available_symmetries"),
+    "build_momentum_superposition": (".Symmetries", "build_momentum_superposition"),
+    "MomentumSectorAnalyzer": (".Symmetries", "MomentumSectorAnalyzer"),
+    "CompactSymmetryData": (".Symmetries", "CompactSymmetryData"),
+    "SymmetryContainer": (".Symmetries", "SymmetryContainer"),
+}
+
+if TYPE_CHECKING:
+    from . import Hamil, Hilbert, Model, Operator, Symmetries, backends
+    from .backends import identity, inner, kron, outer, overlap, trace
+    from .hamil import Hamiltonian
+    from .hamil_config import (
         HAMILTONIAN_REGISTRY,
         HamiltonianConfig,
         register_hamiltonian,
     )
-    from .hilbert import HilbertSpace  # type: ignore
-    from .hilbert_config import HilbertConfig, SymmetrySpec  # type: ignore
+    from .hilbert import HilbertSpace
+    from .hilbert_config import HilbertConfig, SymmetrySpec
+    from .Symmetries import (
+        CompactSymmetryData,
+        InversionSymmetry,
+        MomentumSector,
+        MomentumSectorAnalyzer,
+        ParitySymmetry,
+        ReflectionSymmetry,
+        SymmetryClass,
+        SymmetryContainer,
+        SymmetryOperator,
+        SymmetryRegistry,
+        TranslationSymmetry,
+        build_momentum_superposition,
+        choose,
+        get_available_symmetries,
+    )
 
-    # Curate exported symmetry names (skip private/dunder)
-    _sym_exports = [n for n in dir(_sym) if not n.startswith("_")]
-    __all__ = [
-        "HilbertSpace",
-        "HilbertConfig",
-        "SymmetrySpec",
-        "Hamiltonian",
-        "HamiltonianConfig",
-        "HAMILTONIAN_REGISTRY",
-        "register_hamiltonian",
-        *_sym_exports,
-    ]
-except Exception as e:  # Broad except to keep package import resilient
-    import warnings
-    warnings.warn(f"QES.Algebra import failed: {e}")
-    __all__ = [
-        "HilbertSpace",
-        "Hamiltonian",
-        "HilbertConfig",
-        "SymmetrySpec",
-        "HamiltonianConfig",
-        "HAMILTONIAN_REGISTRY",
-        "register_hamiltonian",
-    ]  # Minimal exports if imports fail
 
-# ----------------------------------------------------------------------------
-#! EOF
-# ---------------------------------------------------------------------------
+def __getattr__(name: str) -> Any:
+    """Lazily import submodules and classes."""
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        module = importlib.import_module(module_path, package=__name__)
+        if attr_name:
+            return getattr(module, attr_name)
+        return module
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
+
+
+__all__ = [
+    # Core
+    "HilbertSpace",
+    "Hamiltonian",
+    "Operator",
+    # Config
+    "HilbertConfig",
+    "SymmetrySpec",
+    "HamiltonianConfig",
+    "HAMILTONIAN_REGISTRY",
+    "register_hamiltonian",
+    # Submodules
+    "Hamil",
+    "Hilbert",
+    "Symmetries",
+    "Model",
+    "backends",
+    # Backends
+    "identity",
+    "inner",
+    "kron",
+    "outer",
+    "overlap",
+    "trace",
+    # Symmetries
+    "TranslationSymmetry",
+    "ReflectionSymmetry",
+    "InversionSymmetry",
+    "ParitySymmetry",
+    "SymmetryOperator",
+    "SymmetryClass",
+    "MomentumSector",
+    "SymmetryRegistry",
+    "choose",
+    "get_available_symmetries",
+    "build_momentum_superposition",
+    "MomentumSectorAnalyzer",
+    "CompactSymmetryData",
+    "SymmetryContainer",
+]

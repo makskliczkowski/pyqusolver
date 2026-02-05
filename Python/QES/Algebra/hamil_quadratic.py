@@ -384,8 +384,8 @@ class QuadraticHamiltonian(Hamiltonian):
     def from_bdg_matrices(
         cls,
         hermitian_part      : "Array",
+        antisymmetric_part  : Optional["Array"] = None,
         *,
-        antisymmetric_part  : Optional["Array"],
         constant            : float = 0.0,
         particles           : str = "fermions",
         dtype               : Optional[np.dtype] = None,

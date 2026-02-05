@@ -1,60 +1,67 @@
-# QES Roadmap
+# Future Roadmap
 
-This document captures the requested roadmap items and future directions for the Quantum EigenSolver (QES) library.
+This document outlines the planned features, improvements, and research directions for the QES framework.
 
-## Tensor Networks / MPS
-*   Integration of Matrix Product States (MPS) and Tensor Network states as a new class of Ansatz in `QES.NQS` or a separate module `QES.TN`.
-*   Support for DMRG-like optimization and TEBD time evolution.
-*   Interoperability with NQS for hybrid methods (e.g., MPS-initialized NQS).
+> **Note**: Items marked with `[Concept]` affecting `general_python` require careful coordination as that submodule is shared across projects.
 
-## Improved Optimizers
-*   Advanced second-order optimizers beyond standard SR/MinSR.
-*   Integration of K-FAC (Kronecker-Factored Approximate Curvature) for deeper networks.
-*   Trust-Region methods for more stable convergence in difficult landscapes.
+## Methods & Solvers
 
-## Determinant Monte Carlo (DQMC) with HS Variants
-*   Implementation of Determinant Quantum Monte Carlo.
-*   Support for various Hubbard-Stratonovich (HS) transformations.
-*   Stable stabilization techniques for low-temperature simulations.
+### Tensor Networks & MPS
+-   Implement Matrix Product States (MPS) and Tensor Train (TT) ansatzes.
+-   Integrate DMRG-like optimization routines.
+-   Support for contraction-based energy evaluation.
 
-## Chebyshev Methods
-*   Chebyshev polynomial expansion for spectral functions and density of states.
-*   Kernel Polynomial Method (KPM) integration.
+### Determinant Quantum Monte Carlo (DQMC)
+-   Implement DQMC with Hubbard-Stratonovich auxiliary field variants.
+-   Support for finite-temperature calculations.
+-   Sign problem mitigation strategies.
 
-## Polfed Placeholder
-*   Placeholder for "Polfed" (Polishing/Refinement methods? Or specific physics algorithm?).
-*   *Note: Needs clarification on specific scope.*
+### Chebyshev Methods
+-   Polynomial expansion of the time evolution operator (Chebyshev propagation).
+-   Spectral density calculation via Kernel Polynomial Method (KPM).
 
-## Exact Diagonalization (ED) / Lanczos Common API
-*   Unify ED and Lanczos interfaces under a common `DiagonalizationSolver`.
-*   Standardize output formats (eigenvalues, eigenvectors, spectral functions) across dense and sparse solvers.
-*   Lazy operator support for larger systems in ED.
+### Improved Optimizers
+-   Integration of advanced second-order optimizers (e.g., K-FAC).
+-   Adaptive learning rate schedulers for VMC (beyond simple decay).
+-   `[Concept]` Unified optimizer interface in `general_python.ml`.
 
-## Numba Recompilation Avoidance
-*   Refactor Numba-compiled kernels to avoid excessive recompilation.
-*   Use caching of compiled functions based on signatures.
-*   Move static arguments to closure variables or strictly typed arguments.
+### "Polfed" (Placeholder)
+-   *Details TBD*: Placeholder for upcoming research method "Polfed".
 
-## Quadratic Hamiltonian Modernization
-*   Modernize `QuadraticHamiltonian` to align with the generic `Hamiltonian` interface.
-*   Ensure efficient Bogoliubov transformation handling.
-*   Support for open boundary conditions and general graphs in quadratic solvers.
+## Exact Diagonalization (ED)
 
-## Spin-1 / Fermions
-*   Full support for Spin-1 systems (already partially in `operators_spin_1`).
-*   Complete Fermionic operator support (Jordan-Wigner strings, etc.) in all NQS ansatze.
-*   Fermionic neural networks (Backflow, Slater-Jastrow).
+### Common API for ED/Lanczos
+-   Refactor `Hamiltonian.diagonalize` to use a unified `EigenSolver` interface.
+-   Standardize Lanczos/Arnoldi iteration control (restarts, convergence criteria).
+-   Support for spectral transformations (shift-invert) across backends.
 
-## Bases for Hilbert Spaces in NQS
-*   Explicit support for working in different bases (Sz, Sx, Particle Number) within NQS.
-*   Basis rotation layers in the ansatz.
+## Performance & JIT
 
-## NQS + Autoregressive Sampling Improvements
-*   Enhanced Autoregressive Neural Networks (AR-NN) for exact sampling.
-*   Optimization of AR sampling kernels (caching, fast sampling).
-*   Support for continuous variables or larger local Hilbert spaces in AR models.
+### Numba Recompilation Avoidance
+-   Systematic review of JIT-compiled functions to ensure type stability.
+-   Use of `cache=True` where appropriate.
+-   Refactor dynamic function generation to avoid recompilation triggers.
 
-## General Python (`QES.general_python`)
-*   *Concept Only*: Refactoring of `general_python` to be less monolithic.
-*   Splitting `general_python` into `qes_core`, `qes_utils`, etc.
-*   Deprecation of legacy modules in favor of standard library or specialized packages.
+## Physics & Modeling
+
+### Quadratic Hamiltonian Modernization
+-   Refactor `QuadraticHamiltonian` to align with the generic `Hamiltonian` interface.
+-   Support for generic Bogoliubov transformations without assuming specific particle types.
+-   Efficient "NQS-like" sampling from Gaussian states (Slater determinants/Pfaffians).
+
+### Spin-1 & Fermionic Systems
+-   Expand `Operator` catalog for Spin-S systems (S > 1/2).
+-   Native support for fermionic mapping strings (Jordan-Wigner) in `NQS`.
+-   Improved performance for fermionic sign handling in VMC.
+
+### Hilbert Space Bases in NQS
+-   Allow NQS models to operate in bases other than the computational (Z) basis.
+-   Support for basis rotation layers (e.g., working in X-basis for transverse field models).
+
+### NQS & Autoregressive Sampling
+-   `[Concept]` Improve autoregressive sampling efficiency (caching of conditional probabilities).
+-   Support for continuous variable autoregressive models in `general_python`.
+
+## Documentation & Structure
+-   Continued modularization of `QES.Algebra`.
+-   Lazy loading for all heavy dependencies.

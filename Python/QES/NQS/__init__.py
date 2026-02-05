@@ -34,6 +34,18 @@ Key Features
 - **Flexible Architectures**: RBMs, CNNs, Transformers, and custom Flax modules.
 - **Stochastic Reconfiguration (SR)**: Natural gradient descent implementation.
 - **Time Evolution**: Time-Dependent Variational Principle (TDVP).
+
+Invariants & Constraints
+------------------------
+1.  **Ansatz Signature**: Custom networks must implement `__call__(self, x)` where
+    `x` has shape `(batch, n_sites)` (integer or float). The output must be
+    complex log-amplitudes of shape `(batch,)` (scalar per sample).
+2.  **Stability**: For deep networks, use `log_cosh` activation instead of `relu`
+    or `tanh` to prevent numerical overflow in VMC.
+3.  **Data Types**: Prefer `complex128` for high-precision physics, though `complex64`
+    is supported for performance.
+4.  **Sampling**: Samplers must be reset via `sampler.reset()` if the number of
+    chains is changed.
 """
 
 import importlib

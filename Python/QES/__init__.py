@@ -17,6 +17,23 @@ Import QES and its submodules:
     log     = QES.get_logger()
     backend = QES.get_backend_manager()
 
+Architecture & Invariants
+-------------------------
+1.  **Backend Agnosticism**: QES supports both NumPy (CPU) and JAX (GPU/TPU) backends.
+    The active backend is managed globally via `QES.get_backend_manager()`.
+    All heavy numerical operations delegate to the active backend.
+2.  **Global State**: Random number generators and logging are managed globally.
+    Use `QES.qes_reseed(seed)` to ensure reproducibility across all components.
+3.  **Lazy Loading**: Submodules are lazily loaded to minimize startup time.
+    Accessing `QES.NQS` or `QES.Solver` triggers their import.
+
+Modules
+-------
+-   **Algebra**: Core quantum mechanics (Hilbert spaces, Operators, Hamiltonians).
+-   **NQS**: Neural Quantum States and Variational Monte Carlo.
+-   **Solver**: Simulation engines (VMC, ED).
+-   **general_python**: Shared utilities and neural network implementations.
+
 ----------------------------------------------------------
 Author          : Maks Kliczkowski
 Email           : maxgrom97@gmail.com

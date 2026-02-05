@@ -16,75 +16,70 @@ Date        : 2025-10-27
 ---------------------------------------------------
 """
 
-# Base classes and enumerations
-from QES.Algebra.Symmetries.base import (
-    MomentumSector,
-    SymmetryClass,
-    SymmetryOperator,
-    SymmetryRegistry,
-)
-from QES.Algebra.Symmetries.inversion import (
-    InversionSymmetry,
-    build_inversion_operator_matrix,
-)
+import importlib
+from typing import TYPE_CHECKING, Any
 
-# Momentum sector analysis
-from QES.Algebra.Symmetries.momentum_sectors import (
-    MomentumSectorAnalyzer,
-)
-from QES.Algebra.Symmetries.parity import (
-    ParitySymmetry,
-)
-from QES.Algebra.Symmetries.reflection import (
-    ReflectionSymmetry,
-)
+# ---------------------------------------------------------------------------
+# Lazy Import Configuration
+# ---------------------------------------------------------------------------
 
-# Compact symmetry data structure
-from QES.Algebra.Symmetries.symmetry_container import (
-    CompactSymmetryData,
-    SymmetryContainer,
-    _compact_get_phase,
-    _compact_get_repr_idx,
-    _compact_get_sym_factor,
-    _compact_is_in_sector,
-)
+_LAZY_IMPORTS = {
+    # base
+    "MomentumSector": (".base", "MomentumSector"),
+    "SymmetryClass": (".base", "SymmetryClass"),
+    "SymmetryOperator": (".base", "SymmetryOperator"),
+    "SymmetryRegistry": (".base", "SymmetryRegistry"),
+    # inversion
+    "InversionSymmetry": (".inversion", "InversionSymmetry"),
+    "build_inversion_operator_matrix": (".inversion", "build_inversion_operator_matrix"),
+    # parity
+    "ParitySymmetry": (".parity", "ParitySymmetry"),
+    # reflection
+    "ReflectionSymmetry": (".reflection", "ReflectionSymmetry"),
+    # translation
+    "TranslationSymmetry": (".translation", "TranslationSymmetry"),
+    "build_momentum_superposition": (".translation", "build_momentum_superposition"),
+    # momentum_sectors
+    "MomentumSectorAnalyzer": (".momentum_sectors", "MomentumSectorAnalyzer"),
+    # symmetry_container
+    "CompactSymmetryData": (".symmetry_container", "CompactSymmetryData"),
+    "SymmetryContainer": (".symmetry_container", "SymmetryContainer"),
+    "_compact_get_phase": (".symmetry_container", "_compact_get_phase"),
+    "_compact_get_repr_idx": (".symmetry_container", "_compact_get_repr_idx"),
+    "_compact_get_sym_factor": (".symmetry_container", "_compact_get_sym_factor"),
+    "_compact_is_in_sector": (".symmetry_container", "_compact_is_in_sector"),
+}
 
-# Symmetry operators
-from QES.Algebra.Symmetries.translation import (
-    TranslationSymmetry,
-    build_momentum_superposition,
-)
+if TYPE_CHECKING:
+    from .base import MomentumSector, SymmetryClass, SymmetryOperator, SymmetryRegistry
+    from .inversion import InversionSymmetry, build_inversion_operator_matrix
+    from .momentum_sectors import MomentumSectorAnalyzer
+    from .parity import ParitySymmetry
+    from .reflection import ReflectionSymmetry
+    from .symmetry_container import (
+        CompactSymmetryData,
+        SymmetryContainer,
+        _compact_get_phase,
+        _compact_get_repr_idx,
+        _compact_get_sym_factor,
+        _compact_is_in_sector,
+    )
+    from .translation import TranslationSymmetry, build_momentum_superposition
 
-####################################################################################################
-#! Public API
-####################################################################################################
 
-__all__ = [
-    # Base classes
-    "SymmetryOperator",
-    "SymmetryClass",
-    "MomentumSector",
-    "SymmetryRegistry",
-    # Symmetry operators
-    "TranslationSymmetry",
-    "ReflectionSymmetry",
-    "InversionSymmetry",
-    "ParitySymmetry",
-    # Utilities
-    "choose",
-    "get_available_symmetries",
-    # Translation utilities
-    "build_momentum_superposition",
-    # Momentum analysis
-    "MomentumSectorAnalyzer",
-    # Compact symmetry data (O(1) JIT-friendly lookups)
-    "CompactSymmetryData",
-    "SymmetryContainer",
-    "_compact_get_sym_factor",
-    "_compact_is_in_sector",
-    "_compact_get_repr_idx",
-    "_compact_get_phase",
-]
+def __getattr__(name: str) -> Any:
+    """Lazily import submodules and classes."""
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        module = importlib.import_module(module_path, package=__name__)
+        return getattr(module, attr_name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
+
 
 ####################################################################################################
 # Module metadata
@@ -109,6 +104,12 @@ def get_available_symmetries():
     dict
         Dictionary mapping symmetry names to their classes.
     """
+    # Import classes inside the function to avoid breaking lazy loading for this utility
+    from .inversion import InversionSymmetry
+    from .parity import ParitySymmetry
+    from .reflection import ReflectionSymmetry
+    from .translation import TranslationSymmetry
+
     return {
         "translation": TranslationSymmetry,
         "reflection": ReflectionSymmetry,
@@ -153,6 +154,29 @@ def choose(n, k):
     return result
 
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#! EOF
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+__all__ = [
+    # Base classes
+    "SymmetryOperator",
+    "SymmetryClass",
+    "MomentumSector",
+    "SymmetryRegistry",
+    # Symmetry operators
+    "TranslationSymmetry",
+    "ReflectionSymmetry",
+    "InversionSymmetry",
+    "ParitySymmetry",
+    # Utilities
+    "choose",
+    "get_available_symmetries",
+    # Translation utilities
+    "build_momentum_superposition",
+    # Momentum analysis
+    "MomentumSectorAnalyzer",
+    # Compact symmetry data (O(1) JIT-friendly lookups)
+    "CompactSymmetryData",
+    "SymmetryContainer",
+    "_compact_get_sym_factor",
+    "_compact_is_in_sector",
+    "_compact_get_repr_idx",
+    "_compact_get_phase",
+]
