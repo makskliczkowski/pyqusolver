@@ -1,41 +1,42 @@
-"""
-QES Algebra Module
-==================
+"""QES algebra package.
 
-Core components for defining quantum systems.
+Purpose
+-------
+Provide core mathematical objects used across QES exact-diagonalization and
+variational workflows:
 
-This module provides the building blocks for quantum mechanics simulations:
-Hilbert spaces, Operators, and Hamiltonians. It handles basis management,
-symmetries, and matrix construction.
+- Hilbert-space definitions,
+- operator algebra,
+- Hamiltonian construction,
+- symmetry-aware basis handling.
 
-Entry Points
-------------
-- :class:`Hamiltonian`: The main object for defining physical models.
-- :class:`HilbertSpace`: Defines the state space (spins, fermions) and symmetries.
-- :class:`Operator`: General operators (observables).
+Input/output contracts
+----------------------
+- Inputs are expected to be numerically typed arrays or scalar parameters
+  consistent with the target Hilbert space.
+- Basis-dependent APIs assume states/operators are aligned to the same ordering.
+- Matrix-like outputs are typically NumPy/JAX arrays or sparse-compatible
+  structures depending on backend path.
 
-Flow
-----
-::
+Dtype and shape expectations
+----------------------------
+- Complex-valued dtypes are common for quantum operators/states.
+- Vector states are typically shape ``(dim,)`` and operators are shape
+  ``(dim, dim)`` after basis expansion.
+- Mixed backend pipelines should avoid implicit dtype promotion when combining
+  NumPy and JAX objects.
 
-    Lattice (geometry)
-        |
-        v
-    HilbertSpace (basis & symmetries)
-        |
-        v
-    Hamiltonian (interactions)
-        |
-        +---> Matrix Building (ED)
-        |
-        +---> NQS Training (VMC)
+Numerical stability notes
+-------------------------
+- Near-degenerate spectra can amplify solver tolerance effects.
+- Large Hilbert spaces may require sparse or iterative methods to reduce memory
+  pressure and floating-point accumulation error.
 
-Submodules
-----------
-- ``hamil``: Hamiltonian implementations.
-- ``hilbert``: Hilbert space logic.
-- ``symmetries``: Group theory and symmetry operations.
-- ``Operator``: Operator definitions.
+Determinism notes
+-----------------
+- Determinism depends on backend behavior and seeded stochastic components.
+- For Monte Carlo or randomized routines, users should set explicit seeds using
+  the public QES seed helpers.
 """
 
 # A short, user-facing description used by QES.registry

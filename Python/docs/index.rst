@@ -17,8 +17,10 @@ Welcome to Quantum EigenSolver (QES)
    :caption: Getting Started
 
    installation
+   getting_started
    quickstart
    concepts
+   design_principles
 
 .. toctree::
    :maxdepth: 2

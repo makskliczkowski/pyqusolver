@@ -80,6 +80,11 @@ def compute_autocorr_time(x, c=5.0):
     acf = autocorr_func_1d(x)
     n = len(acf)
 
+    # Constant/near-constant series: treat as effectively uncorrelated for
+    # ESS purposes so ESS ~= N instead of collapsing to 1.
+    if np.allclose(acf, 1.0, atol=1e-12):
+        return 1.0
+
     # Find cutoff M
     tau = 1.0
     for m in range(1, n):
@@ -142,16 +147,13 @@ def compute_rhat(chains):
     chain_vars = np.var(chains, axis=1, ddof=1)
 
     # Between-chain variance B
-    # B = n * np.var(chain_means, ddof=1)
+    B = n * np.var(chain_means, ddof=1)
 
     # Within-chain variance W
     W = np.mean(chain_vars)
 
     # Weighted variance estimate V_hat
-    # var_plus = (n - 1) / n * W + B / n
-    # Note B/n is just var(chain_means, ddof=1)
-
-    var_plus = ((n - 1) / n) * W + np.var(chain_means, ddof=1)
+    var_plus = ((n - 1) / n) * W + B / n
 
     if W < 1e-12:
         return 1.0  # If variances are zero, we are converged (or stuck)
