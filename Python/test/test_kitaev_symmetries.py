@@ -79,7 +79,7 @@ class TestKitaevSymmetries:
             dtype=np.float64,
             use_forward=True,
         )
-        E_full = np.linalg.eigvalsh(kitaev_full.matrix.toarray())
+        E_full = np.linalg.eigvalsh(kitaev_full.matrix().toarray())
         E_full_sorted = np.sort(E_full)
         logger.info(f"Full Hilbert space: {h_full.Nh} states", color="red")
 
@@ -108,7 +108,7 @@ class TestKitaevSymmetries:
                     use_forward=True,
                 )
 
-                H_k = kitaev_k.matrix.toarray()
+                H_k = kitaev_k.matrix().toarray()
                 E_k = np.real(np.linalg.eigvals(H_k))  # Use eigvals, take real part
                 E_all_k.extend(E_k)
                 total_states += len(E_k)
@@ -169,7 +169,7 @@ class TestKitaevSymmetries:
             dtype=np.float64,
             use_forward=True,
         )
-        E_full = np.linalg.eigvalsh(kitaev_full.matrix.toarray())
+        E_full = np.linalg.eigvalsh(kitaev_full.matrix().toarray())
         E_full_sorted = np.sort(E_full)
         logger.info(f"Full Hilbert space: {h_full.Nh} states", color="red")
 
@@ -198,7 +198,7 @@ class TestKitaevSymmetries:
                     use_forward=True,
                 )
 
-                H_k = kitaev_k.matrix.toarray()
+                H_k = kitaev_k.matrix().toarray()
                 E_k = np.real(np.linalg.eigvals(H_k))  # Use eigvals, take real part
                 E_all_k.extend(E_k)
                 total_states += len(E_k)
@@ -252,7 +252,7 @@ class TestKitaevSymmetries:
             use_forward=True,
         )
 
-        H_k0 = kitaev_k0.matrix.toarray()
+        H_k0 = kitaev_k0.matrix().toarray()
 
         # Eigenvalues should be real even if representation is not Hermitian
         E_k0 = np.linalg.eigvals(H_k0)
@@ -290,7 +290,7 @@ class TestKitaevSymmetries:
             dtype=np.float64,
             use_forward=True,
         )
-        H = kitaev.matrix.toarray()
+        H = kitaev.matrix().toarray()
 
         # Check Hermiticity
         assert np.allclose(H, H.T.conj()), "Isotropic Kitaev Hamiltonian not Hermitian"
@@ -320,7 +320,7 @@ class TestKitaevSymmetries:
             use_forward=True,
         )
 
-        H = kitaev.matrix.toarray()
+        H = kitaev.matrix().toarray()
         assert np.allclose(H, H.T.conj()), "Ising-X Hamiltonian not Hermitian"
 
         E = np.linalg.eigvalsh(H)
@@ -347,7 +347,7 @@ class TestKitaevSymmetries:
             use_forward=True,
         )
 
-        H = kitaev_heis.matrix.toarray()
+        H = kitaev_heis.matrix().toarray()
         assert np.allclose(H, H.T.conj()), "Kitaev-Heisenberg Hamiltonian not Hermitian"
 
         E = np.linalg.eigvalsh(H)

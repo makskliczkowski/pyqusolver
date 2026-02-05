@@ -186,7 +186,7 @@ def test_spectral_function_type_safety():
     G = np.array([[1.0 / (1.0 + 1j * 0.1), 0], [0, 1.0 / (2.0 + 1j * 0.1)]], dtype=complex)
 
     # Spectral function should be real
-    A = spectral_function(G)
+    A = spectral_function(G, return_greens=False)
 
     # Verify type safety
     assert A.dtype in [np.float32, np.float64, float]
@@ -207,7 +207,7 @@ def test_spectral_function_with_identity_operator():
     )
 
     # Test that spectral function works with just Green's function
-    A = spectral_function(G)
+    A = spectral_function(G, return_greens=False)
 
     # Should be real and positive
     assert np.all(np.imag(A) == 0)
@@ -226,7 +226,7 @@ def test_spectral_function_with_diagonal_operator():
         dtype=complex,
     )
 
-    A = spectral_function(G)
+    A = spectral_function(G, return_greens=False)
 
     # Should be real and positive
     assert np.all(np.isreal(A) | (np.abs(np.imag(A)) < 1e-14))
@@ -258,7 +258,7 @@ def test_spectral_function_sum_rule():
     A_LDOS = np.zeros(len(omegas), dtype=float)
     for i, omega in enumerate(omegas):
         G_omega = evecs @ np.diag(1.0 / (omega + 1j * eta - evals)) @ evecs.T.conj()
-        A_i = spectral_function(G_omega)
+        A_i = spectral_function(G_omega, return_greens=False)
         A_LDOS[i] = np.trace(A_i)
 
     # Integrate: should be approximately N

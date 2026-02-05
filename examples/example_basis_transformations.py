@@ -14,10 +14,19 @@ Examples included:
 """
 
 import sys
+import os
+import numpy as np
+
+# Ensure QES is in path if running from root
+current_dir = os.getcwd()
+if os.path.isdir(os.path.join(current_dir, "Python")):
+    sys.path.append(os.path.join(current_dir, "Python"))
+
+import QES
 
 # Try to import QES modules
 try:
-    from QES.Algebra import QuadraticHamiltonian
+    from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
     from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
     from QES.general_python.lattices import Lattice
 except ImportError as e:
@@ -43,7 +52,7 @@ def example_1d_chain():
     Demonstrate real -> k-space transformation for a simple 1D chain.
 
     System: 16-site 1D tight-binding with periodic boundary conditions
-    H = -t Σᵢ (c†ᵢ cᵢ₊₁ + h.c.)
+    H = -t sum_i (c^dag_i c_{i+1} + h.c.)
     """
     print_section("EXAMPLE 1: 1D Tight-Binding Chain")
 
@@ -61,12 +70,15 @@ def example_1d_chain():
     print(f"  - Number of sites: {ns}")
     print(f"  - Hopping amplitude: t = {t}")
     print(f"  - Current basis: {H_real.get_basis_type()}")
-    print(f"  - Matrix shape: {H_real.build_single_particle_matrix().shape}")
 
-    # Build the real-space matrix
-    H_real_mat = H_real.build_single_particle_matrix()
-    print("\nReal-space matrix (first 3times 3 block):")
-    print(H_real_mat[:3, :3])
+    # Check if matrix can be built
+    try:
+        mat = H_real.build_single_particle_matrix()
+        print(f"  - Matrix shape: {mat.shape}")
+        print("\nReal-space matrix (first 3x3 block):")
+        print(mat[:3, :3])
+    except Exception as e:
+        print(f"  - Matrix build failed: {e}")
 
     # Attempt transformation (will fail without lattice unless we use enforce=True)
     print("\n-> Attempting transformation to k-space...")
@@ -74,11 +86,15 @@ def example_1d_chain():
         H_k = H_real.to_basis("k-space", enforce=True)
         print("✓ Transformation successful!")
         print(f"  - Target basis: {H_k.get_basis_type()}")
-        print(f"  - H_k blocks shape: {H_k._H_k.shape}")
-        print(f"  - k-grid shape: {H_k._k_grid.shape}")
+        if hasattr(H_k, '_H_k'):
+             print(f"  - H_k blocks shape: {H_k._H_k.shape}")
+        if hasattr(H_k, '_k_grid'):
+             print(f"  - k-grid shape: {H_k._k_grid.shape}")
     except NotImplementedError as e:
         print(f"⚠ {e}")
         print("  (Auto-lattice creation not yet fully implemented)")
+    except Exception as e:
+        print(f"⚠ Transformation failed: {e}")
 
 
 # ============================================================================
@@ -125,7 +141,7 @@ def example_round_trip_stability():
 
     print("Round-trip test: real-space -> Bloch blocks -> real-space")
     print("\nFor a properly implemented FFT-based transform:")
-    print("  ‖H_original - H_reconstructed‖ / ‖H_original‖ ≈ 10⁻¹⁴ (machine precision)")
+    print("  ||H_original - H_reconstructed|| / ||H_original|| approx 10^-14 (machine precision)")
 
     print("\nSetup:")
     print("  - System: 16-site 1D chain")
@@ -150,17 +166,17 @@ def example_bloch_analysis():
     print_section("EXAMPLE 4: Bloch Hamiltonian Analysis")
 
     print("After FFT-based Bloch transform:")
-    print("\n1. Bloch blocks: H_k[kx, ky, kz, \alpha, β]")
-    print("   - Each H_k[kx, ky, kz] is an (Nb times  Nb) block")
+    print("\n1. Bloch blocks: H_k[kx, ky, kz, alpha, beta]")
+    print("   - Each H_k[kx, ky, kz] is an (Nb x Nb) block")
     print("   - Nb = number of basis sites per unit cell")
     print("   - For monatomic lattice: Nb = 1 (scalar blocks)")
-    print("   - For honeycomb: Nb = 2 (2times 2 blocks)")
+    print("   - For honeycomb: Nb = 2 (2x2 blocks)")
 
     print("\n2. k-grid: k[kx, ky, kz, :]")
     print("   - Contains the reciprocal-space vectors at each k-point")
     print("   - Used for band structure plots")
 
-    print("\n3. Sublattice phases: e^{-i k\\cdot (r_β - r_\alpha)}")
+    print("\n3. Sublattice phases: e^{-i k . (r_beta - r_alpha)}")
     print("   - Applied after FFT to account for intra-cell structure")
     print("   - Critical for multipartite systems (honeycomb, graphene, etc.)")
 
@@ -180,7 +196,7 @@ def example_api_overview():
 QUICKSTART: Transform a Hamiltonian
 ─────────────────────────────────────
 
-from QES.Algebra import QuadraticHamiltonian
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
 from QES.Algebra.Hilbert.hilbert_local import HilbertBasisType
 
 # Create in real-space
@@ -239,7 +255,7 @@ EXAMPLE WORKFLOW:
 ─────────────────
 
 import numpy as np
-from QES.Algebra import QuadraticHamiltonian
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
 
 # Setup
 H = QuadraticHamiltonian(ns=64, lattice=honeycomb_lattice)
@@ -254,7 +270,7 @@ H_k = H.to_basis("k-space", sublattice_positions=sublattice_pos)
 # Work in k-space
 for kx in range(H_k._H_k.shape[0]):
     for ky in range(H_k._H_k.shape[1]):
-        H_block = H_k._H_k[kx, ky, 0, :, :]  # (Nb times  Nb) block
+        H_block = H_k._H_k[kx, ky, 0, :, :]  # (Nb x Nb) block
         evals, evecs = np.linalg.eigh(H_block)
         print(f"k-point ({kx}, {ky}): eigenvalues = {evals}")
 
@@ -280,21 +296,21 @@ COMPLEXITY COMPARISON
 
 Operation                  | Naive DFT  | FFT-based
 ───────────────────────────┼────────────┼──────────
-Extract hopping tensor     | O(N²)      | O(N²)       *
-Apply Fourier transform    | O(N³)      | O(N log N)  **
+Extract hopping tensor     | O(N^2)     | O(N^2)      *
+Apply Fourier transform    | O(N^3)     | O(N log N)  **
 Sublattice corrections     | O(N)       | O(N)
 ───────────────────────────┼────────────┼──────────
-TOTAL                      | O(N³)      | O(N² log N) ***
+TOTAL                      | O(N^3)     | O(N^2 log N) ***
 
 * Data-driven: unavoidable
 ** Dominant term for large N
-*** For N = 1000: ~10⁷ ops (naive) vs ~10⁵ ops (FFT) -> 100times  speedup!
+*** For N = 1000: ~10^7 ops (naive) vs ~10^5 ops (FFT) -> 100x speedup!
 
 MEMORY
 ──────
 
-Real-space matrix       : O(N²) dense storage
-k-space Bloch blocks    : O(N times  Nb²) where Nb ≈ 1-10 (typical)
+Real-space matrix       : O(N^2) dense storage
+k-space Bloch blocks    : O(N x Nb^2) where Nb approx 1-10 (typical)
                         -> Much smaller for small Nb
 
 
@@ -302,13 +318,13 @@ EXAMPLE TIMINGS (estimated for N = 1024 sites):
 ───────────────────────────────────────────────
 
 Naive Fourier transform (explicit DFT)
-  T_naive ≈ N³ = 10⁹ operations -> ~1-10 seconds
+  T_naive approx N^3 = 10^9 operations -> ~1-10 seconds
 
 FFT-based Bloch transform
-  T_fft ≈ N log N = 10⁴ operations (FFT) + N² (extraction)
-        ≈ ~0.1 seconds
+  T_fft approx N log N = 10^4 operations (FFT) + N^2 (extraction)
+        approx ~0.1 seconds
 
-Speedup: ~10-100times 
+Speedup: ~10-100x
     """)
 
 
@@ -379,6 +395,7 @@ Solution: Provide correct shape
 # ============================================================================
 
 if __name__ == "__main__":
+    QES.qes_reseed(42)
     print("\n" + "#" * 80)
     print("# QES Basis Transformations: Practical Examples")
     print("#" * 80)

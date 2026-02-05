@@ -526,6 +526,24 @@ class QuadraticHamiltonian(Hamiltonian):
             
         val         = [-v if remove else v for v in value]
         valc        = [v.conjugate() if isinstance(v, complex) or hasattr(v, "conjugate") else v for v in val]
+
+        # Extract scalar if possible to prevent broadcasting errors
+        if len(val) == 1:
+            val_scalar = val[0]
+            valc_scalar = valc[0]
+        else:
+            val_scalar = val
+            valc_scalar = valc
+
+        # Ensure JAX compatibility: avoid adding list to array scalar
+        if hasattr(val_scalar, "__len__") and len(val_scalar) == 1:
+            # Unwrap again if needed (e.g. list inside tuple)
+            try:
+                val_scalar = val_scalar[0]
+                valc_scalar = valc_scalar[0]
+            except (IndexError, TypeError):
+                pass
+
         term_type   = QuadraticTerm.from_str(term_typ) if isinstance(term_typ, str) else term_typ
 
         if term_type is QuadraticTerm.Onsite:
@@ -533,9 +551,9 @@ class QuadraticHamiltonian(Hamiltonian):
             for site in sites:
                 i = site
                 if self._is_numpy:
-                    self._hamil_sp[i, i] += val
+                    self._hamil_sp[i, i] += val_scalar
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, i].add(val)
+                    self._hamil_sp = self._hamil_sp.at[i, i].add(val_scalar)
 
         elif term_type is QuadraticTerm.Hopping:
 
@@ -546,11 +564,11 @@ class QuadraticHamiltonian(Hamiltonian):
                 i, j = sites[idx], sites[idx + 1]
                 
                 if self._is_numpy:
-                    self._hamil_sp[i, j] += val
-                    self._hamil_sp[j, i] += valc
+                    self._hamil_sp[i, j] += val_scalar
+                    self._hamil_sp[j, i] += valc_scalar
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, j].add(val)
-                    self._hamil_sp = self._hamil_sp.at[j, i].add(valc)
+                    self._hamil_sp = self._hamil_sp.at[i, j].add(val_scalar)
+                    self._hamil_sp = self._hamil_sp.at[j, i].add(valc_scalar)
 
         elif term_type is QuadraticTerm.Pairing:
             
@@ -566,18 +584,18 @@ class QuadraticHamiltonian(Hamiltonian):
 
                 if self._isfermions:  # antisymmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += value
-                        self._delta_sp[j, i] -= value
+                        self._delta_sp[i, j] += val_scalar
+                        self._delta_sp[j, i] -= val_scalar
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(-value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(val_scalar)
+                        self._delta_sp = self._delta_sp.at[j, i].add(-val_scalar)
                 else:  # bosons: symmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += value
-                        self._delta_sp[j, i] += value
+                        self._delta_sp[i, j] += val_scalar
+                        self._delta_sp[j, i] += val_scalar
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(val_scalar)
+                        self._delta_sp = self._delta_sp.at[j, i].add(val_scalar)
 
         else:
             raise TypeError(term_type)
@@ -1865,6 +1883,54 @@ class QuadraticHamiltonian(Hamiltonian):
             (calculator_function, matrix_argument)
         """
         return self._make_calculator()
+
+    def many_body_states(self, occupations, return_dict: bool = False, **kwargs):
+        """
+        Compute multiple many-body states for a list of occupations.
+
+        Parameters
+        ----------
+        occupations : list or array-like
+            List of occupations. Each element can be an integer (bitmask)
+            or a list/array of occupied orbital indices.
+        return_dict : bool, optional
+            If True, return a dictionary {occupation: state}.
+            Note: occupation must be hashable (int or tuple) for dict keys.
+            If occupations contains lists/arrays, keys will be their tuple representation.
+        **kwargs
+            Additional arguments passed to many_body_state.
+
+        Returns
+        -------
+        np.ndarray or dict
+            If return_dict=False: Array of shape (n_states, Hilbert_dim).
+            If return_dict=True: Dictionary mapping occupation to state vector.
+        """
+        results = []
+        keys = []
+
+        # Ensure occupations is iterable
+        if isinstance(occupations, (int, np.integer)):
+            occupations = [occupations]
+
+        for occ in occupations:
+            state = self.many_body_state(occupied_orbitals=occ, **kwargs)
+            results.append(state)
+
+            if return_dict:
+                # Create hashable key
+                if isinstance(occ, (int, np.integer)):
+                    key = int(occ)
+                elif isinstance(occ, (list, tuple, np.ndarray)):
+                    key = tuple(np.asarray(occ).tolist())
+                else:
+                    key = occ
+                keys.append(key)
+
+        if return_dict:
+            return dict(zip(keys, results))
+
+        return self._backend.stack(results)
 
     def many_body_state(
         self,

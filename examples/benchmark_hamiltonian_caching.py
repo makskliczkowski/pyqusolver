@@ -1,6 +1,14 @@
 
+import sys
+import os
 import time
 import numpy as np
+
+# Ensure QES is in path if running from root
+current_dir = os.getcwd()
+if os.path.isdir(os.path.join(current_dir, "Python")):
+    sys.path.append(os.path.join(current_dir, "Python"))
+
 import QES
 from QES.Algebra.hamil import Hamiltonian
 from QES.Algebra.hilbert import HilbertSpace
