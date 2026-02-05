@@ -528,14 +528,28 @@ class QuadraticHamiltonian(Hamiltonian):
         valc        = [v.conjugate() if isinstance(v, complex) or hasattr(v, "conjugate") else v for v in val]
         term_type   = QuadraticTerm.from_str(term_typ) if isinstance(term_typ, str) else term_typ
 
+        # JAX requires scalar values for scalar updates, but val is a list. Extract if single element.
+        scalar_val = val[0] if len(val) == 1 else val
+        # Unwrap 1-element arrays (numpy or jax) to scalars/0-d arrays
+        if hasattr(scalar_val, "shape") and scalar_val.shape == (1,):
+            scalar_val = scalar_val[0]
+
+        scalar_valc = valc[0] if len(valc) == 1 else valc
+        if hasattr(scalar_valc, "shape") and scalar_valc.shape == (1,):
+            scalar_valc = scalar_valc[0]
+
+        scalar_value = value[0] if isinstance(value, (list, tuple)) and len(value) == 1 else value
+        if hasattr(scalar_value, "shape") and scalar_value.shape == (1,):
+            scalar_value = scalar_value[0]
+
         if term_type is QuadraticTerm.Onsite:
 
             for site in sites:
                 i = site
                 if self._is_numpy:
-                    self._hamil_sp[i, i] += val
+                    self._hamil_sp[i, i] += scalar_val
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, i].add(val)
+                    self._hamil_sp = self._hamil_sp.at[i, i].add(scalar_val)
 
         elif term_type is QuadraticTerm.Hopping:
 
@@ -546,11 +560,11 @@ class QuadraticHamiltonian(Hamiltonian):
                 i, j = sites[idx], sites[idx + 1]
                 
                 if self._is_numpy:
-                    self._hamil_sp[i, j] += val
-                    self._hamil_sp[j, i] += valc
+                    self._hamil_sp[i, j] += scalar_val
+                    self._hamil_sp[j, i] += scalar_valc
                 else:
-                    self._hamil_sp = self._hamil_sp.at[i, j].add(val)
-                    self._hamil_sp = self._hamil_sp.at[j, i].add(valc)
+                    self._hamil_sp = self._hamil_sp.at[i, j].add(scalar_val)
+                    self._hamil_sp = self._hamil_sp.at[j, i].add(scalar_valc)
 
         elif term_type is QuadraticTerm.Pairing:
             
@@ -566,18 +580,18 @@ class QuadraticHamiltonian(Hamiltonian):
 
                 if self._isfermions:  # antisymmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += value
-                        self._delta_sp[j, i] -= value
+                        self._delta_sp[i, j] += scalar_value
+                        self._delta_sp[j, i] -= scalar_value
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(-value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(scalar_value)
+                        self._delta_sp = self._delta_sp.at[j, i].add(-scalar_value)
                 else:  # bosons: symmetric
                     if self._is_numpy:
-                        self._delta_sp[i, j] += value
-                        self._delta_sp[j, i] += value
+                        self._delta_sp[i, j] += scalar_value
+                        self._delta_sp[j, i] += scalar_value
                     else:
-                        self._delta_sp = self._delta_sp.at[i, j].add(value)
-                        self._delta_sp = self._delta_sp.at[j, i].add(value)
+                        self._delta_sp = self._delta_sp.at[i, j].add(scalar_value)
+                        self._delta_sp = self._delta_sp.at[j, i].add(scalar_value)
 
         else:
             raise TypeError(term_type)
@@ -1845,8 +1859,50 @@ class QuadraticHamiltonian(Hamiltonian):
             matrix_arg = G_matrix
         
         # Cache for future calls
+        # Ensure matrix_arg is complex to avoid Numba type unification errors
+        if matrix_arg is not None and getattr(matrix_arg, 'dtype', None) != np.complex128:
+             # Only cast if it's a numpy/jax array
+             if hasattr(matrix_arg, 'astype'):
+                 matrix_arg = matrix_arg.astype(np.complex128)
+
         self._calculator_cache[cache_key] = (calc_fn, matrix_arg)
         return calc_fn, matrix_arg
+
+    def many_body_states(
+        self,
+        occupations: Union[List[int], List[List[int]], np.ndarray],
+        return_dict: bool = False,
+        **kwargs
+    ) -> Union[List[np.ndarray], Dict[int, np.ndarray]]:
+        """
+        Compute many-body states for multiple occupation configurations.
+
+        Parameters
+        ----------
+        occupations : List[int] or List[List[int]]
+            List of occupation configurations (integers or lists of indices).
+        return_dict : bool
+            If True, return dictionary mapping input occupation (if hashable) to state.
+            If False, return list of states.
+
+        Returns
+        -------
+        List[np.ndarray] or Dict[int, np.ndarray]
+            Computed states.
+        """
+        results_list = []
+        results_dict = {}
+
+        for occ in occupations:
+            state = self.many_body_state(occupied_orbitals=occ, **kwargs)
+            if return_dict:
+                # Key must be hashable
+                key = occ if isinstance(occ, int) else tuple(occ)
+                results_dict[key] = state
+            else:
+                results_list.append(state)
+
+        return results_dict if return_dict else results_list
 
     def _many_body_state_calculator(self):
         r"""
@@ -2535,9 +2591,16 @@ class QuadraticHamiltonian(Hamiltonian):
             # If operator provided, compute with it; otherwise use Green's function directly
             if operator is not None:
                 # Spectral function already handles operator weighting
-                A_i = sf_func(greens_function=G[i])
+                res = sf_func(greens_function=G[i])
             else:
-                A_i = sf_func(greens_function=G[i])
+                res = sf_func(greens_function=G[i])
+
+            # Unpack tuple if returned (A, G)
+            if isinstance(res, tuple):
+                A_i = res[0]
+            else:
+                A_i = res
+
             A_list.append(A_i)
 
         A = np.array(A_list)

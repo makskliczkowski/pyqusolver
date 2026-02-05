@@ -135,7 +135,12 @@ class DummyVector:
             self.val = backend.real(self.val)
         elif not is_val_complex and is_tgt_complex:
             # If we're casting from real to complex, add a zero imaginary part
-            self.val = backend.asarray(self.val, dtype=backend.complex128)
+            # Use 'complex128' string for JAX compatibility if backend is JAX
+            if hasattr(backend, "complex128"):
+                 c_dtype = backend.complex128
+            else:
+                 c_dtype = "complex128"
+            self.val = backend.asarray(self.val, dtype=c_dtype)
 
         # fast path: nothing to change
         if not copy and tgt_dt == self.dtype:
