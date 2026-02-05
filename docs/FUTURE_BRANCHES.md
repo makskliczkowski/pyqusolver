@@ -1,25 +1,24 @@
-# Future Branches / Breaking Changes
+# FUTURE_BRANCHES.md
 
-This document records potential refactors that were deferred to preserve backward compatibility (import paths). These changes would improve the library structure but require a major version bump or deprecation cycle.
+Compatibility-breaking or high-risk structural changes deferred from this branch.
+Each item is tagged with **future branch**.
 
-## `QES.Algebra` Structure
+## [future branch] Package renames and path normalization
 
-*   **Rename `Hamil` to `Hamiltonian`**: The package `QES.Algebra.Hamil` should be renamed to `QES.Algebra.Hamiltonian` to match the class name and be more descriptive.
-*   **Physical Operator Structure**: Move implementation files from `QES.Algebra.Operator.impl` to top-level `QES.Algebra.Operator` or dedicated subpackages like `QES.Algebra.Spin`, `QES.Algebra.Fermion`.
+- Rename `QES.Algebra.Hamil` to `QES.Algebra.Hamiltonian` and migrate references.
+- Flatten/reshape `QES.Algebra.Operator.impl` into clearer physics-domain packages.
 
-## `QES.Solver` Organization
+## [future branch] Solver package reshaping
 
-*   **VMC Package**: Move `QES.Solver.MonteCarlo.vmc` to `QES.Solver.VMC`.
-*   **Sampler consolidation**: Merge `sampler.py`, `arsampler.py`, `vmc.py` into a unified `samplers` subpackage.
+- Move `QES.Solver.MonteCarlo.vmc` into a dedicated top-level solver namespace.
+- Consolidate sampler implementations under a unified `samplers/` package API.
 
-## `QES.general_python` Decomposition
+## [future branch] `general_python` decomposition
 
-*   **Dissolve `general_python`**: This submodule is currently a catch-all. It should be broken down and its contents moved to:
-    *   `QES.Utils`: Common utilities (`common`).
-    *   `QES.Math`: Mathematical functions (`maths`).
-    *   `QES.Physics`: General physics utilities (`physics`).
-    *   `QES.ML`: Machine learning cores (`ml`).
+- Split `QES.general_python` into focused packages/modules with deprecation shims.
+- Migrate callers to stable non-monolithic namespaces over a staged cycle.
 
-## Global Namespaces
+## [future branch] Global-state API reduction
 
-*   **Remove `QES.qes_globals`**: Use explicit dependency injection or a context object passed through the stack instead of global singletons.
+- Reduce reliance on global singletons in `QES.qes_globals`.
+- Transition to explicit context/config injection where practical.

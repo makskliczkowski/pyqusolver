@@ -1,44 +1,41 @@
-"""
-QES Solver Module
-=================
+"""QES solver package.
 
-Simulation engines and optimization backends.
+Provides abstract solver interfaces and concrete algorithm families.
 
-This module provides the abstract interfaces and concrete implementations for
-simulating quantum systems. It primarily houses the Monte Carlo engines used
-by NQS.
-
-Entry Points
-------------
-- :class:`MonteCarloSolver`: Base class for MC-based simulations.
-- :class:`QES.Solver.MonteCarlo.sampler.Sampler`: Abstract interface for sampling.
-- :class:`QES.Solver.MonteCarlo.vmc.VMCSampler`: Metropolis-Hastings sampler.
-
-Flow
-----
-::
-
-    Sampler (MCMC)
-        |
-        v
-    MonteCarloSolver (Optimization Loop)
-        |
-        v
-    Physics Results
-
-Submodules
-----------
-- ``MonteCarlo``: Samplers and VMC logic.
-- ``solver``: Abstract base classes.
+Correctness notes
+-----------------
+* ``Solver`` subclasses should expose deterministic ``init``/``train`` behavior
+  for fixed random seeds.
+* Solver outputs should record metadata needed for reproducibility (settings,
+  acceptance rates, or convergence diagnostics depending on solver type).
 """
 
-from .solver import Solver
+from __future__ import annotations
 
-__all__ = ["Solver"]
+import importlib
+from typing import TYPE_CHECKING, Any
 
-# A short, user-facing description used by QES.registry
 MODULE_DESCRIPTION = "Core solver interfaces and Monte Carlo-based solvers."
 
-# ----------------------------------------------------------------------------
-#! EOF
-# ----------------------------------------------------------------------------
+_LAZY_IMPORTS = {
+    "Solver": (".solver", "Solver"),
+    "MonteCarlo": (".MonteCarlo", None),
+}
+
+if TYPE_CHECKING:
+    from .solver import Solver
+    from . import MonteCarlo
+
+__all__ = ["Solver", "MonteCarlo"]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        module = importlib.import_module(module_path, package=__name__)
+        return module if attr_name is None else getattr(module, attr_name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(list(globals().keys()) + list(_LAZY_IMPORTS.keys()) + __all__))
