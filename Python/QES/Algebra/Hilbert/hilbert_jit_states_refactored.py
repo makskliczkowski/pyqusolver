@@ -986,6 +986,65 @@ def _fill_many_body_state_permanent(
             else:
                 result[i, st] = 0.0
 
+# BdG / Gaussian parallel fillers
+
+@njit(parallel=True, cache=True)
+def _fill_bdg_vacuum_row(
+    F   : np.ndarray,
+    ns  : int,
+    row : np.ndarray,
+):
+    r'''Fill BCS vacuum amplitudes in parallel: row[st] = Pf(F_occ).'''
+    nh = row.shape[0]
+    for st in numba.prange(nh):
+        n_occ = _popcount64(np.uint64(st))
+        if n_occ & 1:
+            row[st] = 0.0 + 0.0j
+        else:
+            workspace = np.empty((ns, ns), dtype=np.complex128)
+            row[st] = calculate_bogoliubov_amp(F, st, ns, True, workspace)
+
+@njit(parallel=True, cache=True)
+def _fill_bdg_excited_configs(
+    F               : np.ndarray,
+    u_bdg_matrix    : np.ndarray,
+    qp_configs      : np.ndarray,
+    ns              : int,
+    result          : np.ndarray,
+):
+    r'''Fill excited BdG amplitudes in parallel over configs.'''
+    chunk_size = result.shape[0]
+    nh         = result.shape[1]
+    n_qp       = qp_configs.shape[1]
+    ws_dim     = ns + n_qp
+    for i in numba.prange(chunk_size):
+        qp_inds   = qp_configs[i]
+        workspace = np.empty((ws_dim, ws_dim), dtype=np.complex128)
+        for st in range(nh):
+            n_occ = _popcount64(np.uint64(st))
+            if (n_occ + n_qp) & 1:
+                result[i, st] = 0.0 + 0.0j
+            else:
+                result[i, st] = calculate_bogoliubov_amp_exc(
+                    F, u_bdg_matrix, qp_inds, st, ns, workspace
+                )
+
+@njit(parallel=True, cache=True)
+def _fill_gaussian_vacuum_row(
+    G   : np.ndarray,
+    ns  : int,
+    row : np.ndarray,
+):
+    r'''Fill bosonic Gaussian vacuum amplitudes in parallel: row[st] = Hf(G_occ).'''
+    nh = row.shape[0]
+    for st in numba.prange(nh):
+        n_occ = _popcount64(np.uint64(st))
+        if n_occ & 1:
+            row[st] = 0.0 + 0.0j
+        else:
+            workspace = np.empty((ns, ns), dtype=np.complex128)
+            row[st] = calculate_bosonic_gaussian_amp(G, st, ns, workspace)
+
 def _fill_many_body_state_bogoliubov(
     F                   : np.ndarray,                   # (ns, ns) - antisymmetric pairing matrix
     ns                  : int,
@@ -1053,48 +1112,27 @@ def _fill_many_body_state_bogoliubov(
     
     Notes
     -----
-    - Cannot use Numba prange because the Pfaffian routine is pure Python.
-    - Vacuum is computed once and broadcast when all configs are identical.
-    - Workspace is pre-allocated per-config to reduce allocation overhead.
+    - Now fully Numba-parallel.  Vacuum: prange over Fock states.
+      Excited: prange over configurations.
     '''
     chunk_size  = result.shape[0]
-    nh          = result.shape[1]
     
     is_vacuum   = (qp_configs is None) or (qp_configs.ndim == 2 and qp_configs.shape[1] == 0)
+    F_c         = F.astype(np.complex128) if F.dtype != np.complex128 else F
     
     if is_vacuum:
-        # BdG vacuum: compute ONCE, then broadcast
-        workspace = np.empty((ns, ns), dtype=F.dtype)
-        for st in range(nh):
-            n_occ = popcount64(np.uint64(st))
-            if n_occ & 1:                       # odd particle number → 0
-                result[0, st] = 0.0
-            else:
-                result[0, st] = calculate_bogoliubov_amp(F, st, ns, True, workspace)
-        # Broadcast to all configs (they are all the same vacuum)
+        # BdG vacuum: compute in parallel, then broadcast
+        _fill_bdg_vacuum_row(F_c, ns, result[0])
         for i in range(1, chunk_size):
             result[i, :] = result[0, :]
     else:
-        # Excited quasiparticle states
         if u_bdg_matrix is None:
             raise ValueError(
                 "u_bdg_matrix is required for excited BdG states. "
                 "Pass the U matrix from bogolubov_decompose()."
             )
-        for i in range(chunk_size):
-            qp_inds         = qp_configs[i]
-            n_qp            = qp_inds.size
-            ws_dim          = ns + n_qp
-            workspace       = np.empty((ws_dim, ws_dim), dtype=F.dtype)
-            for st in range(nh):
-                n_occ = popcount64(np.uint64(st))
-                if (n_occ + n_qp) & 1: # parity mismatch → 0
-                    result[i, st] = 0.0
-                else:
-                    # calculate Pfaffian of extended matrix for this config and basis state
-                    result[i, st] = calculate_bogoliubov_amp_exc(
-                        F, u_bdg_matrix, qp_inds, st, ns, workspace
-                    )
+        U_c = u_bdg_matrix.astype(np.complex128) if u_bdg_matrix.dtype != np.complex128 else u_bdg_matrix
+        _fill_bdg_excited_configs(F_c, U_c, qp_configs, ns, result)
 
 def _fill_many_body_state_gaussian(
     G               : np.ndarray,   # (ns, ns) - symmetric pairing matrix
@@ -1138,19 +1176,13 @@ def _fill_many_body_state_gaussian(
     -----
     - Bosonic Gaussian vacuum is unique for a given G; all chunk rows
       receive the same state.
-    - Cannot use Numba prange (Hafnian routine is pure Python).
+    - Now fully Numba-parallel (Hafnian via Gray-code @njit).
     '''
     chunk_size  = result.shape[0]
-    nh          = result.shape[1]
+    G_c = G.astype(np.complex128) if G.dtype != np.complex128 else G
     
-    # Gaussian vacuum: compute once, then broadcast
-    workspace = np.empty((ns, ns), dtype=G.dtype)
-    for st in range(nh):
-        n_occ = popcount64(np.uint64(st))
-        if n_occ & 1:
-            result[0, st] = 0.0
-        else:
-            result[0, st] = calculate_bosonic_gaussian_amp(G, st, ns, workspace)
+    # Gaussian vacuum: compute in parallel, then broadcast
+    _fill_gaussian_vacuum_row(G_c, ns, result[0])
     for i in range(1, chunk_size):
         result[i, :] = result[0, :]
 
@@ -1278,10 +1310,12 @@ def many_body_states(
     
     Performance
     -----------
-    - SLATER / PERMANENT: fully Numba-parallel over configs × Fock states.
-    - BOGOLIUBOV / GAUSSIAN: Python-level loop (Pfaffian / Hafnian are not
-      yet JIT-compiled).  Vacuum is computed once and broadcast, so the cost
-      is O(2^ns) regardless of ``chunk_size``.
+    - SLATER / PERMANENT: fully Numba-parallel over configs x Fock states.
+    - BOGOLIUBOV: fully Numba-parallel.  Vacuum parallelises over Fock states;
+      excited states over configs.  Pfaffian via Parlett-Reid O(n³).
+    - GAUSSIAN: fully Numba-parallel over Fock states.
+      Hafnian via Gray-code O(2^n · n).
+    - Vacuum states are computed once and broadcast to all config rows.
     
     Examples
     --------
