@@ -54,7 +54,7 @@ except ImportError:
 
 
 class DummyVector:
-    """
+    r"""
     Constant vector of length `ns` with all entries == `val`.
     A thin dummy so scalar couplings can be broadcast like arrays.
     
@@ -169,7 +169,7 @@ class DummyVector:
         return f"DummyVector(val={self.val!r}, ns={self.ns})"
 
     def __str__(self):
-        return f"[{self.val}] * {self.ns}"
+        return f"[{self.val}] * {self.ns}" if self.ns > 1 else f"{self.val}"
 
     # ---------------------------------------------------------------------------
 
@@ -228,6 +228,8 @@ class DummyVector:
     # ---------------------------------------------------------------------------
 
     def __eq__(self, other):
+        if isinstance(other, (int, float, complex)):
+            return self.ns == 1 and self.val == other
         return isinstance(other, DummyVector) and self.ns == other.ns and self.val == other.val
 
     def __hash__(self):
@@ -239,6 +241,14 @@ class DummyVector:
         """
         backend = backend if backend is not None else __import__("numpy")
         return backend.full(self.ns, self.val, dtype=dtype)
+
+    @property
+    def imag(self):
+        return DummyVector(self._backend.imag(self.val), ns=self.ns, backend=self._backend)
+    
+    @property
+    def real(self):
+        return DummyVector(self._backend.real(self.val), ns=self.ns, backend=self._backend)
 
 
 ##################################################################################

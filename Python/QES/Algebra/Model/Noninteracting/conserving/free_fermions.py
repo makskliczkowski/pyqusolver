@@ -303,7 +303,32 @@ class FreeFermions(QuadraticHamiltonian):
     # -----------------------------------------------------------------
 
     def __repr__(self):
-        return f"FreeFermions(ns={self._ns},t={self._t[0]},c={self._constant_offset})"
+        if isinstance(self._t, (float, int)) and isinstance(self._t2, (float, int)):
+            t_str   = f"t={self._t.real}"           if hasattr(self._t, 'real') else f"t={self._t}"
+            t2_str  = f"t2={self._t2.real}"         if hasattr(self._t2, 'real') else f"t2={self._t2}"
+        elif hasattr(self._t, '__len__') and len(self._t) > 1 and hasattr(self._t2, '__len__') and len(self._t2) > 1:
+            t_str   = f"t={self._t[0].real}"        if hasattr(self._t, '__len__')  and len(self._t) > 1     else f"t={self._t.real}"
+            t2_str  = f"t2={self._t2[0].real}"      if hasattr(self._t2, '__len__') and len(self._t2) > 1    else f"t2={self._t2.real}"
+        else:
+            t_str   = f"t={self._t.real}"           if hasattr(self._t, 'real') else f"t={self._t}"
+            t2_str  = f"t2={self._t2.real}"         if hasattr(self._t2, 'real') else f"t2={self._t2}"
+        
+        
+        if self._e1 != 0.0 or self._e2 != 0.0:
+            e1_str = f"e1={self._e1.real}" if hasattr(self._e1, 'real') else f"e1={self._e1}"
+            e2_str = f"e2={self._e2.real}" if hasattr(self._e2, 'real') else f"e2={self._e2}"
+        elif self._e1 != 0.0:
+            e1_str = f"e1={self._e1.real}" if hasattr(self._e1, 'real') else f"e1={self._e1}"
+            e2_str = ""
+        elif self._e2 != 0.0:
+            e1_str = ""
+            e2_str = f"e2={self._e2.real}" if hasattr(self._e2, 'real') else f"e2={self._e2}"
+        else:
+            e1_str = ""
+            e2_str = ""
+    
+        param_str = ",".join(filter(None, [t_str, t2_str, e1_str, e2_str]))
+        return f"FreeFermions(ns={self._ns},{param_str},c={self._constant_offset})"
 
     def __str__(self):
         return self.__repr__()
