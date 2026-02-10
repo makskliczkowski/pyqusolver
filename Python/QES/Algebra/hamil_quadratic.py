@@ -35,8 +35,8 @@ _lazy_cache: Dict[str, Any] = {}
 def _get_hilbert_jit_states():
     """Lazily import hilbert_jit_states module."""
     if 'hilbert_jit_states' not in _lazy_cache:
-        from QES.Algebra.Hilbert import hilbert_jit_states_refactored
-        _lazy_cache['hilbert_jit_states'] = hilbert_jit_states_refactored
+        from QES.Algebra.Hilbert import hilbert_jit_states
+        _lazy_cache['hilbert_jit_states'] = hilbert_jit_states
     return _lazy_cache['hilbert_jit_states']
 
 def _get_jax_states():
@@ -2040,7 +2040,7 @@ class QuadraticHamiltonian(Hamiltonian):
         # Import unified dispatcher (single source of truth)
         
         try:
-            from QES.Algebra.Hilbert.hilbert_jit_states_refactored import (
+            from QES.Algebra.Hilbert.hilbert_jit_states import (
                 many_body_states as _many_body_states, ManyBodyStateType,
             )
         except ImportError as e:
