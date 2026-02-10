@@ -2037,7 +2037,8 @@ class QuadraticHamiltonian(Hamiltonian):
         if self._eig_vec is None:
             raise RuntimeError("Eigenvectors not available. Call diagonalize() first.")
         
-        # ── Import unified dispatcher (single source of truth) ──────────
+        # Import unified dispatcher (single source of truth)
+        
         try:
             from QES.Algebra.Hilbert.hilbert_jit_states_refactored import (
                 many_body_states as _many_body_states, ManyBodyStateType,

@@ -957,7 +957,7 @@ def _fill_many_body_state_slater(
         workspace           = np.empty((nfilling, nfilling), dtype=np.complex128)
         
         for st in range(nh):
-            if _popcount64(np.uint64(st)) == nfilling:
+            if _popcount64(np.int64(st)) == nfilling:
                 result[i, st] = calculate_slater_det(sp_eigvecs, occupied_orbitals, st, ns, workspace)
             else:
                 result[i, st] = 0.0
@@ -981,7 +981,7 @@ def _fill_many_body_state_permanent(
         workspace           = np.empty((nfilling, nfilling), dtype=np.complex128)
         
         for st in range(nh):
-            if _popcount64(np.uint64(st)) == nfilling:
+            if _popcount64(np.int64(st)) == nfilling:
                 result[i, st] = calculate_permanent(sp_eigvecs, occupied_orbitals, st, ns, workspace)
             else:
                 result[i, st] = 0.0
@@ -997,7 +997,7 @@ def _fill_bdg_vacuum_row(
     r'''Fill BCS vacuum amplitudes in parallel: row[st] = Pf(F_occ).'''
     nh = row.shape[0]
     for st in numba.prange(nh):
-        n_occ = _popcount64(np.uint64(st))
+        n_occ = _popcount64(np.int64(st))
         if n_occ & 1:
             row[st] = 0.0 + 0.0j
         else:
@@ -1021,7 +1021,7 @@ def _fill_bdg_excited_configs(
         qp_inds   = qp_configs[i]
         workspace = np.empty((ws_dim, ws_dim), dtype=np.complex128)
         for st in range(nh):
-            n_occ = _popcount64(np.uint64(st))
+            n_occ = _popcount64(np.int64(st))
             if (n_occ + n_qp) & 1:
                 result[i, st] = 0.0 + 0.0j
             else:
@@ -1038,7 +1038,7 @@ def _fill_gaussian_vacuum_row(
     r'''Fill bosonic Gaussian vacuum amplitudes in parallel: row[st] = Hf(G_occ).'''
     nh = row.shape[0]
     for st in numba.prange(nh):
-        n_occ = _popcount64(np.uint64(st))
+        n_occ = _popcount64(np.int64(st))
         if n_occ & 1:
             row[st] = 0.0 + 0.0j
         else:

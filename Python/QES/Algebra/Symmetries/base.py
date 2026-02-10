@@ -261,11 +261,12 @@ class SymOpTables:
 
 
 @numba.njit(cache=True, fastmath=True)
-def _popcount64(x: np.int64) -> np.int64:
+def _popcount64(x):
     # portable popcount (Numba supports bit ops; this is fine)
+    v = np.int64(x)
     c = np.int64(0)
-    while x:
-        x &= x - 1
+    while v:
+        v &= v - 1
         c += 1
     return c
 
