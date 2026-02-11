@@ -35,7 +35,7 @@ warnings.filterwarnings("ignore", message=".*Skipped cross-host ArrayMetadata va
 
 # typing and other imports
 from functools  import partial
-from typing     import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
+from typing     import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 Array           = Any
 
@@ -1394,6 +1394,202 @@ class NQS(MonteCarloSolver):
         )
 
     #####################################
+    #! MONTE CARLO STATISTICS HELPERS
+    #####################################
+
+    @staticmethod
+    def compute_mc_stats(
+        values      : Union[np.ndarray, list, tuple],
+        *,
+        num_chains  : int = 1,
+    ) -> Dict[str, Any]:
+        """
+        Compute chain-aware Monte Carlo statistics for potentially correlated samples.
+
+        Returns
+        -------
+        dict
+            Keys include: mean, std, stderr, ess, tau_int, r_hat, n_samples, num_chains
+        """
+        vals = np.asarray(values).reshape(-1)
+        n = int(vals.size)
+
+        if n == 0:
+            raise ValueError("Cannot compute MC statistics for empty values.")
+
+        real_vals   = np.real(vals)
+        mean_val    = np.mean(vals)
+        std_val     = float(np.std(real_vals, ddof=1)) if n > 1 else 0.0
+
+        nch         = max(int(num_chains), 1)
+        stderr      = std_val / np.sqrt(n) if n > 1 else 0.0
+        ess         = float(n)
+        tau_int     = 1.0
+        r_hat       = float("nan")
+
+        if nch <= n and (n % nch) == 0:
+            chain_len   = n // nch
+            chains      = real_vals.reshape(nch, chain_len)
+
+            try:
+                from QES.Solver.MonteCarlo.diagnostics import compute_autocorr_time, compute_rhat
+
+                taus = []
+                for c in chains:
+                    t = float(compute_autocorr_time(c))
+                    taus.append(max(t, 1.0))
+
+                # Effective sample size and standard error calculations
+                tau_int = float(np.mean(taus))
+                ess     = float(np.sum([chain_len / t for t in taus]))
+                ess     = max(1.0, min(ess, float(n)))
+                stderr  = std_val / np.sqrt(ess) if n > 1 else 0.0
+
+                if nch > 1 and chain_len > 1:
+                    r_hat = float(compute_rhat(chains))
+                    
+            except Exception:
+                pass
+
+        return {
+            "mean"          : mean_val,
+            "std"           : std_val,
+            "stderr"        : float(stderr),
+            "ess"           : float(ess),
+            "tau_int"       : float(tau_int),   # Integrated autocorrelation time
+            "r_hat"         : float(r_hat),     # Potential scale reduction factor
+            "n_samples"     : n,                # Total number of samples
+            "num_chains"    : nch,              # Number of chains
+        }
+
+    def compute_loss_statistics(
+        self,
+        states=None,
+        ansatze=None,
+        *,
+        params=None,
+        probabilities=None,
+        batch_size=None,
+        num_samples=None,
+        num_chains=None,
+        return_values: bool = False,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Compute loss with chain-aware Monte Carlo uncertainty diagnostics.
+        """
+        local_losses = self.compute_loss(
+            states=states,
+            ansatze=ansatze,
+            params=params,
+            probabilities=probabilities,
+            batch_size=batch_size,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            return_values=True,
+            **kwargs,
+        )
+        nch     = num_chains if num_chains is not None else self._sampler.numchains
+        stats   = NQS.compute_mc_stats(local_losses, num_chains=nch)
+        if return_values:
+            stats["values"] = np.asarray(local_losses)
+        return stats
+
+    def compute_connected_correlation(
+        self,
+        function_i: Callable,
+        function_j: Optional[Callable] = None,
+        *,
+        states=None,
+        ansatze=None,
+        params=None,
+        probabilities=None,
+        batch_size=None,
+        num_samples=None,
+        num_chains=None,
+        args_i: Optional[tuple] = None,
+        args_j: Optional[tuple] = None,
+        return_values: bool = False,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        r"""
+        Compute connected correlation:
+            C_ij = <O_i O_j> - <O_i><O_j>
+        using shared Monte Carlo samples.
+        """
+        if function_j is None:
+            function_j = function_i
+
+        shared_states           = states
+        shared_ansatze          = ansatze
+        shared_probabilities    = probabilities
+
+        if shared_states is None:
+            (_, _), (shared_states, shared_ansatze), sampled_probabilities = self.sample(
+                num_samples=num_samples,
+                num_chains=num_chains,
+                params=params,
+            )
+            if shared_probabilities is None:
+                shared_probabilities = sampled_probabilities
+
+        obs_i, obs_j = self.compute_observable(
+            states=shared_states,
+            ansatze=shared_ansatze,
+            functions=[function_i, function_j],
+            params=params,
+            probabilities=shared_probabilities,
+            batch_size=batch_size,
+            num_samples=None,
+            num_chains=None,
+            return_values=True,
+            args=args_i,
+            **kwargs,
+        )
+
+        if args_j is not None and args_j != args_i:
+            obs_j = self.compute_observable(
+                states=shared_states,
+                ansatze=shared_ansatze,
+                functions=function_j,
+                params=params,
+                probabilities=shared_probabilities,
+                batch_size=batch_size,
+                num_samples=None,
+                num_chains=None,
+                return_values=True,
+                args=args_j,
+                **kwargs,
+            )
+
+        oi = np.asarray(obs_i).reshape(-1)
+        oj = np.asarray(obs_j).reshape(-1)
+        if oi.shape != oj.shape:
+            raise ValueError(
+                f"Observable shapes do not match for connected correlation: {oi.shape} vs {oj.shape}."
+            )
+
+        mean_i              = np.mean(oi)
+        mean_j              = np.mean(oj)
+        connected_samples   = oi * oj - mean_i * mean_j
+
+        nch                 = num_chains if num_chains is not None else self._sampler.numchains
+        mc                  = NQS.compute_mc_stats(connected_samples, num_chains=nch)
+
+        result = {
+            "connected": mc["mean"],
+            "error_of_mean": mc["stderr"],
+            "std": mc["std"],
+            "ess": mc["ess"],
+            "tau_int": mc["tau_int"],
+            "r_hat": mc["r_hat"],
+            "mean_i": mean_i,
+            "mean_j": mean_j,
+        }
+        if return_values:
+            result["values"] = connected_samples
+        return result
+
     #! SAMPLE
     #####################################
 
@@ -2966,12 +3162,14 @@ class NQS(MonteCarloSolver):
 
     @staticmethod
     def compute_renyi2(
-        nqs: "NQS",
-        region: Optional["Array"] = None,
+        nqs                 : "NQS",
+        region              : Optional["Array"] = None,
         *,
-        num_samples: int = 4096,
-        num_chains: int = 1,
-        return_swap_mean: bool = False,
+        num_samples         : int = 4096,
+        num_chains          : int = 1,
+        return_swap_mean    : bool = False,
+        return_error        : bool = False,
+        min_swap_value      : float = 1e-15,
     ) -> Union[float, Tuple[float, float]]:
         r"""
         Compute second Renyi entropy S^2(A) via the swap operator.
@@ -2983,10 +3181,11 @@ class NQS(MonteCarloSolver):
 
         def _swap_region(s1, s2, region):
             """
-            Swap states in `region` between two configurations.
+            Swap subsystem indices in `region` for a batch of configurations.
+            Input shape is (n_samples, n_visible), and swapping is done along axis=1.
             """
-            s1_new = s1.at[region].set(s2[region])
-            s2_new = s2.at[region].set(s1[region])
+            s1_new = s1.at[:, region].set(s2[:, region])
+            s2_new = s2.at[:, region].set(s1[:, region])
             return s1_new, s2_new
 
         import jax.numpy as jnp
@@ -3003,25 +3202,67 @@ class NQS(MonteCarloSolver):
         (_, _), (s1, log1), _ = nqs.sample(num_samples=num_samples, num_chains=num_chains)
         (_, _), (s2, log2), _ = nqs.sample(num_samples=num_samples, num_chains=num_chains)
 
+        s1 = jnp.asarray(s1)
+        s2 = jnp.asarray(s2)
+        if s1.ndim == 1:
+            s1 = s1.reshape(1, -1)
+        if s2.ndim == 1:
+            s2 = s2.reshape(1, -1)
+        if s1.shape != s2.shape:
+            raise ValueError(f"Replica samples must have identical shapes, got {s1.shape} and {s2.shape}.")
+
+        if jnp.any(region < 0) or jnp.any(region >= Ns):
+            raise ValueError(f"Region contains out-of-bounds indices for n_visible={Ns}.")
+
         # Swap region A
         s1s, s2s = _swap_region(s1, s2, region)
 
         # Evaluate log psi on swapped configs
-        log1s = nqs.ansatz(s1s)
-        log2s = nqs.ansatz(s2s)
+        log1    = jnp.asarray(log1).reshape(-1)
+        log2    = jnp.asarray(log2).reshape(-1)
+        log1s   = jnp.asarray(nqs.ansatz(s1s)).reshape(-1)
+        log2s   = jnp.asarray(nqs.ansatz(s2s)).reshape(-1)
+        if not (log1.shape == log2.shape == log1s.shape == log2s.shape):
+            raise ValueError("Incompatible log-amplitude shapes while computing Renyi entropy.")
 
         # ---------------------------------------------------
         # 5. Log estimator
         # ---------------------------------------------------
         log_ratio = (log1s + log2s) - (log1 + log2)
 
-        # Stable mean: ⟨e^{log_ratio}⟩
+        # Stable mean: <e^{log_ratio}>
         log_swap = jsp.logsumexp(log_ratio) - jnp.log(log_ratio.shape[0])
         swap_mean = jnp.exp(log_swap)
+        swap_mean_real = jnp.maximum(jnp.real(swap_mean), min_swap_value)
+
+        # Chain-aware uncertainty estimate from per-chain means (fallback to all-sample stderr)
+        swap_samples    = jnp.real(jnp.exp(log_ratio))
+        n_total         = int(swap_samples.shape[0])
+        n_chain         = max(int(num_chains), 1)
+
+        if n_chain > 1 and (n_total % n_chain) == 0:
+            per_chain = swap_samples.reshape(n_chain, n_total // n_chain).mean(axis=1)
+            if n_chain > 1:
+                swap_err = jnp.std(per_chain, ddof=1) / jnp.sqrt(float(n_chain))
+            else:
+                swap_err = jnp.array(0.0, dtype=swap_samples.dtype)
+        else:
+            if n_total > 1:
+                swap_err = jnp.std(swap_samples, ddof=1) / jnp.sqrt(float(n_total))
+            else:
+                swap_err = jnp.array(0.0, dtype=swap_samples.dtype)
+
+        s2_val  = -jnp.log(swap_mean_real)
+        s2_err  = swap_err / swap_mean_real
+
         if return_swap_mean:
-            return float(jnp.real(swap_mean))
-        S2 = -jnp.log(swap_mean)
-        return float(jnp.real(S2))
+            if return_error:
+                return float(swap_mean_real), float(jnp.real(swap_err))
+            return float(swap_mean_real)
+
+        if return_error:
+            return float(jnp.real(s2_val)), float(jnp.real(s2_err))
+        return float(jnp.real(s2_val))
 
     def compute_topological_entropy(self, radius: Optional[float] = None, **renyi_kwargs) -> dict:
         """
