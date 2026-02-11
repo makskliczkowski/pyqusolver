@@ -156,3 +156,50 @@ def test_compute_mc_stats_returns_chain_diagnostics_keys():
     assert stats["num_chains"] == 2
     assert stats["ess"] > 0.0
     assert stats["stderr"] >= 0.0
+
+class ProductStateDummyNQS:
+    """Dummy NQS with constant log-amplitude (product state, zero entanglement)."""
+
+    backend_str = "jax"
+
+    def __init__(self, samples):
+        self._samples = jnp.asarray(samples, dtype=jnp.float64)
+        self.nvisible = int(self._samples.shape[1])
+
+    @staticmethod
+    def ansatz(states):
+        s = jnp.asarray(states)
+        if s.ndim == 1:
+            s = s.reshape(1, -1)
+        return jnp.zeros((s.shape[0],), dtype=jnp.float64)
+
+    def sample(self, num_samples=None, num_chains=None):
+        states = self._samples
+        log_psi = self.ansatz(states)
+        probs = jnp.ones(states.shape[0], dtype=jnp.float64)
+        return (None, None), (states, log_psi), probs
+
+
+def test_compute_renyi2_subsystem_entropy_product_state_zero():
+    """Subsystem Renyi-2 entropy should be zero for an unentangled product state."""
+    samples = jnp.array(
+        [
+            [1, -1, 1, -1],
+            [-1, 1, -1, 1],
+            [1, 1, -1, -1],
+            [-1, -1, 1, 1],
+        ],
+        dtype=jnp.float64,
+    )
+    dummy = ProductStateDummyNQS(samples)
+
+    s2, s2_err = NQS.compute_renyi2(
+        dummy,
+        region=[0, 1],
+        num_samples=4,
+        num_chains=2,
+        return_error=True,
+    )
+
+    assert np.isclose(s2, 0.0, atol=1e-12)
+    assert np.isclose(s2_err, 0.0, atol=1e-12)

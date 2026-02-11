@@ -3172,9 +3172,20 @@ class NQS(MonteCarloSolver):
         min_swap_value      : float = 1e-15,
     ) -> Union[float, Tuple[float, float]]:
         r"""
-        Compute second Renyi entropy S^2(A) via the swap operator.
+        Compute the second Renyi entanglement entropy of subsystem A.
 
-        If region is None, defaults to a canonical bipartition.
+        This estimates
+            S_2(A) = -log(Tr[rho_A^2])
+        using the two-replica swap estimator.
+
+        If ``region`` is ``None``, a canonical half-system bipartition is used.
+
+        Returns
+        -------
+        float or (float, float)
+            - ``S_2`` by default.
+            - ``(S_2, dS_2)`` when ``return_error=True``.
+            - ``swap_mean`` (or ``(swap_mean, dswap_mean)``) when ``return_swap_mean=True``.
         """
         if nqs.backend_str != "jax":
             raise NotImplementedError("compute_renyi2 is only implemented for JAX backend.")
