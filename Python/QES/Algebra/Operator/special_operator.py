@@ -277,11 +277,13 @@ class SpecialOperator(Operator, ABC):
                 The dtype to use for the Hamiltonian.
         """
 
-        self._iscpx = False
-
         if dtype is not None:
-            super()._handle_dtype(dtype)
+            return
+        
+
         else:
+            self._iscpx = False
+            
             if self._hilbert_space is not None:
                 try:
                     hs_dtype = getattr(self._hilbert_space, "dtype", None)

@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 # ---------------------------------------------
 
-
 def mutual_information(
     state: np.ndarray, i: int, j: int, hilbert: "HilbertSpace", q: float = 1.0,
     rho_i: np.ndarray = None, rho_j: np.ndarray = None,
@@ -69,9 +68,7 @@ def mutual_information(
 
     return S_i + S_j - S_ij
 
-
 # ---------------------------------------------
-
 
 def topological_entropy(
     state: np.ndarray, regions: Dict[str, np.ndarray], hilbert: "HilbertSpace", q: float = 1.0

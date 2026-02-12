@@ -11,9 +11,10 @@ Date        : 2025-12-01
 ------------------------------------------------------------------------
 """
 
-import  numpy as np
-from    abc import ABC, abstractmethod
-from    typing import Any, Optional, Union, List
+from    __future__  import annotations
+import  numpy       as np
+from    abc         import ABC, abstractmethod
+from    typing      import Any, Optional, Union, List
 
 # Try importing JAX
 try:

@@ -97,10 +97,10 @@ except ImportError as e:
 # Conditional JAX imports for SymmetryHandler
 try:
     import jax
-    import jax.numpy        as jnp
-    import jax.tree_util    as tree_util
-    from jax.scipy.special  import logsumexp
-    from jax.tree_util      import tree_flatten
+    import jax.numpy            as jnp
+    import jax.tree_util        as tree_util
+    from jax.scipy.special      import logsumexp
+    from jax.tree_util          import tree_flatten
 
     _JAX_AVAILABLE_FOR_SYMMETRY = True
     JAX_AVAILABLE               = True
@@ -109,20 +109,14 @@ except ImportError:
     JAX_AVAILABLE               = False
 
 # ----------------------------------------------------------
-AnsatzFunctionType      = Callable[
-    [Callable, Array, int, Any], Array
-]  # func, states, batch_size, params -> Array [log ansatz values]
-ApplyFunctionType       = Callable[
-    [Callable, Array, Array, Array, int, Any], Array
-]  # func, states, probs, params, batch_size -> Array [sampled/evaluated values]
-EvalFunctionType        = Callable[
-    [Callable, Array, Any, int], Array
-]  # func, states, params, batch_size -> Array [log ansatz values]
-CallableFunctionType    = Callable[[Array], Tuple[Array, Array]]  # states -> (new_states, coeffs)
-LossFunctionType        = CallableFunctionType  # states -> (new_states, coeffs)
+
+AnsatzFunctionType      = Callable[[Callable, Array, int, Any], Array]                  # func, states, batch_size, params -> Array [log ansatz values]
+ApplyFunctionType       = Callable[[Callable, Array, Array, Array, int, Any], Array]    # func, states, probs, params, batch_size -> Array [sampled/evaluated values]
+EvalFunctionType        = Callable[[Callable, Array, Any, int], Array]                  # func, states, params, batch_size -> Array [log ansatz values]
+CallableFunctionType    = Callable[[Array], Tuple[Array, Array]]                        # states -> (new_states, coeffs)
+LossFunctionType        = CallableFunctionType                                          # states -> (new_states, coeffs)
 
 #########################################
-
 
 class NQS(MonteCarloSolver):
     r"""
@@ -215,6 +209,7 @@ class NQS(MonteCarloSolver):
     _ERROR_STATES_PSI           = "If providing states and psi, both must be provided as a tuple (states, psi)."
     _ERROR_SHAPE_HILBERT        = "Either shape or hilbert space must be provided."
     _ERROR_ENERGY_WAVEFUNCTION  = "Energy computation is only valid for wavefunction problems."
+    _ERROR_NO_FUNCTIONS         = "No functions provided for apply(). Provide a callable or a list of callables."
 
     @staticmethod
     def DUMMY_APPLY_FUN_NPY(x):
@@ -369,7 +364,6 @@ class NQS(MonteCarloSolver):
             raise ValueError(self._ERROR_SHAPE_HILBERT)
 
         super().__init__(
-            sampler     =   sampler,
             seed        =   seed,
             beta        =   beta,
             mu          =   mu,
@@ -544,11 +538,11 @@ class NQS(MonteCarloSolver):
 
         if self._nqsproblem.typ == "wavefunction":
             self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
-            self._loss_func = self._local_en_func
+            self._loss_func     = self._local_en_func
         elif self._nqsproblem.typ == "densitymatrix":
-            self._loss_func = getattr(self._nqsproblem, "loss_fn", None)
+            self._loss_func     = getattr(self._nqsproblem, "loss_fn", None)
         elif self._nqsproblem.typ == "unitary":
-            self._loss_func = getattr(self._nqsproblem, "loss_fn", None)
+            self._loss_func     = getattr(self._nqsproblem, "loss_fn", None)
         else:
             raise ValueError(self._ERROR_INVALID_PHYSICS)
 
@@ -567,12 +561,12 @@ class NQS(MonteCarloSolver):
 
             # Recreate the modifier to ensure it wraps the correct `_ansatz_base_func`
             self._modifier_wrapper = AnsatzModifier(
-                net_apply=self._ansatz_base_func,  # Base network apply function
-                operator=self._modifier_source,  # Could be Operator or Callable
-                input_shape=self._shape if self._shape else (self._nvisible,),
-                dtype=self._dtype,  # Data type
+                net_apply   =   self._ansatz_base_func,     # Base network apply function
+                operator    =   self._modifier_source,      # Could be Operator or Callable
+                input_shape =   self._shape if self._shape else (self._nvisible,),
+                dtype       =   self._dtype,                # Data type
             )
-            current_ansatz = self._modifier_wrapper  # Get the modified ansatz function
+            current_ansatz = self._modifier_wrapper         # Get the modified ansatz function
 
         # Apply Symmetrization if active
         current_ansatz = self.symmetry_handler.wrap(
@@ -623,10 +617,10 @@ class NQS(MonteCarloSolver):
 
         # Initialize the Manager
         self.ckpt_manager = NQSCheckpointManager(
-            directory=self._dir_detailed,
-            use_orbax=kwargs.get("use_orbax", True),
-            max_to_keep=kwargs.get("orbax_max_to_keep", 3),
-            logger=self._logger,
+            directory   =   self._dir_detailed,
+            use_orbax   =   kwargs.get("use_orbax", True),
+            max_to_keep =   kwargs.get("orbax_max_to_keep", 3),
+            logger      =   self._logger,
         )
 
         # --------------------------------------------------
@@ -701,32 +695,28 @@ class NQS(MonteCarloSolver):
         if not self._initialized or forced:
 
             # initialize the network
-            self._params = self._net.init(self._rng_k)
-            dtypes = self._net.dtypes
+            self._params        = self._net.init(self._rng_k)
+            dtypes              = self._net.dtypes
 
             # check if all dtypes are the same
             if not all([a == dtypes[0] for a in dtypes]):
                 raise ValueError(self._ERROR_ALL_DTYPE_SAME)
 
             # check if the network is complex
-            self._iscpx = not (dtypes[0] == np.single or dtypes[0] == np.double)
+            self._iscpx         = not (dtypes[0] == np.single or dtypes[0] == np.double)
 
             # check if the network is holomorphic
-            self._holomorphic = self._net.check_holomorphic()
-            self.log(
-                f"Network is holomorphic: {self._holomorphic}", log="info", lvl=2, color="blue"
-            )
-            self._analytic = self._net.has_analytic_grad
-            self.log(
-                f"Network has analytic gradient: {self._analytic}", log="info", lvl=2, color="blue"
-            )
+            self._holomorphic   = self._net.check_holomorphic()
+            self.log(f"Network is holomorphic: {self._holomorphic}", log="info", lvl=2, color="blue")
+            self._analytic      = self._net.has_analytic_grad
+            self.log(f"Network has analytic gradient: {self._analytic}", log="info", lvl=2, color="blue")
 
             # check the shape of the weights
-            self._paramshape = self._net.shapes
+            self._paramshape    = self._net.shapes
 
             # number of parameters
-            self._nparams = self._net.nparams
-            self._initialized = True
+            self._nparams       = self._net.nparams
+            self._initialized   = True
 
     #####################################
     #! EXACT INFORMATION HANDLING
@@ -745,7 +735,6 @@ class NQS(MonteCarloSolver):
         Set the exact information (ground truth).
         """
         from .src.nqs_exact import set_exact_impl
-
         set_exact_impl(self, info)
 
     def get_exact(self, **kwargs) -> Optional["NQSTrainStats"]:
@@ -754,7 +743,6 @@ class NQS(MonteCarloSolver):
         Delegates to src.nqs_exact.get_exact_impl.
         """
         from .src.nqs_exact import get_exact_impl
-
         return get_exact_impl(self, **kwargs)
 
     def load_exact(self, filepath: str, *, key: str = "energy_values"):
@@ -763,7 +751,6 @@ class NQS(MonteCarloSolver):
         Delegates to src.nqs_exact.load_exact_impl.
         """
         from .src.nqs_exact import load_exact_impl
-
         return load_exact_impl(self, filepath, key=key)
 
     #####################################
@@ -781,16 +768,14 @@ class NQS(MonteCarloSolver):
         if batch_size is None or self._batch_size == batch_size:
             return
         self._batch_size = batch_size
-        self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(
-            self._net, batch_size=self._batch_size
-        )
+        self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         self._ansatz_base_func = self._ansatz_func
 
     def set_sampler(
         self,
-        sampler: Union[VMCSampler, str],
-        upd_fun: Optional[Callable] = None,
-        replica: int = 1,
+        sampler     : Union[VMCSampler, str],
+        upd_fun     : Optional[Callable] = None,
+        replica     : int = 1,
         **kwargs,
     ) -> VMCSampler:
         """Set a new sampler for the NQS solver."""
@@ -810,90 +795,86 @@ class NQS(MonteCarloSolver):
             if self._isjax:
                 import jax.numpy as jnp
 
-            sampler_kwargs = kwargs.copy()
-            sampler_kwargs["net"] = self._net
-            sampler_kwargs["shape"] = self._shape
-            sampler_kwargs["rng"] = self._rng
-            sampler_kwargs["rng_k"] = self._rng_k
-            sampler_kwargs["dtype"] = self._dtype
-            sampler_kwargs["beta"] = self._beta
-            sampler_kwargs["mu"] = self._mu
-            sampler_kwargs["hilbert"] = self._hilbert
-            sampler_kwargs["backend"] = self._backend_str
+            sampler_kwargs                  = kwargs.copy()
+            sampler_kwargs["net"]           = self._net
+            sampler_kwargs["shape"]         = self._shape
+            sampler_kwargs["rng"]           = self._rng
+            sampler_kwargs["rng_k"]         = self._rng_k
+            sampler_kwargs["dtype"]         = self._dtype
+            sampler_kwargs["beta"]          = self._beta
+            sampler_kwargs["mu"]            = self._mu
+            sampler_kwargs["hilbert"]       = self._hilbert
+            sampler_kwargs["backend"]       = self._backend_str
 
-            sampler_kwargs["numchains"] = kwargs.get("s_numchains", 16)
+            sampler_kwargs["numchains"]     = kwargs.get("s_numchains", 16)
             sampler_kwargs.pop("s_numchains", None)
-            sampler_kwargs["numsamples"] = kwargs.get("s_numsamples", 1000)
+            sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", 1000)
             sampler_kwargs.pop("s_numsamples", None)
 
-            sampler_kwargs["numupd"] = kwargs.get("s_numupd", 1)
+            sampler_kwargs["numupd"]        = kwargs.get("s_numupd", 1)
             sampler_kwargs.pop("s_numupd", None)
 
-            sampler_kwargs["sweep_steps"] = kwargs.get("s_sweep_steps", 10)
+            sampler_kwargs["sweep_steps"]   = kwargs.get("s_sweep_steps", 10)
             sampler_kwargs.pop("s_sweep_steps", None)
 
-            sampler_kwargs["therm_steps"] = kwargs.get("s_therm_steps", 100)
+            sampler_kwargs["therm_steps"]   = kwargs.get("s_therm_steps", 100)
             sampler_kwargs.pop("s_therm_steps", None)
 
-            default_state_dtype = (
-                self._precision_policy.state_dtype
-                if hasattr(self, "_precision_policy")
-                else (jnp.float32 if self._isjax else np.float32)
-            )
-            sampler_kwargs["statetype"] = kwargs.get("s_statetype", default_state_dtype)
+            default_state_dtype             = (
+                                                self._precision_policy.state_dtype
+                                                if hasattr(self, "_precision_policy")
+                                                else (jnp.float32 if self._isjax else np.float32)
+                                            )
+            sampler_kwargs["statetype"]     = kwargs.get("s_statetype", default_state_dtype)
             sampler_kwargs.pop("s_statetype", None)
 
             if "s_sample_dtype" in kwargs:
                 sampler_kwargs["sample_dtype"] = kwargs.pop("s_sample_dtype")
 
-            sampler_kwargs["initstate"] = kwargs.get("s_initstate", None)
+            sampler_kwargs["initstate"]     = kwargs.get("s_initstate", None)
             sampler_kwargs.pop("s_initstate", None)
 
-            sampler_kwargs["logprob_fact"] = kwargs.get("s_logprob_fact", 0.5)
+            sampler_kwargs["logprob_fact"]  = kwargs.get("s_logprob_fact", 0.5)
             sampler_kwargs.pop("s_logprob_fact", None)
 
-            sampler_kwargs["makediffer"] = kwargs.get("s_makediffer", True)
+            sampler_kwargs["makediffer"]    = kwargs.get("s_makediffer", True)
             sampler_kwargs.pop("s_makediffer", None)
 
             upd_fun = upd_fun or kwargs.get("s_upd_fun", upd_fun)
             sampler_kwargs.pop("s_upd_fun", None)
 
             # Pass logger to sampler
-            sampler_kwargs["logger"] = self._logger
-            sampler_kwargs["hilbert"] = self._hilbert
-            sampler_kwargs["lattice"] = self._hilbert.lattice if self._model is not None else None
+            sampler_kwargs["logger"]        = self._logger
+            sampler_kwargs["hilbert"]       = self._hilbert
+            sampler_kwargs["lattice"]       = self._hilbert.lattice if self._model is not None else None
 
-            sampler_kwargs["patterns"] = kwargs.get("s_patterns", None)
+            sampler_kwargs["patterns"]      = kwargs.get("s_patterns", None)
             sampler_kwargs.pop("s_patterns", None)
-            sampler_kwargs["n_flip"] = kwargs.get("s_n_flip", 1)
+            sampler_kwargs["n_flip"]        = kwargs.get("s_n_flip", 1)
             sampler_kwargs.pop("s_n_flip", None)
 
             # Global updates
             if "s_p_global" in kwargs:
-                sampler_kwargs["global_p"] = kwargs.pop("s_p_global")
+                sampler_kwargs["global_p"]  = kwargs.pop("s_p_global")
             else:
-                sampler_kwargs["global_p"] = kwargs.pop("s_global_p", 0.0)
+                sampler_kwargs["global_p"]  = kwargs.pop("s_global_p", 0.0)
 
             sampler_kwargs["global_update"] = kwargs.pop("s_global_update", None)
 
-            sampler_kwargs["beta_penalty"] = self._beta_penalty
+            sampler_kwargs["beta_penalty"]  = self._beta_penalty
             sampler_kwargs.pop("s_beta_penalty", None)
-            sampler_kwargs["n_particles"] = self._nparticles
+            sampler_kwargs["n_particles"]   = self._nparticles
             sampler_kwargs.pop("s_n_particles", None)
 
             # -----------------------------------------------------------------
             #! Parallel Tempering Setup
             # -----------------------------------------------------------------
-            n_replicas = replica
-            pt_betas = kwargs.get("pt_betas", None)
+            n_replicas  = replica
+            pt_betas    = kwargs.get("pt_betas", None)
             if n_replicas > 1 or pt_betas is not None:
-                sampler_kwargs["pt_replicas"] = n_replicas
-                sampler_kwargs["pt_betas"] = pt_betas
-                self._logger.info(
-                    f"Parallel Tempering enabled with {n_replicas if pt_betas is None else pt_betas} replicas.",
-                    lvl=1,
-                    color="blue",
-                )
+                sampler_kwargs["pt_replicas"]   = n_replicas
+                sampler_kwargs["pt_betas"]      = pt_betas
+                self._logger.info(f"Parallel Tempering enabled with {n_replicas if pt_betas is None else pt_betas} replicas.", lvl=1, color="blue")
 
             # -----------------------------------------------------------------
 
@@ -1187,6 +1168,9 @@ class NQS(MonteCarloSolver):
         """
         Allows the object to be indexed using square brackets with a callable or a list of callables.
         """
+        if isinstance(funct, (list, tuple)):
+            if len(funct) == 0:
+                raise ValueError(self._ERROR_NO_FUNCTIONS)
         return self.apply(funct)
 
     @property
@@ -1497,19 +1481,19 @@ class NQS(MonteCarloSolver):
 
     def compute_connected_correlation(
         self,
-        function_i: Callable,
-        function_j: Optional[Callable] = None,
+        function_i              : Callable,
+        function_j              : Optional[Callable] = None,
         *,
-        states=None,
-        ansatze=None,
-        params=None,
-        probabilities=None,
-        batch_size=None,
-        num_samples=None,
-        num_chains=None,
-        args_i: Optional[tuple] = None,
-        args_j: Optional[tuple] = None,
-        return_values: bool = False,
+        states                  =   None,
+        ansatze                 =   None,
+        params                  =   None,
+        probabilities           =   None,
+        batch_size              =   None,
+        num_samples             =   None,
+        num_chains              =   None,
+        args_i: Optional[tuple] =   None,
+        args_j: Optional[tuple] =   None,
+        return_values: bool     =   False,
         **kwargs,
     ) -> Dict[str, Any]:
         r"""
@@ -1577,14 +1561,14 @@ class NQS(MonteCarloSolver):
         mc                  = NQS.compute_mc_stats(connected_samples, num_chains=nch)
 
         result = {
-            "connected": mc["mean"],
-            "error_of_mean": mc["stderr"],
-            "std": mc["std"],
-            "ess": mc["ess"],
-            "tau_int": mc["tau_int"],
-            "r_hat": mc["r_hat"],
-            "mean_i": mean_i,
-            "mean_j": mean_j,
+            "connected"     : mc["mean"],
+            "error_of_mean" : mc["stderr"],
+            "std"           : mc["std"],
+            "ess"           : mc["ess"],
+            "tau_int"       : mc["tau_int"],
+            "r_hat"         : mc["r_hat"],
+            "mean_i"        : mean_i,
+            "mean_j"        : mean_j,
         }
         if return_values:
             result["values"] = connected_samples
@@ -3077,13 +3061,13 @@ class NQS(MonteCarloSolver):
 
     @staticmethod
     def compute_overlap(
-        nqs_a: "NQS",
-        nqs_b: "NQS",
+        nqs_a           : "NQS",
+        nqs_b           : "NQS",
         *,
-        num_samples: int = 4096,
-        num_chains: Optional[int] = None,
-        operator: Optional[Any] = None,
-        operator_args: Optional[Any] = None,
+        num_samples     : int = 4096,
+        num_chains      : Optional[int] = None,
+        operator        : Optional[Any] = None,
+        operator_args   : Optional[Any] = None,
     ) -> float:
         r"""
         Computes the squared overlap (Fidelity) between two NQS instances:
@@ -3130,14 +3114,14 @@ class NQS(MonteCarloSolver):
 
         # Evaluate Ansatz B on samples from A
         # Note: nqs.ansatz() handles batching internally based on nqs._batch_size
-        log_psi_b_on_a = nqs_b.ansatz(samples_a)
+        log_psi_b_on_a  = nqs_b.ansatz(samples_a)
 
         # Compute Ratio 1: <Psi_A | Psi_B> / <Psi_A | Psi_A>
         # ratio = exp( log_psi_b - log_psi_a )
         # We use Log-Sum-Exp for numerical stability:
         # mean(exp(x)) = exp(logsumexp(x) - log(N))
-        log_ratio_1 = log_psi_b_on_a - log_psi_a_on_a
-        log_mean_1 = jsp.logsumexp(log_ratio_1) - jnp.log(samples_a.shape[0])
+        log_ratio_1     = log_psi_b_on_a - log_psi_a_on_a
+        log_mean_1      = jsp.logsumexp(log_ratio_1) - jnp.log(samples_a.shape[0])
 
         # Step 2: Sample from Distribution B
         (_, _), (samples_b, log_psi_b_on_b), _ = nqs_b.sample(
@@ -3145,19 +3129,20 @@ class NQS(MonteCarloSolver):
         )
 
         # Evaluate Ansatz A on samples from B
-        log_psi_a_on_b = nqs_a.ansatz(samples_b)
+        log_psi_a_on_b  = nqs_a.ansatz(samples_b)
 
         # Compute Ratio 2: <Psi_B | Psi_A> / <Psi_B | Psi_B>
-        log_ratio_2 = log_psi_a_on_b - log_psi_b_on_b
-        log_mean_2 = jsp.logsumexp(log_ratio_2) - jnp.log(samples_b.shape[0])
+        log_ratio_2     = log_psi_a_on_b - log_psi_b_on_b
+        log_mean_2      = jsp.logsumexp(log_ratio_2) - jnp.log(samples_b.shape[0])
 
         # Step 3: Combine
         # F = Mean(B/A)_A * Mean(A/B)_B
-        # In log space:                         log_F = log_mean_1 + log_mean_2
+        # In log space: 
+        #   log_F = log_mean_1 + log_mean_2
         # The result should be real-valued (overlap of normalized vectors).
         # We take the real part of the exponential.
 
-        fidelity = jnp.exp(log_mean_1 + log_mean_2)
+        fidelity        = jnp.exp(log_mean_1 + log_mean_2)
         return float(jnp.real(fidelity))
 
     @staticmethod
@@ -3172,193 +3157,50 @@ class NQS(MonteCarloSolver):
         min_swap_value      : float = 1e-15,
     ) -> Union[float, Tuple[float, float]]:
         r"""
-        Compute the second Renyi entanglement entropy of subsystem A.
+        Compute the second Rényi entanglement entropy of subsystem A.
 
-        This estimates
-            S_2(A) = -log(Tr[rho_A^2])
-        using the two-replica swap estimator.
-
-        If ``region`` is ``None``, a canonical half-system bipartition is used.
-
-        Returns
-        -------
-        float or (float, float)
-            - ``S_2`` by default.
-            - ``(S_2, dS_2)`` when ``return_error=True``.
-            - ``swap_mean`` (or ``(swap_mean, dswap_mean)``) when ``return_swap_mean=True``.
+        Delegates to the general implementation in ``QES.NQS.src.nqs_entropy``.
+        See :func:`nqs_entropy.compute_renyi_entropy` for full documentation.
         """
-        if nqs.backend_str != "jax":
-            raise NotImplementedError("compute_renyi2 is only implemented for JAX backend.")
+        from QES.NQS.src.nqs_entropy import compute_renyi_entropy
 
-        def _swap_region(s1, s2, region):
-            """
-            Swap subsystem indices in `region` for a batch of configurations.
-            Input shape is (n_samples, n_visible), and swapping is done along axis=1.
-            """
-            s1_new = s1.at[:, region].set(s2[:, region])
-            s2_new = s2.at[:, region].set(s1[:, region])
-            return s1_new, s2_new
-
-        import jax.numpy as jnp
-        import jax.scipy.special as jsp
-
-        Ns = nqs.nvisible
-
-        if region is None:
-            region = jnp.arange(Ns // 2)
-        else:
-            region = jnp.asarray(region, dtype=jnp.int32)
-
-        # Sample TWO independent replicas
-        (_, _), (s1, log1), _ = nqs.sample(num_samples=num_samples, num_chains=num_chains)
-        (_, _), (s2, log2), _ = nqs.sample(num_samples=num_samples, num_chains=num_chains)
-
-        s1 = jnp.asarray(s1)
-        s2 = jnp.asarray(s2)
-        if s1.ndim == 1:
-            s1 = s1.reshape(1, -1)
-        if s2.ndim == 1:
-            s2 = s2.reshape(1, -1)
-        if s1.shape != s2.shape:
-            raise ValueError(f"Replica samples must have identical shapes, got {s1.shape} and {s2.shape}.")
-
-        if jnp.any(region < 0) or jnp.any(region >= Ns):
-            raise ValueError(f"Region contains out-of-bounds indices for n_visible={Ns}.")
-
-        # Swap region A
-        s1s, s2s = _swap_region(s1, s2, region)
-
-        # Evaluate log psi on swapped configs
-        log1    = jnp.asarray(log1).reshape(-1)
-        log2    = jnp.asarray(log2).reshape(-1)
-        log1s   = jnp.asarray(nqs.ansatz(s1s)).reshape(-1)
-        log2s   = jnp.asarray(nqs.ansatz(s2s)).reshape(-1)
-        if not (log1.shape == log2.shape == log1s.shape == log2s.shape):
-            raise ValueError("Incompatible log-amplitude shapes while computing Renyi entropy.")
-
-        # ---------------------------------------------------
-        # 5. Log estimator
-        # ---------------------------------------------------
-        log_ratio = (log1s + log2s) - (log1 + log2)
-
-        # Stable mean: <e^{log_ratio}>
-        log_swap = jsp.logsumexp(log_ratio) - jnp.log(log_ratio.shape[0])
-        swap_mean = jnp.exp(log_swap)
-        swap_mean_real = jnp.maximum(jnp.real(swap_mean), min_swap_value)
-
-        # Chain-aware uncertainty estimate from per-chain means (fallback to all-sample stderr)
-        swap_samples    = jnp.real(jnp.exp(log_ratio))
-        n_total         = int(swap_samples.shape[0])
-        n_chain         = max(int(num_chains), 1)
-
-        if n_chain > 1 and (n_total % n_chain) == 0:
-            per_chain = swap_samples.reshape(n_chain, n_total // n_chain).mean(axis=1)
-            if n_chain > 1:
-                swap_err = jnp.std(per_chain, ddof=1) / jnp.sqrt(float(n_chain))
-            else:
-                swap_err = jnp.array(0.0, dtype=swap_samples.dtype)
-        else:
-            if n_total > 1:
-                swap_err = jnp.std(swap_samples, ddof=1) / jnp.sqrt(float(n_total))
-            else:
-                swap_err = jnp.array(0.0, dtype=swap_samples.dtype)
-
-        s2_val  = -jnp.log(swap_mean_real)
-        s2_err  = swap_err / swap_mean_real
+        result          = compute_renyi_entropy(
+                            nqs, region=region, q=2,
+                            num_samples=num_samples, num_chains=num_chains,
+                            return_error=True, min_trace_value=min_swap_value,
+                        )
+        s2_val, s2_err  = result
 
         if return_swap_mean:
+            import jax.numpy as jnp
+            swap_mean   = jnp.exp(-s2_val)
+            swap_err    = swap_mean * s2_err
             if return_error:
-                return float(swap_mean_real), float(jnp.real(swap_err))
-            return float(swap_mean_real)
+                return float(swap_mean), float(swap_err)
+            return float(swap_mean)
 
         if return_error:
-            return float(jnp.real(s2_val)), float(jnp.real(s2_err))
-        return float(jnp.real(s2_val))
+            return s2_val, s2_err
+        return s2_val
 
     def compute_topological_entropy(self, radius: Optional[float] = None, **renyi_kwargs) -> dict:
         """
         Compute the Topological Entanglement Entropy (gamma) using the Kitaev-Preskill construction.
 
-        Uses the lattice geometry to define regions A, B, C.
-        Formula: gamma = S_A + S_B + S_C - S_AB - S_BC - S_AC + S_ABC
-
-        Parameters
-        ----------
-        radius : float, optional
-            Radius for region definition (passed to region_kitaev_preskill).
-            Defaults to avoiding system wrapping if None.
-        **renyi_kwargs : dict
-            Arguments passed to compute_renyi2 (e.g., num_samples, num_chains).
-
-        Returns
-        -------
-        dict
-            Dictionary containing 'gamma' and individual entropies.
+        Delegates to the general implementation in ``QES.NQS.src.nqs_entropy``.
+        See :func:`nqs_entropy.compute_topological_entropy` for full documentation.
         """
+        from QES.NQS.src.nqs_entropy import compute_topological_entropy as _tee
+
         if not hasattr(self._model, "lattice") or self._model.lattice is None:
             raise ValueError("Lattice is required for topological entropy calculation.")
 
-        # Get regions
-        regions = self._model.lattice.regions.region_kitaev_preskill(radius=radius)
-
-        entropies = {}
-        # Keys required for Kitaev-Preskill: A, B, C, AB, BC, AC, ABC
-        required_keys = ["A", "B", "C", "AB", "BC", "AC", "ABC"]
-
         self.log("Computing Topological Entropy (Kitaev-Preskill)...", lvl=1, color="blue")
-
-        for key in required_keys:
-            if key not in regions:
-                continue
-
-            region_indices = regions[key]
-            if len(region_indices) == 0:
-                entropies[key] = 0.0
-                continue
-
-            self.log(f"  Computing S2 for region {key} (size={len(region_indices)})...", lvl=2)
-            # Use static compute_renyi2
-            s2 = NQS.compute_renyi2(self, region=region_indices, **renyi_kwargs)
-            entropies[key] = s2
-
-        # Calculate Gamma
-        # gamma = S_A + S_B + S_C - S_AB - S_BC - S_AC + S_ABC
-        try:
-            gamma = (
-                entropies["A"]
-                + entropies["B"]
-                + entropies["C"]
-                - entropies["AB"]
-                - entropies["BC"]
-                - entropies["AC"]
-                + entropies["ABC"]
-            )
-        except KeyError as e:
-            self.log(f"Missing region for TEE calculation: {e}", lvl=1, color="red")
-            gamma = float("nan")
-
-        return {"gamma": gamma, "entropies": entropies, "regions": regions}
+        return _tee(self, self._model.lattice, radius=radius, **renyi_kwargs)
 
     #####################################
     #! SAMPLES FOR MCMC, IF APPLICABLE
     #####################################
-
-    @staticmethod
-    def est(loss: np.ndarray, last_el: float = 10):
-        """Estimate value from last elements of loss array"""
-        if isinstance(loss, (list, tuple, np.ndarray)):
-            loss = np.array(loss)
-            if 0 < last_el < 1:
-                n = int(len(loss) * last_el)
-                lossr = loss[-n:]
-            else:
-                last_el = min(last_el, len(loss))
-                lossr = loss[-last_el:]
-
-            lossv = np.mean(lossr)
-        else:
-            lossv = loss
-        return lossv
 
     @staticmethod
     def relative_error(loss: np.ndarray, reference: float, last_el: float = 10):
@@ -3370,13 +3212,13 @@ class NQS(MonteCarloSolver):
     @staticmethod
     def get_auto_config(
         system_size,
-        target_total_samples=4096,
-        dtype=jnp.complex64,
-        logger: Logger = None,
+        target_total_samples        = 4096,
+        dtype                       = jnp.complex64,
+        logger : Logger             = None,
         *,
-        net_depth_estimate: int = 64,
-        num_therm: Optional[int] = None,
-        num_sweep: Optional[int] = None,
+        net_depth_estimate: int     = 64,
+        num_therm: Optional[int]    = None,
+        num_sweep: Optional[int]    = None,
     ) -> dict:
         """
         Automatically detects hardware and returns optimal VMC parameters.
@@ -3390,23 +3232,21 @@ class NQS(MonteCarloSolver):
             dict: A dictionary of parameters ready to pass to NQS/VMCSampler.
         """
         if not JAX_AVAILABLE:
-            raise ImportError(
-                "JAX is required for automatic configuration. Please install JAX to use this feature."
-            )
+            raise ImportError("JAX is required for automatic configuration. Please install JAX to use this feature.")
 
         import jax
         import jax.numpy as jnp
         import psutil
 
-        logme = lambda x: print(x) if logger is None else logger.info(x, lvl=1, color="green")
-        # Detect Backend
+        logme = lambda x, lvl=1: print(x) if logger is None else logger.info(x, lvl=lvl, color="green")
+        
         try:
-            backend = jax.default_backend()
-            devices = jax.devices()
-            device_name = str(devices[0].device_kind) if devices else "Unknown"
+            backend         = jax.default_backend()
+            devices         = jax.devices()
+            device_name     = str(devices[0].device_kind) if devices else "Unknown"
         except:
-            backend = "cpu"
-            device_name = "CPU"
+            backend         = "cpu"
+            device_name     = "CPU"
 
         logme(f"Auto-detected backend: {backend.upper()} ({device_name})")
 
@@ -3414,9 +3254,7 @@ class NQS(MonteCarloSolver):
         config = {}
         is_double_precision = (dtype == jnp.complex128) or (dtype == jnp.float64)
         if backend == "gpu" and is_double_precision:
-            logme("WARNING: Double precision (complex128) detected on GPU.")
-            logme("This effectively disables parallelism on consumer GPUs.")
-            logme("Performance will be degraded by ~50x.")
+            logme("WARNING: Double precision (complex128) detected on GPU.", 2)
 
         # =========================================================================
         # STRATEGY A: GPU (Wide & Shallow)
@@ -3432,12 +3270,12 @@ class NQS(MonteCarloSolver):
                 Returns defaults if GPU is not found or nvidia-smi fails.
                 """
                 gpu_info = {
-                    "name": "Unknown GPU",
-                    "total_memory_mb": 4096,  # Safe fallback (4GB)
-                    "free_memory_mb": 2048,
+                    "name"              : "Unknown GPU",
+                    "total_memory_mb"   : 4096,  # Safe fallback (4GB)
+                    "free_memory_mb"    : 2048,
                 }
 
-                # 1. Try JAX for Name
+                # Try JAX for Name
                 try:
                     devices = jax.local_devices()
                     if devices and devices[0].platform == "gpu":
@@ -3445,24 +3283,18 @@ class NQS(MonteCarloSolver):
                 except:
                     pass
 
-                # 2. Try nvidia-smi for Memory details
+                # Try nvidia-smi for Memory details
                 try:
                     # Query total and free memory
-                    cmd = "nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits"
-                    output = (
-                        subprocess.check_output(cmd.split()).decode("ascii").strip().split("\n")[0]
-                    )
-                    total, free = map(int, output.split(","))
+                    cmd                         = "nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits"
+                    output                      = (subprocess.check_output(cmd.split()).decode("ascii").strip().split("\n")[0])
+                    total, free                 = map(int, output.split(","))
                     gpu_info["total_memory_mb"] = total
-                    gpu_info["free_memory_mb"] = free
-                    logme(
-                        f"Detected GPU: {gpu_info['name']} with {total} MB VRAM ({free} MB free)."
-                    )
+                    gpu_info["free_memory_mb"]  = free
+                    logme(f"Detected GPU: {gpu_info['name']} with {total} MB VRAM ({free} MB free).", 2)
 
                 except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
-                    logme(
-                        "Warning: Unable to query GPU memory via nvidia-smi. Using default values."
-                    )
+                    logme("Warning: Unable to query GPU memory via nvidia-smi. Using default values.")
 
                 return gpu_info
 
@@ -3509,36 +3341,27 @@ class NQS(MonteCarloSolver):
         # =========================================================================
         else:
             # Detect physical cores
-            physical_cores = psutil.cpu_count(logical=False) or 4
-
-            # Set chains equal to cores to avoid context switching
-            optimal_chains = physical_cores
+            physical_cores          = psutil.cpu_count(logical=False) or 4
+            optimal_chains          = physical_cores
 
             # We need to get all our data from length, not width
-            num_samples_per_chain = int(
-                max(1, -(-target_total_samples // optimal_chains))
-            )  # Ceiling division
+            num_samples_per_chain   = int(max(1, -(-target_total_samples // optimal_chains)))  # Ceiling division
 
             # CPU needs to sweep to decorrelate because we have few chains
-            config = {
-                "s_numchains": optimal_chains,
-                "s_numsamples": num_samples_per_chain,
-                "s_therm_steps": (
-                    num_therm if num_therm is not None else max(20, system_size)
-                ),  # Rule of thumb: N
-                "s_sweep_steps": (
-                    num_sweep if num_sweep is not None else max(1, system_size // 2)
-                ),  # Rule of thumb: N/2
-                "hardware": "cpu",
+            config                  = {
+                "s_numchains"       : optimal_chains,
+                "s_numsamples"      : num_samples_per_chain,
+                "s_therm_steps"     : (num_therm if num_therm is not None else max(20, system_size)),       # Rule of thumb: N
+                "s_sweep_steps"     : (num_sweep if num_sweep is not None else max(1, system_size // 2)),   # Rule of thumb: N/2
+                "hardware"          : "cpu",
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
         # Calculate actual batch size generated
         total_batch = config["s_numchains"] * config["s_numsamples"]
-        logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.")
+        logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.", 2)
 
         return config
-
 
 #########################################
 #! EOF
