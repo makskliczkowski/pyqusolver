@@ -243,13 +243,6 @@ def _apply_op_batch_projected_compact_jit(
                 for t in range(n_threads):
                     sum_val += bufs[t, row, b]
                 vecs_out[row, b_start + b] += sum_val
-        # Reduction
-        for row in numba.prange(nh_out):
-            for b in range(actual_w):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
 
 
 @numba.njit(fastmath=True, inline="always")
