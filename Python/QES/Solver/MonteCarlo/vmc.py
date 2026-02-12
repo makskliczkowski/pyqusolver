@@ -713,9 +713,9 @@ class VMCSampler(Sampler):
         def _sweep_chain_jax_step_inner(carry, _):
             chain_in, current_val_in, current_key, num_prop, num_acc = carry
 
-            key_step, next_key_carry = jax.random.split(current_key)
-            key_prop_base, key_acc = jax.random.split(key_step)
-            chain_prop_keys = jax.random.split(key_prop_base, num_chains)
+            key_step, next_key_carry    = jax.random.split(current_key)
+            key_prop_base, key_acc      = jax.random.split(key_step)
+            chain_prop_keys             = jax.random.split(key_prop_base, num_chains)
 
             #! Single MCMC update step logic
             # Propose update
@@ -730,9 +730,9 @@ class VMCSampler(Sampler):
             # Calculate new log-probability
             if log_psi_delta_fun is not None and update_info is not None:
                 # O(N_hidden) fast update
-                delta_log_psi = log_psi_delta_fun(params, current_val_in, chain_in, update_info)
-                new_val = current_val_in + delta_log_psi
-                delta = jnp.real(delta_log_psi)
+                delta_log_psi   = log_psi_delta_fun(params, current_val_in, chain_in, update_info)
+                new_val         = current_val_in + delta_log_psi
+                delta           = jnp.real(delta_log_psi)
             else:
                 # O(N_sites * N_hidden) standard update
                 new_val = logproba_fun(new_chain)
@@ -740,18 +740,22 @@ class VMCSampler(Sampler):
                     new_val = new_val.squeeze()
                 delta = jnp.real(new_val - current_val_in)
 
-            log_acc = beta * mu * delta
+            # Work in log-space for numerical stability:
+            # accept iff log(u) < min(0, log_acc).
+            log_acc         = jnp.minimum(beta * mu * delta, 0.0)
 
             #! Calculate acceptance
-            log_u = jnp.log(jax.random.uniform(key_acc, shape=(num_chains)))
-            keep = log_u < log_acc
-            mask = keep.reshape((num_chains,) + (1,) * (chain_in.ndim - 1))
-            chain_out = jnp.where(mask, new_chain, chain_in)
-            val_out = jnp.where(keep, new_val, current_val_in)
-            proposed_out = num_prop + 1
-            accepted_out = num_acc + keep.astype(num_acc.dtype)
+            # Guard against log(0) from rare exact-zero draws.
+            u               = jax.random.uniform(key_acc, shape=(num_chains,), minval=1e-12, maxval=1.0)
+            log_u           = jnp.log(u)
+            keep            = log_u < log_acc
+            mask            = keep.reshape((num_chains,) + (1,) * (chain_in.ndim - 1))
+            chain_out       = jnp.where(mask, new_chain, chain_in)
+            val_out         = jnp.where(keep, new_val, current_val_in)
+            proposed_out    = num_prop + 1
+            accepted_out    = num_acc + keep.astype(num_acc.dtype)
 
-            new_carry = (chain_out, val_out, next_key_carry, proposed_out, accepted_out)
+            new_carry       = (chain_out, val_out, next_key_carry, proposed_out, accepted_out)
             return new_carry, None
 
         initial_carry = (
@@ -1109,71 +1113,51 @@ class VMCSampler(Sampler):
     #! PARALLEL TEMPERING (PT) SUPPORT
     ###################################################################
 
+
     @staticmethod
     @partial(jax.jit, static_argnames=("mu",))
     def _replica_exchange_kernel_jax_betas(log_psi, betas, key, mu):
         r"""
-        Performs Parallel Tempering swaps by swapping BETAS (indices) instead of states.
+        Perform PT swaps by exchanging beta labels between adjacent replica slots.
 
-        Parameters:
-        -----------
-        log_psi: (n_replicas, n_chains)
-            log probability (real part used)
-        betas: (n_replicas,)
-            Current inverse temperatures for each replica slot.
-        key:
-            JAX RNG key
-        mu:
-            Distribution power
-
-        Returns:
-            swapped_betas: (n_replicas,)
+        This implementation keeps updates pairwise-safe (no overlapping scatter writes),
+        so chain-wise swap decisions cannot overwrite neighboring pairs.
         """
-        n_replicas = log_psi.shape[0]
-        n_chains = log_psi.shape[1]
+        n_replicas  = log_psi.shape[0]
+        n_chains    = log_psi.shape[1]
 
-        # 1. Choose Swap Phase
         key, subkey = jax.random.split(key)
-        swap_odd = jax.random.bernoulli(subkey, 0.5)
-        start_idx = jnp.where(swap_odd, 1, 0)
+        swap_odd    = jax.random.bernoulli(subkey, 0.5)
+        start_idx   = jnp.where(swap_odd, 1, 0)
 
-        # 2. Identify pairs (i, j) where j = i + 1
-        # betas are permuted, so we swap betas at adjacent SLOTS.
-        beta_i = betas[:-1]
-        beta_j = betas[1:]
+        beta_i      = betas[:-1]
+        beta_j      = betas[1:]
         log_psi_real = jnp.real(log_psi)
-        lpsi_i = log_psi_real[:-1]
-        lpsi_j = log_psi_real[1:]
+        lpsi_i      = log_psi_real[:-1]
+        lpsi_j      = log_psi_real[1:]
 
-        # 3. Acceptance Probability (Log Space)
-        # Standard PT:          Swap accepted if exp( (beta_i - beta_j)(E_j - E_i) ) > rand
-        # Here                  E ~ -log_psi
-        # A                     = min(1, exp( (beta_i - beta_j) * mu * (log_psi_j - log_psi_i) ))
-        # Note:                 beta_i is temp of replica in slot i.
         log_acc = (beta_i - beta_j) * mu * (lpsi_j - lpsi_i)
 
-        # 4. Metropolis Check
         key, subkey = jax.random.split(key)
-        log_u = jnp.log(jax.random.uniform(subkey, shape=(n_replicas - 1, n_chains)))
-        accept_raw = log_u < log_acc
+        u = jax.random.uniform(subkey, shape=(n_replicas - 1, n_chains), minval=1e-12, maxval=1.0)
+        log_u           = jnp.log(u)
+        accept_raw      = log_u < jnp.minimum(log_acc, 0.0)
 
-        # 5. Apply Phase Mask
-        pair_indices = jnp.arange(n_replicas - 1)[:, None]
-        phase_mask = (pair_indices % 2) == start_idx
-        do_swap = accept_raw & phase_mask  # (n_replicas-1, n_chains)
+        pair_indices    = jnp.arange(n_replicas - 1)[:, None]
+        phase_mask      = (pair_indices % 2) == start_idx
+        do_swap         = accept_raw & phase_mask
 
-        # 6. Global Decision?
-        beta_i_mat = betas[:-1]
-        beta_j_mat = betas[1:]
+        # Pairwise-safe reconstruction: each slot can come from itself, slot+1, or slot-1.
+        from_above      = jnp.concatenate([betas[1:], betas[-1:]], axis=0)
+        from_below      = jnp.concatenate([betas[:1], betas[:-1]], axis=0)
 
-        new_beta_down = jnp.where(do_swap, beta_j_mat, beta_i_mat)
-        new_beta_up = jnp.where(do_swap, beta_i_mat, beta_j_mat)
+        swap_down_mask  = jnp.zeros((n_replicas, n_chains), dtype=bool).at[:-1].set(do_swap)
+        swap_up_mask    = jnp.zeros((n_replicas, n_chains), dtype=bool).at[1:].set(do_swap)
 
-        betas_out = betas.at[:-1].set(new_beta_down.astype(betas.dtype))
-        betas_out = betas_out.at[1:].set(new_beta_up.astype(betas.dtype))
+        betas_out       = jnp.where(swap_down_mask, from_above, betas)
+        betas_out       = jnp.where(swap_up_mask, from_below, betas_out)
 
         return betas_out
-
     @staticmethod
     def _static_sample_pt_jax(
         states_init,
@@ -1241,7 +1225,8 @@ class VMCSampler(Sampler):
 
             return (states_new, lpsi_new, key, n_prop_new, n_acc_new, betas_swapped), None
 
-        n_therm_sweeps = max(1, total_therm_updates // updates_per_sample)
+        # Use ceil division so requested thermalization is not truncated.
+        n_therm_sweeps = max(1, (total_therm_updates + updates_per_sample - 1) // updates_per_sample)
         initial_carry = (
             states_init,
             logprobas_init,
@@ -1486,20 +1471,23 @@ class VMCSampler(Sampler):
             return final_state_info, samples_tuple, probs
         else:
             self._logprobas = self.logprob(
-                self._states, net_callable=net_callable, net_params=parameters
+                self._states, net_callable=net_callable, net_params=current_params
             )
 
             (self._states, self._logprobas, self._num_proposed, self._num_accepted), configs = (
-                self._generate_samples_np(parameters, num_samples, num_chains)
+                self._generate_samples_np(current_params, used_num_samples)
             )
-            configs_log_ansatz = np.array([self._net(parameters, config) for config in configs])
-            probs = np.exp((1.0 / self._logprob_fact - self._mu) * np.real(configs_log_ansatz))
-            norm = np.sum(probs, axis=0, keepdims=True)
-            probs = probs / norm * self._numchains
+            configs             = configs.reshape(-1, *configs.shape[2:])
+            configs_log_ansatz  = self.logprob(
+                configs, net_callable=net_callable, net_params=current_params
+            )
+            probs   = np.exp((1.0 / self._logprob_fact - self._mu) * np.real(configs_log_ansatz))
+            probs   = probs.reshape(-1)
+            norm    = max(np.sum(probs), 1e-12)
+            probs   = probs / norm * probs.size
 
-            configs = configs.reshape(-1, *configs.shape[2:])
-            configs_log_ansatz = configs_log_ansatz.reshape(-1, *configs_log_ansatz.shape[2:])
-            probs = probs.reshape(-1, *probs.shape[2:])
+            configs_log_ansatz = configs_log_ansatz.reshape(-1)
+            probs   = probs.reshape(-1)
 
             return (self._states, self._logprobas), (configs, configs_log_ansatz), probs
 

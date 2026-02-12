@@ -849,7 +849,7 @@ class TDVP:
         Array
             The centered loss.
         """
-        return self._loss_c_fn_j(loss, loss.mean(axis=0) if not loss_m else loss_m)
+        return self._loss_c_fn_j(loss, loss.mean(axis=0) if loss_m is None else loss_m)
 
     def get_deriv_centered(self, deriv, deriv_m=None):
         """
@@ -867,7 +867,7 @@ class TDVP:
         Array
             The centered derivative.
         """
-        deriv_m = deriv.mean(axis=0) if not deriv_m else deriv_m
+        deriv_m = deriv.mean(axis=0) if deriv_m is None else deriv_m
         return self._deriv_c_fn_j(deriv, deriv_m)
 
     ##################
@@ -1386,7 +1386,7 @@ class TDVP:
         # Compute global phase evolution $\dot{\theta}_0$
         # $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
         theta0_dot = None
-        if solution is not None and self.rhs_prefactor:
+        if solution is not None:
             param_derivatives = solution.x if hasattr(solution, "x") else solution
             log_derivatives_mean = vd_m
             theta0_dot = self.compute_global_phase_evolution(
