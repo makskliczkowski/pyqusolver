@@ -179,8 +179,8 @@ def _apply_op_batch_projected_compact_jit(
                             vecs_out[idx, b] += factor * vecs_in[k, b]
         return
 
-    n_threads = thread_buffers.shape[0]
-    chunk_size = min(chunk_size, n_batch)
+    n_threads   = thread_buffers.shape[0]
+    chunk_size  = min(chunk_size, n_batch)
     bufs = thread_buffers
 
     if (
@@ -236,13 +236,6 @@ def _apply_op_batch_projected_compact_jit(
                         for b in range(actual_w):
                             bufs[tid, idx, b] += factor * vecs_in[k, b_start + b]
 
-        # Reduction
-        for row in numba.prange(nh_out):
-            for b in range(actual_w):
-                sum_val = 0.0
-                for t in range(n_threads):
-                    sum_val += bufs[t, row, b]
-                vecs_out[row, b_start + b] += sum_val
         # Reduction
         for row in numba.prange(nh_out):
             for b in range(actual_w):

@@ -19,7 +19,8 @@ if TYPE_CHECKING:
 
 
 def mutual_information(
-    state: np.ndarray, i: int, j: int, hilbert: "HilbertSpace", q: float = 1.0
+    state: np.ndarray, i: int, j: int, hilbert: "HilbertSpace", q: float = 1.0,
+    rho_i: np.ndarray = None, rho_j: np.ndarray = None,
 ) -> float:
     """
     Compute mutual information I(i:j) = S_i + S_j - S_ij for a symmetry-reduced state.
@@ -34,6 +35,10 @@ def mutual_information(
         Hilbert space with symmetries.
     q : float
         Renyi entropy order (default 1.0 for von Neumann).
+    rho_i : np.ndarray, optional
+        Pre-computed reduced density matrix for site i. If None, computed internally.
+    rho_j : np.ndarray, optional
+        Pre-computed reduced density matrix for site j. If None, computed internally.
 
     Returns
     -------
@@ -48,18 +53,19 @@ def mutual_information(
     except ImportError as e:
         raise ImportError("Required physics modules not found in general_python") from e
 
-    # S_i: Entropy of single site i
-    rho_i = rho_symmetries(state, va=[i], hilbert=hilbert)
-    S_i = entropy(rho_spectrum(rho_i), q=q)
+    # S_i: Entropy of single site i (use pre-computed rho if provided)
+    if rho_i is None:
+        rho_i   = rho_symmetries(state, va=[i], hilbert=hilbert)
+    S_i     = entropy(rho_spectrum(rho_i), q=q)
 
-    # S_j: Entropy of single site j
-    rho_j = rho_symmetries(state, va=[j], hilbert=hilbert)
-    S_j = entropy(rho_spectrum(rho_j), q=q)
+    # S_j: Entropy of single site j (use pre-computed rho if provided)
+    if rho_j is None:
+        rho_j   = rho_symmetries(state, va=[j], hilbert=hilbert)
+    S_j     = entropy(rho_spectrum(rho_j), q=q)
 
-    # S_ij: Entropy of pair (i,j)
-    # Note: mask order [i, j] or [j, i] doesn't matter for entropy
-    rho_ij = rho_symmetries(state, va=[i, j], hilbert=hilbert)
-    S_ij = entropy(rho_spectrum(rho_ij), q=q)
+    # S_ij: Entropy of pair (i,j) — always computed fresh
+    rho_ij  = rho_symmetries(state, va=[i, j], hilbert=hilbert)
+    S_ij    = entropy(rho_spectrum(rho_ij), q=q)
 
     return S_i + S_j - S_ij
 
