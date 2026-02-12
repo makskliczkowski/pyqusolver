@@ -179,8 +179,8 @@ def _apply_op_batch_projected_compact_jit(
                             vecs_out[idx, b] += factor * vecs_in[k, b]
         return
 
-    n_threads = thread_buffers.shape[0]
-    chunk_size = min(chunk_size, n_batch)
+    n_threads   = thread_buffers.shape[0]
+    chunk_size  = min(chunk_size, n_batch)
     bufs = thread_buffers
 
     if (

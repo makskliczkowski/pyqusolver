@@ -669,6 +669,11 @@ class OperatorModule:
                         buf = buf_corr[:, :curr_width]
                         buf.fill(0)
 
+                        # Diagonal operators (e.g. zz) don't change the state -> use 'fast' kernel O(1)
+                        # Off-diagonal operators (xx, xy, ...) may leave symmetry sector → need 'project' O(|G|²)
+                        op_modifies = corr_ops[op_name].modifies
+                        sym_mode    = 'project' if (has_sym and op_modifies) else ('fast' if has_sym else 'auto')
+
                         # Apply composite operator S_a^i S_b^j
                         corr_ops[op_name].matvec(
                             ev_batch,
@@ -678,7 +683,7 @@ class OperatorModule:
                             out=buf,
                             thread_buffer=thread_buf_cache,
                             chunk_size=JIT_CHUNK_SIZE,
-                            symmetry_mode="project",
+                            symmetry_mode=sym_mode,
                         )
                         val = np.einsum("bi,ib->b", ev_c_t[b_start:b_end, :], buf)
                         values[op_name][i, j, b_start:b_end] = val
