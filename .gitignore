@@ -234,3 +234,8 @@ data/*
 .DS_Store
 Python/docs/_build/
 mcdata/
+
+# ---------------------------------------------------------------
+# abstract plots 
+
+*demo*.png
