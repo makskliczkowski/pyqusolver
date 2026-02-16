@@ -1,133 +1,281 @@
 r'''
+Here, a minimum entangled state (MES) finder is implemented using projected gradient 
+descent on the unit sphere of coefficients. The main function `find_mes` 
+performs multiple random restarts to find distinct MES, which are then orthonormalized. 
+This approach allows us to identify states in the ground state manifold that minimize 
+the entanglement entropy for a given partition, which is crucial 
+for extracting topological entanglement entropy and understanding the underlying topological order.
 
+--------------------------------
+Author      : Maksymilian Kliczkowski
+Created     : 2026-02-12
+--------------------------------
 '''
 
 import  numpy as np
-from    typing import Callable, List, Tuple
+from    typing import Callable, List, Tuple, Optional, Dict, Any
 
-def normalize(c):
-    ''' Normalize a complex vector. '''
-    return c / np.linalg.norm(c)
-
-def random_c(m):
-    ''' Generate random complex vector and normalize it. '''
-    c = np.random.randn(m) + 1j*np.random.randn(m)
-    return normalize(c)
-
-def random(m):
-    ''' Generate random vector without normalization. '''
-    return np.random.randn(m)
+try:
+    from scipy.optimize import minimize
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
 
 # ---------------------------------------
-# Entropy minimization to find MES
+#! Minimum Entangled States (MES) Finder
 # ---------------------------------------
 
-def entropy_of_c(c, V, S_func):
-    ''' Compute the entropy S(V @ c) for a given vector c. '''
-    psi = V @ c
-    return S_func(psi)
+def _params_to_complex(params: np.ndarray, m: int):
+    ''' Convert real parameters to a complex vector of length m. '''
+    if params.size != 2*m:
+        raise ValueError(f"Expected 2*m parameters, got {params.size}")
 
-# ---------------------------------------
-# Projected gradient descent on the unit sphere
-# ---------------------------------------
-
-def projected_gradient_step(c, V, S_func, eps=1e-6, lr=0.1):
-    ''' Perform a projected gradient step to minimize entropy on the unit sphere. '''
-    m       = len(c)
-    grad    = np.zeros_like(c, dtype=np.complex128)
-    base    = entropy_of_c(c, V, S_func)
-
-    # finite-difference gradient
-    for i in range(m):
-        dc          = np.zeros_like(c)
-        dc[i]       = eps
-        grad[i]     = (entropy_of_c(normalize(c + dc), V, S_func) - base) / eps
-
-        dc[i]       = 1j * eps
-        grad[i]    += 1j * (entropy_of_c(normalize(c + dc), V, S_func) - base) / eps
-
-    # project gradient to tangent space of unit sphere
-    grad    = grad - np.vdot(c, grad) * c
-    c_new   = normalize(c - lr * grad)
-    return c_new
-
-# ---------------------------------------
-# Main function to find MES
-# ---------------------------------------
-
-def minimize_entropy(V, S_func: Callable, max_iter=200, tol=1e-10):
-    ''' Minimize the entropy S(V @ c) over normalized vectors c using projected gradient descent. '''
+    c   = params[:m] + 1j * params[m:]
+    nrm = np.linalg.norm(c)
     
-    m       = V.shape[1]
-    c       = random_c(m)
-    prev    = entropy_of_c(c, V, S_func)
+    if nrm < 1e-13:
+        c       = np.zeros(m, dtype=np.complex128)
+        c[0]    = 1.0
+        return c
+    return c / nrm
 
-    for _ in range(max_iter):
-        c       = projected_gradient_step(c, V, S_func)
-        val     = entropy_of_c(c, V, S_func)
-
-        if abs(val - prev) < tol:
-            break
-        prev = val
-
-    return normalize(c), prev
-
-# ---------------------------------------
-# Wrapper to find multiple MES by random restarts
-# ---------------------------------------
-
-def find_mes(V, S_func, n_trials=30, overlap_tol=1e-6, state_max=10):
-    ''' 
-    Find multiple MES by performing multiple runs of entropy minimization with random initializations.
-    Parameters    
-    ----------
-    V : np.ndarray
-        The matrix whose columns span the subspace of interest (e.g., low-energy eigenstates).
-    S_func : Callable
-        A function that takes a state vector and returns its entanglement entropy.
-    n_trials : int, optional
-        The number of random initializations to try for finding MES. Default is 30.
-    overlap_tol : float, optional
-        The tolerance for considering two MES as distinct based on their overlap. Default is 1e-6.
-    state_max : int, optional
-        The maximum number of MES to find. Default is 10.
-    Returns
-    -------
-    List[np.ndarray]
-        A list of MES state vectors found.
-    List[float]
-        The corresponding entanglement entropy values for the MES found.
-    '''    
+class MESFinder:
+    ''' Class to find Minimum Entangled States (MES) by minimizing the entanglement entropy. '''
     
-    minima = []
-    values = []
-
-    for _ in range(n_trials):
+    def __init__(self, V: np.ndarray, S_func: Callable[[np.ndarray], float]):
+        """
+        Initialize the MESFinder.
         
-        # Minimize entropy to find one MES
-        c, val  = minimize_entropy(V, S_func)
-        psi     = V @ c
+        Parameters
+        ----------
+        V : np.ndarray
+            A matrix of shape (Ns, m) where m is the dimension of the degenerate manifold.
+            Each column is a basis state of the manifold.
+        S_func : Callable[[np.ndarray], float]
+            A function that takes a state vector of size Ns and returns its entanglement entropy.
+        """
+        self.V          = V
+        self.S_func     = S_func
+        self.m          = V.shape[1]
+        self.Ns         = V.shape[0]
+        # Pre-allocate buffer for state vector to avoid multiple large allocations.
+        # Ensure it is complex as coefficients c are complex.
+        self._psi_buf   = np.zeros(self.Ns, dtype=np.complex128 if np.isrealobj(V) else V.dtype)
 
-        # check uniqueness
-        unique = True
-        for psi_prev in minima:
-            if abs(np.vdot(psi_prev, psi)) > 1 - overlap_tol:
-                unique = False
+    @staticmethod
+    def normalize(c):
+        ''' Normalize a complex vector. '''
+        nrm = np.linalg.norm(c)
+        if nrm < 1e-15: return c
+        return c / nrm
+
+    @staticmethod
+    def random_c(m, rng=None):
+        ''' Generate random complex vector and normalize it. '''
+        if rng is None:
+            c = np.random.randn(m) + 1j*np.random.randn(m)
+        else:
+            c = rng.standard_normal(m) + 1j*rng.standard_normal(m)
+        return MESFinder.normalize(c)
+
+    # --------------------------------
+    #! Find
+    # --------------------------------
+    
+    def __call__(self, c):
+        ''' Compute the entropy S(V @ c) for a given vector c. '''
+        
+        # Optimized matrix-vector multiplication into buffer
+        # psi = self.V @ c
+        np.dot(self.V, c, out=self._psi_buf)
+        return self.S_func(self._psi_buf)
+
+    # --------------------------------
+    #! Optimization methods
+    # --------------------------------
+
+    def _minimize_projected_gradient(self, c, eps=1e-6, lr=0.1, max_iter=200, tol=1e-8):
+        ''' Perform a projected gradient step to minimize entropy on the unit sphere. '''
+        m           = len(c)
+        c_curr      = c.copy()
+        val_curr    = self(c_curr)
+        
+        for _ in range(max_iter):
+            grad    = np.zeros_like(c_curr, dtype=np.complex128)
+            # finite-difference gradient
+            for i in range(m):
+                # Real part
+                old_val     = c_curr[i]
+                c_curr[i]  += eps
+                val_plus    = self(self.normalize(c_curr))
+                grad[i]     = (val_plus - val_curr) / eps
+                c_curr[i]   = old_val
+                
+                # Imaginary part
+                c_curr[i]  += 1j * eps
+                val_plus_im = self(self.normalize(c_curr))
+                grad[i]    += 1j * (val_plus_im - val_curr) / eps
+                c_curr[i]   = old_val
+
+            # project gradient to tangent space of unit sphere
+            grad        = grad - np.vdot(c_curr, grad) * c_curr
+            
+            c_next      = self.normalize(c_curr - lr * grad)
+            val_next    = self(c_next)
+            
+            if abs(val_next - val_curr) < tol:
+                break
+                
+            c_curr      = c_next
+            val_curr    = val_next
+            
+        return c_curr
+
+    # --------------------------------
+    
+    def minimize_entropy(
+        self,
+        max_iter            : int=200, 
+        tol                 : float=1e-10,
+        n_restarts          : int=5,
+        rng                 : Optional[np.random.Generator] = None,
+        seed                : Optional[int] = None,
+        # projected gradient options
+        eps                 : float = 1e-6,
+        lr                  : float = 0.1,
+        # scipy options
+        method              : str = 'L-BFGS-B',
+        options             : Optional[Dict[str, Any]] = None,
+        verbose             : bool = False
+    ):
+        ''' Minimize the entropy S(V @ c) over normalized vectors c using projected gradient descent. '''
+        if options is None:
+            options = {'maxiter': max_iter, 'ftol': tol}
+        
+        m           = self.m
+        rng         = np.random.default_rng(seed) if rng is None else rng
+        
+        best_c      = None      # best vector found across restarts
+        best_val    = np.inf    # best value found across restarts
+        nfev_total  = 0         # total number of function evaluations across restarts
+        
+        if verbose:
+            print(f"Starting MES optimization with method={method}, max_iter={max_iter}, tol={tol}, n_restarts={n_restarts}")
+        
+        def obj(params: np.ndarray):
+            c   = _params_to_complex(params, m)
+            return self(c)
+        
+        # Optimize using scipy if available, otherwise use manual projected gradient descent
+        for i in range(n_restarts):
+            c0      = self.random_c(m, rng=rng)
+            if SCIPY_AVAILABLE:
+                p0      = np.concatenate([c0.real, c0.imag])
+                res     = minimize(obj, p0, method=method, options=options)
+                c_opt   = _params_to_complex(res.x, m)
+                val     = res.fun
+                nfev    = res.nfev
+            else:
+                c_opt   = self._minimize_projected_gradient(c0, eps=eps, lr=lr, max_iter=max_iter, tol=tol)
+                val     = self(c_opt)
+                nfev    = max_iter # Approximate
+            
+            nfev_total += nfev
+            if verbose:
+                print(f"\tRestart {i+1}/{n_restarts}: val={val:.8f}, nfev={nfev}")
+                
+            if val < best_val:
+                best_val = val
+                best_c   = c_opt
+                
+        info = {
+            "method"        : method if SCIPY_AVAILABLE else "projected_gradient",
+            "nfev_total"    : nfev_total,
+            "best_val"      : best_val,
+            "best_c_norm"   : np.linalg.norm(best_c) if best_c is not None else None,
+            "n_restarts"    : n_restarts
+        }
+        
+        if verbose:
+            print(f"Best value found: {best_val:.8f} with method={info['method']}")
+        
+        return self.normalize(best_c), float(best_val), info
+
+    def find(
+        self,
+        n_trials        : int = 20, 
+        overlap_tol     : float = 1e-4, 
+        state_max       : int = 10,
+        # optimization options
+        rng             : Optional[np.random.Generator] = None,
+        seed            : Optional[int] = None,
+        max_iter        : int = 200,
+        tol             : float = 1e-10,
+        n_restarts      : int = 3,
+        method          : str = 'L-BFGS-B',
+        options         : Optional[Dict[str, Any]] = None,
+        verbose         : bool = False,
+    ) -> Tuple[List[np.ndarray], List[float], List[np.ndarray], List[Dict]]:
+        r''' 
+        Find multiple MES by performing multiple runs of entropy minimization with random initializations.
+        '''    
+        
+        rng         = np.random.default_rng(seed) if rng is None else rng    
+        minima      = []
+        values      = []
+        coeffs      = []
+        diagnostics = []
+
+        # To find multiple MES, we perform multiple optimization runs with random initializations.
+        for trial in range(n_trials):
+            if verbose:
+                print(f"Trial {trial+1}/{n_trials}...")
+                
+            c_opt, val, info = self.minimize_entropy(
+                max_iter=max_iter, tol=tol, n_restarts=n_restarts, rng=rng, seed=None,
+                method=method, options=options, verbose=verbose
+            )
+            
+            # Check for uniqueness against found coefficients in the subspace
+            # This is more efficient than checking full state vectors
+            is_unique = True
+            for c_prev in coeffs:
+                
+                # In the subspace, we check overlap |<c_prev|c_opt>|
+                if abs(np.vdot(c_prev, c_opt)) > 1.0 - overlap_tol:
+                    is_unique = False
+                    break
+            
+            if is_unique:
+                psi = self.V @ c_opt
+                minima.append(psi)
+                coeffs.append(c_opt)
+                values.append(float(val))
+                diagnostics.append(info)
+                if verbose:
+                    print(f"  -> Found unique MES with S={val:.6f}")
+            
+            if len(minima) >= state_max:
                 break
 
-        if unique:
-            minima.append(psi)
-            values.append(val)
-            
-        if len(minima) >= state_max:
-            break
+        # Orthonormalize the found MES manifold if requested or needed
+        # Often MES states are not exactly orthogonal, but they represent the manifold.
+        # But if the user wants an orthonormal basis of MES, we can do QR.
+        # Note: Orthonormalizing might change the entropy of the states slightly if they were not orthogonal.
+        # For Kitaev model, they should be approximately orthogonal for large systems.
+        if len(minima) > 1:
+            Q, _    = np.linalg.qr(np.column_stack(coeffs))
+            coeffs  = [Q[:, i] for i in range(Q.shape[1])]
+            minima  = [self.V @ c for c in coeffs]
 
-    # Orthonormalize MES
-    if minima:
-        Q, _    = np.linalg.qr(np.column_stack(minima))
-        minima  = [Q[:, i] for i in range(Q.shape[1])]
+        return minima, values, coeffs, diagnostics
 
-    return minima, values
+def find_mes(V: np.ndarray, S_func: Callable[[np.ndarray], float], **kwargs):
+    """
+    Convenience function to find MES using MESFinder.
+    """
+    finder = MESFinder(V, S_func)
+    return finder.find(**kwargs)
 
 # ---------------------------------------
 #! EOF
