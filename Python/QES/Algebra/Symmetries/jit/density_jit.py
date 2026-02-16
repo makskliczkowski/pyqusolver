@@ -12,7 +12,7 @@ try:
     # public physics imports
 
     from .symmetry_container_jit                    import _NUMBA_OVERHEAD_SIZE, apply_group_element_fast
-    from ....general_python.physics.density_matrix  import rho_spectrum
+    from ....general_python.physics.density_matrix  import rho_spectrum, mask_subsystem
 except Exception:
     raise RuntimeError("Couldn't import symmetries correctly...")
 
@@ -311,44 +311,31 @@ def _rho_symmetries_mask(
 
 def rho_symmetries(
     state,
-    va: Union[int, np.ndarray, List[int]],
-    hilbert: "HilbertSpace",
-    cache_size=256,
-    full_state: Optional[np.ndarray] = None,
+    va          : Union[int, np.ndarray, List[int]],
+    hilbert     : "HilbertSpace",
+    cache_size  = 256,
+    full_state  : Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Symmetric density of states rhoA for subsystem A,
     from symmetry-reduced state vector.
     ---------------------------------------------
     Parameters:
-    state       : np.ndarray
+    state : np.ndarray
         Symmetry-reduced state vector (complex128).
-    va          : int or array-like
+    va : int or array-like
         Number of sites in subsystem A (assumed first va sites)
         OR explicit site indices of subsystem A.
-    hilbert     : HilbertSpace
+    hilbert : HilbertSpace
         Hilbert space with symmetries.
     """
-    local_dim = hilbert.local_space.local_dim
-    ns = hilbert.lattice.ns
+    local_dim       = hilbert.local_space.local_dim
+    ns              = hilbert.lattice.ns
 
     # determine if we use mask or contiguous
-    is_contiguous = isinstance(va, (int, np.integer))
+    is_contiguous   = isinstance(va, (int, np.integer))
 
-    if not is_contiguous:
-        sites_a = np.sort(np.asarray(va, dtype=np.int64))
-        va_size = sites_a.shape[0]
-        # check if it's actually contiguous from 0
-        if va_size > 0 and np.all(sites_a == np.arange(va_size, dtype=np.int64)):
-            is_contiguous = True
-            va = va_size
-        else:
-            # complement
-            mask = np.ones(ns, dtype=np.bool_)
-            mask[sites_a] = False
-            sites_b = np.arange(ns, dtype=np.int64)[mask]
-    else:
-        va_size = va
+    (va, vb), order = mask_subsystem(va, ns, local_dim, contiguous=is_contiguous)
 
     if hilbert.nhfull <= _NUMBA_OVERHEAD_SIZE or not hilbert.has_sym:
         from QES.general_python.physics.density_matrix import rho_numba_mask, rho_numpy
@@ -363,8 +350,8 @@ def rho_symmetries(
             dimB = hilbert.nhfull // dimA
             return rho_numpy(final_state, dimA, dimB)
         else:
-            order = tuple(sites_a) + tuple(sites_b)
-            psi_reshaped = rho_numba_mask(final_state, order, va_size)
+            order           = tuple(sites_a) + tuple(sites_b)
+            psi_reshaped    = rho_numba_mask(final_state, order, va_size)
             return psi_reshaped @ psi_reshaped.conj().T
 
     container = hilbert.sym_container

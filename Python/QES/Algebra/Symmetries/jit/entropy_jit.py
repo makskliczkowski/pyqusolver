@@ -98,8 +98,8 @@ def topological_entropy(
         Input regions.
     """
     try:
-        from QES.general_python.physics.density_matrix import rho_spectrum
-        from QES.general_python.physics.entropy import entropy
+        from QES.general_python.physics.density_matrix  import rho_spectrum
+        from QES.general_python.physics.entropy         import entropy
 
         from .density_jit import rho_symmetries
     except ImportError as e:
@@ -114,7 +114,7 @@ def topological_entropy(
             continue
 
         # Use rho_symmetries with mask
-        rho = rho_symmetries(state, va=mask, hilbert=hilbert)
+        rho             = rho_symmetries(state, va=mask, hilbert=hilbert)
         entropies[name] = entropy(rho_spectrum(rho), q=q)
 
     # Calculate Gamma (detect construction based on keys)
