@@ -14,12 +14,50 @@ Created     : 2026-02-12
 
 import  numpy as np
 from    typing import Callable, List, Tuple, Optional, Dict, Any
+from    dataclasses import dataclass
 
 try:
     from scipy.optimize import minimize
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
+
+# ---------------------------------------
+#! Topological Results Dataclass
+# ---------------------------------------
+
+@dataclass
+class TopologicalResults:
+    """
+    Data class to store results of topological analysis from MES.
+    
+    Attributes
+    ----------
+    S_matrix : np.ndarray
+        The modular S-matrix (normalized overlap matrix). S_ij = <MES_i|MES_j> / D, where D is the total quantum dimension.
+    overlap_matrix : np.ndarray
+        The raw overlap matrix between two MES bases. This is the unnormalized version of S_matrix
+        and can be used to extract quantum dimensions.
+    quantum_dimensions : np.ndarray
+        Individual quantum dimensions d_i for each anyon type.
+    total_quantum_dimension : float
+        The total quantum dimension D = sqrt(sum d_i^2). This is a key quantity characterizing the topological order.
+    is_abelian : bool
+        True if all d_i are approximately 1.
+    is_non_abelian : bool
+        True if any d_i > 1 (within tolerance).
+    """
+    S_matrix                : np.ndarray
+    overlap_matrix          : np.ndarray
+    quantum_dimensions      : np.ndarray
+    total_quantum_dimension : float
+    is_abelian              : bool
+    is_non_abelian          : bool
+
+    def __repr__(self) -> str:
+        return (f"TopologicalResults(D={self.total_quantum_dimension:.4f}, "
+                f"Abelian={self.is_abelian}, Non-Abelian={self.is_non_abelian}, "
+                f"d_i={self.quantum_dimensions})")
 
 # ---------------------------------------
 #! Minimum Entangled States (MES) Finder
@@ -276,6 +314,78 @@ def find_mes(V: np.ndarray, S_func: Callable[[np.ndarray], float], **kwargs):
     """
     finder = MESFinder(V, S_func)
     return finder.find(**kwargs)
+
+# ---------------------------------------
+#! Modular S-matrix and Topological Statistics
+# ---------------------------------------
+
+def compute_modular_s_matrix(
+    mes_x   : List[np.ndarray], 
+    mes_y   : List[np.ndarray], 
+    tol     : float = 1e-8
+) -> TopologicalResults:
+    r"""
+    Compute the modular S-matrix from two bases of Minimum Entangled States (MES)
+    obtained from perpendicular cuts (e.g., along x and y).
+    
+    The modular S-matrix S_ij encodes the topological mutual statistics between anyons.
+    It is proportional to the overlap matrix:
+    S_ij = <Xi_i(x) | Xi_j(y)> / D
+    
+    Parameters
+    ----------
+    mes_x : List[np.ndarray]
+        List of MES obtained from a cut along the x-direction.
+    mes_y : List[np.ndarray]
+        List of MES obtained from a cut along the y-direction.
+    tol : float
+        Numerical tolerance for Abelian/Non-Abelian classification.
+        
+    Returns
+    -------
+    TopologicalResults
+        Dataclass containing the modular S-matrix, quantum dimensions, and total quantum dimension.
+    """
+    n_x     = len(mes_x)
+    n_y     = len(mes_y)
+    
+    if n_x != n_y:
+        raise ValueError(f"Number of MES in x and y bases must be equal (got {n_x} and {n_y}).")
+    
+    m       = n_x
+    overlap = np.zeros((m, m), dtype=np.complex128)
+    
+    for i in range(m):
+        for j in range(m):
+            overlap[i, j] = np.vdot(mes_x[i], mes_y[j])
+            
+    # The modular S-matrix is unitary. The first row (or column) contains d_i / D.
+    # Since d_i >= 1, the largest values in the first row correspond to d_i.
+    
+    row1        = np.abs(overlap[0, :])
+    d_tilde     = row1
+    d_1_tilde   = d_tilde[0]
+    
+    if d_1_tilde < 1e-10:
+        d_1_tilde = np.max(d_tilde)
+    
+    quantum_dims    = d_tilde / d_1_tilde
+    total_D         = 1.0 / d_1_tilde
+    
+    # Normalized S-matrix
+    s_matrix        = overlap / total_D
+    
+    is_abelian      = np.all(np.abs(quantum_dims - 1.0) < tol)
+    is_non_abelian  = np.any(quantum_dims > 1.0 + tol)
+    
+    return TopologicalResults(
+        S_matrix                = s_matrix,
+        overlap_matrix          = overlap,
+        quantum_dimensions      = quantum_dims,
+        total_quantum_dimension = total_D,
+        is_abelian              = is_abelian,
+        is_non_abelian          = is_non_abelian
+    )
 
 # ---------------------------------------
 #! EOF
