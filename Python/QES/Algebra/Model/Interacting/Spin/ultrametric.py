@@ -56,7 +56,13 @@ class UltrametricModel(hamil_module.Hamiltonian):
 
         L = ns - n
         # initialize Hilbert space
-        _hilbert_space = hilbert_module.HilbertSpace(ns=ns, backend=backend, dtype=dtype, nhl=2)
+        _hilbert_space = (
+            hilbert_space
+            if hilbert_space is not None
+            else hilbert_module.HilbertSpace(
+                ns=ns, backend=backend, dtype=dtype, local_space="spin-1/2"
+            )
+        )
         super().__init__(
             is_manybody=True,
             hilbert_space=_hilbert_space,

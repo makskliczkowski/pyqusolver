@@ -30,14 +30,189 @@ Flow
 
 Key Features
 ------------
-- **JAX-based**: Fully differentiable and GPU-accelerated.
-- **Flexible Architectures**: RBMs, CNNs, Transformers, and custom Flax modules.
-- **Stochastic Reconfiguration (SR)**: Natural gradient descent implementation.
-- **Time Evolution**: Time-Dependent Variational Principle (TDVP).
+- **JAX-based**: 
+    Fully differentiable and GPU-accelerated.
+- **Flexible Architectures**: 
+    RBMs, CNNs, Transformers, and custom Flax modules.
+- **Stochastic Reconfiguration (SR)**: 
+    Natural gradient descent implementation.
+- **Time Evolution**: 
+    Time-Dependent Variational Principle (TDVP).
 """
 
-import importlib
-from typing import TYPE_CHECKING, Any
+import  importlib
+from    dataclasses import dataclass, field, asdict
+from    typing      import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+
+# ----------------------------------------------------------------------------
+#! Configuration dataclasses
+# ----------------------------------------------------------------------------
+
+@dataclass
+class NQSPhysicsConfig:
+    """
+    Configuration for the physical model in NQS.
+    Behaves like a dictionary and allows dynamic argument addition.
+    """
+    model_type      : str   = "kitaev"
+    lattice_type    : str   = "honeycomb"
+    lx              : int   = 3
+    ly              : int   = 3
+    lz              : int   = 1
+    bc              : str   = "pbc"
+    flux            : Optional[Union[str, Dict]] = None # Boundary fluxes, see Lattice class for details
+    # magnetic field
+    hx              : float = 0.0
+    hy              : float = 0.0
+    hz              : float = 0.0
+    # Impurities: list of (site, amplitude) or (site, phi, theta, amplitude)
+    impurities      : List[Tuple] = field(default_factory=list)
+    # General couplings and other dynamic arguments
+    args            : Dict[str, Any] = field(default_factory=dict)
+
+    # ---------------
+    # Lazy properties for derived quantities can be added here if needed
+    # ---------------
+
+    def __getitem__(self, key):
+        if key in self.__dict__:
+            return getattr(self, key)
+        return self.args.get(key)
+
+    def __setitem__(self, key, value):
+        if key in self.__dict__:
+            setattr(self, key, value)
+        else:
+            self.args[key] = value
+
+    def get(self, key, default=None):
+        try:
+            val = self[key]
+            return val if val is not None else default
+        except (AttributeError, KeyError):
+            return default
+
+    def update(self, **kwargs):
+        for k, v in kwargs.items():
+            self[k] = v
+
+    def to_dict(self):
+        d       = asdict(self)
+        extra   = d.pop("args")
+        d.update(extra)
+        return d
+
+    @property
+    def num_sites(self) -> int:
+        mult = 2 if self.lattice_type.lower() == 'honeycomb' else 1
+        return self.lx * self.ly * mult
+
+    def make_hamiltonian(self, **kwargs):
+        """
+        Creates a Hamiltonian instance based on this configuration.
+        """
+        from QES.Algebra.Model              import choose_model
+        from QES.general_python.lattices    import choose_lattice
+        from QES.Algebra.hilbert            import HilbertSpace
+
+        # Use local imports to avoid circular dependencies
+        lattice = choose_lattice(
+            typek   =   self.lattice_type,
+            lx      =   self.lx,
+            ly      =   self.ly,
+            bc      =   self.bc,
+            flux    =   self.flux,
+            **self.args # Pass any additional lattice-related args
+        )
+
+        # Allow overriding hilbert kwargs from args, but also support direct kwargs
+        hilbert_kwargs = self.get("hilbert_kwargs", {})
+        if "dtype" in kwargs and "dtype" not in hilbert_kwargs:
+            hilbert_kwargs["dtype"] = kwargs["dtype"]
+            
+        hilbert         = HilbertSpace(lattice=lattice, **hilbert_kwargs)
+        model_kwargs    = self.args.copy()
+        model_kwargs.update({
+            "lattice"       : lattice,
+            "hilbert_space" : hilbert,
+            "hx"            : self.hx if self.hx != 0 else None,
+            "hy"            : self.hy if self.hy != 0 else None,
+            "hz"            : self.hz if self.hz != 0 else None,
+            "impurities"    : self.impurities,
+        })
+        
+        # Special mapping for Kitaev couplings if provided in args
+        if self.model_type == 'kitaev':
+            
+            if 'K' not in model_kwargs and ('kxy' in self.args or 'kz' in self.args):
+                model_kwargs['K']       = (self.get('kxy', 0.0), self.get('kxy', 0.0), self.get('kz', 1.0))
+                
+            if 'Gamma' not in model_kwargs and ('gamma_xy' in self.args or 'gamma_z' in self.args):
+                model_kwargs['Gamma']   = (self.get('gamma_xy', 0.0), self.get('gamma_xy', 0.0), self.get('gamma_z', 0.0))
+        # Update with any additional model-related args
+        model_kwargs.update(kwargs)
+
+        return choose_model(self.model_type, **model_kwargs), hilbert, lattice
+
+@dataclass
+class NQSSolverConfig:
+    """
+    Configuration for the NQS solver and training.
+    """
+    ansatz      : str   = "rbm"
+    sampler     : str   = "MCSampler"
+    n_chains    : int   = 16
+    n_samples   : int   = 1000
+    n_sweep     : int   = 10
+    n_therm     : int   = 100
+    lr          : float = 0.01
+    epochs      : int   = 300
+    dtype       : str   = "complex128"
+    backend     : str   = "jax"
+    
+    # SOTA configuration estimated from physics
+    sota_config : Any   = field(default=None, init=False)
+
+    def __post_init__(self):
+        """
+        Lazy estimation can be triggered here if enough information is present.
+        """
+        pass
+
+    def estimate(self, physics_config: NQSPhysicsConfig, **kwargs):
+        """
+        Automatically estimates network parameters based on physics configuration.
+        """
+        from QES.NQS.src.nqs_network_integration import estimate_network_params
+        
+        self.sota_config = estimate_network_params(
+            net_type=self.ansatz,
+            num_sites=physics_config.num_sites,
+            lattice_dims=(physics_config.lx, physics_config.ly),
+            lattice_type=physics_config.lattice_type,
+            model_type=physics_config.model_type,
+            dtype=self.dtype,
+            **kwargs
+        )
+        return self.sota_config
+
+    def make_net(self, physics_config: NQSPhysicsConfig, **kwargs):
+        """
+        Creates a network instance based on this configuration and a physics configuration.
+        """
+        from QES.NQS.src.nqs_network_integration import NetworkFactory
+        
+        if self.sota_config is None:
+            self.estimate(physics_config, **kwargs)
+            
+        factory_kwargs = self.sota_config.to_factory_kwargs()
+        factory_kwargs.update(kwargs)
+        
+        return NetworkFactory.create(
+            network_type=self.ansatz,
+            backend=self.backend,
+            **factory_kwargs
+        )
 
 # ----------------------------------------------------------------------------
 # Lazy Import Configuration
@@ -226,6 +401,8 @@ __all__ = [
     "TDVPStepInfo",
     "NetworkFactory",
     "VMCSampler",
+    "NQSPhysicsConfig",
+    "NQSSolverConfig",
     "quick_start",
     "info",
 ]

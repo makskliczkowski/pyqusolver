@@ -3,12 +3,11 @@ This module implements spin-1 operators for quantum systems.
 It includes functions for S_x, S_y, S_z, S_plus (raising), S_minus (lowering),
 and their products for spin-1 (S=1) systems.
 
-Spin-1 systems have local dimension 3 with states |+1⟩, |0⟩, |-1⟩.
-The representation uses integer encoding where each site uses 2 bits (trits):
-    00 (0) -> |+1⟩  (m = +1)
-    01 (1) -> | 0⟩  (m =  0)
-    10 (2) -> |-1⟩  (m = -1)
-    11 (3) -> invalid (not used)
+Spin-1 systems have local dimension 3 with states |+1>, |0>, |-1>.
+The integer representation uses base-3 digits:
+    0 -> |+1>  (m = +1)
+    1 -> | 0>  (m =  0)
+    2 -> |-1>  (m = -1)
 
 Spin-1 Matrices (in |+1⟩, |0⟩, |-1⟩ basis):
 
@@ -42,6 +41,7 @@ try:
         Operator,
         OperatorTypeActing,
         create_operator,
+        ensure_operator_output_shape_jax,
         ensure_operator_output_shape_numba,
     )
     from QES.Algebra.Operator.special_operator import CUSTOM_OP_BASE
@@ -72,6 +72,16 @@ except ImportError:
 ################################################################################
 #! JAX-accelerated operators (imported from jax/operators_spin_1)
 ################################################################################
+
+spin1_x_int_jnp     = None
+spin1_y_int_jnp     = None
+spin1_z_int_jnp     = None
+spin1_z_jnp         = None
+spin1_z2_int_jnp    = None
+spin1_plus_int_jnp  = None
+spin1_plus_jnp      = None
+spin1_minus_int_jnp = None
+spin1_minus_jnp     = None
 
 if JAX_AVAILABLE:
     try:
@@ -109,33 +119,38 @@ if JAX_AVAILABLE:
 ################################################################################
 
 # Spin value for S=1
-_SPIN_1 = 1.0
-_SQRT2 = np.sqrt(2.0)
-_SQRT2_INV = 1.0 / np.sqrt(2.0)
+_SPIN_1         = 1.0
+_SQRT2          = np.sqrt(2.0)
+_SQRT2_INV      = 1.0 / np.sqrt(2.0)
 
 # Define the spin-1 matrices (3x3) in basis |+1⟩, |0⟩, |-1⟩
-_S1_IDENTITY = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+_S1_IDENTITY    = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
 
-_S1_X = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float) * _SQRT2_INV
+_S1_X           = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float) * _SQRT2_INV
+_S1_Y           = np.array([[0, -1j, 0], [1j, 0, -1j], [0, 1j, 0]], dtype=complex) * _SQRT2_INV
+_S1_Z           = np.array([[1, 0, 0], [0, 0, 0], [0, 0, -1]], dtype=float)
 
-_S1_Y = np.array([[0, -1j, 0], [1j, 0, -1j], [0, 1j, 0]], dtype=complex) * _SQRT2_INV
-_S1_Z = np.array([[1, 0, 0], [0, 0, 0], [0, 0, -1]], dtype=float)
-
-_S1_PLUS = np.array([[0, 1, 0], [0, 0, 1], [0, 0, 0]], dtype=float) * _SQRT2
-
-_S1_MINUS = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=float) * _SQRT2
+_S1_PLUS        = np.array([[0, 1, 0], [0, 0, 1], [0, 0, 0]], dtype=float) * _SQRT2
+_S1_MINUS       = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=float) * _SQRT2
 
 # S_z^2 for quadrupolar interactions
-_S1_Z2 = np.array([[1, 0, 0], [0, 0, 0], [0, 0, 1]], dtype=float)
+_S1_Z2          = np.array([[1, 0, 0], [0, 0, 0], [0, 0, 1]], dtype=float)
 
 ################################################################################
-#! Bit manipulation for spin-1 (using 2 bits per site)
+#! Integer encoding helpers for spin-1 (base-3 representation)
 ################################################################################
 
-# Spin-1 states encoded as 2 bits per site:
-# State encoding: 0 = |+1⟩, 1 = |0⟩, 2 = |-1⟩
-# Position of site i in the integer state: bits at positions 2*(ns-1-i) and 2*(ns-1-i)+1
+# Spin-1 states encoded in base-3:
+# State encoding: 0 = |+1>, 1 = |0>, 2 = |-1>
+# Position of site i corresponds to ternary digit (ns-1-i).
 
+@numba.njit(inline="always")
+def _pow3_int(exp: int) -> int:
+    """Return 3**exp as int (numba-friendly)."""
+    out = 1
+    for _ in range(exp):
+        out *= 3
+    return out
 
 @numba.njit(inline="always")
 def _get_spin1_state(state: int, ns: int, site: int) -> int:
@@ -156,8 +171,9 @@ def _get_spin1_state(state: int, ns: int, site: int) -> int:
     int
         Local state: 0 = |+1⟩, 1 = |0⟩, 2 = |-1⟩
     """
-    bit_pos = 2 * (ns - 1 - site)
-    return (state >> bit_pos) & 0b11
+    pos = ns - 1 - site
+    p3  = _pow3_int(pos)
+    return (state // p3) % 3
 
 
 @numba.njit(inline="always")
@@ -185,13 +201,10 @@ def _set_spin1_state(state: int, ns: int, site: int, local_state: int) -> int:
     -------
     >>> new_state = _set_spin1_state(state, ns, site, local_state)
     """
-    bit_pos = 2 * (ns - 1 - site)
-    # Clear the 2 bits at this position
-    # Set the new value
-    mask = ~(0b11 << bit_pos)
-    state = state & mask
-    state = state | (local_state << bit_pos)
-    return state
+    pos         = ns - 1 - site
+    p3          = _pow3_int(pos)
+    old_local   = (state // p3) % 3
+    return state + (local_state - old_local) * p3
 
 
 @numba.njit(inline="always")
@@ -274,11 +287,113 @@ def spin1_z_np(
     # Note: This would need proper implementation for array states
     return ensure_operator_output_shape_numba(state, coeff)
 
+def _spin1_plus_single_site_array(state: np.ndarray, site: int):
+    """Single-site S_+ on array-state representation."""
+    local_s = int(state[site])
+    if local_s == 0:
+        return np.empty((0, state.shape[0]), dtype=state.dtype), np.empty(0, dtype=np.float64)
+    out = state.copy()
+    out[site] = local_s - 1
+    return out.reshape(1, -1), np.array([_SQRT2], dtype=np.float64)
+
+def _spin1_minus_single_site_array(state: np.ndarray, site: int):
+    """Single-site S_- on array-state representation."""
+    local_s = int(state[site])
+    if local_s == 2:
+        return np.empty((0, state.shape[0]), dtype=state.dtype), np.empty(0, dtype=np.float64)
+    out = state.copy()
+    out[site] = local_s + 1
+    return out.reshape(1, -1), np.array([_SQRT2], dtype=np.float64)
+
+def _spin1_x_single_site_array(state: np.ndarray, site: int):
+    """Single-site S_x on array-state representation."""
+    local_s = int(state[site])
+    if local_s == 0:
+        out         = state.copy()
+        out[site]   = 1
+        return out.reshape(1, -1), np.array([_SQRT2_INV], dtype=np.float64)
+    if local_s == 2:
+        out         = state.copy()
+        out[site]   = 1
+        return out.reshape(1, -1), np.array([_SQRT2_INV], dtype=np.float64)
+    # |0> -> (|+1> + |-1>) / sqrt(2)
+    out1        = state.copy()
+    out2        = state.copy()
+    out1[site]  = 0
+    out2[site]  = 2
+    return np.vstack([out1, out2]), np.array([_SQRT2_INV, _SQRT2_INV], dtype=np.float64)
+
+
+def _spin1_y_single_site_array(state: np.ndarray, site: int):
+    """Single-site S_y on array-state representation."""
+    local_s = int(state[site])
+    if local_s == 0:
+        out         = state.copy()
+        out[site]   = 1
+        return out.reshape(1, -1), np.array([-1j * _SQRT2_INV], dtype=np.complex128)
+    if local_s == 2:
+        out         = state.copy()
+        out[site]   = 1
+        return out.reshape(1, -1), np.array([1j * _SQRT2_INV], dtype=np.complex128)
+    out1        = state.copy()
+    out2        = state.copy()
+    out1[site]  = 0
+    out2[site]  = 2
+    return np.vstack([out1, out2]), np.array([-1j * _SQRT2_INV, 1j * _SQRT2_INV], dtype=np.complex128)
+
+
+def _spin1_apply_array_superposition(state: np.ndarray, sites, single_site_fun, dtype):
+    """Apply a possibly branching single-site action sequentially on selected sites."""
+    states = state.reshape(1, -1).astype(state.dtype, copy=True)
+    coeffs = np.ones((1,), dtype=dtype)
+    for site in sites:
+        new_states = []
+        new_coeffs = []
+        for idx in range(states.shape[0]):
+            out_states, out_coeffs = single_site_fun(states[idx], int(site))
+            if out_states.shape[0] == 0:
+                continue
+            for j in range(out_states.shape[0]):
+                new_states.append(out_states[j])
+                new_coeffs.append(coeffs[idx] * out_coeffs[j])
+        if not new_states:
+            return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=dtype))
+        states = np.asarray(new_states, dtype=state.dtype).reshape(len(new_states), -1)
+        coeffs = np.asarray(new_coeffs, dtype=dtype)
+    return ensure_operator_output_shape_numba(states, coeffs)
+
+
+def spin1_plus_np(state: np.ndarray, sites: Union[List[int], tuple], spin_value: float = _SPIN_1):
+    out_s, out_c = _spin1_apply_array_superposition(
+        state, sites, _spin1_plus_single_site_array, np.float64
+    )
+    return out_s, out_c * spin_value
+
+
+def spin1_minus_np(state: np.ndarray, sites: Union[List[int], tuple], spin_value: float = _SPIN_1):
+    out_s, out_c = _spin1_apply_array_superposition(
+        state, sites, _spin1_minus_single_site_array, np.float64
+    )
+    return out_s, out_c * spin_value
+
+
+def spin1_x_np(state: np.ndarray, sites: Union[List[int], tuple], spin_value: float = _SPIN_1):
+    out_s, out_c = _spin1_apply_array_superposition(
+        state, sites, _spin1_x_single_site_array, np.float64
+    )
+    return out_s, out_c * spin_value
+
+
+def spin1_y_np(state: np.ndarray, sites: Union[List[int], tuple], spin_value: float = _SPIN_1):
+    out_s, out_c = _spin1_apply_array_superposition(
+        state, sites, _spin1_y_single_site_array, np.complex128
+    )
+    return out_s, out_c * spin_value
+
 
 ################################################################################
 #! S_z^2 operator (diagonal, for quadrupolar terms)
 ################################################################################
-
 
 @numba.njit(inline="always")
 def _spin1_z2_core(state: int, ns: int, sites: tuple) -> Tuple[int, float]:
@@ -295,7 +410,6 @@ def _spin1_z2_core(state: int, ns: int, sites: tuple) -> Tuple[int, float]:
         coeff *= m * m
     return state, coeff
 
-
 @numba.njit(inline="always")
 def spin1_z2_int_np(
     state: int, ns: int, sites: Union[List[int], tuple], spin_value: float = _SPIN_1
@@ -305,6 +419,20 @@ def spin1_z2_int_np(
         sites = tuple(sites)
     s, c = _spin1_z2_core(state, ns, sites)
     return (np.array([s], dtype=np.int64), np.array([c], dtype=np.float64))
+
+def spin1_z2_np(
+    state       : np.ndarray,
+    sites       : Union[List[int], tuple],
+    spin        : bool = True,
+    spin_value  : float = _SPIN_1,
+):
+    """Apply S_z^2 to an array-state representation (diagonal action)."""
+    coeff = np.ones(1, dtype=np.float64)
+    for site in sites:
+        local_s = int(state[site])
+        m = 1.0 - float(local_s)
+        coeff *= m * m
+    return ensure_operator_output_shape_numba(state, coeff)
 
 
 ################################################################################
@@ -629,7 +757,6 @@ def spin1_y_int(state: int, ns: int, sites: Union[List[int], None], spin_value: 
 #! S_+ S_- and S_- S_+ correlators
 ################################################################################
 
-
 @numba.njit(inline="always")
 def spin1_pm_int_np(
     state: int, ns: int, sites: Union[List[int], tuple], spin_value: float = _SPIN_1
@@ -670,6 +797,74 @@ def spin1_mp_int_np(
     s2, c2 = _spin1_plus_core(s1, ns, site2)
 
     return (np.array([s2], dtype=np.int64), np.array([c1 * c2], dtype=np.float64))
+
+def spin1_pm_np(
+    state: np.ndarray, sites: Union[List[int], tuple], spin_value: float = _SPIN_1
+):
+    """Apply S_+ at site1 and S_- at site2 on an array-state representation."""
+    if len(sites) < 2:
+        return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=np.float64))
+
+    site1, site2    = int(sites[0]), int(sites[1])
+    s1, c1          = _spin1_plus_single_site_array(state, site1)
+    if s1.shape[0] == 0 or abs(c1[0]) < 1e-15:
+        return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=np.float64))
+
+    s2, c2 = _spin1_minus_single_site_array(s1[0], site2)
+    if s2.shape[0] == 0 or abs(c2[0]) < 1e-15:
+        return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=np.float64))
+
+    coeff = np.array([c1[0] * c2[0] * spin_value], dtype=np.float64)
+    return ensure_operator_output_shape_numba(s2[0], coeff)
+
+def spin1_mp_np(
+    state: np.ndarray, sites: Union[List[int], tuple], spin_value: float = _SPIN_1
+):
+    """Apply S_- at site1 and S_+ at site2 on an array-state representation."""
+    if len(sites) < 2:
+        return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=np.float64))
+
+    site1, site2    = int(sites[0]), int(sites[1])
+    s1, c1          = _spin1_minus_single_site_array(state, site1)
+    if s1.shape[0] == 0 or abs(c1[0]) < 1e-15:
+        return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=np.float64))
+
+    s2, c2          = _spin1_plus_single_site_array(s1[0], site2)
+    if s2.shape[0] == 0 or abs(c2[0]) < 1e-15:
+        return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=np.float64))
+
+    coeff = np.array([c1[0] * c2[0] * spin_value], dtype=np.float64)
+    return ensure_operator_output_shape_numba(s2[0], coeff)
+
+if JAX_AVAILABLE:
+
+    def spin1_pm_jnp(state: "jnp.ndarray", sites: Union[List[int], tuple], spin_value: float = _SPIN_1):
+        """Apply S_+ at site1 and S_- at site2 on a JAX array-state representation."""
+        if len(sites) < 2:
+            return ensure_operator_output_shape_jax(state, jnp.zeros((1,), dtype=jnp.float64))
+
+        sites_arr = jnp.asarray(sites)
+        s1, c1  = spin1_plus_jnp(state, sites_arr[:1], spin_value)
+        s2, c2  = spin1_minus_jnp(s1[0], sites_arr[1:2], spin_value)
+        coeff   = jnp.asarray([c1[0] * c2[0]], dtype=jnp.result_type(c1.dtype, c2.dtype))
+        return ensure_operator_output_shape_jax(s2[0], coeff)
+
+
+    def spin1_mp_jnp(
+        state: "jnp.ndarray", sites: Union[List[int], tuple], spin_value: float = _SPIN_1
+    ):
+        """Apply S_- at site1 and S_+ at site2 on a JAX array-state representation."""
+        if len(sites) < 2:
+            return ensure_operator_output_shape_jax(state, jnp.zeros((1,), dtype=jnp.float64))
+
+        sites_arr = jnp.asarray(sites)
+        s1, c1  = spin1_minus_jnp(state, sites_arr[:1], spin_value)
+        s2, c2  = spin1_plus_jnp(s1[0], sites_arr[1:2], spin_value)
+        coeff   = jnp.asarray([c1[0] * c2[0]], dtype=jnp.result_type(c1.dtype, c2.dtype))
+        return ensure_operator_output_shape_jax(s2[0], coeff)
+else:
+    spin1_pm_jnp = None
+    spin1_mp_jnp = None
 
 
 ################################################################################
@@ -789,16 +984,16 @@ def s1_x(
         name = "S1x/C"
 
     return create_operator(
-        name=name,
-        fun_int=spin1_x_int,
-        fun_np=None,
-        fun_jax=None,
-        ns=ns,
-        lattice=lattice,
         type_act=type_act,
+        op_func_int=spin1_x_int,
+        op_func_np=spin1_x_np,
+        op_func_jnp=None,
+        lattice=lattice,
+        ns=ns,
         sites=sites,
+        extra_args=(spin_value,),
+        name=name,
         modifies=True,
-        matrix=_S1_X,
         code=code,
     )
 
@@ -825,16 +1020,16 @@ def s1_y(
         name = "S1y/C"
 
     return create_operator(
-        name=name,
-        fun_int=spin1_y_int,
-        fun_np=None,
-        fun_jax=None,
-        ns=ns,
-        lattice=lattice,
         type_act=type_act,
+        op_func_int=spin1_y_int,
+        op_func_np=spin1_y_np,
+        op_func_jnp=None,
+        lattice=lattice,
+        ns=ns,
         sites=sites,
+        extra_args=(spin_value,),
+        name=name,
         modifies=True,
-        matrix=_S1_Y,
         code=code,
     )
 
@@ -861,16 +1056,16 @@ def s1_z(
         name = "S1z/C"
 
     return create_operator(
-        name=name,
-        fun_int=spin1_z_int,
-        fun_np=spin1_z_np,
-        fun_jax=None,
-        ns=ns,
-        lattice=lattice,
         type_act=type_act,
+        op_func_int=spin1_z_int,
+        op_func_np=spin1_z_np,
+        op_func_jnp=spin1_z_jnp,
+        lattice=lattice,
+        ns=ns,
         sites=sites,
+        extra_args=(spin_value,),
+        name=name,
         modifies=False,
-        matrix=_S1_Z,
         code=code,
     )
 
@@ -897,16 +1092,16 @@ def s1_z2(
         name = "S1z2/C"
 
     return create_operator(
-        name=name,
-        fun_int=lambda s, ns, sites, sv=spin_value: spin1_z2_int_np(s, ns, sites, sv),
-        fun_np=None,
-        fun_jax=None,
-        ns=ns,
-        lattice=lattice,
         type_act=type_act,
+        op_func_int=spin1_z2_int_np,
+        op_func_np=spin1_z2_np,
+        op_func_jnp=None,
+        lattice=lattice,
+        ns=ns,
         sites=sites,
+        extra_args=(spin_value,),
+        name=name,
         modifies=False,
-        matrix=_S1_Z2,
         code=code,
     )
 
@@ -933,16 +1128,16 @@ def s1_plus(
         name = "S1p/C"
 
     return create_operator(
-        name=name,
-        fun_int=spin1_plus_int,
-        fun_np=None,
-        fun_jax=None,
-        ns=ns,
-        lattice=lattice,
         type_act=type_act,
+        op_func_int=spin1_plus_int,
+        op_func_np=spin1_plus_np,
+        op_func_jnp=spin1_plus_jnp,
+        lattice=lattice,
+        ns=ns,
         sites=sites,
+        extra_args=(spin_value,),
+        name=name,
         modifies=True,
-        matrix=_S1_PLUS,
         code=code,
     )
 
@@ -969,17 +1164,73 @@ def s1_minus(
         name = "S1m/C"
 
     return create_operator(
-        name=name,
-        fun_int=spin1_minus_int,
-        fun_np=None,
-        fun_jax=None,
-        ns=ns,
-        lattice=lattice,
         type_act=type_act,
+        op_func_int=spin1_minus_int,
+        op_func_np=spin1_minus_np,
+        op_func_jnp=spin1_minus_jnp,
+        lattice=lattice,
+        ns=ns,
         sites=sites,
+        extra_args=(spin_value,),
+        name=name,
         modifies=True,
-        matrix=_S1_MINUS,
         code=code,
+    )
+
+
+def s1_pm(
+    lattice: Optional[Lattice] = None,
+    ns: Optional[int] = None,
+    type_act: OperatorTypeActing = OperatorTypeActing.Correlation,
+    sites: Optional[List[int]] = None,
+    spin_value: float = _SPIN_1,
+) -> Operator:
+    r"""Factory function for spin-1 two-site correlator S_+^i S_-^j."""
+    if ns is None:
+        ns = lattice.ns if lattice is not None else 1
+    if type_act != OperatorTypeActing.Correlation:
+        raise ValueError("s1_pm is defined only for correlation (two-site) action.")
+
+    return create_operator(
+        type_act=type_act,
+        op_func_int=spin1_pm_int_np,
+        op_func_np=spin1_pm_np,
+        op_func_jnp=spin1_pm_jnp,
+        lattice=lattice,
+        ns=ns,
+        sites=sites,
+        extra_args=(spin_value,),
+        name="S1pm/C",
+        modifies=True,
+        code=Spin1LookupCodes.s1_pm_corr,
+    )
+
+
+def s1_mp(
+    lattice: Optional[Lattice] = None,
+    ns: Optional[int] = None,
+    type_act: OperatorTypeActing = OperatorTypeActing.Correlation,
+    sites: Optional[List[int]] = None,
+    spin_value: float = _SPIN_1,
+) -> Operator:
+    r"""Factory function for spin-1 two-site correlator S_-^i S_+^j."""
+    if ns is None:
+        ns = lattice.ns if lattice is not None else 1
+    if type_act != OperatorTypeActing.Correlation:
+        raise ValueError("s1_mp is defined only for correlation (two-site) action.")
+
+    return create_operator(
+        type_act=type_act,
+        op_func_int=spin1_mp_int_np,
+        op_func_np=spin1_mp_np,
+        op_func_jnp=spin1_mp_jnp,
+        lattice=lattice,
+        ns=ns,
+        sites=sites,
+        extra_args=(spin_value,),
+        name="S1mp/C",
+        modifies=True,
+        code=Spin1LookupCodes.s1_mp_corr,
     )
 
 
@@ -1010,67 +1261,107 @@ def spin1_composition_integer(is_complex: bool, only_apply: bool = False) -> Cal
     """
     dtype = np.complex128 if is_complex else np.float64
 
+    @numba.njit(nogil=True, inline="always")
+    def _to_dtype(val):
+        if is_complex:
+            return dtype(val)
+        return dtype(np.real(val))
+
     @numba.njit(nogil=True)
     def spin1_operator_composition_single_op(
         state: int, code: int, site1: int, site2: int, ns: int
     ):
-        """Applies a single spin-1 operator based on the code."""
+        """Apply a single spin-1 operator based on its instruction code."""
+        if code <= Spin1LookupCodes.s1_z2_global:
+            raise ValueError("Global spin-1 operators are not allowed in composition.")
+
+        site1_i = np.int64(site1)
+        site2_i = np.int64(site2)
 
         current_s = state
-        current_c = dtype(1.0 + 0.0j)
+        current_c = dtype(1.0)
         is_diagonal = False
-        sites_1 = (site1,)
-        sites_2 = (site1, site2)
+        sites_1 = (site1_i,)
+        sites_2 = (site1_i, site2_i)
 
         # Local operators
         if code == Spin1LookupCodes.s1_x_local:
-            s_arr, c_arr = _spin1_x_core(state, ns, sites_1)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = _spin1_x_core(state, ns, sites_1)
+            current_s = s_int
+            current_c = _to_dtype(c_s)
         elif code == Spin1LookupCodes.s1_y_local:
-            s_arr, c_arr = _spin1_y_core(state, ns, sites_1)
-            current_s = s_arr
-            current_c = dtype(c_arr)
+            s_int, c_s = _spin1_y_core(state, ns, sites_1)
+            current_s = s_int
+            current_c = _to_dtype(c_s)
         elif code == Spin1LookupCodes.s1_z_local:
-            s_arr, c_arr = _spin1_z_core(state, ns, sites_1)
+            s_int, c_s = _spin1_z_core(state, ns, sites_1)
+            current_s = s_int
+            current_c = _to_dtype(c_s)
             is_diagonal = True
-            current_s = s_arr
-            current_c = dtype(c_arr)
         elif code == Spin1LookupCodes.s1_z2_local:
-            s_arr, c_arr = _spin1_z2_core(state, ns, sites_1)
+            s_int, c_s = _spin1_z2_core(state, ns, sites_1)
+            current_s = s_int
+            current_c = _to_dtype(c_s)
             is_diagonal = True
-            current_s = s_arr
-            current_c = dtype(c_arr)
         elif code == Spin1LookupCodes.s1_p_local:
-            s_arr, c_arr = spin1_plus_int_np(state, ns, sites_1)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            current_s, c_s = _spin1_plus_core(state, ns, site1_i)
+            current_c = _to_dtype(c_s)
         elif code == Spin1LookupCodes.s1_m_local:
-            s_arr, c_arr = spin1_minus_int_np(state, ns, sites_1)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            current_s, c_s = _spin1_minus_core(state, ns, site1_i)
+            current_c = _to_dtype(c_s)
 
         # Correlation operators
+        elif code == Spin1LookupCodes.s1_x_corr or code == Spin1LookupCodes.s1_y_corr:
+            raise ValueError(
+                "Spin-1 Sx/Sy correlators are not directly supported in integer composition. "
+                "Use ladder decompositions."
+            )
         elif code == Spin1LookupCodes.s1_z_corr:
-            s_arr, c_arr = _spin1_z_core(state, ns, sites_2)
+            s_int, c_s = _spin1_z_core(state, ns, sites_2)
+            current_s = s_int
+            current_c = _to_dtype(c_s)
             is_diagonal = True
-            current_s = s_arr
-            current_c = dtype(c_arr)
         elif code == Spin1LookupCodes.s1_z2_corr:
-            s_arr, c_arr = _spin1_z2_core(state, ns, sites_2)
+            s_int, c_s = _spin1_z2_core(state, ns, sites_2)
+            current_s = s_int
+            current_c = _to_dtype(c_s)
             is_diagonal = True
-            current_s = s_arr
-            current_c = dtype(c_arr)
+        elif code == Spin1LookupCodes.s1_p_corr:
+            if site2_i < 0:
+                return state, dtype(0.0), False
+            s1, c1 = _spin1_plus_core(state, ns, site1_i)
+            if abs(c1) < 1e-15:
+                return state, dtype(0.0), False
+            s2, c2 = _spin1_plus_core(s1, ns, site2_i)
+            current_s = s2
+            current_c = _to_dtype(c1 * c2)
+        elif code == Spin1LookupCodes.s1_m_corr:
+            if site2_i < 0:
+                return state, dtype(0.0), False
+            s1, c1 = _spin1_minus_core(state, ns, site1_i)
+            if abs(c1) < 1e-15:
+                return state, dtype(0.0), False
+            s2, c2 = _spin1_minus_core(s1, ns, site2_i)
+            current_s = s2
+            current_c = _to_dtype(c1 * c2)
         elif code == Spin1LookupCodes.s1_pm_corr:
-            s_arr, c_arr = spin1_pm_int_np(state, ns, sites_2)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
+            if site2_i < 0:
+                return state, dtype(0.0), False
+            s1, c1 = _spin1_plus_core(state, ns, site1_i)
+            if abs(c1) < 1e-15:
+                return state, dtype(0.0), False
+            s2, c2 = _spin1_minus_core(s1, ns, site2_i)
+            current_s = s2
+            current_c = _to_dtype(c1 * c2)
         elif code == Spin1LookupCodes.s1_mp_corr:
-            s_arr, c_arr = spin1_mp_int_np(state, ns, sites_2)
-            current_s = s_arr[0]
-            current_c = dtype(c_arr[0])
-        else:
-            pass
+            if site2_i < 0:
+                return state, dtype(0.0), False
+            s1, c1 = _spin1_minus_core(state, ns, site1_i)
+            if abs(c1) < 1e-15:
+                return state, dtype(0.0), False
+            s2, c2 = _spin1_plus_core(s1, ns, site2_i)
+            current_s = s2
+            current_c = _to_dtype(c1 * c2)
 
         return current_s, current_c, is_diagonal
 
@@ -1083,13 +1374,13 @@ def spin1_composition_integer(is_complex: bool, only_apply: bool = False) -> Cal
     ):
         """Apply a sequence of spin-1 operators to a basis state."""
         ptr = 0
-        diag_sum = 0.0 + 0.0j if is_complex else 0.0
+        diag_sum = dtype(0.0)
 
         for k in range(nops):
             code = codes[k]
             coeff = coeffs[k]
-            s1 = sites[k, 0]
-            s2 = sites[k, 1] if sites.shape[1] > 1 else -1
+            s1 = int(sites[k, 0])
+            s2 = int(sites[k, 1]) if sites.shape[1] > 1 else -1
 
             current_s, current_c, is_diagonal = spin1_operator_composition_single_op(
                 state, code, s1, s2, ns

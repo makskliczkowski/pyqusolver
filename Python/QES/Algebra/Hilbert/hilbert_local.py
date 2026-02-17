@@ -67,11 +67,18 @@ class LocalOperator:
 
 
 class LocalSpaceTypes(Enum):
-    SPIN_1_2 = "spin-1/2"
-    SPIN_1 = "spin-1"
-    SPINLESS_FERMIONS = "spinless-fermions"
-    ANYON_ABELIAN = "abelian-anyons"
-    BOSONS = "bosons"
+    SPIN_1_2            = "spin-1/2"
+    SPIN_1              = "spin-1"
+    SPINLESS_FERMIONS   = "spinless-fermions"
+    ANYON_ABELIAN       = "abelian-anyons"
+    BOSONS              = "bosons"
+    # Backward-compatible aliases used in older modules.
+    SPIN_HALF           = "spin-1/2"
+    SPIN_ONE            = "spin-1"
+    FERMION             = "spinless-fermions"
+    ANYONS              = "abelian-anyons"
+    BOSON               = "bosons"
+    HARDCORE_BOSON      = "bosons"
 
 
 # ------------------------------------------------------------------
@@ -159,13 +166,13 @@ def _ensure_operator_modules_for(local_type: LocalSpaceTypes) -> None:
 
 @dataclass(frozen=True)
 class LocalSpace:
-    name: str
-    typ: LocalSpaceTypes
-    local_dim: int  # e.g. 2S+1 for spins, cutoff+1 for bosons
-    sign_rule: int  # +1 for bosons/spins, -1 for fermions
-    cutoff: int  # 0 unless a truncation is imposed
-    max_occupation: int  # 1 for hard-core species, cutoff for bosons
-    onsite_operators: Dict[str, LocalOperator] = field(default_factory=dict)
+    name                : str
+    typ                 : LocalSpaceTypes
+    local_dim           : int  # e.g. 2S+1 for spins, cutoff+1 for bosons
+    sign_rule           : int  # +1 for bosons/spins, -1 for fermions
+    cutoff              : int  # 0 unless a truncation is imposed
+    max_occupation      : int  # 1 for hard-core species, cutoff for bosons
+    onsite_operators    : Dict[str, LocalOperator] = field(default_factory=dict)
 
     def has_op(self, key: str) -> bool:
         return key in self.onsite_operators
@@ -205,12 +212,30 @@ class LocalSpace:
         ops = OPERATOR_CATALOG.build_local_operator_map(self.typ, **kwargs)
         return replace(self, onsite_operators=ops)
 
+    @property
+    def state_convention(self) -> Dict[str, object]:
+        """Return state-encoding convention metadata for this local space."""
+        from QES.Algebra.Operator.impl import get_state_convention
+
+        return get_state_convention(self.typ)
+
+    def state_convention_text(self, include_examples: bool = True) -> str:
+        """Human-readable state-encoding convention for this local space."""
+        from QES.Algebra.Operator.impl import format_state_convention
+
+        return format_state_convention(self.typ, include_examples=include_examples)
+
+    def describe_state_convention(self, include_examples: bool = True) -> str:
+        """Alias for state_convention_text()."""
+        return self.state_convention_text(include_examples=include_examples)
+
     def __str__(self) -> str:
+        conv = self.state_convention.get("name", "unknown")
         return (
             f"LocalSpace(name={self.name}, local_dim={self.local_dim}, "
             f"sign_rule={self.sign_rule}, cutoff={self.cutoff}, "
             f"max_occupation={self.max_occupation}, "
-            f"operators={self.list_operator_keys()})"
+            f"state_convention={conv}, operators={self.list_operator_keys()})"
         )
 
     def __repr__(self) -> str:
@@ -247,16 +272,35 @@ class LocalSpace:
 
     @staticmethod
     def default_from_string(s: str, **kwargs) -> "LocalSpace":
-        s_lower = s.lower()
-        if s_lower == LocalSpaceTypes.SPIN_1_2.value:
+        s_lower = s.lower().strip().replace("_", "-")
+        aliases = {
+            "spin-half"         : LocalSpaceTypes.SPIN_1_2.value,
+            "spin1/2"           : LocalSpaceTypes.SPIN_1_2.value,
+            "spin-1/2"          : LocalSpaceTypes.SPIN_1_2.value,
+            "spin-1"            : LocalSpaceTypes.SPIN_1.value,
+            "spin1"             : LocalSpaceTypes.SPIN_1.value,
+            "fermion"           : LocalSpaceTypes.SPINLESS_FERMIONS.value,
+            "spinless-fermion"  : LocalSpaceTypes.SPINLESS_FERMIONS.value,
+            "spinless-fermions" : LocalSpaceTypes.SPINLESS_FERMIONS.value,
+            "hardcore-boson"    : LocalSpaceTypes.BOSONS.value,
+            "hardcore-bosons"   : LocalSpaceTypes.BOSONS.value,
+            "boson"             : LocalSpaceTypes.BOSONS.value,
+            "bosons"            : LocalSpaceTypes.BOSONS.value,
+            "abelian-anyon"     : LocalSpaceTypes.ANYON_ABELIAN.value,
+            "abelian-anyons"    : LocalSpaceTypes.ANYON_ABELIAN.value,
+            "anyon"             : LocalSpaceTypes.ANYON_ABELIAN.value,
+            "anyons"            : LocalSpaceTypes.ANYON_ABELIAN.value,
+        }
+        s_norm = aliases.get(s_lower, s_lower)
+        if s_norm == LocalSpaceTypes.SPIN_1_2.value:
             return LocalSpace.default_spin_half(**kwargs)
-        elif s_lower == LocalSpaceTypes.SPIN_1.value:
+        elif s_norm == LocalSpaceTypes.SPIN_1.value:
             return LocalSpace.default_spin_1(**kwargs)
-        elif s_lower == LocalSpaceTypes.SPINLESS_FERMIONS.value:
+        elif s_norm == LocalSpaceTypes.SPINLESS_FERMIONS.value:
             return LocalSpace.default_fermion_spinless(**kwargs)
-        elif s_lower == LocalSpaceTypes.BOSONS.value:
+        elif s_norm == LocalSpaceTypes.BOSONS.value:
             return LocalSpace.default_boson(**kwargs)
-        elif s_lower == LocalSpaceTypes.ANYON_ABELIAN.value:
+        elif s_norm == LocalSpaceTypes.ANYON_ABELIAN.value:
             raise ValueError("For abelian anyons, please specify the statistics_angle parameter.")
         else:
             raise ValueError(f"Unknown local space type string: '{s}'.")
@@ -277,8 +321,8 @@ class LocalSpace:
 
     @staticmethod
     def default_spin_1(**kwargs):
-        # Spin-1: dim=3 (states |+1⟩, |0⟩, |-1⟩), no cutoff, sign +1
-        # Uses 2 bits per site for state encoding
+        # Spin-1: dim=3 (states |+1>, |0>, |-1>), no cutoff, sign +1.
+        # Integer states follow base-3 site encoding.
         base = LocalSpace(
             name=LocalSpaceTypes.SPIN_1.value,
             local_dim=3,
@@ -342,10 +386,9 @@ class LocalSpace:
 
 #####################################################################################################
 
-
 class StateTypes(Enum):
     INTEGER = "integer"
-    VECTOR = "vector"
+    VECTOR  = "vector"
 
     def lower(self):
         return self.value.lower()
@@ -355,7 +398,6 @@ class StateTypes(Enum):
 
     def __str__(self):
         return self.value
-
 
 #####################################################################################################
 #! EOF

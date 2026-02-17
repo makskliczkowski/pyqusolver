@@ -24,11 +24,11 @@ from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import numpy as np
 
 if TYPE_CHECKING:
-    from QES.Algebra.globals import GlobalSymmetry
-    from QES.Algebra.Hilbert.hilbert_local import LocalSpace
-    from QES.Algebra.Symmetries.symmetry_container import CompactSymmetryData, SymmetryContainer
-    from QES.general_python.common.flog import Logger
-    from QES.general_python.lattices.lattice import Lattice
+    from QES.Algebra.globals                        import GlobalSymmetry
+    from QES.Algebra.Hilbert.hilbert_local          import LocalSpace
+    from QES.Algebra.Symmetries.symmetry_container  import CompactSymmetryData, SymmetryContainer
+    from QES.general_python.common.flog             import Logger
+    from QES.general_python.lattices.lattice        import Lattice
 
 # ------------------------------------------------------------------------------------------------------
 #! Base Hilbert Space Class
@@ -204,6 +204,26 @@ class BaseHilbertSpace(ABC):
     @property
     def local_space(self) -> Optional["LocalSpace"]:
         return self._local_space
+
+    @property
+    def state_convention(self):
+        """
+        State encoding convention metadata for the active local space.
+        """
+        from QES.Algebra.Operator.impl import get_state_convention
+
+        if self._local_space is None:
+            return get_state_convention("spin-1/2")
+        return get_state_convention(self._local_space.typ)
+
+    def state_convention_text(self, include_examples: bool = True) -> str:
+        """
+        Human-readable state encoding convention for the active local space.
+        """
+        from QES.Algebra.Operator.impl import format_state_convention
+
+        local_key = self._local_space.typ if self._local_space is not None else "spin-1/2"
+        return format_state_convention(local_key, include_examples=include_examples)
 
     @property
     def backend(self):
@@ -405,6 +425,11 @@ class BaseHilbertSpace(ABC):
         info = f"HilbertSpace: Ns={self._ns}, Nh={self._nh}"
         if self._local_space:
             info += f", Local={self._local_space}"
+            try:
+                conv_name = self.state_convention.get("name", "unknown")
+                info += f", StateConvention={conv_name}"
+            except Exception:
+                pass
         sym_info = self.get_sym_info()
         if sym_info:
             info += f", Symmetries=[{sym_info}]"
@@ -723,6 +748,8 @@ LOCAL SPACE
 -----------
     .local / .local_space       : Local Hilbert space (spin-1/2, fermion, etc.)
     .list_local_operators()     : Available local operator names
+    .state_convention           : Structured state-encoding metadata
+    .state_convention_text()    : Human-readable state-encoding summary
 
 SYSTEM TYPE
 -----------

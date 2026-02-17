@@ -234,24 +234,35 @@ class SpecialOperator(Operator, ABC):
 
             # Map physics_type to local_space string
             physics_to_local = {
-                LocalSpaceTypes.SPIN_HALF: "spin-1/2",
-                LocalSpaceTypes.SPIN_ONE: "spin-1",
-                LocalSpaceTypes.FERMION: "fermion",
-                LocalSpaceTypes.HARDCORE_BOSON: "hardcore-boson",
-                LocalSpaceTypes.BOSON: "boson",
+                LocalSpaceTypes.SPIN_HALF           : "spin-1/2",
+                LocalSpaceTypes.SPIN_ONE            : "spin-1",
+                LocalSpaceTypes.FERMION             : "fermion",
+                LocalSpaceTypes.HARDCORE_BOSON      : "hardcore-boson",
+                LocalSpaceTypes.BOSON               : "boson",
+                LocalSpaceTypes.SPIN_1_2            : "spin-1/2",
+                LocalSpaceTypes.SPIN_1              : "spin-1",
+                LocalSpaceTypes.SPINLESS_FERMIONS   : "spinless-fermions",
+                LocalSpaceTypes.ANYON_ABELIAN       : "abelian-anyons",
+                LocalSpaceTypes.BOSONS              : "bosons",
                 "spin-1/2": "spin-1/2",
                 "spin-1": "spin-1",
                 "fermion": "fermion",
+                "spinless-fermions": "spinless-fermions",
                 "hardcore-boson": "hardcore-boson",
                 "boson": "boson",
+                "bosons": "bosons",
+                "abelian-anyons": "abelian-anyons",
             }
             local_space_arg = physics_to_local.get(self._physics_type, None)
+
+        explicit_local_space = kwargs.pop("local_space", None)
+        resolved_local_space = explicit_local_space if explicit_local_space is not None else local_space_arg
 
         self._hilbert_space = HilbertSpace(
             ns=self._ns,
             lattice=self._lattice,
             is_manybody=self._is_manybody,
-            local_space=local_space_arg,
+            local_space=resolved_local_space,
             dtype=self._dtype,
             backend=self._backendstr,
             logger=logger,
@@ -260,7 +271,7 @@ class SpecialOperator(Operator, ABC):
 
         if self._logger:
             self._log(
-                f"Created HilbertSpace: ns={self._ns}, local_space={local_space_arg or 'default'}",
+                f"Created HilbertSpace: ns={self._ns}, local_space={resolved_local_space or 'default'}",
                 lvl=3,
                 color="green",
                 log="debug",
@@ -738,7 +749,7 @@ class SpecialOperator(Operator, ABC):
                 # Default to spin-1/2 for many-body, None for quadratic
                 from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
 
-                local_space_type = LocalSpaceTypes.SPIN_HALF if self._is_manybody else None
+                local_space_type = LocalSpaceTypes.SPIN_1_2 if self._is_manybody else None
             self._operator_module = get_operator_module(local_space_type)
         return self._operator_module
 

@@ -104,39 +104,53 @@ class QSM(hamil_module.Hamiltonian):
         if hilbert_space is None:
             if ns is None:
                 raise ValueError(self._ERR_EITHER_HIL_OR_NS)
-            hilbert_space = hilbert_module.HilbertSpace(ns=ns, backend=backend, dtype=dtype, nhl=2)
+            
+            hilbert_space = hilbert_module.HilbertSpace(
+                            ns=ns,
+                            backend=backend,
+                            dtype=dtype,
+                            local_space="spin-1/2",
+                        )
 
         # Initialize the Hamiltonian
-        super().__init__(hilbert_space, is_sparse=True, dtype=dtype, backend=backend, **kwargs)
+        super().__init__(
+            is_manybody=True,
+            hilbert_space=hilbert_space,
+            is_sparse=True,
+            dtype=dtype,
+            backend=backend,
+            **kwargs,
+        )
 
         # setup the internal variables
-        self._n = n  # Number of particles in the dot
-        self._gamma = gamma  # Hilbert-Schmidt norm of the coupling operator normalizer
-        self._g0 = g0  # Coupling strength between the particles in the dot and the particles outside the dot
-        self._nout = 0  # Number of particles outside the dot
+        self._n             = n     # Number of particles in the dot
+        self._gamma         = gamma # Hilbert-Schmidt norm of the coupling operator normalizer
+        self._g0            = g0    # Coupling strength between the particles in the dot and the particles outside the dot
+        self._nout          = 0     # Number of particles outside the dot
         self._a, self._h, self._xi = None, None, None
         self.check_sizes(
             a, h, xi
         )  # Check the sizes of the coupling vector, random box distribution vector, and magnetic field vector
 
         # Initialize the Hamiltonian
-        self._hdot = None
-        self._dimin = 0
-        self._dimout = 0
-        self._neidot = []
-        self._au = None
-        self._u = None
-        self._name = "Quantum Sun Model"
-        self._startns = n
-        self._is_sparse = True
-        self._max_local_ch = 2
+        self._hdot          = None
+        self._dimin         = 0
+        self._dimout        = 0
+        self._neidot        = []
+        self._au            = None
+        self._u             = None
+        self._name          = "Quantum Sun Model"
+        self._startns       = n
+        self._is_sparse     = True
+        self._max_local_ch  = 2
         self.init_particles()
         # test the Hamiltonian and allow jit to be built - trigger the jit compilation
-        self._hamil = None
-        self._std_en = None
+        self._hamil         = None
+        self._std_en    = None
 
         # set the Hamiltonian operators
         self._set_local_energy_operators()
+        self.setup_instruction_codes()
         self._set_local_energy_functions()
 
     # ----------------------------------------------------------------------------------------------

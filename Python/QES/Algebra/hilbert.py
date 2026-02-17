@@ -252,6 +252,8 @@ class HilbertSpace(BaseHilbertSpace):
             LocalSpace object or string defining local Hilbert space properties.
             Default is None (uses spin-1/2).
             Supported strings: 'spin-1/2', 'spin-1', 'fermion', 'hardcore-boson', etc.
+            Legacy compatibility: you may still pass `nhl` via kwargs
+            (`nhl=2` -> spin-1/2, `nhl=3` -> spin-1).
 
         state_type (str, optional):
             Type of state representation (e.g., "integer"). Default is "integer".
@@ -275,12 +277,28 @@ class HilbertSpace(BaseHilbertSpace):
             ValueError: If provided arguments do not match expected types or required parameters are missing.
         """
 
+        # Legacy compatibility: nhl is mapped to a local-space family when local_space is omitted.
+        nhl_legacy = kwargs.pop("nhl", None)
+
         #! set locals
-        # If we have a LocalSpace.default(), use it; otherwise use default spin-1/2 factory.
+        # If we have a LocalSpace.default(), use it; otherwise infer from legacy args or use spin-1/2.
         if isinstance(local_space, LocalSpace):
             _local_space = local_space
         elif isinstance(local_space, str):
             _local_space = LocalSpace.from_str(local_space)
+        elif nhl_legacy is not None:
+            try:
+                nhl_legacy = int(nhl_legacy)
+            except Exception as exc:
+                raise ValueError(f"Invalid legacy `nhl` value: {nhl_legacy!r}") from exc
+            if nhl_legacy == 2:
+                _local_space = LocalSpace.default_spin_half()
+            elif nhl_legacy == 3:
+                _local_space = LocalSpace.default_spin_1()
+            elif nhl_legacy > 1:
+                _local_space = LocalSpace.default_boson(cutoff=nhl_legacy - 1)
+            else:
+                raise ValueError("Legacy `nhl` must be >= 2.")
         else:
             _local_space = LocalSpace.default()
 
@@ -1587,6 +1605,11 @@ class HilbertSpace(BaseHilbertSpace):
         info = f"{mode} Hilbert space: Ns={self._ns}, Nh={self._nh}"
         if self._is_many_body:
             info += f", Local={self._local_space}"
+            try:
+                conv = self.state_convention.get("name", "unknown")
+                info += f", StateConvention={conv}"
+            except Exception:
+                pass
         if self._global_syms:
             gs = ", ".join(f"{g.get_name_str()}={g.get_val()}" for g in self._global_syms)
             info += f", GlobalSyms=[{gs}]"
@@ -1599,12 +1622,11 @@ class HilbertSpace(BaseHilbertSpace):
 
     def __repr__(self):
         sym_info = self.get_sym_info()
-        base = "SP" if self._is_quadratic else "MB"
-        return (
-            f"{base} Hilbert space with {self._nh} states and {self._ns} sites; {self._local_space}. Symmetries: {sym_info}"
-            if sym_info
-            else ""
-        )
+        base    = "SP" if self._is_quadratic else "MB"
+        txt     = f"{base} Hilbert space with {self._nh} states and {self._ns} sites; {self._local_space}"
+        if sym_info:
+            txt += f". Symmetries: {sym_info}"
+        return txt
 
     ####################################################################################################
     #! Find the representative of a state

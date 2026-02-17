@@ -19,8 +19,10 @@ hamil_topics = {
 ║                                                                              ║
 ║  Model-Specific Subclasses (use these instead of base Hamiltonian):          ║
 ║    HeisenbergKitaev(lattice, K=1.0, J=None, hz=None, ...)                    ║
-║    TransverseIsing(lattice, J=1.0, h=1.0, ...)                               ║
+║    TransverseFieldIsing(lattice, j=1.0, hx=1.0, ...)                         ║
 ║    FreeFermions(ns=N, t=1.0, mu=0.0, ...)                                    ║
+║    ManyBodyFreeFermions(lattice, t=1.0, mu=0.0, ...)                         ║
+║    HubbardModel(lattice, t=1.0, U=1.0, mu=0.0, ...)                          ║
 ║    BCSHamiltonian(ns=N, t=1.0, delta=0.5, ...)                               ║
 ║                                                                              ║
 ║  From Configuration:                                                         ║
@@ -183,7 +185,8 @@ hamil_overview = r"""
 ║            Supports diagonalization, local energy, and k-space.              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Inheritance: Hamiltonian -> Operator -> GeneralMatrix -> LinearOperator       ║
-║  Model Subclasses: HeisenbergKitaev, TransverseIsing, FreeFermions, ...      ║
+║  Model Subclasses: HeisenbergKitaev, TransverseFieldIsing, XXZ, J1J2Model,   ║
+║                    ManyBodyFreeFermions, HubbardModel, FreeFermions, ...     ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Quick Start:                                                                ║
 ║    1. Create model:    H = TransverseIsing(ns=10, J=1.0, h=0.5)              ║

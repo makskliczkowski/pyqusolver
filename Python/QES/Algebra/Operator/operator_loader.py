@@ -480,24 +480,12 @@ class OperatorModule:
 
                     if "xx" == corr:
                         op = ops_module.s1_x(**kwargs_op)
-                    elif "xy" == corr:
-                        op = ops_module.s1_xy(**kwargs_op)
-                    elif "xz" == corr:
-                        op = ops_module.s1_xz(**kwargs_op)
-                    elif "yx" == corr:
-                        op = ops_module.s1_yx(**kwargs_op)
                     elif "yy" == corr:
                         op = ops_module.s1_y(**kwargs_op)
-                    elif "yz" == corr:
-                        op = ops_module.s1_yz(**kwargs_op)
-                    elif "zx" == corr:
-                        op = ops_module.s1_zx(**kwargs_op)
-                    elif "zy" == corr:
-                        op = ops_module.s1_zy(**kwargs_op)
                     elif "zz" == corr:
                         op = ops_module.s1_z(**kwargs_op)
                     else:
-                        raise ValueError(f"Unknown correlator type: {corr}")
+                        raise ValueError(f"Unsupported spin-1 correlator type '{corr}'. Supported: 'xx', 'yy', 'zz'.")
                     ops[corr][key] = op
             return ops
 

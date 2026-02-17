@@ -318,7 +318,10 @@ def estimate_network_params(
             "j1j2"          : 4.0,
             "tfi"           : 1.0,
         }.get(model_type, 2.0)
-        base_alpha  = kwargs.get("alpha", base_alpha)   # user override
+        
+        user_alpha = kwargs.get("alpha", None)
+        if user_alpha is not None:
+            base_alpha  = user_alpha
         
         # Scale with system size for better convergence on large lattices
         if num_sites > 50 and "alpha" not in kwargs:

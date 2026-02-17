@@ -6,8 +6,10 @@ This module provides implementations of various quantum many-body models.
 
 Submodules:
 -----------
-- Interacting: Models with particle interactions
-- Noninteracting: Free particle and non-interacting models
+- Interacting: 
+    Models with particle interactions
+- Noninteracting: 
+    Free particle and non-interacting models
 
 Classes:
 --------
@@ -16,17 +18,17 @@ Various quantum model implementations including:
 - Fermionic models (Hubbard, t-J, etc.)
 - Bosonic models
 
+-------------------------------
 Author: Maksymilian Kliczkowski
 Email: maksymilian.kliczkowski@pwr.edu.pl
+-------------------------------
 """
 
 from . import Interacting as intr
-
 from . import Noninteracting as nintr
 
 
 __all__ = ["intr", "nintr", "choose_model"]
-
 
 def choose_model(model_name: str, **kwargs):
 
@@ -44,19 +46,29 @@ def choose_model(model_name: str, **kwargs):
 
     # Try interacting/spin models
     try:
-        # Spin is under Interacting
-        return intr.Spin.choose_model(model_name, **kwargs)
-    except (ValueError, AttributeError):
+        return intr.choose_model(model_name, **kwargs)
+    except ValueError as exc:
+        if "Unknown interacting model" not in str(exc):
+            raise
+    except AttributeError:
         pass
 
     # Try non-interacting models
     try:
         return nintr.choose_model(model_name, **kwargs)
-    except (ValueError, AttributeError):
+    except ValueError as exc:
+        if "Unknown non-interacting model" not in str(exc):
+            raise
+    except AttributeError:
         pass
     
     # Try dummy
     if model_name.lower() in ["dummy", "dummy_hamiltonian"]:
-        from .dummy import DummyHamiltonian
-        return DummyHamiltonian(**kwargs)
+        from    .dummy import DummyHamiltonian
+        return  DummyHamiltonian(**kwargs)
+    
     raise ValueError(f"Unknown model '{model_name}'.")
+
+# ═══════════════════════════════════════════════════════════════════════════
+#! EOF
+# ═══════════════════════════════════════════════════════════════════════════

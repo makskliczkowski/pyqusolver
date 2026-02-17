@@ -19,7 +19,11 @@ import numpy as np
 try:
     import QES.Algebra.hamil as hamil_module
     import QES.Algebra.hilbert as hilbert_module
-    import QES.Algebra.Operator.impl.operators_spin as operators_spin_module
+    from QES.Algebra.Model.Interacting.Spin._spin_ops import (
+        normalize_spin_operator_family,
+        select_spin_operator_module,
+        spin_axis_operator,
+    )
 except ImportError as e:
     raise ImportError("Required QES modules are not available.") from e
 
@@ -59,6 +63,7 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         j: Union[List[float], float] = 1.0,  # Ising coupling
         hx: Union[List[float], float] = 1.0,  # Transverse field
         hz: Union[List[float], float] = 1.0,  # Perpendicular field
+        operator_family: str = "auto",
         dtype: type = np.float64,  # Default to float64
         backend: str = "default",
         **kwargs,
@@ -81,6 +86,9 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
             hz : Union[List[float], float]:
                 Perpendicular field strength h_z. If a list, specifies site-dependent field.
                 Default is 1.0.
+            operator_family : str:
+                Operator family to use: "auto", "spin-1/2", or "spin-1".
+                In "auto" mode, inferred from `hilbert_space.local_space` when available.
             dtype : type:
                 Data type for the Hamiltonian (default: np.float64).
             backend : str:
@@ -92,14 +100,22 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
         if lattice is None:
             raise ValueError("TFIM requires a 'lattice' object to define neighbors.")
 
+        requested_family = normalize_spin_operator_family(operator_family)
+        if hilbert_space is None and requested_family == "spin-1":
+            kwargs.setdefault("local_space", "spin-1")
+
         # Initialize the base Hamiltonian class
         super().__init__(
+            is_manybody=True,
             hilbert_space=hilbert_space,
             lattice=lattice,
             is_sparse=True,
             dtype=dtype,
             backend=backend,
             **kwargs,
+        )
+        self._spin_ops_module, self._spin_operator_family = select_spin_operator_module(
+            self.hilbert_space, requested_family
         )
 
         # Set Hamiltonian attributes before base class init
@@ -196,25 +212,62 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
 
         #! Define Base Operators
         # Local operators (act on one site)
-        op_sx_l = operators_spin_module.sig_x(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
-        )
-        op_sz_l = operators_spin_module.sig_z(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
+        op_sx_l = None
+        op_sp_l = None
+        op_sm_l = None
+        if self._spin_operator_family == "spin-1":
+            op_sp_l = self._spin_ops_module.s1_plus(
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Local,
+            )
+            op_sm_l = self._spin_ops_module.s1_minus(
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Local,
+            )
+        else:
+            op_sx_l = spin_axis_operator(
+                self._spin_ops_module,
+                self._spin_operator_family,
+                "x",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Local,
+            )
+        op_sz_l = spin_axis_operator(
+            self._spin_ops_module,
+            self._spin_operator_family,
+            "z",
+            lattice=lattice,
+            type_act=self._spin_ops_module.OperatorTypeActing.Local,
         )
 
         # Correlation operators (act on two sites)
-        op_sz_sz_c = operators_spin_module.sig_z(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation
+        op_sz_sz_c = spin_axis_operator(
+            self._spin_ops_module,
+            self._spin_operator_family,
+            "z",
+            lattice=lattice,
+            type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
         )
 
         #! Add Transverse Field Terms
         for i in range(self.ns):
             if not np.isclose(self._hx[i], 0.0):
-                self.add(operator=op_sx_l, multiplier=-self._hx[i], sites=[i], modifies=True)
-                self._log(
-                    f"Adding Sx at site {i} with multiplier {-self._hx[i]:.3f}", lvl=2, log="debug"
-                )
+                if self._spin_operator_family == "spin-1":
+                    mult = -0.5 * self._hx[i]
+                    self.add(operator=op_sp_l, multiplier=mult, sites=[i], modifies=True)
+                    self.add(operator=op_sm_l, multiplier=mult, sites=[i], modifies=True)
+                    self._log(
+                        f"Adding Sx decomposition (Sp+Sm)/2 at site {i} with multiplier {-self._hx[i]:.3f}",
+                        lvl=2,
+                        log="debug",
+                    )
+                else:
+                    self.add(operator=op_sx_l, multiplier=-self._hx[i], sites=[i], modifies=True)
+                    self._log(
+                        f"Adding Sx at site {i} with multiplier {-self._hx[i]:.3f}",
+                        lvl=2,
+                        log="debug",
+                    )
 
         #! Add Ising Perpendicular Terms
         for i in range(self.ns):
@@ -232,7 +285,7 @@ class TransverseFieldIsing(hamil_module.Hamiltonian):
 
             for nn_idx in range(nn_forward_num):
 
-                j_neighbor = int(lattice.get_nn_forward(i, num=nn_idx))
+                j_neighbor = lattice.get_nn_forward(i, num=nn_idx)
                 if lattice.wrong_nei(j_neighbor):
                     continue
                 j_neighbor = int(j_neighbor)

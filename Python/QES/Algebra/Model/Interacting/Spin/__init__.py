@@ -70,11 +70,14 @@ def choose_model(model_name: str, **kwargs):
     """
     model_name_map = {
         "heisenberg_kitaev" : "HeisenbergKitaev",
+        "kitaev"            : "HeisenbergKitaev",
+        "heisenberg"        : "HeisenbergKitaev",
         "qsm"               : "QSM",
         "transverse_ising"  : "TransverseFieldIsing",
         "tfim"              : "TransverseFieldIsing",
         "ultrametric"       : "UltrametricModel",
         "j1j2"              : "J1J2Model",
+        "j1_j2"             : "J1J2Model",
         "xxz"               : "XXZ",
     }
 
