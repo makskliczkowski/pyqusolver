@@ -47,33 +47,33 @@ if TYPE_CHECKING:
 
 _LAZY_IMPORTS = {
     # hamil_energy
-    "process_mod_sites": (".hamil_energy", "process_mod_sites"),
-    "process_mod_nosites": (".hamil_energy", "process_mod_nosites"),
-    "process_nmod_sites": (".hamil_energy", "process_nmod_sites"),
-    "process_nmod_nosites": (".hamil_energy", "process_nmod_nosites"),
-    "local_energy_np_wrap": (".hamil_energy", "local_energy_np_wrap"),
+    "process_mod_sites"         : (".hamil_energy", "process_mod_sites"),
+    "process_mod_nosites"       : (".hamil_energy", "process_mod_nosites"),
+    "process_nmod_sites"        : (".hamil_energy", "process_nmod_sites"),
+    "process_nmod_nosites"      : (".hamil_energy", "process_nmod_nosites"),
+    "local_energy_np_wrap"      : (".hamil_energy", "local_energy_np_wrap"),
     # hamil_energy_helper
-    "default_operator": (".hamil_energy_helper", "default_operator"),
-    "default_operator_njit": (".hamil_energy_helper", "default_operator_njit"),
-    "flatten_operator_terms": (".hamil_energy_helper", "flatten_operator_terms"),
-    "unpack_operator_terms": (".hamil_energy_helper", "unpack_operator_terms"),
+    "default_operator"          : (".hamil_energy_helper", "default_operator"),
+    "default_operator_njit"     : (".hamil_energy_helper", "default_operator_njit"),
+    "flatten_operator_terms"    : (".hamil_energy_helper", "flatten_operator_terms"),
+    "unpack_operator_terms"     : (".hamil_energy_helper", "unpack_operator_terms"),
     # hamil_jit_methods
-    "mean_level_spacing": (".hamil_jit_methods", "mean_level_spacing"),
-    "energy_width": (".hamil_jit_methods", "energy_width"),
-    "gap_ratio": (".hamil_jit_methods", "gap_ratio"),
+    "mean_level_spacing"        : (".hamil_jit_methods", "mean_level_spacing"),
+    "energy_width"              : (".hamil_jit_methods", "energy_width"),
+    "gap_ratio"                 : (".hamil_jit_methods", "gap_ratio"),
     # hamil_types
-    "check_noninteracting": (".hamil_types", "check_noninteracting"),
-    "check_dense": (".hamil_types", "check_dense"),
-    "Hamiltonians": (".hamil_types", "Hamiltonians"),
-    "DummyVector": (".hamil_types", "DummyVector"),
+    "check_noninteracting"      : (".hamil_types", "check_noninteracting"),
+    "check_dense"               : (".hamil_types", "check_dense"),
+    "Hamiltonians"              : (".hamil_types", "Hamiltonians"),
+    "DummyVector"               : (".hamil_types", "DummyVector"),
 }
 
 # Submodule descriptions for help()
 _SUBMODULES = {
-    "hamil_energy": "Energy calculation methods for Hamiltonians (local energy)",
-    "hamil_energy_helper": "Helper functions for flattening/unpacking terms",
-    "hamil_jit_methods": "JIT-compiled analysis (level spacing, energy width)",
-    "hamil_types": "Hamiltonian enums and type checks",
+    "hamil_energy"          : "Energy calculation methods for Hamiltonians (local energy)",
+    "hamil_energy_helper"   : "Helper functions for flattening/unpacking terms",
+    "hamil_jit_methods"     : "JIT-compiled analysis (level spacing, energy width)",
+    "hamil_types"           : "Hamiltonian enums and type checks",
 }
 
 def __getattr__(name: str) -> Any:
@@ -139,3 +139,7 @@ __all__ = [
     "Hamiltonians",
     "DummyVector",
 ]
+
+##############################################################################
+#! EOF
+##############################################################################

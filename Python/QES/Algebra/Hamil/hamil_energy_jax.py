@@ -1,4 +1,4 @@
-"""
+r"""
 Module      : Algebra/hamil_energy_jax.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-04-01

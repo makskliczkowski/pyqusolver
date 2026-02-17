@@ -46,7 +46,6 @@ class PhysicsInterface(ABC):
 #! Wavefunction physics
 # --------------------------------------------------------------
 
-
 class WavefunctionPhysics(PhysicsInterface):
     """
     Wavefunction physics interface for NQS.

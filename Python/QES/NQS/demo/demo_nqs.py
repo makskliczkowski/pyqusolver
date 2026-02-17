@@ -20,16 +20,13 @@ Usage:
     python demo_nqs.py --test  # Quick test on small system
 """
 
-import  argparse
-import  copy
+from __future__ import annotations
 import  os
 import  sys
 import  time
+import  argparse
 from    pathlib import Path
-from    typing  import List, Optional, Tuple, Union, Dict, Any
-
-import  numpy as np
-import  matplotlib.pyplot as plt
+from    typing  import List, Optional, Tuple, Union, Dict, Any, TYPE_CHECKING
 
 # Add project root to sys.path
 _CWD        = Path(__file__).resolve().parent
@@ -44,13 +41,28 @@ try:
 except ImportError:
     HAS_JAX = False
 
-from QES.general_python.lattices            import choose_lattice
-from QES.Algebra.Model.Interacting.Spin     import HeisenbergKitaev, TransverseFieldIsing, XXZ, J1J2Model
-from QES.NQS.nqs                            import NQS
-from QES.NQS.src.nqs_network_integration    import NetworkFactory, estimate_network_params
-from QES.NQS.src.nqs_entropy                import compute_renyi_entropy, bipartition_cuts_honeycomb
-from QES.general_python.common.flog         import get_global_logger
-from QES.general_python.common.plot         import Plotter
+try:
+    from QES.general_python.lattices            import choose_lattice, Lattice
+    from QES.general_python.common.flog         import get_global_logger
+    from QES.general_python.common.plot         import Plotter # also sets up matplotlib defaults
+except ImportError as e:
+    raise ImportError(f"Required modules from QES.general_python could not be imported. Please ensure the module is available.") from e
+
+try:
+    if TYPE_CHECKING:
+        from QES.Algebra.hamil                  import Hamiltonian
+        
+    from QES.Algebra.Model.Interacting.Spin     import HeisenbergKitaev, TransverseFieldIsing, XXZ, J1J2Model
+    from QES.NQS.nqs                            import NQS
+    # Ansatze
+    from QES.NQS.src.nqs_network_integration    import NetworkFactory, estimate_network_params
+    # Computation...
+    from QES.NQS.src.nqs_entropy                import compute_renyi_entropy, bipartition_cuts_honeycomb
+except ImportError as e:
+    raise ImportError(f"Required modules from QES.Algebra.Model.Interacting.Spin or QES.NQS could not be imported. Please ensure the module is available.") from e
+
+import  numpy as np
+import  matplotlib.pyplot as plt
 
 logger = get_global_logger()
 
@@ -58,19 +70,22 @@ logger = get_global_logger()
 #! Helpers
 # ----------------------------------------------------------------------------
 
-def make_hamiltonian(args):
+def make_hamiltonian(args: argparse.Namespace) -> Tuple['Hamiltonian', Lattice, Optional[List[Tuple[int, float, float, float]]]]:
     """Factory for Hamiltonian creation from CLI args."""
-    lattice = choose_lattice(
-        typek   = args.lattice,
-        lx      = args.lx,
-        ly      = args.ly,
-        bc      = args.bc,
-    )
     
-    model_type = args.model.lower()
+    # a) Create lattice
+    lattice     = choose_lattice(
+                    typek   = args.lattice,
+                    lx      = args.lx,
+                    ly      = args.ly,
+                    bc      = args.bc,
+                )
+    
+    # b) Create Hamiltonian
+    model_type  = args.model.lower()
     
     # Process impurities
-    impurities = []
+    impurities  = []
     if args.impurity:
         for imp in args.impurity:
             # site, phi, theta, amplitude
@@ -79,62 +94,65 @@ def make_hamiltonian(args):
     if model_type == 'kitaev':
         # Heisenberg-Kitaev model
         hamil = HeisenbergKitaev(
-            lattice =   lattice,
-            K       =   args.K,
-            J       =   args.J,
-            hx      =   args.hx,
-            hz      =   args.hz,
-            impurities = impurities,
-            dtype   =   np.complex128 if args.complex else np.float64
+            lattice     =   lattice,
+            K           =   args.K,     # (tuple or float) can be used for bond-dependent K
+            J           =   args.J,     # (tuple or float) can be used for bond-dependent J
+            Gamma       =   args.Gamma, # (tuple or float) can be used for bond-dependent Gamma
+            hx          =   args.hx,
+            hy          =   args.hy,
+            hz          =   args.hz,
+            impurities  =   impurities,
+            dtype       =   np.complex128 if args.complex else np.float64
         )
     elif model_type == 'heisenberg':
         hamil = HeisenbergKitaev(
-            lattice =   lattice,
-            K       =   0.0,
-            J       =   args.J,
-            hx      =   args.hx,
-            hz      =   args.hz,
-            impurities = impurities,
-            dtype   =   np.float64
+            lattice     =   lattice,
+            K           =   None,
+            J           =   args.J,
+            hx          =   args.hx,
+            hy          =   args.hy,
+            hz          =   args.hz,
+            impurities  =   impurities,
+            dtype       =   np.float64
         )
     elif model_type == 'tfim':
         hamil = TransverseFieldIsing(
-            lattice =   lattice,
-            j       =   args.J,
-            hx      =   args.hx,
-            hz      =   args.hz,
+            lattice     =   lattice,
+            j           =   args.J,
+            hx          =   args.hx,
+            hz          =   args.hz,
         )
     elif model_type == 'xxz':
         hamil = XXZ(
-            lattice =   lattice,
-            jxy     =   args.J,
-            jz      =   args.Jz,
-            hx      =   args.hx,
-            hz      =   args.hz,
+            lattice     =   lattice,
+            jxy         =   args.J,
+            jz          =   args.Jz,
+            hx          =   args.hx,
+            hz          =   args.hz,
         )
     elif model_type == 'j1j2':
         hamil = J1J2Model(
-            lattice =   lattice,
-            J1      =   args.J,
-            J2      =   args.J2,
-            impurities = impurities,
+            lattice     =   lattice,
+            J1          =   args.J,
+            J2          =   args.J2,
+            impurities  =   impurities,
         )
     else:
         raise ValueError(f"Unknown model type: {args.model}")
         
-    return hamil, lattice
+    return hamil, lattice, impurities if len(impurities) > 0 else None
 
-def make_net(args, num_sites):
+def make_net(args: argparse.Namespace, num_sites: int) -> Any:
     """Factory for network creation from CLI args."""
     
-    # Use SOTA parameter estimation
+    # Use parameter estimation
     sota_cfg = estimate_network_params(
         net_type        = args.ansatz,
         num_sites       = num_sites,
         lattice_dims    = (args.lx, args.ly),
         lattice_type    = args.lattice,
         model_type      = args.model,
-        target_accuracy = args.accuracy,
+        target_accuracy = 'high',
         dtype           = 'complex128' if args.complex else 'float64',
     )
     
@@ -154,7 +172,7 @@ def make_net(args, num_sites):
     )
     
     logger.info(f"Created {args.ansatz} network with {net.nparams} parameters.", lvl=1, color='blue')
-    logger.info(f"SOTA config: {sota_cfg.description}", lvl=2)
+    logger.info(f"Config: {sota_cfg.description}", lvl=2)
     
     return net
 
@@ -162,83 +180,110 @@ def make_net(args, num_sites):
 #! Main Execution
 # ----------------------------------------------------------------------------
 
-def run_demo(args):
+def _plot_training(history: List[float], ed_stats: Optional[Any], args: argparse.Namespace):
+    ''' Helper function to plot training history with ED comparison. '''
+    fig, ax         = plt.subplots(figsize=(8, 4))
+    history         = np.array(history)
+    ax.plot(history, label='NQS Energy', lw=2)
+    
+    if ed_stats and ed_stats.has_exact:
+        ax.axhline(ed_stats.exact_gs, color='red', linestyle='--', label='ED Ground State', alpha=0.7)
+        
+        # Plot exact gap if available
+        if len(ed_stats.exact_predictions) > 1:
+            for i in range(1, min(5, len(ed_stats.exact_predictions))):
+                ax.axhline(ed_stats.exact_predictions[i], color='gray', linestyle=':', alpha=0.3)
+    
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Energy')
+    ax.set_title(f'Training History: {args.model} {args.lx}x{args.ly}')
+    ax.grid(alpha=0.2)
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(Path(args.save_dir) / "demo_training_history.png", dpi=200)
+    logger.info(f"Saved training plot to {args.save_dir}/demo_training_history.png", lvl=2)
+
+# ----------------------------------------------------------------------------
+#! Main demo function
+# ----------------------------------------------------------------------------
+
+def run_demo(args: argparse.Namespace):
     """Main demo workflow."""
     
-    # 1. Setup Physical Model
-    hamil, lattice = make_hamiltonian(args)
+    # Setup Physical Model
+    hamil, lattice, impurities = make_hamiltonian(args)
     num_sites = lattice.ns
-    logger.title(f"NQS Demo: {args.model.upper()} on {args.lattice.upper()} ({args.lx}x{args.ly}, Ns={num_sites})")
+    logger.title(f"NQS: {args.model.upper()} on {args.lattice.upper()} ({args.lx}x{args.ly}, Ns={num_sites})")
     
-    # 2. Setup NQS
+    # Setup NQS
     net = make_net(args, num_sites)
     
     # Sampler config
     sample_config = {
-        's_numchains'   : args.num_chains,
-        's_numsamples'  : args.num_samples,
-        's_therm_steps' : args.num_therm,
-        's_sweep_steps' : args.num_sweep,
-        's_upd_fun'     : args.sampler_rule,
+        's_numchains'   :   args.num_chains,
+        's_numsamples'  :   args.num_samples,
+        's_therm_steps' :   args.num_therm,
+        's_sweep_steps' :   args.num_sweep,
+        's_upd_fun'     :   args.sampler_rule,
     }
     
     psi = NQS(
-        logansatz   =   net,
-        model       =   hamil,
-        backend     =   args.backend,
-        dtype       =   jnp.complex128 if args.complex else jnp.float64,
-        directory   =   args.save_dir,
-        seed        =   args.seed,
+        logansatz       =   net,
+        model           =   hamil,
+        backend         =   args.backend,
+        dtype           =   jnp.complex128 if args.complex else jnp.float64,
+        directory       =   args.save_dir,
+        seed            =   args.seed,
         **sample_config
     )
     
-    # 3. Load Weights if specified
+    # Load Weights if specified
     if args.load:
         logger.info(f"Loading weights from {args.load}...", lvl=1, color='green')
         psi.load_weights(args.load)
         
-    # 4. Exact Diagonalization (for comparison)
+    # Exact Diagonalization (for comparison)
     ed_stats = None
     if args.ed or (num_sites <= args.max_ed_size):
         logger.info(f"Performing Exact Diagonalization (Lanczos) for comparison...", lvl=1, color='cyan')
         ed_stats = psi.get_exact(k=6, verbose=True)
         
-    # 5. Training
+    # Training
     if args.train:
         logger.info(f"Starting Variational Ground State Search (SR)...", lvl=1, color='green')
         train_config = {
             'n_epochs'          : args.epochs,
+            # other
+            'use_pbar'          : args.use_pbar or True,
+            # lr
             'checkpoint_every'  : args.checkpoint_every,
             'lr'                : args.lr,
             'lr_scheduler'      : args.lr_scheduler,
-            'use_sr'            : not args.no_sr,
+            'lr_final'          : args.lr_final,
+            # solvers
+            'ode_solver'        : args.ode_solver or 'Euler',
+            'pre_solver'        : args.pre_solver or 'jacobi',
+            'lin_solver'        : args.lin_solver or 'minres_qlp',
+            # SR options
+            'use_minsr'         : args.use_minsr,
+            'use_sr'            : True,
+            # diagonal
             'diag_shift'        : args.diag_shift,
-            'use_pbar'          : True,
+            'diag_final'        : args.diag_final,
+            'diag_scheduler'    : args.diag_scheduler,
+            # Timing
+            'use_timing'        : True,
+            'timing_mode'       : 'detailed',
+            'symmetrize'        : args.symmetrize and impurities is not None and lattice.is_periodic(allow_twisted=False),
+            'exact_predictions' : ed_stats.exact_predictions if psi.exact is not None else hamil.eig_val,
         }
         stats = psi.train(**train_config)
         
         # Plot training history
         if args.plot:
-            fig, ax = plt.subplots(figsize=(8, 4))
-            history = np.array(stats.history)
-            ax.plot(history, label='NQS Energy', lw=2)
-            if ed_stats and ed_stats.has_exact:
-                ax.axhline(ed_stats.exact_gs, color='red', linestyle='--', label='ED Ground State', alpha=0.7)
-                # Plot exact gap if available
-                if len(ed_stats.exact_predictions) > 1:
-                    for i in range(1, min(5, len(ed_stats.exact_predictions))):
-                        ax.axhline(ed_stats.exact_predictions[i], color='gray', linestyle=':', alpha=0.3)
-            
-            ax.set_xlabel('Epoch')
-            ax.set_ylabel('Energy')
-            ax.set_title(f'Training History: {args.model} {args.lx}x{args.ly}')
-            ax.grid(alpha=0.2)
-            ax.legend()
-            plt.tight_layout()
-            plt.savefig(Path(args.save_dir) / "training_history.png", dpi=200)
-            logger.info(f"Saved training plot to {args.save_dir}/training_history.png", lvl=2)
+            _plot_training(stats.history, ed_stats, args)
 
-    # 6. Compute Observables
+    # Compute Observables
     if args.compute_observables or args.compute_correlations:
         logger.info(f"Computing ground state observables...", lvl=1, color='green')
         
@@ -247,60 +292,60 @@ def run_demo(args):
         
         # Magnetization
         if args.model.lower() in ('kitaev', 'heisenberg', 'tfim', 'xxz'):
-            sz_op = hamil.operators.sig_z(ns=num_sites, type_act='local')
+            sz_op   = hamil.operators.sig_z(ns=num_sites, type_act='local')
             sz_vals = psi.compute_observable(functions=sz_op.jax, states=states, ansatze=log_psi)
             logger.info(f"Average Magnetization <Sz>: {np.mean(sz_vals.mean):.6f} +/- {np.mean(sz_vals.error_of_mean):.6f}", lvl=2)
 
         # Spin-Spin Correlations
         if args.compute_correlations:
-            logger.info("Computing spin-spin correlation matrix <Sz_i Sz_j>...", lvl=2)
-            # Use correlator kernels
-            corr_kernels = hamil.operators.correlators(
-                correlators = ['zz'],
-                type_acting = 'global',
-                compute     = False
-            )
-            zz_kernel = corr_kernels['zz']['i,j'].jax
-            
-            # Compute for all pairs (Warning: O(N^2) calls)
-            corr_mat = np.zeros((num_sites, num_sites))
-            for i in range(num_sites):
-                for j in range(i, num_sites):
-                    res = psi.compute_observable(functions=zz_kernel, states=states, ansatze=log_psi, args=(i, j))
-                    corr_mat[i, j] = np.real(res.mean)
-                    corr_mat[j, i] = corr_mat[i, j]
-            
-            if args.plot:
-                fig, ax = plt.subplots(figsize=(6, 5))
-                im = ax.imshow(corr_mat, cmap='RdBu_r', vmin=-0.25, vmax=0.25)
-                plt.colorbar(im, label=r'$\langle S^z_i S^z_j \rangle$')
-                ax.set_title(f'Spin-Spin Correlations ({args.model})')
-                ax.set_xlabel('Site $j$')
-                ax.set_ylabel('Site $i$')
-                plt.tight_layout()
-                plt.savefig(Path(args.save_dir) / "correlations.png", dpi=200)
-                logger.info(f"Saved correlation plot to {args.save_dir}/correlations.png", lvl=2)
+            correlators     = ['zz', 'xx']
+            for corr in correlators:
+                logger.info(f"Computing spin-spin correlation matrix <S{corr}_i S{corr}_j>...", lvl=2)
+                # Use correlator kernels
+                corr_kernels    = hamil.operators.correlators(
+                                    correlators = [corr],
+                                    type_acting = 'global',
+                                    compute     = False
+                                )
+                zz_kernel       = corr_kernels[corr]['i,j'].jax
+                corr_mat        = np.zeros((num_sites, num_sites))
+                for i in range(num_sites):
+                    for j in range(i, num_sites):
+                        res             = psi.compute_observable(functions=zz_kernel, states=states, ansatze=log_psi, args=(i, j))
+                        corr_mat[i, j]  = np.real(res.mean)
+                        corr_mat[j, i]  = corr_mat[i, j]
+                
+                if args.plot:
+                    fig, ax = plt.subplots(figsize=(6, 5))
+                    im = ax.imshow(corr_mat, cmap='RdBu_r', vmin=-0.25, vmax=0.25)
+                    plt.colorbar(im, label=fr'$\langle S^{corr}_i S^{corr}_j \rangle$')
+                    ax.set_title(f'Spin-Spin Correlations ({args.model})')
+                    ax.set_xlabel('Site $j$')
+                    ax.set_ylabel('Site $i$')
+                    plt.tight_layout()
+                    plt.savefig(Path(args.save_dir) / "demo_correlations.png", dpi=200)
+                    logger.info(f"Saved correlation plot to {args.save_dir}/demo_correlations.png", lvl=2)
 
         # Plaquette Operators (for Kitaev Honeycomb)
-        if args.model.lower() == 'kitaev' and args.lattice == 'honeycomb':
-            logger.info("Computing Kitaev plaquette operators W_p...", lvl=2)
-            try:
-                # W_p = sigma^x_1 sigma^y_2 sigma^z_3 sigma^x_4 sigma^y_5 sigma^z_6
-                # We need to get hexagons from lattice
-                plaquettes = lattice.get_plaquettes()
-                if plaquettes:
-                    w_p_values = []
-                    for p_sites in plaquettes:
-                        # Construct product operator
-                        # This is a bit involved to construct on the fly, 
-                        # but we can use the kernel approach if we have a W_p kernel.
-                        # For now, let's just log that we found them.
-                        pass
-                    logger.info(f"Identified {len(plaquettes)} plaquettes on the lattice.", lvl=3)
-            except Exception as e:
-                logger.warning(f"Could not compute plaquettes: {e}", lvl=3)
+        # if args.model.lower() == 'kitaev' and args.lattice == 'honeycomb':
+        #     logger.info("Computing Kitaev plaquette operators W_p...", lvl=2)
+        #     try:
+        #         # W_p = sigma^x_1 sigma^y_2 sigma^z_3 sigma^x_4 sigma^y_5 sigma^z_6
+        #         # We need to get hexagons from lattice
+        #         plaquettes = lattice.get_plaquettes()
+        #         if plaquettes:
+        #             w_p_values = []
+        #             for p_sites in plaquettes:
+        #                 # Construct product operator
+        #                 # This is a bit involved to construct on the fly, 
+        #                 # but we can use the kernel approach if we have a W_p kernel.
+        #                 # For now, let's just log that we found them.
+        #                 pass
+        #             logger.info(f"Identified {len(plaquettes)} plaquettes on the lattice.", lvl=3)
+        #     except Exception as e:
+        #         logger.warning(f"Could not compute plaquettes: {e}", lvl=3)
 
-    # 7. Entanglement Entropy
+    # Entanglement Entropy
     if args.compute_entropy:
         logger.info(f"Estimating Rényi entanglement entropy (replica method)...", lvl=1, color='green')
         

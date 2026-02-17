@@ -33,7 +33,7 @@ hamil_topics = {
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  Adding Terms to Hamiltonian:                                                ║
 ║    .add(operator, multiplier, modifies=False, sites=None)                    ║
-║        Add an operator term: multiplier × operator                           ║
+║        Add an operator term: multiplier x operator                           ║
 ║                                                                              ║
 ║  Operator Collections:                                                       ║
 ║    .reset_operators()        - Clear all operator terms                      ║

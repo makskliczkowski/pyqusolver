@@ -18,10 +18,10 @@ from enum import Enum, unique
 
 ###########################################################################
 # ED limits (using hexadecimal where applicable)
-UI_LIMITS_MAXFULLED = 0x40000
-UI_LIMITS_MAXPRINT = 0x8
-UI_LIMITS_SI_STATENUM = 100
-UI_LIMITS_MIDDLE_SPEC_STATENUM = 200
+UI_LIMITS_MAXFULLED             = 0x40000
+UI_LIMITS_MAXPRINT              = 0x8
+UI_LIMITS_SI_STATENUM           = 100
+UI_LIMITS_MIDDLE_SPEC_STATENUM  = 200
 
 
 # ############################ EXISTING MODELS ############################
@@ -31,20 +31,20 @@ class Hamiltonians(Enum):
     Enumeration for different Hamiltonian models.
     """
 
-    NONE = 0
+    NONE                        = 0
     # interacting models:
-    ISING_M = 1  # Quantum Ising model
-    XYZ_M = 2  # XYZ model
-    HEI_KIT_M = 3  # Heisenberg model with Kitaev interaction
-    QSM_M = 4  # Quantum Summer Model (QSM)
-    RP_M = 5  # Rosenzweig-Porter Model
-    ULTRAMETRIC_M = 6  # Ultrametric Model (UM)
+    ISING_M                     = 1  # Quantum Ising model
+    XYZ_M                       = 2  # XYZ model
+    HEI_KIT_M                   = 3  # Heisenberg model with Kitaev interaction
+    QSM_M                       = 4  # Quantum Summer Model (QSM)
+    RP_M                        = 5  # Rosenzweig-Porter Model
+    ULTRAMETRIC_M               = 6  # Ultrametric Model (UM)
     # quadratic (or noninteracting) models:
-    FREE_FERMIONS_M = 100  # Free Fermions Model
-    AUBRY_ANDRE_M = 101  # Aubry-André Model
-    SYK2_M = 102  # Sachdev-Ye-Kitaev (SYK) Model
-    ANDERSON_M = 103  # Anderson Model
-    POWER_LAW_RANDOM_BANDED_M = 104  # Power-law Random Banded Model
+    FREE_FERMIONS_M             = 100  # Free Fermions Model
+    AUBRY_ANDRE_M               = 101  # Aubry-André Model
+    SYK2_M                      = 102  # Sachdev-Ye-Kitaev (SYK) Model
+    ANDERSON_M                  = 103  # Anderson Model
+    POWER_LAW_RANDOM_BANDED_M   = 104  # Power-law Random Banded Model
 
 
 MY_MODELS_LIST = [

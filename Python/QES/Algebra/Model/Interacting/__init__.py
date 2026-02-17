@@ -1,8 +1,23 @@
-"""Interacting quantum model definitions (placeholder).
+"""Interacting quantum model definitions.
 
-This subpackage currently has no public API objects defined.  The file exists
-to ensure the directory is treated as a Python package so relative imports
-work reliably throughout the project.
+Modules:
+--------
+- Spin: Spin models (Heisenberg, Ising, XXZ, etc.)
+
+Author: Maksymilian Kliczkowski
+Email: maksymilian.kliczkowski@pwr.edu.pl
 """
 
-__all__: list[str] = []
+__all__: list[str] = ["Spin"]
+
+import importlib
+
+def __getattr__(name: str):
+    if name == "Spin":
+        module = importlib.import_module(".Spin", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+def __dir__() -> list[str]:
+    return sorted(list(globals().keys()) + __all__)

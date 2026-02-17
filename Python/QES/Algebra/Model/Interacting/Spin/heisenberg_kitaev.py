@@ -54,20 +54,19 @@ except ImportError as e:
 #! DEFINE CONSTANTS
 # ----------------------------------------------------------------------------------------
 
-HEI_KIT_X_BOND_NEI = X_BOND_NEI
-HEI_KIT_Y_BOND_NEI = Y_BOND_NEI
-HEI_KIT_Z_BOND_NEI = Z_BOND_NEI
+HEI_KIT_X_BOND_NEI  = X_BOND_NEI
+HEI_KIT_Y_BOND_NEI  = Y_BOND_NEI
+HEI_KIT_Z_BOND_NEI  = Z_BOND_NEI
 
 # Pauli matrix scaling factors for HeisenbergKitaev (Pauli σ convention)
 # SINGLE_TERM_MULT    = 1.0   # Single-spin terms (σ has eigenvalues ±1)
-SINGLE_TERM_MULT = 2.0  # Single-spin terms (σ has eigenvalues ±1)
+SINGLE_TERM_MULT    = 2.0  # Single-spin terms (σ has eigenvalues ±1)
 # CORR_TERM_MULT      = 1.0   # Two-spin correlation terms (σ_i σ_j has eigenvalues ±1)
-CORR_TERM_MULT = 4.0  # Two-spin correlation terms (σ_i σ_j has eigenvalues ±1)
+CORR_TERM_MULT      = 4.0  # Two-spin correlation terms (σ_i σ_j has eigenvalues ±1)
 
 ##########################################################################################
 #! HAMILTONIAN CLASS
 ##########################################################################################
-
 
 class HeisenbergKitaev(Hamiltonian):
     """
@@ -77,12 +76,8 @@ class HeisenbergKitaev(Hamiltonian):
 
     #############################
 
-    _ERR_EITHER_HIL_OR_NS = (
-        "QSM: either the Hilbert space or the number of particles in the system must be provided."
-    )
-    _ERR_LATTICE_NOT_PROVIDED = (
-        "QSM: Lattice must be provided to define the Kitaev-Heisenberg Hamiltonian."
-    )
+    _ERR_EITHER_HIL_OR_NS       = "Either the Hilbert space or the number of particles in the system must be provided."
+    _ERR_LATTICE_NOT_PROVIDED   = "Lattice must be provided to define the Kitaev-Heisenberg Hamiltonian."
 
     def __init__(
         self,
@@ -229,7 +224,7 @@ class HeisenbergKitaev(Hamiltonian):
             else [dlt] * self.ns if dlt is not None else None
         )
         self._kx, self._ky, self._kz = (
-            K if isinstance(K, (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K)
+            K if isinstance(K, (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K) if K is not None else (None, None, None)
         )
 
         # setup the impurities - validate format: either 2-tuple (site, ampl) or (3,4)-tuple (site, phi, theta, ampl)
@@ -251,13 +246,13 @@ class HeisenbergKitaev(Hamiltonian):
             verbose=self._verbose,
         )
 
-        self._neibz = [[]]
-        self._neiby = [[]]
-        self._neibx = [[]]
-        self._neiadd = [[]]
+        self._neibz     = [[]]
+        self._neiby     = [[]]
+        self._neibx     = [[]]
+        self._neiadd    = [[]]
 
         # Initialize the Hamiltonian
-        self._name = "Kitaev-Heisenberg-Gamma Model"
+        self._name      = "Kitaev-Heisenberg-Gamma Model"
         self._is_sparse = True
 
         #! Calculate maximum local coupling channels
