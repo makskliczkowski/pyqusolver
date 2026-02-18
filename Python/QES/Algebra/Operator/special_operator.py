@@ -803,13 +803,15 @@ class SpecialOperator(Operator, ABC):
 
         if not compute:
             if hasattr(op_module, "correlators"):
+                # Avoid passing duplicate kwargs (e.g. caller provides lattice/ns).
+                op_kwargs = dict(kwargs)
+                op_kwargs.setdefault("lattice", self._lattice)
+                op_kwargs.setdefault("ns", self._ns)
                 return op_module.correlators(
                     indices_pairs   =   indices_pairs,
                     correlators     =   correlators,
                     type_acting     =   type_acting,
-                    lattice         =   self._lattice,
-                    ns              =   self._ns,
-                    **kwargs,
+                    **op_kwargs,
                 )
             else:
                 raise AttributeError("Operator module does not have a 'correlators' attribute.")

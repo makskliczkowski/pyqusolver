@@ -48,6 +48,13 @@ class NQSCheckpointManager:
     Supports HDF5 (generic) and Orbax (JAX-optimized).
     """
 
+    # Reserved step numbers for special tags in Orbax
+    TAG_MAP = {
+        "final"     : 999999,
+        "best"      : 888888,
+        "pretrain"  : 111111,
+    }
+
     def __init__(
         self,
         directory: Union[str, Path],
@@ -93,6 +100,18 @@ class NQSCheckpointManager:
         else:
             print(f"[NQSCheckpointManager] {msg}")
 
+    def _step_to_int(self, step: Union[int, str]) -> int:
+        """Convert a step identifier or tag to an integer for Orbax."""
+        if isinstance(step, int):
+            return step
+        if isinstance(step, str):
+            if step.isdigit():
+                return int(step)
+            
+            # Map common tags to reserved high integers
+            return self.TAG_MAP.get(step.lower(), 0) # Fallback to 0 if unknown tag
+        return 0
+
     # ------------------------------------------------------
 
     def _init_orbax(self, checkpoint_dir: Path = None):
@@ -121,7 +140,7 @@ class NQSCheckpointManager:
         self._log(f"Initialized Orbax Manager (Legacy API: {self._legacy_api})", lvl=2)
 
     def _resolve_path(
-        self, filename: Optional[str], step: Union[int, str], extension: str = "h5"
+        self, filename: Optional[str], step: Union[int, str, None], extension: str = "h5"
     ) -> Path:
         """Resolve the full path for a checkpoint file."""
         if filename is not None:
@@ -131,6 +150,8 @@ class NQSCheckpointManager:
             else:
                 return self.directory / filename
         else:
+            if step is None:
+                step = "latest"
             return self.directory / f"checkpoint_{step}.{extension}"
 
     # ------------------------------------------------------
@@ -171,9 +192,12 @@ class NQSCheckpointManager:
         Save using Orbax backend. Always saves a single PyTree using PyTreeCheckpointer.
         This ensures the directory structure is always .../checkpoints/<step>/default/...
         """
-        if isinstance(step, str) and step.isdigit():
-            step = int(step)
-        save_key = step if isinstance(step, int) else kwargs.get("current_epoch", 999999)
+        save_key = self._step_to_int(step)
+        if save_key == 0 and not (isinstance(step, str) and step == "0") and step != 0:
+            # If it was a tag that mapped to 0 but wasn't intended to be 0, 
+            # use a high number or current_epoch
+            save_key = kwargs.get("current_epoch", 999999)
+
         try:
             # Check if step exists in manager OR filesystem (to be safe)
             step_exists = save_key in self._orbax_manager.all_steps() or os.path.exists(
@@ -183,7 +207,7 @@ class NQSCheckpointManager:
             if step_exists:
                 if force:
                     self._log(
-                        f"Overwriting existing Orbax checkpoint for step {save_key}",
+                        f"Overwriting existing Orbax checkpoint for step {save_key} ({step})",
                         lvl=1,
                         color="yellow",
                     )
@@ -207,7 +231,7 @@ class NQSCheckpointManager:
             shutil.rmtree(self._checkpoint_dir / str(save_key), ignore_errors=True)
             raise e
         self._save_metadata_json(save_key, metadata)
-        self._log(f"Saved Orbax checkpoint for step {save_key}", lvl=1, color="green")
+        self._log(f"Saved Orbax checkpoint for step {save_key} ({step})", lvl=1, color="green")
         return self._checkpoint_dir / str(save_key)
 
     # ---
@@ -269,14 +293,12 @@ class NQSCheckpointManager:
 
         # Case 2: Load via Manager (step based)
         if step is None:
-            step = self._orbax_manager.latest_step()
-            if step is None:
+            step_int = self._orbax_manager.latest_step()
+            if step_int is None:
                 raise FileNotFoundError("No checkpoints found in manager.")
+        else:
+            step_int = self._step_to_int(step)
 
-        if step == "final":
-            step = 999999
-
-        step_int = int(step) if isinstance(step, (int, str)) and str(step).isdigit() else 0
         self._log(f"Loading Orbax step {step_int}...", lvl=1)
 
         try:
@@ -310,6 +332,7 @@ class NQSCheckpointManager:
             # Try to guess the path: <dir>/<step>/default or <dir>/<step>
             potential_paths = [
                 self._checkpoint_dir / str(step_int) / "default",
+                self._checkpoint_dir / str(step_int) / "params",
                 self._checkpoint_dir / str(step_int),
             ]
 
@@ -355,9 +378,8 @@ class NQSCheckpointManager:
     ) -> Dict[str, Any]:
         """Load metadata for a given checkpoint."""
         if self.use_orbax:
-            if step == "final":
-                step = 999999
-            meta_path = self._checkpoint_dir / f"metadata_{step}.json"
+            step_int    = self._step_to_int(step) if step is not None else self._orbax_manager.latest_step()
+            meta_path   = self._checkpoint_dir / f"metadata_{step_int}.json"
         else:
             if filename:
                 meta_path = self._resolve_path(filename, step=0).with_suffix(".json")

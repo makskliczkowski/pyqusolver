@@ -677,13 +677,29 @@ class VMCSampler(Sampler):
             return self._acceptance_probability_np(current_val, candidate_val, beta=use_beta, mu=mu)
 
     @staticmethod
+    def _flatten_batch_output_jax(values, batch_size: int):
+        """
+        Normalize network output to shape ``(batch_size,)``.
+        """
+        out = jnp.asarray(values)
+        if out.ndim == 0:
+            return jnp.broadcast_to(out, (batch_size,))
+        if out.shape[0] != batch_size:
+            out = out.reshape((batch_size, -1))
+            return out[:, 0]
+        if out.ndim == 1:
+            return out
+        return out.reshape((batch_size, -1))[:, 0]
+
+    @staticmethod
     @partial(jax.jit, static_argnames=("net_callable",))
     def _logprob_jax(x, net_callable, net_params=None):
         def apply_net(s):
             return net_callable(net_params, s)
 
         batched_log_psi = jax.vmap(apply_net)(x)
-        return jnp.real(batched_log_psi)
+        flat_log_psi = VMCSampler._flatten_batch_output_jax(batched_log_psi, x.shape[0])
+        return jnp.real(flat_log_psi)
 
     @staticmethod
     @numba.njit
@@ -756,9 +772,7 @@ class VMCSampler(Sampler):
                 delta           = jnp.real(delta_log_psi)
             else:
                 # O(N_sites * N_hidden) standard update
-                new_val = logproba_fun(new_chain)
-                if new_val.ndim > 1:
-                    new_val = new_val.squeeze()
+                new_val = VMCSampler._flatten_batch_output_jax(logproba_fun(new_chain), num_chains)
                 delta = jnp.real(new_val - current_val_in)
 
             # Work in log-space for numerical stability:
@@ -1021,19 +1035,28 @@ class VMCSampler(Sampler):
     @staticmethod
     def _batched_network_apply(params, configs, net_apply, chunk_size=2048):
         n_samples = configs.shape[0]
+        if n_samples == 0:
+            return jnp.empty((0,), dtype=jnp.result_type(configs.dtype, jnp.float32))
+
+        if n_samples <= chunk_size:
+            out_direct = net_apply(params, configs)
+            return VMCSampler._flatten_batch_output_jax(out_direct, n_samples)
+
         n_chunks = (n_samples + chunk_size - 1) // chunk_size
         pad_size = n_chunks * chunk_size - n_samples
 
         if pad_size > 0:
-            padding = jnp.zeros((pad_size,) + configs.shape[1:], dtype=configs.dtype)
-            configs_padded = jnp.concatenate([configs, padding], axis=0)
+            pad_cfg = [(0, pad_size)] + [(0, 0)] * (configs.ndim - 1)
+            configs_padded = jnp.pad(configs, pad_cfg, mode="edge")
         else:
             configs_padded = configs
 
         configs_reshaped = configs_padded.reshape((n_chunks, chunk_size) + configs.shape[1:])
 
         def scan_fn(carry, x_chunk):
-            out_chunk = net_apply(params, x_chunk)
+            out_chunk = VMCSampler._flatten_batch_output_jax(
+                net_apply(params, x_chunk), chunk_size
+            )
             return carry, out_chunk
 
         _, outputs = jax.lax.scan(scan_fn, None, configs_reshaped)
@@ -1064,8 +1087,7 @@ class VMCSampler(Sampler):
     ):
 
         logprobas_init = net_callable_fun(params, states_init)
-        if logprobas_init.ndim > 1:
-            logprobas_init = logprobas_init.squeeze()
+        logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
 
         #! Phase 1: Thermalization
         states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm = (

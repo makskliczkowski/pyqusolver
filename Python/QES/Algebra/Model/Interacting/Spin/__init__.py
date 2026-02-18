@@ -27,7 +27,9 @@ License     : MIT
 
 __all__ = [
     "heisenberg_kitaev", "qsm", "transverse_ising", "ultrametric", "j1j2", "xxz",
+    "hamiltonian_spin",
     "HeisenbergKitaev", "QSM", "TransverseFieldIsing", "UltrametricModel", "J1J2Model", "XXZ",
+    "HamiltonianSpin",
     "choose_model"
 ]
 
@@ -35,6 +37,7 @@ __all__ = [
 import importlib
 
 _MAPPINGS = {
+    "HamiltonianSpin"      : ".hamiltonian_spin",
     "HeisenbergKitaev"      : ".heisenberg_kitaev",
     "QSM"                   : ".qsm",
     "TransverseFieldIsing"  : ".transverse_ising",

@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 import  os
 import  sys
-import  time
 import  argparse
 from    pathlib import Path
 from    typing  import List, Optional, Tuple, Union, Dict, Any, TYPE_CHECKING
@@ -42,24 +41,17 @@ except ImportError:
     HAS_JAX = False
 
 try:
-    from QES.general_python.lattices            import choose_lattice, Lattice
+    from QES.general_python.lattices            import Lattice
     from QES.general_python.common.flog         import get_global_logger
-    from QES.general_python.common.plot         import Plotter # also sets up matplotlib defaults
 except ImportError as e:
     raise ImportError(f"Required modules from QES.general_python could not be imported. Please ensure the module is available.") from e
 
 try:
-    if TYPE_CHECKING:
-        from QES.Algebra.hamil                  import Hamiltonian
-        
-    from QES.Algebra.Model.Interacting.Spin     import HeisenbergKitaev, TransverseFieldIsing, XXZ, J1J2Model
-    from QES.NQS.nqs                            import NQS
-    # Ansatze
-    from QES.NQS.src.nqs_network_integration    import NetworkFactory, estimate_network_params
+    from QES.NQS                                import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
     # Computation...
-    from QES.NQS.src.nqs_entropy                import compute_renyi_entropy, bipartition_cuts_honeycomb
+    from QES.NQS.src.nqs_entropy                import compute_renyi_entropy, compute_ed_entanglement_entropy, bipartition_cuts
 except ImportError as e:
-    raise ImportError(f"Required modules from QES.Algebra.Model.Interacting.Spin or QES.NQS could not be imported. Please ensure the module is available.") from e
+    raise ImportError(f"Required modules from QES.NQS could not be imported. Please ensure the module is available.") from e
 
 import  numpy as np
 import  matplotlib.pyplot as plt
@@ -68,116 +60,6 @@ logger = get_global_logger()
 
 # ----------------------------------------------------------------------------
 #! Helpers
-# ----------------------------------------------------------------------------
-
-def make_hamiltonian(args: argparse.Namespace) -> Tuple['Hamiltonian', Lattice, Optional[List[Tuple[int, float, float, float]]]]:
-    """Factory for Hamiltonian creation from CLI args."""
-    
-    # a) Create lattice
-    lattice     = choose_lattice(
-                    typek   = args.lattice,
-                    lx      = args.lx,
-                    ly      = args.ly,
-                    bc      = args.bc,
-                )
-    
-    # b) Create Hamiltonian
-    model_type  = args.model.lower()
-    
-    # Process impurities
-    impurities  = []
-    if args.impurity:
-        for imp in args.impurity:
-            # site, phi, theta, amplitude
-            impurities.append((int(imp[0]), imp[1], imp[2], imp[3]))
-
-    if model_type == 'kitaev':
-        # Heisenberg-Kitaev model
-        hamil = HeisenbergKitaev(
-            lattice     =   lattice,
-            K           =   args.K,     # (tuple or float) can be used for bond-dependent K
-            J           =   args.J,     # (tuple or float) can be used for bond-dependent J
-            Gamma       =   args.Gamma, # (tuple or float) can be used for bond-dependent Gamma
-            hx          =   args.hx,
-            hy          =   args.hy,
-            hz          =   args.hz,
-            impurities  =   impurities,
-            dtype       =   np.complex128 if args.complex else np.float64
-        )
-    elif model_type == 'heisenberg':
-        hamil = HeisenbergKitaev(
-            lattice     =   lattice,
-            K           =   None,
-            J           =   args.J,
-            hx          =   args.hx,
-            hy          =   args.hy,
-            hz          =   args.hz,
-            impurities  =   impurities,
-            dtype       =   np.float64
-        )
-    elif model_type == 'tfim':
-        hamil = TransverseFieldIsing(
-            lattice     =   lattice,
-            j           =   args.J,
-            hx          =   args.hx,
-            hz          =   args.hz,
-        )
-    elif model_type == 'xxz':
-        hamil = XXZ(
-            lattice     =   lattice,
-            jxy         =   args.J,
-            jz          =   args.Jz,
-            hx          =   args.hx,
-            hz          =   args.hz,
-        )
-    elif model_type == 'j1j2':
-        hamil = J1J2Model(
-            lattice     =   lattice,
-            J1          =   args.J,
-            J2          =   args.J2,
-            impurities  =   impurities,
-        )
-    else:
-        raise ValueError(f"Unknown model type: {args.model}")
-        
-    return hamil, lattice, impurities if len(impurities) > 0 else None
-
-def make_net(args: argparse.Namespace, num_sites: int) -> Any:
-    """Factory for network creation from CLI args."""
-    
-    # Use parameter estimation
-    sota_cfg = estimate_network_params(
-        net_type        = args.ansatz,
-        num_sites       = num_sites,
-        lattice_dims    = (args.lx, args.ly),
-        lattice_type    = args.lattice,
-        model_type      = args.model,
-        target_accuracy = 'high',
-        dtype           = 'complex128' if args.complex else 'float64',
-    )
-    
-    # User overrides
-    factory_kwargs = sota_cfg.to_factory_kwargs()
-    if args.alpha: factory_kwargs['alpha'] = args.alpha
-    
-    # Check for GCNN symmetry perms
-    if args.ansatz in ('gcnn', 'eqgcnn'):
-        # For GCNN we often need to provide symmetry perms explicitly if not using from_lattice
-        # But NetworkFactory.create handles it via kwargs if provided
-        pass
-
-    net = NetworkFactory.create(
-        network_type    = args.ansatz,
-        **factory_kwargs
-    )
-    
-    logger.info(f"Created {args.ansatz} network with {net.nparams} parameters.", lvl=1, color='blue')
-    logger.info(f"Config: {sota_cfg.description}", lvl=2)
-    
-    return net
-
-# ----------------------------------------------------------------------------
-#! Main Execution
 # ----------------------------------------------------------------------------
 
 def _plot_training(history: List[float], ed_stats: Optional[Any], args: argparse.Namespace):
@@ -203,6 +85,65 @@ def _plot_training(history: List[float], ed_stats: Optional[Any], args: argparse
     plt.savefig(Path(args.save_dir) / "demo_training_history.png", dpi=200)
     logger.info(f"Saved training plot to {args.save_dir}/demo_training_history.png", lvl=2)
 
+def compute_observables(nqs: Optional[NQS], hamil: Optional[Any], lattice: Lattice, s_cfg: NQSSolverConfig, out_dir: Path):
+    """Unified computation of observables for both NQS and ED."""
+    
+    results     = {}
+    num_sites   = lattice.ns
+    
+    # NQS Observables
+    if nqs is not None:
+        logger.info(f"Computing NQS observables...", lvl=1, color='green')
+        # Sample states from trained model
+        (_, _), (states, log_psi), probabilities = nqs.sample(num_samples=s_cfg.n_samples)
+        
+        # Magnetization
+        if nqs.model.name.lower() in ('kitaev', 'heisenberg', 'tfim', 'xxz'):
+            sz_op               = nqs.model.operators.sig_z(ns=num_sites, type_act='local')
+            sz_vals             = nqs.compute_observable(functions=sz_op.jax, states=states, ansatze=log_psi, probabilities=probabilities)
+            results['nqs_mag']  = sz_vals
+            logger.info(f"NQS Average Magnetization <Sz>: {np.mean(sz_vals.mean):.6f}", lvl=2)
+
+        # Correlations
+        correlators = ['zz', 'xx']
+        for corr in correlators:
+            corr_kernels    = nqs.model.correlators(correlators=[corr], type_acting='correlation', compute=False)
+            kernel_jax      = corr_kernels[corr]['i,j'].jax
+            corr_mat        = np.zeros((num_sites, num_sites))
+            for i in range(num_sites):
+                for j in range(i, num_sites):
+                    res             = nqs.compute_observable(functions=kernel_jax, states=states, ansatze=log_psi, probabilities=probabilities, args=(i, j))
+                    corr_mat[i, j]  = np.real(res.mean)
+                    corr_mat[j, i]  = corr_mat[i, j]
+            results[f'nqs_corr_{corr}'] = corr_mat
+
+        # Entropy
+        cuts = bipartition_cuts(lattice, cut_type="half_x")
+        for label, region in cuts.items():
+            s2, s2_err = compute_renyi_entropy(nqs, region=region, q=2, num_samples=s_cfg.n_samples, return_error=True)
+            results[f'nqs_entropy_{label}'] = (s2, s2_err)
+            logger.info(f"NQS Rényi-2 Entropy ({label}): {s2:.6f} +/- {s2_err:.6f}", lvl=2)
+
+    # 2. ED Observables
+    if hamil is not None and hamil.eig_vec is not None:
+        logger.info(f"Computing ED observables for comparison...", lvl=1, color='cyan')
+        # We reuse the logic from impurity_solver but simplified for demo
+        from QES.NQS import EDDataset
+        ed_ds = EDDataset(num_states=1, losses=hamil.eig_val, model_type=str(hamil), lattice_type=lattice.typek)
+        corr, mag = ed_ds.get_operators(hamil, nstates_to_store=1)
+        results['ed_corr'] = corr
+        results['ed_mag'] = mag
+        
+        # Exact Entropy
+        cuts = bipartition_cuts(lattice, cut_type="all")
+        for label, region in cuts.items():
+            if len(region) == 0 or len(region) >= num_sites: continue
+            ee = compute_ed_entanglement_entropy(hamil.eig_vec, region, num_sites, q_values=[2])
+            results[f'ed_entropy_{label}'] = ee['renyi_2'][0]
+            logger.info(f"ED Rényi-2 Entropy ({label}): {ee['renyi_2'][0]:.6f}", lvl=2)
+
+    return results
+
 # ----------------------------------------------------------------------------
 #! Main demo function
 # ----------------------------------------------------------------------------
@@ -210,160 +151,107 @@ def _plot_training(history: List[float], ed_stats: Optional[Any], args: argparse
 def run_demo(args: argparse.Namespace):
     """Main demo workflow."""
     
-    # Setup Physical Model
-    hamil, lattice, impurities = make_hamiltonian(args)
-    num_sites = lattice.ns
+    # 1. Setup Configuration
+    p_cfg = NQSPhysicsConfig(
+        model_type      = args.model,
+        lattice_type    = args.lattice,
+        lx              = args.lx,
+        ly              = args.ly,
+        bc              = args.bc,
+        hx              = args.hx,
+        hy              = 0.0,
+        hz              = args.hz,
+    )
+    
+    if args.impurity:
+        for imp in args.impurity:
+            p_cfg.impurities.append((int(imp[0]), imp[1], imp[2], imp[3]))
+
+    if args.model.lower() == 'kitaev':
+        p_cfg.args['kxy']       = args.K
+        p_cfg.args['kz']        = args.K
+        p_cfg.args['gamma_xy']  = args.Gamma
+        p_cfg.args['gamma_z']   = args.Gamma
+    elif args.model.lower() in ('heisenberg', 'tfim', 'xxz', 'j1j2'):
+        p_cfg.args['J']         = args.J
+        if args.model.lower() == 'xxz': p_cfg.args['jz'] = args.Jz
+        if args.model.lower() == 'j1j2':
+            p_cfg.args['J1'] = args.J
+            p_cfg.args['J2'] = args.J2
+
+    s_cfg = NQSSolverConfig(
+        ansatz          = args.ansatz,
+        n_chains        = args.num_chains,
+        n_samples       = args.num_samples,
+        lr              = args.lr,
+        epochs          = args.epochs,
+        dtype           = "complex128" if args.complex else "float64",
+        backend         = args.backend,
+        optimizer       = args.optimizer,
+        early_stopping  = args.early_stopping,
+        patience        = args.patience,
+    )
+
+    # 2. Setup Physical Model
+    hamil, hilbert, lattice = p_cfg.make_hamiltonian(dtype=np.complex128 if args.complex else np.float64)
+    num_sites               = lattice.ns
     logger.title(f"NQS: {args.model.upper()} on {args.lattice.upper()} ({args.lx}x{args.ly}, Ns={num_sites})")
     
-    # Setup NQS
-    net = make_net(args, num_sites)
+    # 3. Setup NQS Network
+    net = s_cfg.make_net(p_cfg, alpha=args.alpha)
     
-    # Sampler config
-    sample_config = {
-        's_numchains'   :   args.num_chains,
-        's_numsamples'  :   args.num_samples,
-        's_therm_steps' :   args.num_therm,
-        's_sweep_steps' :   args.num_sweep,
-        's_upd_fun'     :   args.sampler_rule,
-    }
-    
+    # 4. Initialize NQS
     psi = NQS(
         logansatz       =   net,
         model           =   hamil,
+        hilbert         =   hilbert,
         backend         =   args.backend,
         dtype           =   jnp.complex128 if args.complex else jnp.float64,
         directory       =   args.save_dir,
         seed            =   args.seed,
-        **sample_config
+        s_numchains     =   args.num_chains,
+        s_numsamples    =   args.num_samples,
+        s_therm_steps   =   args.num_therm,
+        s_sweep_steps   =   args.num_sweep,
+        s_upd_fun       =   args.sampler_rule,
+        optimizer       =   s_cfg.optimizer,
+        early_stopper   =   s_cfg.early_stopping,
     )
     
-    # Load Weights if specified
-    if args.load:
-        logger.info(f"Loading weights from {args.load}...", lvl=1, color='green')
-        psi.load_weights(args.load)
+    if args.load: psi.load_weights(args.load)
         
-    # Exact Diagonalization (for comparison)
+    # Exact Diagonalization
     ed_stats = None
     if args.ed or (num_sites <= args.max_ed_size):
-        logger.info(f"Performing Exact Diagonalization (Lanczos) for comparison...", lvl=1, color='cyan')
+        logger.info(f"Performing Exact Diagonalization...", lvl=1, color='cyan')
         ed_stats = psi.get_exact(k=6, verbose=True)
         
-    # Training
+    # 5. Training
     if args.train:
-        logger.info(f"Starting Variational Ground State Search (SR)...", lvl=1, color='green')
-        train_config = {
-            'n_epochs'          : args.epochs,
-            # other
-            'use_pbar'          : args.use_pbar or True,
-            # lr
-            'checkpoint_every'  : args.checkpoint_every,
-            'lr'                : args.lr,
-            'lr_scheduler'      : args.lr_scheduler,
-            'lr_final'          : args.lr_final,
-            # solvers
-            'ode_solver'        : args.ode_solver or 'Euler',
-            'pre_solver'        : args.pre_solver or 'jacobi',
-            'lin_solver'        : args.lin_solver or 'minres_qlp',
-            # SR options
-            'use_minsr'         : args.use_minsr,
-            'use_sr'            : True,
-            # diagonal
-            'diag_shift'        : args.diag_shift,
-            'diag_final'        : args.diag_final,
-            'diag_scheduler'    : args.diag_scheduler,
-            # Timing
-            'use_timing'        : True,
-            'timing_mode'       : 'detailed',
-            'symmetrize'        : args.symmetrize and impurities is not None and lattice.is_periodic(allow_twisted=False),
-            'exact_predictions' : ed_stats.exact_predictions if psi.exact is not None else hamil.eig_val,
-        }
-        stats = psi.train(**train_config)
-        
-        # Plot training history
-        if args.plot:
-            _plot_training(stats.history, ed_stats, args)
-
-    # Compute Observables
-    if args.compute_observables or args.compute_correlations:
-        logger.info(f"Computing ground state observables...", lvl=1, color='green')
-        
-        # Sample states from trained model
-        (_, _), (states, log_psi), _ = psi.sample(num_samples=2000)
-        
-        # Magnetization
-        if args.model.lower() in ('kitaev', 'heisenberg', 'tfim', 'xxz'):
-            sz_op   = hamil.operators.sig_z(ns=num_sites, type_act='local')
-            sz_vals = psi.compute_observable(functions=sz_op.jax, states=states, ansatze=log_psi)
-            logger.info(f"Average Magnetization <Sz>: {np.mean(sz_vals.mean):.6f} +/- {np.mean(sz_vals.error_of_mean):.6f}", lvl=2)
-
-        # Spin-Spin Correlations
-        if args.compute_correlations:
-            correlators     = ['zz', 'xx']
-            for corr in correlators:
-                logger.info(f"Computing spin-spin correlation matrix <S{corr}_i S{corr}_j>...", lvl=2)
-                # Use correlator kernels
-                corr_kernels    = hamil.operators.correlators(
-                                    correlators = [corr],
-                                    type_acting = 'global',
-                                    compute     = False
-                                )
-                zz_kernel       = corr_kernels[corr]['i,j'].jax
-                corr_mat        = np.zeros((num_sites, num_sites))
-                for i in range(num_sites):
-                    for j in range(i, num_sites):
-                        res             = psi.compute_observable(functions=zz_kernel, states=states, ansatze=log_psi, args=(i, j))
-                        corr_mat[i, j]  = np.real(res.mean)
-                        corr_mat[j, i]  = corr_mat[i, j]
-                
-                if args.plot:
-                    fig, ax = plt.subplots(figsize=(6, 5))
-                    im = ax.imshow(corr_mat, cmap='RdBu_r', vmin=-0.25, vmax=0.25)
-                    plt.colorbar(im, label=fr'$\langle S^{corr}_i S^{corr}_j \rangle$')
-                    ax.set_title(f'Spin-Spin Correlations ({args.model})')
-                    ax.set_xlabel('Site $j$')
-                    ax.set_ylabel('Site $i$')
-                    plt.tight_layout()
-                    plt.savefig(Path(args.save_dir) / "demo_correlations.png", dpi=200)
-                    logger.info(f"Saved correlation plot to {args.save_dir}/demo_correlations.png", lvl=2)
-
-        # Plaquette Operators (for Kitaev Honeycomb)
-        # if args.model.lower() == 'kitaev' and args.lattice == 'honeycomb':
-        #     logger.info("Computing Kitaev plaquette operators W_p...", lvl=2)
-        #     try:
-        #         # W_p = sigma^x_1 sigma^y_2 sigma^z_3 sigma^x_4 sigma^y_5 sigma^z_6
-        #         # We need to get hexagons from lattice
-        #         plaquettes = lattice.get_plaquettes()
-        #         if plaquettes:
-        #             w_p_values = []
-        #             for p_sites in plaquettes:
-        #                 # Construct product operator
-        #                 # This is a bit involved to construct on the fly, 
-        #                 # but we can use the kernel approach if we have a W_p kernel.
-        #                 # For now, let's just log that we found them.
-        #                 pass
-        #             logger.info(f"Identified {len(plaquettes)} plaquettes on the lattice.", lvl=3)
-        #     except Exception as e:
-        #         logger.warning(f"Could not compute plaquettes: {e}", lvl=3)
-
-    # Entanglement Entropy
-    if args.compute_entropy:
-        logger.info(f"Estimating Rényi entanglement entropy (replica method)...", lvl=1, color='green')
-        
-        # Determine bipartition cuts
-        if args.lattice == 'honeycomb':
-            cuts = bipartition_cuts_honeycomb(lattice, cut_type="half_x")
-        else:
-            # Default to half-system cut for other lattices
-            cuts = {"half": np.arange(num_sites // 2)}
-            
-        for label, region in cuts.items():
-            s2, s2_err = compute_renyi_entropy(
-                psi, region=region, q=2, num_samples=args.num_samples_entropy, return_error=True
+        train_cfg = NQSTrainConfig.from_solver(
+            s_cfg,
+            n_epochs            = args.epochs,
+            checkpoint_every    = args.checkpoint_every,
+            phases              = "kitaev" if args.model.lower() == "kitaev" else "default",
+            lr_scheduler        = args.lr_scheduler,
+            diag_shift          = args.diag_shift,
+            use_sr              = not args.no_sr,
+            patience            = args.patience if args.early_stopping else None,
+        )
+        stats = psi.train(
+            **train_cfg.to_train_kwargs(
+                exact_predictions=ed_stats.exact_predictions if ed_stats is not None else None,
+                use_pbar=True,
             )
-            logger.info(f"Rényi-2 Entropy ({label}, size={len(region)}): {s2:.6f} +/- {s2_err:.6f}", lvl=2)
+        )
+        if args.plot: _plot_training(stats.history, ed_stats, args)
 
-    if args.show:
-        plt.show()
+    # 6. Compute Observables (NQS & ED)
+    if args.compute_observables or args.compute_correlations:
+        results = compute_observables(psi, hamil if ed_stats else None, lattice, s_cfg, Path(args.save_dir))
+        
+        # Save results to NPZ
+        np.savez(Path(args.save_dir) / "demo_results.npz", **results)
 
 # ----------------------------------------------------------------------------
 #! CLI Arguments
@@ -371,79 +259,58 @@ def run_demo(args: argparse.Namespace):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="NQS Demo: Variational Ground State Search")
-    
-    # Lattice & Model
-    parser.add_argument("--lattice",    type=str,   default="honeycomb", help="Lattice type")
-    parser.add_argument("--lx",         type=int,   default=4,           help="Lattice Lx")
-    parser.add_argument("--ly",         type=int,   default=3,           help="Lattice Ly")
-    parser.add_argument("--bc",         type=str,   default="pbc",       help="Boundary conditions (pbc/obc)")
-    parser.add_argument("--model",      type=str,   default="kitaev",    help="Model type (kitaev/heisenberg/tfim/xxz/j1j2)")
-    
-    # Model Params
-    parser.add_argument("-J",           type=float, default=1.0,         help="Heisenberg coupling J")
-    parser.add_argument("-K",           type=float, default=1.0,         help="Kitaev coupling K")
-    parser.add_argument("--Jz",         type=float, default=1.0,         help="Ising coupling Jz (for XXZ)")
-    parser.add_argument("--J2",         type=float, default=0.0,         help="NNN coupling J2 (for J1J2)")
-    parser.add_argument("--hx",         type=float, default=0.0,         help="Field hx")
-    parser.add_argument("--hz",         type=float, default=0.0,         help="Field hz")
-    parser.add_argument("--impurity",   type=float, nargs=4, action="append", help="Add impurity: site phi theta amplitude")
-    
-    # NQS Setup
-    parser.add_argument("--ansatz",     type=str,   default="rbm",       help="Ansatz type (rbm/cnn/resnet/eqgcnn/ar)")
-    parser.add_argument("--alpha",      type=float, default=None,        help="RBM hidden density (hidden = alpha * sites)")
-    parser.add_argument("--complex",    action="store_true",             help="Use complex-valued NQS")
-    parser.add_argument("--accuracy",   type=str,   default="medium",    help="SOTA parameter tier (fast/medium/high)")
-    parser.add_argument("--backend",    type=str,   default="jax",       help="Computation backend (jax/numpy)")
-    
-    # Sampler
-    parser.add_argument("--num-chains",  type=int,   default=16,         help="Number of MCMC chains")
-    parser.add_argument("--num-samples", type=int,   default=1000,       help="Samples per chain per epoch")
-    parser.add_argument("--num-therm",   type=int,   default=100,        help="Thermalization steps")
-    parser.add_argument("--num-sweep",   type=int,   default=10,         help="Sweep steps between samples")
-    parser.add_argument("--sampler-rule",type=str,   default="LOCAL",    help="Update rule (LOCAL/EXCHANGE/WORM)")
-    
-    # Training
-    parser.add_argument("--train",      action="store_true",             help="Run training loop")
-    parser.add_argument("--epochs",     type=int,   default=300,         help="Number of epochs")
-    parser.add_argument("--lr",         type=float, default=0.01,        help="Learning rate")
-    parser.add_argument("--lr-scheduler",type=str,  default="cosine",    help="LR scheduler type")
-    parser.add_argument("--no-sr",      action="store_true",             help="Use plain SGD instead of SR")
-    parser.add_argument("--diag-shift", type=float, default=1e-3,        help="SR regularization diagonal shift")
-    parser.add_argument("--checkpoint-every", type=int, default=50,      help="Save weights every N epochs")
-    
-    # Actions & Utilities
-    parser.add_argument("--test",       action="store_true",             help="Run small test scenario")
-    parser.add_argument("--ed",         action="store_true",             help="Force Exact Diagonalization")
-    parser.add_argument("--max-ed-size",type=int,   default=16,          help="Auto-ED if num_sites <= this")
-    parser.add_argument("--load",       type=str,   default=None,        help="Path to weights file to load")
-    parser.add_argument("--save-dir",   type=str,   default="./demo_output", help="Output directory")
-    parser.add_argument("--compute-observables", action="store_true",    help="Compute magnetization and energy")
-    parser.add_argument("--compute-correlations", action="store_true",   help="Compute spin correlation matrix")
-    parser.add_argument("--compute-entropy",      action="store_true",   help="Estimate Rényi-2 entropy")
-    parser.add_argument("--num-samples-entropy",  type=int, default=4096, help="Samples for entropy estimation")
-    parser.add_argument("--plot",       action="store_true",             help="Save plots")
-    parser.add_argument("--show",       action="store_true",             help="Show plots interactively")
-    parser.add_argument("--seed",       type=int,   default=42,          help="Random seed")
-    
+    parser.add_argument("--lattice",    type=str,   default="honeycomb")
+    parser.add_argument("--lx",         type=int,   default=4)
+    parser.add_argument("--ly",         type=int,   default=3)
+    parser.add_argument("--bc",         type=str,   default="pbc")
+    parser.add_argument("--model",      type=str,   default="kitaev")
+    parser.add_argument("-J",           type=float, default=1.0)
+    parser.add_argument("-K",           type=float, default=1.0)
+    parser.add_argument("--Gamma",      type=float, default=0.0)
+    parser.add_argument("--Jz",         type=float, default=1.0)
+    parser.add_argument("--J2",         type=float, default=0.0)
+    parser.add_argument("--hx",         type=float, default=0.0)
+    parser.add_argument("--hz",         type=float, default=0.0)
+    parser.add_argument("--impurity",   type=float, nargs=4, action="append")
+    parser.add_argument("--ansatz",     type=str,   default="rbm")
+    parser.add_argument("--alpha",      type=float, default=None)
+    parser.add_argument("--complex",    action="store_true")
+    parser.add_argument("--accuracy",   type=str,   default="medium")
+    parser.add_argument("--backend",    type=str,   default="jax")
+    parser.add_argument("--num-chains",  type=int,   default=16)
+    parser.add_argument("--num-samples", type=int,   default=1000)
+    parser.add_argument("--num-therm",   type=int,   default=100)
+    parser.add_argument("--num-sweep",   type=int,   default=10)
+    parser.add_argument("--sampler-rule",type=str,   default="LOCAL")
+    parser.add_argument("--train",      action="store_true")
+    parser.add_argument("--epochs",     type=int,   default=300)
+    parser.add_argument("--lr",         type=float, default=0.01)
+    parser.add_argument("--lr-scheduler",type=str,  default="cosine")
+    parser.add_argument("--optimizer",  type=str,   default=None, help="Optax optimizer: adam, sgd, adamw")
+    parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping")
+    parser.add_argument("--patience",   type=int,   default=50, help="Early stopping patience")
+    parser.add_argument("--no-sr",      action="store_true")
+    parser.add_argument("--diag-shift", type=float, default=1e-3)
+    parser.add_argument("--checkpoint-every", type=int, default=50)
+    parser.add_argument("--test",       action="store_true")
+    parser.add_argument("--ed",         action="store_true")
+    parser.add_argument("--max-ed-size",type=int,   default=16)
+    parser.add_argument("--load",       type=str,   default=None)
+    parser.add_argument("--save-dir",   type=str,   default="./demo_output")
+    parser.add_argument("--compute-observables", action="store_true")
+    parser.add_argument("--compute-correlations", action="store_true")
+    parser.add_argument("--compute-entropy",      action="store_true")
+    parser.add_argument("--num-samples-entropy",  type=int, default=4096)
+    parser.add_argument("--plot",       action="store_true")
+    parser.add_argument("--show",       action="store_true")
+    parser.add_argument("--seed",       type=int,   default=42)
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-    
     if args.test:
-        # Override for small test
-        args.lx = 2
-        args.ly = 2
-        args.lattice = "honeycomb"
-        args.model = "kitaev"
-        args.epochs = 50
-        args.train = True
-        args.ed = True
-        args.compute_observables = True
-        args.compute_correlations = True
-        args.compute_entropy = True
-        args.complex = True
-        args.plot = True
-        
+        args.lx, args.ly, args.lattice, args.model = 2, 2, "honeycomb", "kitaev"
+        args.epochs, args.train, args.ed, args.compute_observables = 50, True, True, True
+        args.complex, args.plot = True, True
     os.makedirs(args.save_dir, exist_ok=True)
     run_demo(args)

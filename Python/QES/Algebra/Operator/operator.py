@@ -1430,7 +1430,14 @@ class Operator(GeneralMatrix):
             if logger is not None:
                 logger.warning("Hilbert space not provided. Assuming single-particle picture for matvec.")
 
-        return self._adapter.matvec(
+        # Runtime backend fallback: allow NumPy vectors even when operator backend is JAX.
+        # This keeps ED/Lanczos post-processing paths working without forcing explicit
+        # backend switches on the operator instance.
+        adapter = self._adapter
+        if isinstance(vecs, np.ndarray) and isinstance(adapter, JaxAdapter):
+            adapter = NumpyAdapter()
+
+        return adapter.matvec(
             self, vecs, hilbert_in, hilbert_out, *args,
             symmetry_mode=symmetry_mode, multithreaded=multithreaded,
             out=out, thread_buffer=thread_buffer, chunk_size=chunk_size, dtype=dtype

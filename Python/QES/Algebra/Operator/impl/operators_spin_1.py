@@ -978,10 +978,10 @@ def s1_x(
         name = "S1x"
     elif type_act == OperatorTypeActing.Local:
         code = Spin1LookupCodes.s1_x_local
-        name = "S1x/L"
+        name = "S1x"
     else:
         code = Spin1LookupCodes.s1_x_corr
-        name = "S1x/C"
+        name = "S1x"
 
     return create_operator(
         type_act=type_act,
@@ -1014,10 +1014,10 @@ def s1_y(
         name = "S1y"
     elif type_act == OperatorTypeActing.Local:
         code = Spin1LookupCodes.s1_y_local
-        name = "S1y/L"
+        name = "S1y"
     else:
         code = Spin1LookupCodes.s1_y_corr
-        name = "S1y/C"
+        name = "S1y"
 
     return create_operator(
         type_act=type_act,
@@ -1050,10 +1050,10 @@ def s1_z(
         name = "S1z"
     elif type_act == OperatorTypeActing.Local:
         code = Spin1LookupCodes.s1_z_local
-        name = "S1z/L"
+        name = "S1z"
     else:
         code = Spin1LookupCodes.s1_z_corr
-        name = "S1z/C"
+        name = "S1z"
 
     return create_operator(
         type_act=type_act,
@@ -1086,10 +1086,10 @@ def s1_z2(
         name = "S1z2"
     elif type_act == OperatorTypeActing.Local:
         code = Spin1LookupCodes.s1_z2_local
-        name = "S1z2/L"
+        name = "S1z2"
     else:
         code = Spin1LookupCodes.s1_z2_corr
-        name = "S1z2/C"
+        name = "S1z2"
 
     return create_operator(
         type_act=type_act,
@@ -1122,10 +1122,10 @@ def s1_plus(
         name = "S1p"
     elif type_act == OperatorTypeActing.Local:
         code = Spin1LookupCodes.s1_p_local
-        name = "S1p/L"
+        name = "S1p"
     else:
         code = Spin1LookupCodes.s1_p_corr
-        name = "S1p/C"
+        name = "S1p"
 
     return create_operator(
         type_act=type_act,
@@ -1158,10 +1158,10 @@ def s1_minus(
         name = "S1m"
     elif type_act == OperatorTypeActing.Local:
         code = Spin1LookupCodes.s1_m_local
-        name = "S1m/L"
+        name = "S1m"
     else:
         code = Spin1LookupCodes.s1_m_corr
-        name = "S1m/C"
+        name = "S1m"
 
     return create_operator(
         type_act=type_act,
@@ -1200,7 +1200,7 @@ def s1_pm(
         ns=ns,
         sites=sites,
         extra_args=(spin_value,),
-        name="S1pm/C",
+        name="S1pm",
         modifies=True,
         code=Spin1LookupCodes.s1_pm_corr,
     )
@@ -1228,7 +1228,7 @@ def s1_mp(
         ns=ns,
         sites=sites,
         extra_args=(spin_value,),
-        name="S1mp/C",
+        name="S1mp",
         modifies=True,
         code=Spin1LookupCodes.s1_mp_corr,
     )

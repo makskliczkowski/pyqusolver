@@ -41,15 +41,105 @@ Key Features
 """
 
 import  importlib
-from    dataclasses import dataclass, field, asdict
-from    typing      import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from    dataclasses import MISSING, asdict, dataclass, field, fields
+from    typing      import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Optional, Tuple, Union
 
 # ----------------------------------------------------------------------------
 #! Configuration dataclasses
 # ----------------------------------------------------------------------------
 
+def _type_to_str(tp: Any) -> str:
+    """Return a compact type annotation representation."""
+    return str(tp).replace("typing.", "")
+
+def _default_to_repr(dc_field) -> Any:
+    """Represent dataclass defaults without invoking factories."""
+    if dc_field.default is not MISSING:
+        return dc_field.default
+    if dc_field.default_factory is not MISSING:
+        fac_name = getattr(dc_field.default_factory, "__name__", "factory")
+        return f"<{fac_name}>"
+    return "<required>"
+
+# ----------------------------------------------------------------------------
+
+class _ConfigSchemaMixin:
+    """
+    Shared config introspection helpers for dataclass-based configs.
+    """
+
+    FIELD_GROUPS: ClassVar[Dict[str, Tuple[str, ...]]] = {}
+
+    @classmethod
+    def schema(cls, grouped: bool = True) -> Dict[str, Any]:
+        """
+        Return config fields with type/default metadata.
+
+        Parameters
+        ----------
+        grouped : bool
+            If True, return fields grouped by ``FIELD_GROUPS``.
+        """
+        base = {}
+        for dc_field in fields(cls):
+            if not dc_field.init:
+                continue
+            base[dc_field.name] = {
+                "type": _type_to_str(dc_field.type),
+                "default": _default_to_repr(dc_field),
+            }
+
+        if not grouped or not getattr(cls, "FIELD_GROUPS", None):
+            return base
+
+        grouped_schema: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        seen = set()
+        for group_name, names in cls.FIELD_GROUPS.items():
+            group_entries = {k: base[k] for k in names if k in base}
+            if group_entries:
+                grouped_schema[group_name] = group_entries
+                seen.update(group_entries.keys())
+
+        other = {k: v for k, v in base.items() if k not in seen}
+        if other:
+            grouped_schema["other"] = other
+
+        return grouped_schema
+
+    @classmethod
+    def defaults(cls) -> Dict[str, Any]:
+        """Return default values for all init fields."""
+        out = {}
+        for dc_field in fields(cls):
+            if dc_field.init:
+                out[dc_field.name] = _default_to_repr(dc_field)
+        return out
+
+    @classmethod
+    def describe(cls, grouped: bool = True) -> str:
+        """
+        Return a human-readable summary of available kwargs and defaults.
+        """
+        info = cls.schema(grouped=grouped)
+        lines = [f"{cls.__name__} kwargs:"]
+
+        if grouped and cls.FIELD_GROUPS:
+            for group_name, entries in info.items():
+                lines.append(f"[{group_name}]")
+                for key, meta in entries.items():
+                    lines.append(f"  - {key}: {meta['type']} = {meta['default']!r}")
+        else:
+            for key, meta in info.items():
+                lines.append(f"  - {key}: {meta['type']} = {meta['default']!r}")
+
+        return "\n".join(lines)
+
+    def help(self, grouped: bool = True) -> None:
+        """Print available kwargs, types, and defaults."""
+        print(self.__class__.describe(grouped=grouped))
+
 @dataclass
-class NQSPhysicsConfig:
+class NQSPhysicsConfig(_ConfigSchemaMixin):
     """
     Configuration for the physical model in NQS.
     Behaves like a dictionary and allows dynamic argument addition.
@@ -73,6 +163,24 @@ class NQSPhysicsConfig:
     # ---------------
     # Lazy properties for derived quantities can be added here if needed
     # ---------------
+    FIELD_GROUPS: ClassVar[Dict[str, Tuple[str, ...]]] = {
+        "model": (
+            "model_type",
+            "hx",
+            "hy",
+            "hz",
+            "impurities",
+            "args",
+        ),
+        "lattice": (
+            "lattice_type",
+            "lx",
+            "ly",
+            "lz",
+            "bc",
+            "flux",
+        ),
+    }
 
     def __getitem__(self, key):
         if key in self.__dict__:
@@ -116,14 +224,16 @@ class NQSPhysicsConfig:
         from QES.Algebra.hilbert            import HilbertSpace
 
         # Use local imports to avoid circular dependencies
-        lattice = choose_lattice(
-            typek   =   self.lattice_type,
-            lx      =   self.lx,
-            ly      =   self.ly,
-            bc      =   self.bc,
-            flux    =   self.flux,
-            **self.args # Pass any additional lattice-related args
-        )
+        # Pass only lattice-relevant args
+        lattice_kwargs  = self.get("lattice_kwargs", {})
+        lattice         = choose_lattice(
+                            typek   =   self.lattice_type,
+                            lx      =   self.lx,
+                            ly      =   self.ly,
+                            bc      =   self.bc,
+                            flux    =   self.flux,
+                            **lattice_kwargs
+                        )
 
         # Allow overriding hilbert kwargs from args, but also support direct kwargs
         hilbert_kwargs = self.get("hilbert_kwargs", {})
@@ -132,6 +242,11 @@ class NQSPhysicsConfig:
             
         hilbert         = HilbertSpace(lattice=lattice, **hilbert_kwargs)
         model_kwargs    = self.args.copy()
+        
+        # Ensure we don't pass lattice_kwargs/hilbert_kwargs to choose_model
+        model_kwargs.pop("lattice_kwargs", None)
+        model_kwargs.pop("hilbert_kwargs", None)
+
         model_kwargs.update({
             "lattice"       : lattice,
             "hilbert_space" : hilbert,
@@ -155,23 +270,113 @@ class NQSPhysicsConfig:
         return choose_model(self.model_type, **model_kwargs), hilbert, lattice
 
 @dataclass
-class NQSSolverConfig:
+class NQSSolverConfig(_ConfigSchemaMixin):
     """
-    Configuration for the NQS solver and training.
+    Configuration for NQS construction and training defaults.
+
+    This dataclass stores solver-level defaults and can be converted to a
+    :class:`NQSTrainConfig` using :meth:`make_train_config`.
     """
-    ansatz      : str   = "rbm"
-    sampler     : str   = "MCSampler"
-    n_chains    : int   = 16
-    n_samples   : int   = 1000
-    n_sweep     : int   = 10
-    n_therm     : int   = 100
-    lr          : float = 0.01
-    epochs      : int   = 300
-    dtype       : str   = "complex128"
-    backend     : str   = "jax"
-    
+    ansatz              : str = "rbm"
+    sampler             : str = "MCSampler"
+    n_chains            : int = 16
+    n_samples           : int = 1000
+    n_sweep             : int = 10
+    n_therm             : int = 100
+    lr                  : float = 0.01
+    epochs              : int = 300
+    dtype               : str = "complex128"
+    backend             : str = "jax"
+
+    # Training / scheduling defaults
+    phases              : Union[str, tuple] = "default"
+    lr_scheduler        : Optional[Union[str, Callable]] = "cosine"
+    reg                 : Optional[float] = None
+    reg_scheduler       : Optional[Union[str, Callable]] = None
+    diag_shift          : float = 1e-2
+    diag_scheduler      : Optional[Union[str, Callable]] = None
+
+    # Sampler controls used in NQS.train(...)
+    n_batch             : int = 128
+    n_update            : Optional[int] = 1
+    upd_fun             : Optional[Union[str, Any]] = "local"
+    update_kwargs       : Dict[str, Any] = field(default_factory=dict)
+    pt_betas            : Optional[List[float]] = None
+    global_p            : Optional[float] = None
+    global_update       : Optional[Union[str, Callable]] = None
+    global_fraction     : Optional[float] = None
+
+    # TDVP/SR + linear solver defaults
+    lin_solver          : Union[str, Callable] = "minres_qlp"
+    pre_solver          : Union[str, Callable] = "jacobi"
+    ode_solver          : Union[str, Any] = "Euler"
+    lin_sigma           : Optional[float] = None
+    lin_is_gram         : bool = True
+    lin_force_mat       : bool = False
+    use_sr              : bool = True
+    use_minsr           : bool = False
+    rhs_prefactor       : float = -1.0
+    grad_clip           : Optional[float] = 1.0
+    timing_mode         : str = "detailed"
+
+    # Optimizer and stopping
+    optimizer           : Optional[str] = None
+    early_stopping      : bool = False
+    patience            : int = 50
+
     # SOTA configuration estimated from physics
-    sota_config : Any   = field(default=None, init=False)
+    sota_config         : Any = field(default=None, init=False)
+
+    FIELD_GROUPS: ClassVar[Dict[str, Tuple[str, ...]]] = {
+        "core": (
+            "ansatz",
+            "sampler",
+            "dtype",
+            "backend",
+            "epochs",
+        ),
+        "sampling": (
+            "n_batch",
+            "n_chains",
+            "n_samples",
+            "n_sweep",
+            "n_therm",
+            "n_update",
+            "upd_fun",
+            "update_kwargs",
+            "pt_betas",
+            "global_p",
+            "global_update",
+            "global_fraction",
+        ),
+        "schedules": (
+            "phases",
+            "lr",
+            "lr_scheduler",
+            "reg",
+            "reg_scheduler",
+            "diag_shift",
+            "diag_scheduler",
+        ),
+        "tdvp_solver": (
+            "lin_solver",
+            "pre_solver",
+            "ode_solver",
+            "lin_sigma",
+            "lin_is_gram",
+            "lin_force_mat",
+            "use_sr",
+            "use_minsr",
+            "rhs_prefactor",
+            "grad_clip",
+            "timing_mode",
+        ),
+        "training_utils": (
+            "optimizer",
+            "early_stopping",
+            "patience",
+        ),
+    }
 
     def __post_init__(self):
         """
@@ -214,22 +419,406 @@ class NQSSolverConfig:
             **factory_kwargs
         )
 
+    def make_train_config(self, **kwargs) -> "NQSTrainConfig":
+        """
+        Create a training config seeded from this solver config.
+        """
+        return NQSTrainConfig.from_solver(self, **kwargs)
+
+@dataclass
+class NQSTrainConfig(_ConfigSchemaMixin):
+    """
+    Training configuration helper for :meth:`NQS.train`.
+
+    This class centralizes training defaults and converts them into keyword
+    arguments expected by ``NQS.train(...)``.
+    """
+
+    # Core loop
+    n_epochs            : int = 300
+    checkpoint_every    : int = 50
+    save_best_checkpoint: bool = True
+    best_checkpoint_every: Optional[int] = None
+    best_checkpoint_min_delta: float = 0.0
+    save_best_stats     : bool = False
+    phases              : Union[str, tuple] = "default"
+    load_checkpoint     : bool = False
+    checkpoint_step     : Optional[Union[int, str]] = None
+    override            : bool = True
+    reset_weights       : bool = False
+    reset_stats         : bool = True
+    save_path           : Optional[str] = None
+
+    # Sampling / update controls
+    n_batch             : int = 128
+    n_update            : Optional[int] = None
+    num_samples         : Optional[int] = None
+    num_chains          : Optional[int] = None
+    num_thermal         : Optional[int] = None
+    num_sweep           : Optional[int] = None
+    pt_betas            : Optional[List[float]] = None
+    upd_fun             : Optional[Union[str, Any]] = None
+    update_kwargs       : Optional[Dict[str, Any]] = None
+    global_p            : Optional[float] = None
+    global_update       : Optional[Union[str, Callable]] = None
+    global_fraction     : Optional[float] = None
+
+    # Optimisation schedules and values
+    lr                  : Optional[float] = 1e-2
+    lr_scheduler        : Optional[Union[str, Callable]] = "cosine"
+    reg                 : Optional[float] = None
+    reg_scheduler       : Optional[Union[str, Callable]] = None
+    diag_shift          : float = 1e-2
+    diag_scheduler      : Optional[Union[str, Callable]] = None
+
+    # Scheduler aliases forwarded as prefixed kwargs (consumed in NQSTrainer)
+    lr_init             : Optional[float] = None
+    lr_final            : Optional[float] = None
+    lr_decay_rate       : Optional[float] = None
+    lr_patience         : Optional[int] = None
+    lr_min_delta        : Optional[float] = None
+    lr_cooldown         : Optional[int] = None
+    lr_step_size        : Optional[int] = None
+    lr_max_epochs       : Optional[int] = None
+    lr_es               : Optional[int] = None
+    lr_es_min           : Optional[float] = None
+
+    reg_init            : Optional[float] = None
+    reg_final           : Optional[float] = None
+    reg_decay_rate      : Optional[float] = None
+    reg_patience        : Optional[int] = None
+    reg_min_delta       : Optional[float] = None
+    reg_step_size       : Optional[int] = None
+    reg_max_epochs      : Optional[int] = None
+
+    diag_init           : Optional[float] = None
+    diag_final          : Optional[float] = None
+    diag_decay_rate     : Optional[float] = None
+    diag_patience       : Optional[int] = None
+    diag_min_delta      : Optional[float] = None
+    diag_step_size      : Optional[int] = None
+    diag_max_epochs     : Optional[int] = None
+
+    # TDVP / SR and linear solver
+    lin_solver          : Union[str, Callable] = "minres_qlp"
+    pre_solver          : Union[str, Callable] = "jacobi"
+    ode_solver          : Union[str, Any] = "Euler"
+    tdvp                : Optional[Any] = None
+    lin_sigma           : Optional[float] = None
+    lin_is_gram         : bool = True
+    lin_force_mat       : bool = False
+    use_sr              : bool = True
+    use_minsr           : bool = False
+    rhs_prefactor       : float = -1.0
+    grad_clip           : Optional[float] = 1.0
+
+    # Utilities
+    optimizer           : Optional[Any] = None
+    early_stopper       : Optional[Any] = None
+    lower_states        : Optional[List[Any]] = None
+    timing_mode         : str = "detailed"
+    symmetrize          : Optional[bool] = None
+    background          : bool = False
+    use_pbar            : bool = True
+    patience            : Optional[int] = None
+
+    # Optional exact benchmark
+    exact_predictions   : Optional[Any] = None
+    exact_method        : Optional[str] = None
+
+    # Extendable bag of kwargs forwarded to NQS.train
+    extra_kwargs        : Dict[str, Any] = field(default_factory=dict)
+
+    FIELD_GROUPS: ClassVar[Dict[str, Tuple[str, ...]]] = {
+        "core_loop": (
+            "n_epochs",
+            "checkpoint_every",
+            "save_best_checkpoint",
+            "best_checkpoint_every",
+            "best_checkpoint_min_delta",
+            "save_best_stats",
+            "load_checkpoint",
+            "checkpoint_step",
+            "override",
+            "reset_weights",
+            "reset_stats",
+            "save_path",
+            "phases",
+        ),
+        "sampling_updates": (
+            "n_batch",
+            "n_update",
+            "num_samples",
+            "num_chains",
+            "num_thermal",
+            "num_sweep",
+            "pt_betas",
+            "upd_fun",
+            "update_kwargs",
+            "global_p",
+            "global_update",
+            "global_fraction",
+        ),
+        "schedules": (
+            "lr",
+            "lr_scheduler",
+            "reg",
+            "reg_scheduler",
+            "diag_shift",
+            "diag_scheduler",
+            "lr_init",
+            "lr_final",
+            "lr_decay_rate",
+            "lr_patience",
+            "lr_min_delta",
+            "lr_cooldown",
+            "lr_step_size",
+            "lr_max_epochs",
+            "lr_es",
+            "lr_es_min",
+            "reg_init",
+            "reg_final",
+            "reg_decay_rate",
+            "reg_patience",
+            "reg_min_delta",
+            "reg_step_size",
+            "reg_max_epochs",
+            "diag_init",
+            "diag_final",
+            "diag_decay_rate",
+            "diag_patience",
+            "diag_min_delta",
+            "diag_step_size",
+            "diag_max_epochs",
+        ),
+        "tdvp_solver": (
+            "lin_solver",
+            "pre_solver",
+            "ode_solver",
+            "tdvp",
+            "lin_sigma",
+            "lin_is_gram",
+            "lin_force_mat",
+            "use_sr",
+            "use_minsr",
+            "rhs_prefactor",
+            "grad_clip",
+        ),
+        "utilities": (
+            "optimizer",
+            "early_stopper",
+            "lower_states",
+            "timing_mode",
+            "symmetrize",
+            "background",
+            "use_pbar",
+            "patience",
+            "exact_predictions",
+            "exact_method",
+            "extra_kwargs",
+        ),
+    }
+
+    KWARG_ALIASES: ClassVar[Dict[str, str]] = {
+        "p_global": "global_p",
+        "lr_initial": "lr_init",
+        "reg_initial": "reg_init",
+        "diag_initial": "diag_init",
+    }
+
+    @classmethod
+    def kwargs_aliases(cls) -> Dict[str, str]:
+        """Return accepted compatibility aliases for train kwargs."""
+        return dict(cls.KWARG_ALIASES)
+
+    @classmethod
+    def describe_kwargs(cls, grouped: bool = True, include_aliases: bool = True) -> str:
+        """Describe available kwargs and include alias mapping when requested."""
+        text = cls.describe(grouped=grouped)
+        if include_aliases:
+            text += "\nAliases:"
+            for alias, canonical in cls.KWARG_ALIASES.items():
+                text += f"\n  - {alias} -> {canonical}"
+        return text
+
+    @classmethod
+    def from_solver(
+        cls,
+        solver_config: "NQSSolverConfig",
+        **kwargs,
+    ) -> "NQSTrainConfig":
+        """
+        Build a training config from a solver config.
+        """
+        return cls(
+            n_epochs=solver_config.epochs,
+            phases=solver_config.phases,
+            n_batch=solver_config.n_batch,
+            n_update=solver_config.n_update,
+            num_samples=solver_config.n_samples,
+            num_chains=solver_config.n_chains,
+            num_thermal=solver_config.n_therm,
+            num_sweep=solver_config.n_sweep,
+            pt_betas=solver_config.pt_betas,
+            upd_fun=solver_config.upd_fun,
+            update_kwargs=(solver_config.update_kwargs.copy() if solver_config.update_kwargs else None),
+            global_p=solver_config.global_p,
+            global_update=solver_config.global_update,
+            global_fraction=solver_config.global_fraction,
+            lr=solver_config.lr,
+            lr_scheduler=solver_config.lr_scheduler,
+            reg=solver_config.reg,
+            reg_scheduler=solver_config.reg_scheduler,
+            diag_shift=solver_config.diag_shift,
+            diag_scheduler=solver_config.diag_scheduler,
+            lin_solver=solver_config.lin_solver,
+            pre_solver=solver_config.pre_solver,
+            ode_solver=solver_config.ode_solver,
+            lin_sigma=solver_config.lin_sigma,
+            lin_is_gram=solver_config.lin_is_gram,
+            lin_force_mat=solver_config.lin_force_mat,
+            use_sr=solver_config.use_sr,
+            use_minsr=solver_config.use_minsr,
+            rhs_prefactor=solver_config.rhs_prefactor,
+            grad_clip=solver_config.grad_clip,
+            timing_mode=solver_config.timing_mode,
+            optimizer=solver_config.optimizer,
+            patience=(solver_config.patience if solver_config.early_stopping else None),
+            **kwargs,
+        )
+
+    def to_train_kwargs(
+        self,
+        *,
+        solver_config       : Optional["NQSSolverConfig"] = None,
+        exact_predictions   : Any = None,
+        exact_method        : Optional[str] = None,
+        **overrides,
+    ) -> Dict[str, Any]:
+        """
+        Convert config to keyword arguments for :meth:`NQS.train`.
+        """
+        
+        optimizer = self.optimizer
+        if optimizer is None and solver_config is not None:
+            optimizer = solver_config.optimizer
+
+        patience = self.patience
+        if patience is None and solver_config is not None and solver_config.early_stopping:
+            patience = solver_config.patience
+
+        ex_pred = self.exact_predictions if exact_predictions is None else exact_predictions
+        ex_meth = self.exact_method if exact_method is None else exact_method
+
+        train_kwargs = {
+            "n_epochs"          : self.n_epochs,
+            "checkpoint_every"  : self.checkpoint_every,
+            "save_best_checkpoint": self.save_best_checkpoint,
+            "best_checkpoint_every": self.best_checkpoint_every,
+            "best_checkpoint_min_delta": self.best_checkpoint_min_delta,
+            "save_best_stats"   : self.save_best_stats,
+            "load_checkpoint"   : self.load_checkpoint,
+            "checkpoint_step"   : self.checkpoint_step,
+            "override"          : self.override,
+            "reset_weights"     : self.reset_weights,
+            "reset_stats"       : self.reset_stats,
+            "save_path"         : self.save_path,
+            "phases"            : self.phases,
+            "n_batch"           : self.n_batch,
+            "n_update"          : self.n_update,
+            "num_samples"       : self.num_samples,
+            "num_chains"        : self.num_chains,
+            "num_thermal"       : self.num_thermal,
+            "num_sweep"         : self.num_sweep,
+            "pt_betas"          : self.pt_betas,
+            "upd_fun"           : self.upd_fun,
+            "update_kwargs"     : self.update_kwargs,
+            "global_p"          : self.global_p,
+            "global_update"     : self.global_update,
+            "global_fraction"   : self.global_fraction,
+            "lr"                : self.lr,
+            "lr_scheduler"      : self.lr_scheduler,
+            "reg"               : self.reg,
+            "reg_scheduler"     : self.reg_scheduler,
+            "diag_shift"        : self.diag_shift,
+            "diag_scheduler"    : self.diag_scheduler,
+            "lin_solver"        : self.lin_solver,
+            "pre_solver"        : self.pre_solver,
+            "ode_solver"        : self.ode_solver,
+            "tdvp"              : self.tdvp,
+            "lin_sigma"         : self.lin_sigma,
+            "lin_is_gram"       : self.lin_is_gram,
+            "lin_force_mat"     : self.lin_force_mat,
+            "use_sr"            : self.use_sr,
+            "use_minsr"         : self.use_minsr,
+            "rhs_prefactor"     : self.rhs_prefactor,
+            "grad_clip"         : self.grad_clip,
+            "timing_mode"       : self.timing_mode,
+            "early_stopper"     : self.early_stopper,
+            "optimizer"         : optimizer,
+            "lower_states"      : self.lower_states,
+            "symmetrize"        : self.symmetrize,
+            "background"        : self.background,
+            "use_pbar"          : self.use_pbar,
+            "patience"          : patience,
+            "exact_predictions" : ex_pred,
+            "exact_method"      : ex_meth,
+        }
+
+        schedule_kwargs = {
+            "lr_init"           : self.lr_init,
+            "lr_initial"        : self.lr_init,
+            "lr_final"          : self.lr_final,
+            "lr_decay_rate"     : self.lr_decay_rate,
+            "lr_patience"       : self.lr_patience,
+            "lr_min_delta"      : self.lr_min_delta,
+            "lr_cooldown"       : self.lr_cooldown,
+            "lr_step_size"      : self.lr_step_size,
+            "lr_max_epochs"     : self.lr_max_epochs,
+            "lr_es"             : self.lr_es,
+            "lr_es_min"         : self.lr_es_min,
+            "reg_init"          : self.reg_init,
+            "reg_initial"       : self.reg_init,
+            "reg_final"         : self.reg_final,
+            "reg_decay_rate"    : self.reg_decay_rate,
+            "reg_patience"      : self.reg_patience,
+            "reg_min_delta"     : self.reg_min_delta,
+            "reg_step_size"     : self.reg_step_size,
+            "reg_max_epochs"    : self.reg_max_epochs,
+            "diag_init"         : self.diag_init,
+            "diag_initial"      : self.diag_init,
+            "diag_final"        : self.diag_final,
+            "diag_decay_rate"   : self.diag_decay_rate,
+            "diag_patience"     : self.diag_patience,
+            "diag_min_delta"    : self.diag_min_delta,
+            "diag_step_size"    : self.diag_step_size,
+            "diag_max_epochs"   : self.diag_max_epochs,
+        }
+        train_kwargs.update({k: v for k, v in schedule_kwargs.items() if v is not None})
+        train_kwargs.update(self.extra_kwargs)
+        train_kwargs.update(overrides)
+
+        return {k: v for k, v in train_kwargs.items() if v is not None}
+
 # ----------------------------------------------------------------------------
 # Lazy Import Configuration
 # ----------------------------------------------------------------------------
 
 _LAZY_IMPORTS = {
-    "NQS": (".nqs", "NQS"),
-    "VMCSampler": ("QES.Solver.MonteCarlo.vmc", "VMCSampler"),
-    "NQSTrainer": (".src.nqs_train", "NQSTrainer"),
-    "NQSTrainStats": (".src.nqs_train", "NQSTrainStats"),
-    "NQSObservable": (".src.nqs_engine", "NQSObservable"),
-    "NQSLoss": (".src.nqs_engine", "NQSLoss"),
-    "NQSEvalEngine": (".src.nqs_engine", "NQSEvalEngine"),
-    "EvaluationResult": (".src.nqs_engine", "EvaluationResult"),
-    "NetworkFactory": (".src.nqs_network_integration", "NetworkFactory"),
-    "TDVP": (".src.tdvp", "TDVP"),
-    "TDVPStepInfo": (".src.tdvp", "TDVPStepInfo"),
+    "NQS"               : (".nqs", "NQS"),
+    "VMCSampler"        : ("QES.Solver.MonteCarlo.vmc", "VMCSampler"),
+    "NQSTrainer"        : (".src.nqs_train", "NQSTrainer"),
+    "NQSTrainStats"     : (".src.nqs_train", "NQSTrainStats"),
+    "NQSObservable"     : (".src.nqs_engine", "NQSObservable"),
+    "NQSLoss"           : (".src.nqs_engine", "NQSLoss"),
+    "NQSEvalEngine"     : (".src.nqs_engine", "NQSEvalEngine"),
+    "EvaluationResult"  : (".src.nqs_engine", "EvaluationResult"),
+    "NetworkFactory"    : (".src.nqs_network_integration", "NetworkFactory"),
+    "TDVP"              : (".src.tdvp", "TDVP"),
+    "TDVPStepInfo"      : (".src.tdvp", "TDVPStepInfo"),
+    "NQSDataset"        : (".src.nqs_dataset", "NQSDataset"),
+    "EDDataset"         : (".src.nqs_dataset", "EDDataset"),
+    "CommonDataset"     : (".src.nqs_dataset", "CommonDataset"),
 }
 
 _LAZY_CACHE = {}
@@ -237,11 +826,12 @@ _LAZY_CACHE = {}
 if TYPE_CHECKING:
     from QES.Solver.MonteCarlo.vmc import VMCSampler
 
-    from .nqs import NQS
-    from .src.nqs_engine import EvaluationResult, NQSEvalEngine, NQSLoss, NQSObservable
-    from .src.nqs_network_integration import NetworkFactory
-    from .src.nqs_train import NQSTrainer, NQSTrainStats
-    from .src.tdvp import TDVP, TDVPStepInfo
+    from .nqs                           import NQS
+    from .src.nqs_engine                import EvaluationResult, NQSEvalEngine, NQSLoss, NQSObservable
+    from .src.nqs_network_integration   import NetworkFactory
+    from .src.nqs_train                 import NQSTrainer, NQSTrainStats
+    from .src.tdvp                      import TDVP, TDVPStepInfo
+    from .src.nqs_dataset               import NQSDataset, EDDataset, CommonDataset
 
 
 def __getattr__(name: str) -> Any:
@@ -275,23 +865,19 @@ def __getattr__(name: str) -> Any:
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-
 def __dir__():
     """Support for dir() and tab completion."""
     return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
 
-
 # Metadata
-MODULE_DESCRIPTION = "Neural Quantum States (NQS) with TDVP and Adaptive Scheduling."
-__version__ = "2.0.0"
+MODULE_DESCRIPTION  = "Neural Quantum States (NQS) with TDVP and Adaptive Scheduling."
+__version__         = "2.0.0"
 
 # Helper Functions
-
 
 def info():
     """Prints the library capability summary."""
     print(__doc__)
-
 
 def quick_start(mode: str = "ground"):
     """
@@ -385,7 +971,6 @@ print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
     else:
         print(boilerplate + ground_body)
 
-
 # --------------------------------------------------------------
 
 # Export
@@ -403,6 +988,7 @@ __all__ = [
     "VMCSampler",
     "NQSPhysicsConfig",
     "NQSSolverConfig",
+    "NQSTrainConfig",
     "quick_start",
     "info",
 ]

@@ -60,10 +60,11 @@ try:
     )
 
     # training phases
-    from QES.general_python.ml.training_phases import PhaseScheduler, create_phase_schedulers
-    from QES.NQS.nqs import NQS, VMCSampler
-    from QES.NQS.src.auto_tuner import AutoTunerConfig, TDVPAutoTuner
-    from QES.NQS.src.tdvp import TDVP, TDVPLowerPenalty
+    from QES.general_python.ml.schedulers       import EarlyStopping, choose_scheduler
+    from QES.general_python.ml.training_phases  import PhaseScheduler, create_phase_schedulers
+    from QES.NQS.nqs                            import NQS, VMCSampler
+    from QES.NQS.src.auto_tuner                 import AutoTunerConfig, TDVPAutoTuner
+    from QES.NQS.src.tdvp                       import TDVP, TDVPLowerPenalty
 except ImportError as e:
     raise ImportError("QES core modules missing.") from e
 
@@ -208,6 +209,7 @@ class NQSTrainer:
     - **Global Phase Evolution**:   Tracking theta_0 for wavefunction analysis
     - **Checkpointing**:            Architecture-aware saving with metadata
     - **Dynamic Time-Step**:        ODE dt controlled via learning rate scheduler
+    - **Optimizers**:               Support for JAX/Optax optimizers (Adam, SGD, etc.)
     - **Excited States**:           Penalty terms for targeting excited states
     - **JIT Compilation**:          Pre-compiled critical paths for performance
 
@@ -279,11 +281,11 @@ class NQSTrainer:
     - `QES.general_python.ml.schedulers`        : Low-level scheduler implementations
     """
 
-    _ERR_INVALID_SCHEDULER = "Invalid scheduler provided. Must be a PhaseScheduler or callable."
-    _ERR_NO_NQS = "NQS instance must be provided."
-    _ERR_INVALID_SOLVER = "Invalid solver specified."
-    _ERR_INVALID_TIMING_MODE = "Invalid timing mode specified."
-    _ERR_INVALID_LOWER_STATES = "Lower states must be a list of NQS instances."
+    _ERR_INVALID_SCHEDULER      = "Invalid scheduler provided. Must be a PhaseScheduler or callable."
+    _ERR_NO_NQS                 = "NQS instance must be provided."
+    _ERR_INVALID_SOLVER         = "Invalid solver specified."
+    _ERR_INVALID_TIMING_MODE    = "Invalid timing mode specified."
+    _ERR_INVALID_LOWER_STATES   = "Lower states must be a list of NQS instances."
 
     def _log(
         self,
@@ -300,10 +302,10 @@ class NQSTrainer:
         # In background mode, check if we should log this step
         if self.background and hasattr(self, "_current_epoch"):
             # Log first epoch, every Nth epoch, and last epoch
-            epoch = self._current_epoch
-            n_epochs = getattr(self, "_total_epochs", 1)
-            interval = getattr(self, "background_log_interval", 20)
-            should_log = (epoch == 1) or (epoch % interval == 0) or (epoch == n_epochs)
+            epoch       = self._current_epoch
+            n_epochs    = getattr(self, "_total_epochs", 1)
+            interval    = getattr(self, "background_log_interval", 20)
+            should_log  = (epoch == 1) or (epoch % interval == 0) or (epoch == n_epochs)
             if not should_log:
                 return
 
@@ -326,6 +328,7 @@ class NQSTrainer:
         # Utilities
         timing_mode         : NQSTimeModes = NQSTimeModes.LAST,  # Timing mode
         early_stopper       : Any = None,  # Callable or EarlyStopping
+        optimizer           : Optional[Any] = None,  # Optimizer instance or identifier
         logger              : Optional[Logger] = None,  # Logger instance
         lower_states        : List[NQS] = None,  # For excited states - list of lower NQS
         background          : bool = False,  # Quiet/background mode (no pbar/log spam)
@@ -535,7 +538,41 @@ class NQSTrainer:
 
         # Utilities
         self.lower_states = lower_states
+        
+        # Setup Early Stopping
         self.early_stopper = early_stopper
+        if self.early_stopper is None:
+            # Build explicit early-stopping kwargs to avoid colliding with
+            # scheduler keys such as lr_patience/reg_patience/diag_patience.
+            es_kwargs = {k: v for k, v in kwargs.items() if k.startswith(("es_", "early_"))}
+            if "patience" in kwargs and "early_stopping_patience" not in es_kwargs:
+                es_kwargs["early_stopping_patience"] = kwargs["patience"]
+            if "min_delta" in kwargs and "early_stopping_min_delta" not in es_kwargs:
+                es_kwargs["early_stopping_min_delta"] = kwargs["min_delta"]
+
+            # Prefer unified factory when available, but keep compatibility with
+            # older/stale EarlyStopping implementations that may not expose it.
+            if hasattr(EarlyStopping, "from_kwargs"):
+                self.early_stopper = EarlyStopping.from_kwargs(logger=self.logger, **es_kwargs)
+            else:
+                es_patience = es_kwargs.get(
+                    "patience",
+                    es_kwargs.get(
+                        "early_stopping_patience",
+                        es_kwargs.get("es_patience", es_kwargs.get("early_patience", 0)),
+                    ),
+                )
+                es_min_delta = es_kwargs.get(
+                    "min_delta",
+                    es_kwargs.get(
+                        "early_stopping_min_delta",
+                        es_kwargs.get("es_min_delta", es_kwargs.get("early_min_delta", 1e-3)),
+                    ),
+                )
+                self.early_stopper = EarlyStopping(
+                    patience=es_patience, min_delta=es_min_delta, logger=self.logger
+                )
+
         if isinstance(timing_mode, str):
             try:
                 timing_mode = NQSTimeModes[timing_mode.upper()]
@@ -549,6 +586,10 @@ class NQSTrainer:
 
         # Setup Schedulers (The Integrated Part)
         self._init_reg, self._init_lr, self._init_diag = reg, lr, diag_shift
+        
+        # Determine max epochs for schedulers
+        max_ep_val = kwargs.get("n_epochs", kwargs.get("epochs", 500))
+        
         self._set_phases(
             phases,
             lr,
@@ -557,6 +598,7 @@ class NQSTrainer:
             reg_scheduler=reg_scheduler,
             diag_scheduler=diag_scheduler,
             diag_shift=diag_shift,
+            n_epochs=max_ep_val,
             **kwargs,
         )
 
@@ -677,6 +719,33 @@ class NQSTrainer:
 
         # State
         self.stats = NQSTrainStats()
+        self.best_energy = float("inf")
+
+        # Setup Optimizer (Experimental)
+        self.optimizer = optimizer
+        self.opt_state = None
+        if self.optimizer is not None and nqs._isjax:
+            try:
+                import optax
+                # Handle string identifiers for common optimizers
+                if isinstance(self.optimizer, str):
+                    opt_id = self.optimizer.lower()
+                    lr_val = self.lr_scheduler if self.lr_scheduler else self._init_lr
+                    if opt_id == "adam":
+                        self.optimizer = optax.adam(learning_rate=lr_val)
+                    elif opt_id == "sgd":
+                        self.optimizer = optax.sgd(learning_rate=lr_val)
+                    elif opt_id == "adamw":
+                        self.optimizer = optax.adamw(learning_rate=lr_val)
+                    else:
+                        raise ValueError(f"Unsupported optimizer string: {self.optimizer}")
+                
+                # Initialize optimizer state with flat parameters
+                self.opt_state = self.optimizer.init(self.nqs.get_params(unravel=True))
+                self._log(f"Initialized optimizer: {self.optimizer}", lvl=1, color="cyan")
+            except ImportError:
+                self._log("Optax not found. Optimizer disabled.", lvl=0, color="red")
+                self.optimizer = None
 
         # Setup Auto-Tuner
         self.auto_tuner = auto_tuner
@@ -753,6 +822,13 @@ class NQSTrainer:
         """
         from QES.general_python.ml.schedulers import choose_scheduler
 
+        def _normalize_scheduler_aliases(sched_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+            """Normalize short aliases (e.g. ``lr_init``) to scheduler factory keys."""
+            out = dict(sched_kwargs)
+            if "lr_init" in out and "lr_initial" not in out:
+                out["lr_initial"] = out.pop("lr_init")
+            return out
+
         diag_kwargs = {k: v for k, v in kwargs.items() if k.startswith("diag_")}
         reg_kwargs = {k: v for k, v in kwargs.items() if k.startswith("reg_")}
         lr_kwargs = {k: v for k, v in kwargs.items() if k.startswith("lr_")}
@@ -761,12 +837,17 @@ class NQSTrainer:
         diag_kwargs = {k.replace("diag_", "lr_"): v for k, v in diag_kwargs.items()}
         if self._init_diag is not None:
             diag_kwargs["lr_initial"] = self._init_diag
+        diag_kwargs = _normalize_scheduler_aliases(diag_kwargs)
+
         reg_kwargs = {k.replace("reg_", "lr_"): v for k, v in reg_kwargs.items()}
         if self._init_reg is not None:
             reg_kwargs["lr_initial"] = self._init_reg
+        reg_kwargs = _normalize_scheduler_aliases(reg_kwargs)
+
         lr_kwargs = {k.replace("lr_", "lr_"): v for k, v in lr_kwargs.items()}
         if self._init_lr is not None:
             lr_kwargs["lr_initial"] = self._init_lr
+        lr_kwargs = _normalize_scheduler_aliases(lr_kwargs)
 
         # Helper to create scheduler from string or passthrough
         def _resolve_scheduler(sched, init_val, param_name, max_epochs, **kwargs):
@@ -1126,6 +1207,16 @@ class NQSTrainer:
 
         # Timer for the WHOLE epoch (BASIC mode)
         checkpoint_every = max(1, checkpoint_every)
+        # Best-checkpoint policy (Orbax best tag reuses a fixed step key).
+        # Throttle frequency by default to avoid repeated expensive overwrites.
+        save_best_checkpoint = bool(kwargs.pop("save_best_checkpoint", True))
+        best_checkpoint_every = max(
+            1, int(kwargs.pop("best_checkpoint_every", checkpoint_every))
+        )
+        best_checkpoint_min_delta = float(kwargs.pop("best_checkpoint_min_delta", 0.0))
+        save_best_stats = bool(kwargs.pop("save_best_stats", False))
+        last_best_save_global_epoch = -best_checkpoint_every
+
         background_flag = (
             self.background
             or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0"))
@@ -1155,6 +1246,7 @@ class NQSTrainer:
         # Reset stats if needed, if not we continue accumulating
         if reset_stats:
             self.stats = NQSTrainStats()
+            self.best_energy = float("inf")
             start_epoch = 0
         else:
             start_epoch = len(self.stats.history)
@@ -1183,8 +1275,8 @@ class NQSTrainer:
                 # Scheduling (use global_epoch so schedulers continue properly)
                 last_E = self.stats.history[-1] if len(self.stats.history) > 0 else 0.0
                 lr, reg, diag = self._update_hyperparameters(
-                    epoch, last_E
-                )  # use local epoch for schedulers as we are in a single phase
+                    global_epoch, last_E
+                )  # use global epoch so resumed training continues schedules
 
                 # Sampling (Timed)
                 # Returns: ((keys), (configs, ansatz_vals), probs)
@@ -1278,15 +1370,44 @@ class NQSTrainer:
 
                 # Update Weights (Timed) - Only if accepted
                 if accepted:
-                    self._timed_execute(
-                        "update",
-                        self.nqs.set_params,
-                        dparams,
-                        shapes=shapes_info[0],
-                        sizes=shapes_info[1],
-                        iscpx=shapes_info[2],
-                        epoch=global_epoch,
-                    )
+                    if self.optimizer is not None and self.nqs._isjax:
+                        # Use optax update logic
+                        import optax
+                        
+                        # Direction from TDVP (dot_theta)
+                        # ODE solver returns new parameters dparams. 
+                        # direction = (new - old) / dt
+                        params_flat = self.nqs.get_params(unravel=True)
+                        dt_step = float(lr)
+                        direction = (dparams - params_flat) / dt_step if dt_step > 1e-12 else (dparams - params_flat)
+                        
+                        # Direction is -grad for standard gradient descent
+                        # optax expects gradients to subtract (update = -lr * grad)
+                        # So we pass -direction as the gradient
+                        updates, self.opt_state = self.optimizer.update(
+                            -direction, self.opt_state, params_flat
+                        )
+                        new_params_flat = optax.apply_updates(params_flat, updates)
+                        
+                        self._timed_execute(
+                            "update",
+                            self.nqs.set_params,
+                            new_params_flat,
+                            shapes=shapes_info[0],
+                            sizes=shapes_info[1],
+                            iscpx=shapes_info[2],
+                            epoch=global_epoch,
+                        )
+                    else:
+                        self._timed_execute(
+                            "update",
+                            self.nqs.set_params,
+                            dparams,
+                            shapes=shapes_info[0],
+                            sizes=shapes_info[1],
+                            iscpx=shapes_info[2],
+                            epoch=global_epoch,
+                        )
 
                 # Global Phase Integration
                 # Extract theta0_dot from JIT output and update TDVP state
@@ -1303,6 +1424,22 @@ class NQSTrainer:
                 self.stats.history.append(mean_loss)
                 self.stats.history_std.append(np.real(std_loss))
                 self.stats.timings.total.append(time.time() - t0)
+
+                # Track best
+                if mean_loss < (self.best_energy - best_checkpoint_min_delta):
+                    self.best_energy = mean_loss
+                    if save_best_checkpoint and (
+                        global_epoch - last_best_save_global_epoch >= best_checkpoint_every
+                    ):
+                        self.save_checkpoint(
+                            "best",
+                            save_path,
+                            fmt="h5",
+                            overwrite=True,
+                            save_stats=save_best_stats,
+                            **kwargs,
+                        )
+                        last_best_save_global_epoch = global_epoch
 
                 self._train_update_pbar(
                     pbar if use_pbar else None,
@@ -1357,7 +1494,7 @@ class NQSTrainer:
         self.stats.history_std = np.array(self.stats.history_std).flatten().tolist()
         final_epoch = start_epoch + epoch + 1  # Total epochs trained so far
         self.save_checkpoint(
-            final_epoch, save_path, fmt="h5", overwrite=True, verbose=True, **kwargs
+            "final", save_path, fmt="h5", overwrite=True, verbose=True, **kwargs
         )
         self._log(
             f"Training completed in {time.time() - t0:.2f} seconds. Total epochs: {len(self.stats.history)} (this run: {n_epochs}, started at: {start_epoch}).",
@@ -1372,11 +1509,12 @@ class NQSTrainer:
 
     def save_checkpoint(
         self,
-        step: int,
+        step: Union[int, str],
         path: Union[str, Path] = None,
         *,
         fmt: str = "h5",
         overwrite: bool = True,
+        save_stats: bool = True,
         **kwargs,
     ) -> Union[Path, None]:
         """
@@ -1398,6 +1536,10 @@ class NQSTrainer:
             Format to save weights ('h5', 'json', etc.) - used for HDF5 fallback.
         overwrite : bool
             Whether to overwrite existing files.
+        save_stats : bool
+            Whether to save/update ``stats.h5`` together with weights.
+            For frequent tag checkpoints (e.g. ``best``), disabling this can
+            reduce I/O overhead.
 
         Returns:
         --------
@@ -1442,16 +1584,17 @@ class NQSTrainer:
             return None
 
         # Save training history/stats
-        HDF5Manager.save_hdf5(
-            directory=os.path.dirname(final_path_stats),
-            filename=os.path.basename(final_path_stats),
-            data=self.stats.to_dict(),
-        )
-        self._log(
-            f"Saved training stats to {final_path_stats}",
-            lvl=2,
-            verbose=kwargs.get("verbose", False),
-        )
+        if save_stats:
+            HDF5Manager.save_hdf5(
+                directory=os.path.dirname(final_path_stats),
+                filename=os.path.basename(final_path_stats),
+                data=self.stats.to_dict(),
+            )
+            self._log(
+                f"Saved training stats to {final_path_stats}",
+                lvl=2,
+                verbose=kwargs.get("verbose", False),
+            )
 
         # Delegate weight saving to NQS (which uses checkpoint manager)
         return self.nqs.save_weights(
@@ -1478,10 +1621,10 @@ class NQSTrainer:
             Training step or epoch to load. Can be:
             - int:
                 specific step number
-            - 'latest':
-                load the most recent checkpoint
+            - 'latest', 'best', 'final':
+                load tagged checkpoint
             - None:
-                same as 'latest' for Orbax, or finds latest for HDF5
+                same as 'latest'
         path : Union[str, Path], optional
             Path to the checkpoint directory or file.
             If None, uses NQS default directory.
@@ -1502,7 +1645,7 @@ class NQSTrainer:
         ---------
         >>> stats = trainer.load_checkpoint(step=100)        # Load specific step
         >>> stats = trainer.load_checkpoint(step='latest')   # Load most recent
-        >>> stats = trainer.load_checkpoint()                # Same as 'latest'
+        >>> stats = trainer.load_checkpoint(step='best')     # Load best energy so far
         """
         import os
         import re
@@ -1520,33 +1663,10 @@ class NQSTrainer:
                 search_dir = path_obj
                 path_str = str(path)
 
-        # Scan directory for available steps (Independent of Manager)
-        available_steps = []
-        if os.path.exists(search_dir):
-            # Scan for explicit checkpoint folders or files (e.g. checkpoint_100.h5 or /100/)
-            for item in os.listdir(search_dir):
-
-                # Match "checkpoint_123.h5" or directory names that are integers "123"
-                if item.isdigit():
-                    available_steps.append(int(item))
-
-                elif item.startswith("checkpoint_") and (
-                    item.endswith(f".{fmt}") or os.path.isdir(os.path.join(search_dir, item))
-                ):
-                    try:
-                        # Extract number from "checkpoint_123.h5"
-                        num = re.search(r"(\d+)", item)
-                        if num:
-                            available_steps.append(int(num.group(1)))
-                    except:
-                        pass
-
-        # Determine the requested_step_for_manager
-        requested_step_for_manager = None
-        if step is None or (isinstance(step, str) and step.lower() == "latest"):
-            requested_step_for_manager = None  # Let Orbax's native latest resolver handle it
-        else:
-            requested_step_for_manager = int(step)  # Convert explicit step to int
+        # Determine step identifier
+        requested_step_for_manager = step
+        if step is not None and isinstance(step, str) and step.lower() == "latest":
+            requested_step_for_manager = None # Manager handles latest if None
 
         # Load Statistics (History)
         # Determine stats filename
@@ -1559,7 +1679,6 @@ class NQSTrainer:
 
         try:
             # Assuming HDF5Manager is available in context
-            # Reconstruct NQSTrainStats object (abbreviated for clarity, use your full constructor)
             stats_data = HDF5Manager.read_hdf5(file_path=Path(stats_file))
             self.stats = NQSTrainStats(
                 history=list(stats_data.get("/history/val", [])),
@@ -1579,12 +1698,14 @@ class NQSTrainer:
                     total=list(stats_data.get("/timings/total", [])),
                 ),
             )
+            if self.stats.history:
+                self.best_energy = min(self.stats.history)
             self._log(f"Loaded stats from {stats_file}", lvl=1, color="green")
         except Exception as e:
             self._log(f"Stats load failed ({e}). Starting fresh stats.", lvl=1, color="yellow")
 
         # Load Weights Logic
-        if load_weights:  # No need for target_step here, it's passed below
+        if load_weights:
             try:
                 ckpt_filename = None
 
@@ -1595,15 +1716,10 @@ class NQSTrainer:
                 # NQS.load_weights will pass this to Manager.
                 self.nqs.load_weights(step=requested_step_for_manager, filename=ckpt_filename)
 
-                # After successful load, if requested_step_for_manager was None, resolve what step was actually loaded
-                loaded_step_info = requested_step_for_manager
-                if loaded_step_info is None:
-                    # Get the step that Orbax actually loaded (use manager's latest_step)
-                    loaded_step_info = (
-                        self.nqs.ckpt_manager.latest_step
-                        if self.nqs.ckpt_manager.use_orbax
-                        else "latest (unknown)"
-                    )
+                # After successful load, resolve what step was actually loaded
+                loaded_step_info = requested_step_for_manager or "latest"
+                if requested_step_for_manager is None and self.nqs.ckpt_manager.use_orbax:
+                    loaded_step_info = self.nqs.ckpt_manager.latest_step
 
                 self._log(
                     f"Successfully loaded weights for step {loaded_step_info}", lvl=1, color="green"
@@ -1613,7 +1729,7 @@ class NQSTrainer:
             except Exception as e:
                 self._log(f"Loading weights failed: {e}", lvl=0, color="red")
 
-                # Handle fallback_latest if native Orbax load failed for a specific step
+                # Handle fallback_latest
                 if requested_step_for_manager is not None and fallback_latest:
                     self._log(
                         f"Failed to load specific step {requested_step_for_manager}. Attempting to load latest as fallback...",
@@ -1621,33 +1737,12 @@ class NQSTrainer:
                         color="yellow",
                     )
                     try:
-                        self.nqs.load_weights(
-                            step=None, filename=ckpt_filename
-                        )  # Try loading latest
-                        loaded_step_info = (
-                            self.nqs.ckpt_manager.latest_step
-                            if self.nqs.ckpt_manager.use_orbax
-                            else "latest (fallback)"
-                        )
-                        self._log(
-                            f"Successfully loaded latest weights (step {loaded_step_info}) after fallback.",
-                            lvl=1,
-                            color="green",
-                        )
+                        self.nqs.load_weights(step=None, filename=ckpt_filename)
                         return self.stats
                     except Exception as e_fallback:
-                        self._log(
-                            f"Critical: Failed to load latest weights after fallback: {e_fallback}",
-                            lvl=0,
-                            color="red",
-                        )
+                        self._log(f"Critical: Failed to load fallback: {e_fallback}", lvl=0, color="red")
                         raise e_fallback
                 else:
-                    self._log(
-                        f"Critical: Failed to load weights for step {requested_step_for_manager if requested_step_for_manager is not None else 'latest'}: {e}",
-                        lvl=0,
-                        color="red",
-                    )
                     raise e
 
         return self.stats

@@ -383,7 +383,17 @@ class JaxAdapter(BackendAdapter):
         if not JAX_AVAILABLE:
             raise RuntimeError("JAX not available.")
 
-        raise NotImplementedError("JAX matvec adapter not yet implemented.")
+        # Compatibility path: allow NumPy vectors even for JAX-backed operators.
+        # This is useful for ED/Lanczos post-processing where eigenvectors are
+        # often NumPy arrays.
+        if isinstance(vecs, np.ndarray):
+            return NumpyAdapter().matvec(
+                operator, vecs, hilbert_in, hilbert_out, *args, **kwargs
+            )
+
+        raise NotImplementedError(
+            "JAX matvec adapter not yet implemented for non-NumPy inputs."
+        )
 
     def matvec_fourier(self, *args, **kwargs) -> Any:
         raise NotImplementedError("JAX matvec_fourier adapter not yet implemented.")

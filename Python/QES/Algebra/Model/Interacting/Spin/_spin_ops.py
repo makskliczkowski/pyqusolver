@@ -70,6 +70,108 @@ def spin_axis_operator(spin_module, spin_family: str, axis: str, *, lattice=None
     fn = getattr(spin_module, f"s1_{axis}")
     return fn(lattice=lattice, ns=ns, type_act=type_act)
 
+
+def normalize_spin_component_name(component: str) -> str:
+    """
+    Normalize convenience component names to canonical keys.
+
+    Canonical keys:
+        x, y, z, p, m, pm, mp
+    """
+    key     = str(component).strip().lower().replace("-", "_")
+    mapping = {
+        "x"             : "x",
+        "sx"            : "x",
+        "sig_x"         : "x",
+        "sigma_x"       : "x",
+        "y"             : "y",
+        "sy"            : "y",
+        "sig_y"         : "y",
+        "sigma_y"       : "y",
+        "z"             : "z",
+        "sz"            : "z",
+        "sig_z"         : "z",
+        "sigma_z"       : "z",
+        "p"             : "p",
+        "plus"          : "p",
+        "sp"            : "p",
+        "sig_p"         : "p",
+        "sig_plus"      : "p",
+        "sigma_plus"    : "p",
+        "m"             : "m",
+        "minus"         : "m",
+        "sm"            : "m",
+        "sig_m"         : "m",
+        "sig_minus"     : "m",
+        "sigma_minus"   : "m",
+        "pm"            : "pm",
+        "sp_sm"         : "pm",
+        "sig_pm"        : "pm",
+        "mp"            : "mp",
+        "sm_sp"         : "mp",
+        "sig_mp"        : "mp",
+    }
+    if key not in mapping:
+        raise ValueError(
+            f"Unknown spin component '{component}'. "
+            "Expected one of x/y/z/p/m/pm/mp or convenience aliases."
+        )
+    return mapping[key]
+
+# ----------------------------------------------------------------------------
+#! Spin ladder and mixed correlation operators
+# ----------------------------------------------------------------------------
+
+def spin_ladder_operator(
+    spin_module,
+    spin_family: str,
+    kind: str,
+    *,
+    lattice=None,
+    ns=None,
+    type_act=None,
+):
+    """
+    Build ladder or ladder-correlation operators across supported families.
+
+    Supported canonical kinds:
+        p, m, pm, mp
+    """
+    key = normalize_spin_component_name(kind)
+    if key not in {"p", "m", "pm", "mp"}:
+        raise ValueError(f"'{kind}' is not a ladder operator kind.")
+
+    if spin_family == "spin-1/2":
+        fn = getattr(spin_module, f"sig_{key}")
+        return fn(lattice=lattice, ns=ns, type_act=type_act)
+
+    fn = getattr(spin_module, f"s1_{key}")
+    return fn(lattice=lattice, ns=ns, type_act=type_act)
+
+def spin_component_operator(
+    spin_module,
+    spin_family: str,
+    component: str,
+    *,
+    lattice=None,
+    ns=None,
+    type_act=None,
+):
+    """
+    Generic convenience wrapper for axis and ladder components.
+
+    This mirrors convenience naming found in `operators_spin.py` while
+    dispatching to the selected spin family implementation.
+    """
+    key = normalize_spin_component_name(component)
+    if key in {"x", "y", "z"}:
+        return spin_axis_operator(
+            spin_module, spin_family, key, lattice=lattice, ns=ns, type_act=type_act
+        )
+    return spin_ladder_operator(
+        spin_module, spin_family, key, lattice=lattice, ns=ns, type_act=type_act
+    )
+
 def spin_mixed_correlation_operator(
     spin_module,
     spin_family: str,

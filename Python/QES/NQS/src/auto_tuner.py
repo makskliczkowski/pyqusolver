@@ -12,33 +12,33 @@ class AutoTunerConfig:
     """Configuration for TDVP Auto-Tuner."""
 
     # Learning Rate / Step Size
-    lr_initial: float = 1e-2
-    lr_min: float = 1e-5
-    lr_max: float = 0.5
-    lr_growth_factor: float = 1.05
-    lr_shrink_factor: float = 0.5
+    lr_initial              : float = 1e-2
+    lr_min                  : float = 1e-5
+    lr_max                  : float = 0.5
+    lr_growth_factor        : float = 1.05
+    lr_shrink_factor        : float = 0.5
 
     # Diagonal Shift
-    diag_initial: float = 1e-3
-    diag_min: float = 1e-6
-    diag_max: float = 1.0
-    diag_growth_factor: float = 2.0
-    diag_shrink_factor: float = 0.9
+    diag_initial            : float = 1e-3
+    diag_min                : float = 1e-6
+    diag_max                : float = 1.0
+    diag_growth_factor      : float = 2.0
+    diag_shrink_factor      : float = 0.9
     # Sampler Length
-    samples_initial: int = 1000
-    samples_min: int = 100
-    samples_max: int = 100000
-    samples_growth_factor: float = 1.5
+    samples_initial         : int = 1000
+    samples_min             : int = 100
+    samples_max             : int = 100000
+    samples_growth_factor   : float = 1.5
 
     # Targets
-    target_ess_fraction: float = 0.1  # ESS should be at least 10% of total samples
-    target_rhat: float = 1.1
-    target_acceptance_min: float = 0.3
-    target_acceptance_max: float = 0.6  # Not strictly enforced, just info
+    target_ess_fraction     : float = 0.1 # ESS should be at least 10% of total samples
+    target_rhat             : float = 1.1
+    target_acceptance_min   : float = 0.3
+    target_acceptance_max   : float = 0.6 # Not strictly enforced, just info
 
     # Heuristics
-    energy_window: int = 5
-    variance_tolerance: float = 10.0  # Factor of allowed variance increase
+    energy_window           : int = 5
+    variance_tolerance      : float = 10.0 # Factor of allowed variance increase
 
 
 class TDVPAutoTuner:
@@ -89,18 +89,16 @@ class TDVPAutoTuner:
             warnings: List of warning strings
         """
 
-        warnings = []
-        accepted = True
+        warnings    = []
+        accepted    = True
 
         # Sampler Diagnostics Check
-        ess = diagnostics.get("ess", float("inf"))
-        r_hat = diagnostics.get("r_hat", 1.0)
+        ess         = diagnostics.get("ess", float("inf"))
+        r_hat       = diagnostics.get("r_hat", 1.0)
 
         # Check R-hat (Multi-chain convergence)
         if r_hat > self.config.target_rhat:
-            warnings.append(
-                f"Poor convergence (R-hat={r_hat:.3f} > {self.config.target_rhat}). Increasing samples."
-            )
+            warnings.append(f"Poor convergence (R-hat={r_hat:.3f} > {self.config.target_rhat}). Increasing samples.")
 
             self.n_samples = int(self.n_samples * self.config.samples_growth_factor)
 

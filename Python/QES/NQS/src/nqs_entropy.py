@@ -62,7 +62,7 @@ Usage
 from QES.NQS.src.nqs_entropy import (
     compute_renyi_entropy,
     compute_topological_entropy,
-    bipartition_cuts_honeycomb,
+    bipartition_cuts,
 )
 
 # Standard bipartition S_2
@@ -107,93 +107,44 @@ except ImportError:
 
 
 # ===========================================================================
-#! Bipartition helpers for honeycomb lattices
+#! Bipartition helpers
 # ===========================================================================
 
-def bipartition_cuts_honeycomb(
+def bipartition_cuts(
     lattice,
     cut_type: str = "half_x",
 ) -> Dict[str, np.ndarray]:
     """
-    Generate physically meaningful bipartition cuts for a honeycomb lattice.
-    
-    For a honeycomb with Lx x Ly unit cells (Ns = 2*Lx*Ly sites), we define several
-    canonical cuts that are useful for entanglement studies:
-    
+    Generate canonical bipartition cuts using the lattice region API.
+
+    This function is lattice-agnostic and relies on:
+    - ``lattice.get_entropy_cuts(...)`` (preferred), or
+    - ``lattice.regions.get_entropy_cuts(...)`` as fallback.
+
     Parameters
     ----------
-    lattice : HoneycombLattice
-        The lattice object.
+    lattice : Lattice
+        Lattice object with region support.
     cut_type : str
-        Which cuts to return. Options:
-        - "half_x"      : Split at x = Lx/2 (vertical cut)
-        - "half_y"      : Split at y = Ly/2 (horizontal cut)
-        - "quarter"     : A quarter of the system (corner region)
-        - "all"         : Return dict with all standard cuts
-        - "sweep"       : Return cuts for entanglement scaling (fractions 1/N...(N-1)/N)
-    
+        One of: ``half_x``, ``half_y``, ``quarter``, ``sublattice_A``,
+        ``sweep``, ``all``.
+
     Returns
     -------
-    dict
-        Keys are cut labels, values are numpy arrays of site indices in region A.
+    dict[str, np.ndarray]
+        Mapping ``cut_label -> region_indices``.
     """
-    Ns  = lattice.ns
-    Lx  = lattice.Lx
-    Ly  = lattice.Ly
-    
-    cuts = {}
-    
-    # Site indexing: site i has unit cell n = i//2, sublattice r = i%2
-    # Unit cell (X, Y) where X = n % Lx, Y = n // Lx
-    
-    def sites_where(condition):
-        """Return site indices satisfying a condition on (X, Y, sublattice)."""
-        result = []
-        for i in range(Ns):
-            n   = i // 2
-            X   = n % Lx
-            Y   = n // Lx
-            sub = i % 2
-            if condition(X, Y, sub):
-                result.append(i)
-        return np.array(result, dtype=np.int32)
-    
-    if cut_type in ("half_x", "all"):
-        cuts["half_x"] = sites_where(lambda X, Y, s: X < Lx // 2)
-    
-    if cut_type in ("half_y", "all"):
-        cuts["half_y"] = sites_where(lambda X, Y, s: Y < Ly // 2)
-    
-    if cut_type in ("quarter", "all"):
-        cuts["quarter"] = sites_where(lambda X, Y, s: X < Lx // 2 and Y < Ly // 2)
-    
-    if cut_type in ("sublattice_A", "all"):
-        cuts["sublattice_A"] = sites_where(lambda X, Y, s: s == 0)
-    
-    if cut_type in ("sweep", "all"):
-        # Sweep cuts for entanglement scaling: include first n unit cells
-        for n_uc in range(1, Lx * Ly):
-            label = f"sweep_{n_uc}_of_{Lx*Ly}"
-            region = []
-            uc_count = 0
-            for Y in range(Ly):
-                for X in range(Lx):
-                    if uc_count >= n_uc:
-                        break
-                    idx = Y * Lx + X
-                    region.extend([2 * idx, 2 * idx + 1])
-                    uc_count += 1
-                if uc_count >= n_uc:
-                    break
-            cuts[label] = np.array(region, dtype=np.int32)
-    
-    if cut_type not in ("half_x", "half_y", "quarter", "sublattice_A", "sweep", "all"):
+    if hasattr(lattice, "get_entropy_cuts"):
+        raw_cuts = lattice.get_entropy_cuts(cut_type=cut_type)
+    elif hasattr(lattice, "regions") and hasattr(lattice.regions, "get_entropy_cuts"):
+        raw_cuts = lattice.regions.get_entropy_cuts(cut_type=cut_type)
+    else:
         raise ValueError(
-            f"Unknown cut_type '{cut_type}'. Use 'half_x', 'half_y', 'quarter', "
-            f"'sublattice_A', 'sweep', or 'all'."
+            "Lattice does not expose entropy cut helpers. "
+            "Expected `lattice.get_entropy_cuts` or `lattice.regions.get_entropy_cuts`."
         )
-    
-    return cuts
+
+    return {label: np.asarray(region, dtype=np.int32) for label, region in raw_cuts.items()}
 
 
 def _default_bipartition(Ns: int) -> "jnp.ndarray":
@@ -586,7 +537,7 @@ def compute_entropy_sweep(
     dict
         {"cuts": dict of cut_label -> region, "results": dict of cut_label -> entropy_result}
     """
-    cuts = bipartition_cuts_honeycomb(lattice, cut_type="all")
+    cuts = bipartition_cuts(lattice, cut_type="all")
     
     results = {}
     

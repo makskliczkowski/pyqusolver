@@ -20,14 +20,15 @@ Changelog   :
 """
 
 from typing import List, Optional, Tuple, Union
+import warnings
 
 import numpy as np
 
 # QES package imports
 try:
-    import QES.Algebra.Operator.impl.operators_spin as operators_spin_module
-    from QES.Algebra.hamil import Hamiltonian
     from QES.Algebra.hilbert import HilbertSpace
+    from QES.Algebra.Model.Interacting.Spin.hamiltonian_spin import HamiltonianSpin
+    from QES.Algebra.Model.Interacting.Spin._spin_ops import spin_mixed_correlation_operator
     from QES.general_python.lattices.honeycomb import (
         X_BOND_NEI,
         Y_BOND_NEI,
@@ -68,7 +69,7 @@ CORR_TERM_MULT      = 4.0  # Two-spin correlation terms (σ_i σ_j has eigenvalu
 #! HAMILTONIAN CLASS
 ##########################################################################################
 
-class HeisenbergKitaev(Hamiltonian):
+class HeisenbergKitaev(HamiltonianSpin):
     """
     Hamiltonian for an ergodic quantum dot coupled to an external system.
     The external system is modeled as a quantum spin chain.
@@ -102,9 +103,10 @@ class HeisenbergKitaev(Hamiltonian):
         #     where theta is polar angle from z-axis, phi is azimuthal angle in xy-plane
         impurities      : List[Tuple] = [],
         # other parameters
-        dtype           : type = np.float64,
-        backend         : str = "default",
-        use_forward     : bool = True,
+        operator_family : str   = "auto",
+        dtype           : type  = np.float64,
+        backend         : str   = "default",
+        use_forward     : bool  = True,
         **kwargs,
     ):
         r"""
@@ -159,6 +161,9 @@ class HeisenbergKitaev(Hamiltonian):
                                 [(0, 0, 0, 1.0)]                adds z-polarized impurity at site 0.
             dtype : type, optional
                 Data type for numerical computations. Default is np.float64.
+            operator_family : str, optional
+                Operator family: "auto", "spin-1/2", or "spin-1".
+                Mixed-axis Gamma terms currently require "spin-1/2".
             backend : str, optional
                 Computational backend to use. Default is "default".
             use_forward : bool, optional
@@ -171,10 +176,15 @@ class HeisenbergKitaev(Hamiltonian):
             raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
 
         if lattice.typek not in [LatticeType.HONEYCOMB, LatticeType.HEXAGONAL]:
-            self._log(
-                f"The type of the lattice {lattice} is not standard. Check your intentions...",
-                lvl=2,
+            warnings.warn(
+                f"Non-standard lattice type detected for HeisenbergKitaev: {lattice}",
+                RuntimeWarning,
             )
+
+        requested_family = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
+        complex_required = self.needs_complex_dtype_from_spin_inputs(
+            hy=hy, impurities=impurities
+        ) or HamiltonianSpin._ADD_CONDITION(Gamma)
 
         # Initialize the Hamiltonian
         self._lattice = lattice
@@ -183,13 +193,12 @@ class HeisenbergKitaev(Hamiltonian):
             hilbert_space=hilbert_space,
             lattice=lattice,
             is_sparse=True,
-            dtype=(
-                dtype if (hy is None and Gamma is None) else np.complex128
-            ),  # enforce complex dtype if hy field is used
+            dtype=(dtype if not complex_required else np.complex128),
             backend=backend,
             use_forward=use_forward,
             **kwargs,
         )
+        self.init_spin_family(requested_family)
 
         # setup the fields
         self._hx = (
@@ -325,24 +334,23 @@ class HeisenbergKitaev(Hamiltonian):
         HeiKit(Ns=16, J=1.000, Kx=0.200, Ky=0.200, Kz=0.000, dlt=1.000,
                 hz[min=-0.500, max=0.300], hx=0.000, sym=U1 CBC)
         """
-        prec = 3  # decimal places
-        sep = ","  # parameter separator
+        prec    = 3  # decimal places
+        sep     = ","  # parameter separator
 
         # string
-        parts = [f"Kitaev(Ns={self.ns}"]
-
-        parts += [
-            Hamiltonian.fmt("Kx",   self._kx,   prec=prec),
-            Hamiltonian.fmt("Ky",   self._ky,   prec=prec),
-            Hamiltonian.fmt("Kz",   self._kz,   prec=prec),
-            Hamiltonian.fmt("J",    self._j,    prec=prec)  if self._j      is not None else "",
-            Hamiltonian.fmt("Gx",   self._gx,   prec=prec)  if self._gx     is not None else "",
-            Hamiltonian.fmt("Gy",   self._gy,   prec=prec)  if self._gy     is not None else "",
-            Hamiltonian.fmt("Gz",   self._gz,   prec=prec)  if self._gz     is not None else "",
-            Hamiltonian.fmt("dlt",  self._dlt,  prec=prec)  if self._dlt    is not None else "",
-            Hamiltonian.fmt("hz",   self._hz,   prec=prec)  if self._hz     is not None else "",
-            Hamiltonian.fmt("hy",   self._hy,   prec=prec)  if self._hy     is not None else "",
-            Hamiltonian.fmt("hx",   self._hx,   prec=prec)  if self._hx     is not None else "",
+        parts   = [f"Kitaev(Ns={self.ns}"]
+        parts   += [
+            HamiltonianSpin.fmt("Kx",   self._kx,   prec=prec),
+            HamiltonianSpin.fmt("Ky",   self._ky,   prec=prec),
+            HamiltonianSpin.fmt("Kz",   self._kz,   prec=prec),
+            HamiltonianSpin.fmt("J",    self._j,    prec=prec)  if self._j      is not None else "",
+            HamiltonianSpin.fmt("Gx",   self._gx,   prec=prec)  if self._gx     is not None else "",
+            HamiltonianSpin.fmt("Gy",   self._gy,   prec=prec)  if self._gy     is not None else "",
+            HamiltonianSpin.fmt("Gz",   self._gz,   prec=prec)  if self._gz     is not None else "",
+            HamiltonianSpin.fmt("dlt",  self._dlt,  prec=prec)  if self._dlt    is not None else "",
+            HamiltonianSpin.fmt("hz",   self._hz,   prec=prec)  if self._hz     is not None else "",
+            HamiltonianSpin.fmt("hy",   self._hy,   prec=prec)  if self._hy     is not None else "",
+            HamiltonianSpin.fmt("hx",   self._hx,   prec=prec)  if self._hx     is not None else "",
         ]
         # handle impurities
         if len(self._impurities) > 0:
@@ -480,37 +488,136 @@ class HeisenbergKitaev(Hamiltonian):
         if lattice is None:
             raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
 
+        is_spin_one = self._spin_operator_family == "spin-1"
+        local_scale = SINGLE_TERM_MULT if self._spin_operator_family == "spin-1/2" else 1.0
+        corr_scale = CORR_TERM_MULT if self._spin_operator_family == "spin-1/2" else 1.0
+
         #! define the operators beforehand - to avoid multiple creations
-        op_sx_l     = operators_spin_module.sig_x(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
-        )
-        op_sy_l     = operators_spin_module.sig_y(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
-        )
-        op_sz_l     = operators_spin_module.sig_z(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Local
+        op_sx_l     = None
+        op_sy_l     = None
+        op_sp_l     = None
+        op_sm_l     = None
+        if is_spin_one:
+            op_sp_l = self.spin_op(
+                "p",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Local,
+            )
+            op_sm_l = self.spin_op(
+                "m",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Local,
+            )
+        else:
+            op_sx_l = self.spin_op(
+                "x",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Local,
+            )
+            op_sy_l = self.spin_op(
+                "y",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Local,
+            )
+
+        op_sz_l = self.spin_op(
+            "z",
+            lattice=lattice,
+            type_act=self._spin_ops_module.OperatorTypeActing.Local,
         )
 
         # Kitaev and Heisenberg terms - correlation operators (two-site)
-        op_sx_sx_c  = operators_spin_module.sig_x(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation
-        )
-        op_sy_sy_c  = operators_spin_module.sig_y(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation
-        )
-        op_sz_sz_c  = operators_spin_module.sig_z(
-            lattice=lattice, type_act=operators_spin_module.OperatorTypeActing.Correlation
+        op_sx_sx_c = None
+        op_sy_sy_c = None
+        op_sp_sp_c = None
+        op_sm_sm_c = None
+        op_sp_sm_c = None
+        op_sm_sp_c = None
+        if is_spin_one:
+            op_sp_sp_c = self.spin_op(
+                "p",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
+            )
+            op_sm_sm_c = self.spin_op(
+                "m",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
+            )
+            op_sp_sm_c = self.spin_op(
+                "pm",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
+            )
+            op_sm_sp_c = self.spin_op(
+                "mp",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
+            )
+        else:
+            op_sx_sx_c = self.spin_op(
+                "x",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
+            )
+            op_sy_sy_c = self.spin_op(
+                "y",
+                lattice=lattice,
+                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
+            )
+        op_sz_sz_c = self.spin_op(
+            "z",
+            lattice=lattice,
+            type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
         )
 
         # Create Gamma operators as products of correlation operators
-        op_sx_sy_c  = operators_spin_module.sig_xy(lattice=lattice, spin_value=0.5)
-        op_sy_sx_c  = operators_spin_module.sig_yx(lattice=lattice, spin_value=0.5)
+        gamma_requested = (
+            HamiltonianSpin._ADD_CONDITION(self._gx)
+            or HamiltonianSpin._ADD_CONDITION(self._gy)
+            or HamiltonianSpin._ADD_CONDITION(self._gz)
+        )
+        if self._spin_operator_family != "spin-1/2" and gamma_requested:
+            raise NotImplementedError(
+                "Gamma anisotropic mixed-axis terms currently require spin-1/2 operators."
+            )
+        if self._spin_operator_family == "spin-1/2":
+            op_sx_sy_c = spin_mixed_correlation_operator(
+                self._spin_ops_module, self._spin_operator_family, "xy", lattice=lattice
+            )
+            op_sy_sx_c = spin_mixed_correlation_operator(
+                self._spin_ops_module, self._spin_operator_family, "yx", lattice=lattice
+            )
+            op_sz_sx_c = spin_mixed_correlation_operator(
+                self._spin_ops_module, self._spin_operator_family, "zx", lattice=lattice
+            )
+            op_sx_sz_c = spin_mixed_correlation_operator(
+                self._spin_ops_module, self._spin_operator_family, "xz", lattice=lattice
+            )
+            op_sy_sz_c = spin_mixed_correlation_operator(
+                self._spin_ops_module, self._spin_operator_family, "yz", lattice=lattice
+            )
+            op_sz_sy_c = spin_mixed_correlation_operator(
+                self._spin_ops_module, self._spin_operator_family, "zy", lattice=lattice
+            )
+        else:
+            op_sx_sy_c = op_sy_sx_c = None
+            op_sz_sx_c = op_sx_sz_c = None
+            op_sy_sz_c = op_sz_sy_c = None
 
-        op_sz_sx_c  = operators_spin_module.sig_zx(lattice=lattice, spin_value=0.5)
-        op_sx_sz_c  = operators_spin_module.sig_xz(lattice=lattice, spin_value=0.5)
-
-        op_sy_sz_c  = operators_spin_module.sig_yz(lattice=lattice, spin_value=0.5)
-        op_sz_sy_c  = operators_spin_module.sig_zy(lattice=lattice, spin_value=0.5)
+        def add_local_axis(axis: str, multiplier, site: int) -> None:
+            if not HamiltonianSpin._ADD_CONDITION(multiplier):
+                return
+            self.add_local_spin_component(
+                site,
+                axis,
+                multiplier,
+                op_x=op_sx_l,
+                op_y=op_sy_l,
+                op_z=op_sz_l,
+                op_p=op_sp_l,
+                op_m=op_sm_l,
+            )
         nn_nums     = (
             [lattice.get_nn_forward_num(i) for i in range(self.ns)]
             if self._use_forward
@@ -524,22 +631,22 @@ class HeisenbergKitaev(Hamiltonian):
         for i in range(self.ns):
             self._log(f"Starting i: {i}", lvl=1, log=log)
 
-            # ? z-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
-            if Hamiltonian._ADD_CONDITION(self._hz, i):
-                z_field = -SINGLE_TERM_MULT * self._hz[i]
-                self.add(op_sz_l, multiplier=z_field, modifies=False, sites=[i])
+            # ? z-field
+            if HamiltonianSpin._ADD_CONDITION(self._hz, i):
+                z_field = -local_scale * self._hz[i]
+                add_local_axis("z", z_field, i)
                 self._log(f"Adding local Sz at {i} with value {z_field:.2f}", lvl=2, log=log)
 
-            # ? y-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
-            if Hamiltonian._ADD_CONDITION(self._hy, i):
-                y_field = -SINGLE_TERM_MULT * self._hy[i]
-                self.add(op_sy_l, multiplier=y_field, modifies=True, sites=[i])
+            # ? y-field
+            if HamiltonianSpin._ADD_CONDITION(self._hy, i):
+                y_field = -local_scale * self._hy[i]
+                add_local_axis("y", y_field, i)
                 self._log(f"Adding local Sy at {i} with value {y_field:.2f}", lvl=2, log=log)
 
-            # ? x-field (single-spin term: applying SINGLE_TERM_MULT scaling for Pauli matrices)
-            if Hamiltonian._ADD_CONDITION(self._hx, i):
-                x_field = -SINGLE_TERM_MULT * self._hx[i]
-                self.add(op_sx_l, multiplier=x_field, modifies=True, sites=[i])
+            # ? x-field
+            if HamiltonianSpin._ADD_CONDITION(self._hx, i):
+                x_field = -local_scale * self._hx[i]
+                add_local_axis("x", x_field, i)
                 self._log(f"Adding local Sx at {i} with value {x_field:.2f}", lvl=2, log=log)
 
             # ? impurities - now supports arbitrary spin directions via spherical coordinates
@@ -547,7 +654,7 @@ class HeisenbergKitaev(Hamiltonian):
             # Format: (site, phi, theta, amplitude) where all are stored in this 4-tuple format
             # Components: sin(theta)*cos(phi)*ampl * sig^x + sin(theta)*sin(phi)*ampl * sig^y + cos(theta)*ampl * sig^z
             for imp_site, phi, theta, ampl in self._impurities:
-                if imp_site == i and Hamiltonian._ADD_CONDITION(ampl):
+                if imp_site == i and HamiltonianSpin._ADD_CONDITION(ampl):
                     # Compute spherical coordinate components
                     sin_theta   = np.sin(theta)
                     cos_theta   = np.cos(theta)
@@ -555,25 +662,25 @@ class HeisenbergKitaev(Hamiltonian):
                     cos_phi     = np.cos(phi)
 
                     # Z-component: cos(theta) * amplitude
-                    imp_z       = -SINGLE_TERM_MULT * ampl * cos_theta
-                    if Hamiltonian._ADD_CONDITION(imp_z):
-                        self.add(op_sz_l, multiplier=imp_z, modifies=False, sites=[i])
+                    imp_z       = -local_scale * ampl * cos_theta
+                    if HamiltonianSpin._ADD_CONDITION(imp_z):
+                        add_local_axis("z", imp_z, i)
                         self._log(
                             f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log=log
                         )
 
                     # X-component: sin(theta) * cos(phi) * amplitude
-                    imp_x       = -SINGLE_TERM_MULT * ampl * sin_theta * cos_phi
-                    if Hamiltonian._ADD_CONDITION(imp_x):
-                        self.add(op_sx_l, multiplier=imp_x, modifies=True, sites=[i])
+                    imp_x       = -local_scale * ampl * sin_theta * cos_phi
+                    if HamiltonianSpin._ADD_CONDITION(imp_x):
+                        add_local_axis("x", imp_x, i)
                         self._log(
                             f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log=log
                         )
 
                     # Y-component: sin(theta) * sin(phi) * amplitude
-                    imp_y       = -SINGLE_TERM_MULT * ampl * sin_theta * sin_phi
-                    if Hamiltonian._ADD_CONDITION(imp_y):
-                        self.add(op_sy_l, multiplier=imp_y, modifies=True, sites=[i])
+                    imp_y       = -local_scale * ampl * sin_theta * sin_phi
+                    if HamiltonianSpin._ADD_CONDITION(imp_y):
+                        add_local_axis("y", imp_y, i)
                         self._log(
                             f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log
                         )
@@ -598,57 +705,61 @@ class HeisenbergKitaev(Hamiltonian):
 
                 #! Heisenberg - value of SzSz, SxSx, SySy (multipliers)
                 if True:
-                    sz_sz   = phase * CORR_TERM_MULT * self._j[i] * self._dlt[i] if self._j is not None else 0.0    # Heisenberg - value of SzSz (multiplier)
-                    sx_sx   = phase * CORR_TERM_MULT * self._j[i] if self._j is not None else 0.0                   # Heisenberg - value of SxSx (multiplier)
-                    sy_sy   = phase * CORR_TERM_MULT * self._j[i] if self._j is not None else 0.0                   # Heisenberg - value of SySy (multiplier)
+                    sz_sz   = phase * corr_scale * self._j[i] * self._dlt[i] if self._j is not None else 0.0    # Heisenberg - value of SzSz (multiplier)
+                    sx_sx   = phase * corr_scale * self._j[i] if self._j is not None else 0.0                   # Heisenberg - value of SxSx (multiplier)
+                    sy_sy   = phase * corr_scale * self._j[i] if self._j is not None else 0.0                   # Heisenberg - value of SySy (multiplier)
 
                 #! check the directional bond contributions - Kitaev (they are subtracted - ferromagnetic)
                 if True:
                     if nn == HEI_KIT_Z_BOND_NEI:
-                        sz_sz -= phase * CORR_TERM_MULT * self._kz if self._kz is not None else 0.0
+                        sz_sz -= phase * corr_scale * self._kz if self._kz is not None else 0.0
                     elif nn == HEI_KIT_Y_BOND_NEI:
-                        sy_sy -= phase * CORR_TERM_MULT * self._ky if self._ky is not None else 0.0
+                        sy_sy -= phase * corr_scale * self._ky if self._ky is not None else 0.0
                     elif nn == HEI_KIT_X_BOND_NEI:
-                        sx_sx -= phase * CORR_TERM_MULT * self._kx if self._kx is not None else 0.0
+                        sx_sx -= phase * corr_scale * self._kx if self._kx is not None else 0.0
 
                 #! Now add the Heisenberg-Kitaev terms
                 if True:
-                    if Hamiltonian._ADD_CONDITION(sz_sz):
+                    if HamiltonianSpin._ADD_CONDITION(sz_sz):
                         self.add(op_sz_sz_c, sites=[i, nei], multiplier=sz_sz, modifies=False)
                         self._log(f"Adding SzSz at {i},{nei} with value {sz_sz:.2f}", lvl=2, log=log)
                         elems += 1
-                    if Hamiltonian._ADD_CONDITION(sx_sx):
-                        self.add(op_sx_sx_c, sites=[i, nei], multiplier=sx_sx, modifies=True)
-                        self._log(f"Adding SxSx at {i},{nei} with value {sx_sx:.2f}", lvl=2, log=log)
-                        elems += 1
-                    if Hamiltonian._ADD_CONDITION(sy_sy):
-                        self.add(op_sy_sy_c, sites=[i, nei], multiplier=sy_sy, modifies=True)
-                        self._log(f"Adding SySy at {i},{nei} with value {sy_sy:.2f}", lvl=2, log=log)
-                        elems += 1
+                    elems += self.add_sx_sy_exchange_general(
+                        i,
+                        nei,
+                        sx_sx,
+                        sy_sy,
+                        op_xx=op_sx_sx_c,
+                        op_yy=op_sy_sy_c,
+                        op_pp=op_sp_sp_c,
+                        op_mm=op_sm_sm_c,
+                        op_pm=op_sp_sm_c,
+                        op_mp=op_sm_sp_c,
+                    )
 
                 #! Gamma terms - these are off-diagonal couplings, they are added - antiferromagnetic
                 # NOTE: The definition is H_gam = - sum Gamma * (S_a S_b + S_b S_a)
                 # Therefore we apply -Gamma as multiplier
                 if True:
                     # ? Gamma_x terms
-                    if Hamiltonian._ADD_CONDITION(self._gx) and nn == HEI_KIT_X_BOND_NEI:
-                        val     = self._gx * phase * CORR_TERM_MULT
+                    if HamiltonianSpin._ADD_CONDITION(self._gx) and nn == HEI_KIT_X_BOND_NEI:
+                        val     = self._gx * phase * corr_scale
                         elems  += 2
                         self.add(op_sy_sz_c, sites=[i, nei], multiplier=val, modifies=True)
                         self.add(op_sz_sy_c, sites=[i, nei], multiplier=val, modifies=True)
                         self._log(f"Adding Gamma_x(SySz+SzSy) at {i},{nei} with value {val:.2f}", lvl=2, log=log)
 
                     # #? Gamma_y terms
-                    if Hamiltonian._ADD_CONDITION(self._gy) and nn == HEI_KIT_Y_BOND_NEI:
-                        val     = self._gy * phase * CORR_TERM_MULT
+                    if HamiltonianSpin._ADD_CONDITION(self._gy) and nn == HEI_KIT_Y_BOND_NEI:
+                        val     = self._gy * phase * corr_scale
                         elems  += 2
                         self.add(op_sz_sx_c, sites=[i, nei], multiplier=val, modifies=True)
                         self.add(op_sx_sz_c, sites=[i, nei], multiplier=val, modifies=True)
                         self._log(f"Adding Gamma_y(SzSx + SxSz) at {i},{nei} with value {val:.2f}", lvl=2, log=log)
 
                     # #? Gamma_z terms
-                    if Hamiltonian._ADD_CONDITION(self._gz) and nn == HEI_KIT_Z_BOND_NEI:
-                        val     = self._gz * phase * CORR_TERM_MULT
+                    if HamiltonianSpin._ADD_CONDITION(self._gz) and nn == HEI_KIT_Z_BOND_NEI:
+                        val     = self._gz * phase * corr_scale
                         elems  += 2
                         self.add(op_sx_sy_c, sites=[i, nei], multiplier=val, modifies=True)
                         self.add(op_sy_sx_c, sites=[i, nei], multiplier=val, modifies=True)

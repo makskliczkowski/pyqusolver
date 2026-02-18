@@ -19,13 +19,8 @@ import numpy as np
 
 # QES package imports
 try:
-    import QES.Algebra.hamil as hamil_module
     import QES.Algebra.hilbert as hilbert_module
-    from QES.Algebra.Model.Interacting.Spin._spin_ops import (
-        normalize_spin_operator_family,
-        select_spin_operator_module,
-        spin_axis_operator,
-    )
+    from QES.Algebra.Model.Interacting.Spin.hamiltonian_spin import HamiltonianSpin
 except ImportError as e:
     raise ImportError("Required QES modules are not available.") from e
 
@@ -40,7 +35,7 @@ except ImportError as e:
 ##########################################################################################
 
 
-class XXZ(hamil_module.Hamiltonian):
+class XXZ(HamiltonianSpin):
     r"""
     Hamiltonian for the XXZ Model.
 
@@ -125,9 +120,7 @@ class XXZ(hamil_module.Hamiltonian):
         if lattice is None:
             raise ValueError("XXZ requires a 'lattice' object to define neighbors.")
 
-        requested_family = normalize_spin_operator_family(operator_family)
-        if hilbert_space is None and requested_family == "spin-1":
-            kwargs.setdefault("local_space", "spin-1")
+        requested_family = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
 
         # Initialize the base Hamiltonian class
         super().__init__(
@@ -139,9 +132,7 @@ class XXZ(hamil_module.Hamiltonian):
             backend=backend,
             **kwargs,
         )
-        self._spin_ops_module, self._spin_operator_family = select_spin_operator_module(
-            self.hilbert_space, requested_family
-        )
+        self.init_spin_family(requested_family)
 
         # Set Hamiltonian attributes
         self._name = "XXZ Model"
@@ -184,15 +175,15 @@ class XXZ(hamil_module.Hamiltonian):
         parts = [f"XXZ(Ns={self.ns}"]
 
         parts += [
-            hamil_module.Hamiltonian.fmt("Jxy", self._jxy, prec=prec),
-            hamil_module.Hamiltonian.fmt("Jz", self._jz, prec=prec),
+            HamiltonianSpin.fmt("Jxy", self._jxy, prec=prec),
+            HamiltonianSpin.fmt("Jz", self._jz, prec=prec),
             (
-                hamil_module.Hamiltonian.fmt("Δ", self._delta, prec=prec)
+                HamiltonianSpin.fmt("Δ", self._delta, prec=prec)
                 if self._delta is not None
                 else ""
             ),
-            hamil_module.Hamiltonian.fmt("hx", self._hx, prec=prec),
-            hamil_module.Hamiltonian.fmt("hz", self._hz, prec=prec),
+            HamiltonianSpin.fmt("hx", self._hx, prec=prec),
+            HamiltonianSpin.fmt("hz", self._hz, prec=prec),
         ]
 
         return sep.join([p for p in parts if p]) + ")"
@@ -304,26 +295,24 @@ class XXZ(hamil_module.Hamiltonian):
         op_sx_l = None
         op_sp_l = None
         op_sm_l = None
-        if self._spin_operator_family == "spin-1":
-            op_sp_l = self._spin_ops_module.s1_plus(
+        if self.is_spin_one:
+            op_sp_l = self.spin_op(
+                "p",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Local,
             )
-            op_sm_l = self._spin_ops_module.s1_minus(
+            op_sm_l = self.spin_op(
+                "m",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Local,
             )
         else:
-            op_sx_l = spin_axis_operator(
-                self._spin_ops_module,
-                self._spin_operator_family,
+            op_sx_l = self.spin_op(
                 "x",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Local,
             )
-        op_sz_l = spin_axis_operator(
-            self._spin_ops_module,
-            self._spin_operator_family,
+        op_sz_l = self.spin_op(
             "z",
             lattice=lattice,
             type_act=self._spin_ops_module.OperatorTypeActing.Local,
@@ -334,33 +323,29 @@ class XXZ(hamil_module.Hamiltonian):
         op_sy_sy_c = None
         op_sp_sm_c = None
         op_sm_sp_c = None
-        if self._spin_operator_family == "spin-1":
-            op_sp_sm_c = self._spin_ops_module.s1_pm(
+        if self.is_spin_one:
+            op_sp_sm_c = self.spin_op(
+                "pm",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
             )
-            op_sm_sp_c = self._spin_ops_module.s1_mp(
+            op_sm_sp_c = self.spin_op(
+                "mp",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
             )
         else:
-            op_sx_sx_c = spin_axis_operator(
-                self._spin_ops_module,
-                self._spin_operator_family,
+            op_sx_sx_c = self.spin_op(
                 "x",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
             )
-            op_sy_sy_c = spin_axis_operator(
-                self._spin_ops_module,
-                self._spin_operator_family,
+            op_sy_sy_c = self.spin_op(
                 "y",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
             )
-        op_sz_sz_c = spin_axis_operator(
-            self._spin_ops_module,
-            self._spin_operator_family,
+        op_sz_sz_c = self.spin_op(
             "z",
             lattice=lattice,
             type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
@@ -370,28 +355,25 @@ class XXZ(hamil_module.Hamiltonian):
         if self._hx is not None:
             for i in range(self.ns):
                 if not np.isclose(self._hx[i], 0.0):
-                    if self._spin_operator_family == "spin-1":
-                        mult = -0.5 * self._hx[i]
-                        self.add(operator=op_sp_l, multiplier=mult, sites=[i], modifies=True)
-                        self.add(operator=op_sm_l, multiplier=mult, sites=[i], modifies=True)
-                        self._log(
-                            f"Adding spin-1 Sx decomposition at site {i} with multiplier {-self._hx[i]:.3f}",
-                            lvl=2,
-                            log="debug",
-                        )
-                    else:
-                        self.add(operator=op_sx_l, multiplier=-self._hx[i], sites=[i], modifies=True)
-                        self._log(
-                            f"Adding Sx at site {i} with multiplier {-self._hx[i]:.3f}",
-                            lvl=2,
-                            log="debug",
-                        )
+                    self.add_local_spin_component(
+                        i,
+                        "x",
+                        -self._hx[i],
+                        op_x=op_sx_l,
+                        op_p=op_sp_l,
+                        op_m=op_sm_l,
+                    )
+                    self._log(
+                        f"Adding Sx at site {i} with multiplier {-self._hx[i]:.3f}",
+                        lvl=2,
+                        log="debug",
+                    )
 
         # Add Longitudinal Field Terms (hz)
         if self._hz is not None:
             for i in range(self.ns):
                 if not np.isclose(self._hz[i], 0.0):
-                    self.add(operator=op_sz_l, multiplier=-self._hz[i], sites=[i], modifies=False)
+                    self.add_local_spin_component(i, "z", -self._hz[i], op_z=op_sz_l)
                     self._log(
                         f"Adding Sz at site {i} with multiplier {-self._hz[i]:.3f}",
                         lvl=2,
@@ -416,52 +398,20 @@ class XXZ(hamil_module.Hamiltonian):
                     coupling_xy = self._jxy[i] * phase
 
                     if not np.isclose(coupling_xy, 0.0):
-                        if self._spin_operator_family == "spin-1":
-                            # SxSx + SySy = 0.5 * (S+S- + S-S+)
-                            ladder_mult = -0.5 * coupling_xy
-                            self.add(
-                                operator=op_sp_sm_c,
-                                multiplier=ladder_mult,
-                                sites=[i, j_neighbor],
-                                modifies=True,
-                            )
-                            self.add(
-                                operator=op_sm_sp_c,
-                                multiplier=ladder_mult,
-                                sites=[i, j_neighbor],
-                                modifies=True,
-                            )
-                            self._log(
-                                f"Adding spin-1 XY ladder terms between ({i}, {j_neighbor}) with multiplier {-coupling_xy:.3f}",
-                                lvl=2,
-                                log="debug",
-                            )
-                        else:
-                            # Add Sx_i Sx_j term
-                            self.add(
-                                operator=op_sx_sx_c,
-                                multiplier=-coupling_xy,
-                                sites=[i, j_neighbor],
-                                modifies=True,
-                            )
-                            self._log(
-                                f"Adding SxSx between ({i}, {j_neighbor}) with multiplier {-coupling_xy:.3f}",
-                                lvl=2,
-                                log="debug",
-                            )
-
-                            # Add Sy_i Sy_j term
-                            self.add(
-                                operator=op_sy_sy_c,
-                                multiplier=-coupling_xy,
-                                sites=[i, j_neighbor],
-                                modifies=True,
-                            )
-                            self._log(
-                                f"Adding SySy between ({i}, {j_neighbor}) with multiplier {-coupling_xy:.3f}",
-                                lvl=2,
-                                log="debug",
-                            )
+                        self.add_xy_exchange(
+                            i,
+                            j_neighbor,
+                            -coupling_xy,
+                            op_xx=op_sx_sx_c,
+                            op_yy=op_sy_sy_c,
+                            op_pm=op_sp_sm_c,
+                            op_mp=op_sm_sp_c,
+                        )
+                        self._log(
+                            f"Adding XY exchange between ({i}, {j_neighbor}) with multiplier {-coupling_xy:.3f}",
+                            lvl=2,
+                            log="debug",
+                        )
 
                 # Ising coupling: Jz * Sz_i Sz_j
                 if self._jz is not None:

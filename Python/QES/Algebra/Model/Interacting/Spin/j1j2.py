@@ -12,13 +12,8 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 
 try:
-    from QES.Algebra.hamil import Hamiltonian
     from QES.Algebra.hilbert import HilbertSpace
-    from QES.Algebra.Model.Interacting.Spin._spin_ops import (
-        normalize_spin_operator_family,
-        select_spin_operator_module,
-        spin_axis_operator,
-    )
+    from QES.Algebra.Model.Interacting.Spin.hamiltonian_spin import HamiltonianSpin
     from QES.general_python.lattices.lattice import Lattice
 except ImportError as e:
     raise ImportError(
@@ -26,7 +21,7 @@ except ImportError as e:
     ) from e
 
 
-class J1J2Model(Hamiltonian):
+class J1J2Model(HamiltonianSpin):
     """
     J1-J2 Heisenberg model with optional local fields and impurities.
 
@@ -59,19 +54,9 @@ class J1J2Model(Hamiltonian):
         if lattice is None:
             raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
 
-        requested_family = normalize_spin_operator_family(operator_family)
-        if hilbert_space is None and requested_family == "spin-1":
-            kwargs.setdefault("local_space", "spin-1")
+        requested_family = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
 
-        complex_required = hy is not None
-        if impurities is not None:
-            for imp in impurities:
-                if len(imp) == 4:
-                    _, phi, theta, ampl = imp
-                    vy = float(ampl) * np.sin(float(theta)) * np.sin(float(phi))
-                    if abs(vy) > 1e-15:
-                        complex_required = True
-                        break
+        complex_required = self.needs_complex_dtype_from_spin_inputs(hy=hy, impurities=impurities)
 
         super().__init__(
             is_manybody     =   True,
@@ -84,9 +69,7 @@ class J1J2Model(Hamiltonian):
             **kwargs,
         )
 
-        self._spin_ops_module, self._spin_operator_family = select_spin_operator_module(
-            self.hilbert_space, requested_family
-        )   
+        self.init_spin_family(requested_family)
 
         # Couplings and fields are stored as backend arrays or DummyVector.
         self._name  = "J1-J2"
@@ -163,31 +146,27 @@ class J1J2Model(Hamiltonian):
         op_sp_l = None
         op_sm_l = None
         if is_spin_one:
-            op_sp_l = self._spin_ops_module.s1_plus(
+            op_sp_l = self.spin_op(
+                "p",
                 lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Local
             )
-            op_sm_l = self._spin_ops_module.s1_minus(
+            op_sm_l = self.spin_op(
+                "m",
                 lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Local
             )
         else:
-            op_sx_l = spin_axis_operator(
-                self._spin_ops_module,
-                self._spin_operator_family,
+            op_sx_l = self.spin_op(
                 "x",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Local,
             )
-            op_sy_l = spin_axis_operator(
-                self._spin_ops_module,
-                self._spin_operator_family,
+            op_sy_l = self.spin_op(
                 "y",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Local,
             )
 
-        op_sz_l = spin_axis_operator(
-            self._spin_ops_module,
-            self._spin_operator_family,
+        op_sz_l = self.spin_op(
             "z",
             lattice=lattice,
             type_act=self._spin_ops_module.OperatorTypeActing.Local,
@@ -198,95 +177,82 @@ class J1J2Model(Hamiltonian):
         op_sp_sm = None
         op_sm_sp = None
         if is_spin_one:
-            op_sp_sm = self._spin_ops_module.s1_pm(
+            op_sp_sm = self.spin_op(
+                "pm",
                 lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation
             )
-            op_sm_sp = self._spin_ops_module.s1_mp(
+            op_sm_sp = self.spin_op(
+                "mp",
                 lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation
             )
         else:
-            op_sx_sx = spin_axis_operator(
-                self._spin_ops_module,
-                self._spin_operator_family,
+            op_sx_sx = self.spin_op(
                 "x",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
             )
-            op_sy_sy = spin_axis_operator(
-                self._spin_ops_module,
-                self._spin_operator_family,
+            op_sy_sy = self.spin_op(
                 "y",
                 lattice=lattice,
                 type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
             )
 
-        op_sz_sz = spin_axis_operator(
-            self._spin_ops_module,
-            self._spin_operator_family,
+        op_sz_sz = self.spin_op(
             "z",
             lattice=lattice,
             type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
         )
 
         def add_local_axis(axis: str, multiplier, site: int) -> None:
-            if not Hamiltonian._ADD_CONDITION(multiplier):
+            if not HamiltonianSpin._ADD_CONDITION(multiplier):
                 return
-            if not is_spin_one:
-                if axis == "x":
-                    self.add(op_sx_l, multiplier=multiplier, modifies=True, sites=[site])
-                elif axis == "y":
-                    self.add(op_sy_l, multiplier=multiplier, modifies=True, sites=[site])
-                else:
-                    self.add(op_sz_l, multiplier=multiplier, modifies=False, sites=[site])
-                return
-
-            if axis == "x":
-                half = 0.5 * multiplier
-                self.add(op_sp_l, multiplier=half, modifies=True, sites=[site])
-                self.add(op_sm_l, multiplier=half, modifies=True, sites=[site])
-            elif axis == "y":
-                # Sy = (S+ - S-) / (2i)
-                self.add(op_sp_l, multiplier=(-0.5j) * multiplier, modifies=True, sites=[site])
-                self.add(op_sm_l, multiplier=(0.5j) * multiplier, modifies=True, sites=[site])
-            else:
-                self.add(op_sz_l, multiplier=multiplier, modifies=False, sites=[site])
+            self.add_local_spin_component(
+                site,
+                axis,
+                multiplier,
+                op_x=op_sx_l,
+                op_y=op_sy_l,
+                op_z=op_sz_l,
+                op_p=op_sp_l,
+                op_m=op_sm_l,
+            )
 
         def add_exchange_isotropic(multiplier, site_i: int, site_j: int) -> None:
-            if not Hamiltonian._ADD_CONDITION(multiplier):
+            if not HamiltonianSpin._ADD_CONDITION(multiplier):
                 return
-            if is_spin_one:
-                # SxSx + SySy = 0.5 * (S+S- + S-S+)
-                ladder = 0.5 * multiplier
-                self.add(op_sp_sm, multiplier=ladder, modifies=True, sites=[site_i, site_j])
-                self.add(op_sm_sp, multiplier=ladder, modifies=True, sites=[site_i, site_j])
-                self.add(op_sz_sz, multiplier=multiplier, modifies=False, sites=[site_i, site_j])
-            else:
-                self.add(op_sx_sx, multiplier=multiplier, modifies=True, sites=[site_i, site_j])
-                self.add(op_sy_sy, multiplier=multiplier, modifies=True, sites=[site_i, site_j])
-                self.add(op_sz_sz, multiplier=multiplier, modifies=False, sites=[site_i, site_j])
+            self.add_xy_exchange(
+                site_i,
+                site_j,
+                multiplier,
+                op_xx=op_sx_sx,
+                op_yy=op_sy_sy,
+                op_pm=op_sp_sm,
+                op_mp=op_sm_sp,
+            )
+            self.add(op_sz_sz, multiplier=multiplier, modifies=False, sites=[site_i, site_j])
 
         # Local fields
         for i in range(self.ns):
-            if Hamiltonian._ADD_CONDITION(self._hx, i):
+            if HamiltonianSpin._ADD_CONDITION(self._hx, i):
                 add_local_axis("x", -self._hx[i], i)
-            if Hamiltonian._ADD_CONDITION(self._hy, i):
+            if HamiltonianSpin._ADD_CONDITION(self._hy, i):
                 add_local_axis("y", -self._hy[i], i)
-            if Hamiltonian._ADD_CONDITION(self._hz, i):
+            if HamiltonianSpin._ADD_CONDITION(self._hz, i):
                 add_local_axis("z", -self._hz[i], i)
 
             for imp_site, phi, theta, ampl in self._impurities:
-                if imp_site != i or not Hamiltonian._ADD_CONDITION(ampl):
+                if imp_site != i or not HamiltonianSpin._ADD_CONDITION(ampl):
                     continue
                 s_t, c_t = np.sin(theta), np.cos(theta)
                 s_p, c_p = np.sin(phi), np.cos(phi)
                 vx = -ampl * s_t * c_p
                 vy = -ampl * s_t * s_p
                 vz = -ampl * c_t
-                if Hamiltonian._ADD_CONDITION(vx):
+                if HamiltonianSpin._ADD_CONDITION(vx):
                     add_local_axis("x", vx, i)
-                if Hamiltonian._ADD_CONDITION(vy):
+                if HamiltonianSpin._ADD_CONDITION(vy):
                     add_local_axis("y", vy, i)
-                if Hamiltonian._ADD_CONDITION(vz):
+                if HamiltonianSpin._ADD_CONDITION(vz):
                     add_local_axis("z", vz, i)
 
         # Nearest-neighbor J1 exchange

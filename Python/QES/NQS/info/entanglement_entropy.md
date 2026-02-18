@@ -125,9 +125,9 @@ For a honeycomb lattice with $L_x \times L_y$ unit cells ($N_s = 2 L_x L_y$ site
 ### NQS (Monte Carlo sampling)
 
 ```python
-from QES.NQS.src.nqs_entropy import compute_renyi_entropy, bipartition_cuts_honeycomb
+from QES.NQS.src.nqs_entropy import compute_renyi_entropy, bipartition_cuts
 
-cuts = bipartition_cuts_honeycomb(lattice, cut_type="all")
+cuts = bipartition_cuts(lattice, cut_type="all")
 for label, region in cuts.items():
     s2, s2_err = compute_renyi_entropy(nqs, region=region, q=2, return_error=True)
     print(f"{label}: S_2 = {s2:.4f} ± {s2_err:.4f}")
