@@ -2188,14 +2188,14 @@ class NQS(MonteCarloSolver):
     #####################################
 
     def save_weights(
-        self, step: int = 0, filename: Optional[str] = None, metadata: Optional[dict] = None
+        self, step: Union[int, str] = 0, filename: Optional[str] = None, metadata: Optional[dict] = None
     ):
         """
         Delegates saving to the CheckpointManager.
 
         Parameters
         ----------
-        step : int
+        step : Union[int, str]
             The current training step or epoch. Used for versioning the saved weights.
         filename : Optional[str]
             The filename to save the weights to. Can be:
@@ -2244,7 +2244,7 @@ class NQS(MonteCarloSolver):
             metadata["exact"] = self.exact
 
         saved_path = self.ckpt_manager.save(
-            step=step if isinstance(step, int) else "final",
+            step=step,
             params=params,
             metadata=metadata,
             filename=filename,
@@ -2253,13 +2253,13 @@ class NQS(MonteCarloSolver):
         self.log(f"Saved weights for step {step} to {saved_path}", lvl=1, color="green")
         return saved_path
 
-    def load_weights(self, step: Optional[int] = None, filename: Optional[str] = None):
+    def load_weights(self, step: Optional[Union[int, str]] = None, filename: Optional[str] = None):
         """
         Delegates loading to the CheckpointManager.
 
         Parameters
         ----------
-        step : Optional[int]
+        step : Optional[Union[int, str]]
             The training step to load. If None:
             - Orbax: loads the latest checkpoint
             - HDF5: requires filename or finds latest checkpoint_*.h5
@@ -2281,7 +2281,7 @@ class NQS(MonteCarloSolver):
         """
         try:
             params = self.ckpt_manager.load(
-                step=step if isinstance(step, int) else "final" if step is not None else None,
+                step=step,
                 filename=filename,
                 target_par=self.get_params(),
             )
@@ -2289,7 +2289,7 @@ class NQS(MonteCarloSolver):
 
             # Load metadata and set exact info
             metadata = self.ckpt_manager.load_metadata(
-                step=step if isinstance(step, int) else "final", filename=filename
+                step=step, filename=filename
             )
             if "exact" in metadata:
                 self.exact = metadata["exact"]
@@ -2589,6 +2589,7 @@ class NQS(MonteCarloSolver):
         # Utilities
         timing_mode: str = "detailed",
         early_stopper: Any = None,
+        optimizer: Optional[Any] = None,
         lower_states: List["NQS"] = None,
         # Schedulers
         lr_scheduler: Optional[Callable] = None,
@@ -2670,6 +2671,10 @@ class NQS(MonteCarloSolver):
         early_stopper : Any, optional
             Early stopping callback or configuration.
 
+        optimizer : Any, optional
+            Optional JAX/Optax optimizer (Adam, SGD, etc.).
+            If provided, it will be used instead of standard TDVP updates.
+
         lower_states : List[NQS], optional
             List of lower-energy NQS states for orthogonalization (excited states).
 
@@ -2690,6 +2695,8 @@ class NQS(MonteCarloSolver):
 
         diag_scheduler : str or Callable, optional
             Diagonal shift scheduler for SR matrix.
+            Scheduler kwargs can be passed via **kwargs:
+                - diag_init, diag_final, diag_decay_rate, diag_patience, diag_min_delta, diag_step_size
 
         use_sr : bool, default=True
             Use Stochastic Reconfiguration (SR) for optimization.
@@ -2867,6 +2874,7 @@ class NQS(MonteCarloSolver):
                 # Utilities
                 timing_mode=timing_mode,
                 early_stopper=early_stopper,
+                optimizer=optimizer,
                 logger=self._logger,
                 lower_states=lower_states,
                 # Schedulers

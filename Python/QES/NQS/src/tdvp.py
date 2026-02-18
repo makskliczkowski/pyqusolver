@@ -261,19 +261,19 @@ class TDVP:
 
     @dataclass
     class TDVPCompiledMeta:
-        gradient_fn: Callable  # Gradient calculator for a given NN        (not jitted)
-        loss_c_fn: Callable  # Centered loss function calculator         (not jitted)
-        deriv_c_fn: Callable  # Centered derivative function calculator   (not jitted)
-        covariance_fn: Callable  # Covariance matrix calculator              (not jitted)
-        prepare_fn: Callable  # Preparation function
-        prepare_fn_m: Callable  # Preparation function for the excited state
+        gradient_fn     : Callable  # Gradient calculator for a given NN        (not jitted)
+        loss_c_fn       : Callable  # Centered loss function calculator         (not jitted)
+        deriv_c_fn      : Callable  # Centered derivative function calculator   (not jitted)
+        covariance_fn   : Callable  # Covariance matrix calculator              (not jitted)
+        prepare_fn      : Callable  # Preparation function
+        prepare_fn_m    : Callable  # Preparation function for the excited state
         # jitted versions
-        gradient_fn_j: Callable
-        loss_c_fn_j: Callable
-        deriv_c_fn_j: Callable
-        covariance_fn_j: Callable
-        prepare_fn_j: Callable
-        prepare_fn_m_j: Callable
+        gradient_fn_j   : Callable
+        loss_c_fn_j     : Callable
+        deriv_c_fn_j    : Callable
+        covariance_fn_j : Callable
+        prepare_fn_j    : Callable
+        prepare_fn_m_j  : Callable
         # flags
         is_jax: bool
 
@@ -402,20 +402,21 @@ class TDVP:
         self.sr_pinv_cutoff = (
             sr_pinv_cutoff  # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
         )
-        self.sr_diag_shift = (
-            sr_diag_shift  # diagonal shift for the covariance matrix in case of ill-conditioning
-        )
-        self.sr_maxiter = sr_maxiter  # maximum number of iterations for the linear solver
-        self.grad_clip = grad_clip  # gradient clipping threshold (None = no clipping)
+        self.sr_diag_shift  = sr_diag_shift  # diagonal shift for the covariance matrix in case of ill-conditioning
+        self.sr_maxiter     = sr_maxiter  # maximum number of iterations for the linear solver
+        self.grad_clip      = grad_clip  # gradient clipping threshold (None = no clipping)
+
+        # Initialize preconditioner slots before solver setup; solver construction
+        # may reference default_precond.
+        self.sr_precond     = None
+        self.sr_precond_fn  = None
 
         #! handle the solver
         try:
-            self.sr_solve_lin = None  # linear solver for the TDVP equation (A x = b)
-            self.sr_solve_lin_t = sr_lin_solver_t  # form of the solver
-            self.sr_solve_lin_fn = None  # function handle for the solver
-            self.sr_solve_forced = (
-                sr_form_matrix  # whether the solver is forced to use the specified form
-            )
+            self.sr_solve_lin       = None              # linear solver for the TDVP equation (A x = b)
+            self.sr_solve_lin_t     = self._normalize_solver_form(sr_lin_solver_t)  # solver form
+            self.sr_solve_lin_fn    = None              # function handle for the solver
+            self.sr_solve_forced    = sr_form_matrix    # whether the solver is forced to use the specified form
             self.set_solver(sr_lin_solver)
         except Exception as e:
             warnings.warn(f"Solver could not be set: {e}")
@@ -423,36 +424,68 @@ class TDVP:
 
         #! handle the preconditioner
         try:
-            self.sr_precond = None  # preconditioner for the TDVP equation (A x = b)
-            self.sr_precond_fn = None  # function handle for the preconditioner
             self.set_preconditioner(sr_precond)
         except Exception as e:
             warnings.warn(f"Preconditioner could not be set: {e}")
             raise e
 
-        self.meta = None
+        self.meta       = None
         self.use_timing = use_timing  # whether to time/synchronize operations
 
         # Helper storage
-        self._e_local_mean = None  # mean local energy
-        self._e_local_std = None  # std local energy
+        self._e_local_mean  = None  # mean local energy
+        self._e_local_std   = None  # std local energy
         # ---
-        self._solution = None  # solution of the TDVP equation
-        self._f0 = None  # force vector obtained from the covariance of loss and derivative
-        self._s0 = None  # Fisher matrix obtained from the covariance of derivatives
-        self._n_samples = None  # number of samples
-        self._full_size = None  # full size of the covariance matrix
-        self._x0 = sr_lin_x0
-        self.timings = TDVPTimes()
+        self._solution      = None  # solution of the TDVP equation
+        self._f0            = None  # force vector obtained from the covariance of loss and derivative
+        self._s0            = None  # Fisher matrix obtained from the covariance of derivatives
+        self._n_samples     = None  # number of samples
+        self._full_size     = None  # full size of the covariance matrix
+        self._x0            = sr_lin_x0
+        self.timings        = TDVPTimes()
 
         # Global phase parameter tracking for dynamical correlation functions
         # Equation from paper: $|\psi_{\theta_0,\theta}\rangle = e^{\theta_0}|\psi_\theta\rangle$
         # Evolution: $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
-        self._theta0 = 0.0  # global phase parameter
-        self._theta0_dot = 0.0  # time derivative of global phase parameter
+        self._theta0        = 0.0  # global phase parameter
+        self._theta0_dot    = 0.0  # time derivative of global phase parameter
 
         #! functions
         self._init_functions()
+
+    def _normalize_solver_form(self, solver_form: Union[solvers.SolverForm, str, int]) -> solvers.SolverForm:
+        """
+        Normalize solver-form inputs to ``solvers.SolverForm``.
+
+        Supports enum values, integer codes, and common string aliases.
+        """
+        if isinstance(solver_form, solvers.SolverForm):
+            return solver_form
+
+        if isinstance(solver_form, int):
+            return solvers.SolverForm(solver_form)
+
+        if isinstance(solver_form, str):
+            key     = solver_form.strip().upper()
+            alias   = {"FULL": "MATRIX", "MAT": "MATRIX"}
+            key     = alias.get(key, key)
+
+            if key in solvers.SolverForm.__members__:
+                return solvers.SolverForm[key]
+
+            low = solver_form.strip().lower()
+            if low == "gram":
+                return solvers.SolverForm.GRAM
+            if low == "matvec":
+                return solvers.SolverForm.MATVEC
+            if low in ("matrix", "full"):
+                return solvers.SolverForm.MATRIX
+
+        raise ValueError(f"Invalid solver form: {solver_form!r}")
+
+    def _solver_form_is(self, solver_form: Union[solvers.SolverForm, str, int]) -> bool:
+        """Check solver form against normalized ``solvers.SolverForm``."""
+        return self.sr_solve_lin_t == self._normalize_solver_form(solver_form)
 
     ###################
     #! TIMING
@@ -512,20 +545,20 @@ class TDVP:
         try:
             #! store the jitted functions
             if self.is_jax:
-                self._gradient_fn_j = jax.jit(self._gradient_fn)
-                self._loss_c_fn_j = jax.jit(self._loss_c_fn)
-                self._deriv_c_fn_j = jax.jit(self._deriv_c_fn)
+                self._gradient_fn_j     = jax.jit(self._gradient_fn)
+                self._loss_c_fn_j       = jax.jit(self._loss_c_fn)
+                self._deriv_c_fn_j      = jax.jit(self._deriv_c_fn)
                 # These ARE decorated with @jax.jit in sr module - don't double-wrap
-                self._covariance_fn_j = self._covariance_fn
-                self._prepare_fn_j = self._prepare_fn
-                self._prepare_fn_m_j = self._prepare_fn_m
+                self._covariance_fn_j   = self._covariance_fn
+                self._prepare_fn_j      = self._prepare_fn
+                self._prepare_fn_m_j    = self._prepare_fn_m
             else:
-                self._gradient_fn_j = self._gradient_fn
-                self._loss_c_fn_j = self._loss_c_fn
-                self._deriv_c_fn_j = self._deriv_c_fn
-                self._covariance_fn_j = self._covariance_fn
-                self._prepare_fn_j = self._prepare_fn
-                self._prepare_fn_m_j = self._prepare_fn_m
+                self._gradient_fn_j     = self._gradient_fn
+                self._loss_c_fn_j       = self._loss_c_fn
+                self._deriv_c_fn_j      = self._deriv_c_fn
+                self._covariance_fn_j   = self._covariance_fn
+                self._prepare_fn_j      = self._prepare_fn
+                self._prepare_fn_m_j    = self._prepare_fn_m
         except Exception as e:
             raise e
 
@@ -571,7 +604,7 @@ class TDVP:
             identifier = self.sr_solve_lin
             self.sr_solve_lin = solvers.choose_solver(
                 solver_id=identifier,
-                is_gram=self.sr_solve_lin_t == solvers.SolverForm.GRAM.value,
+                is_gram=self._solver_form_is(solvers.SolverForm.GRAM),
                 sigma=self.sr_diag_shift,
                 backend=self.backend,
                 default_precond=self.sr_precond,
@@ -585,9 +618,9 @@ class TDVP:
                 )
 
         if self.sr_solve_lin is not None:
-            if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
+            if self._solver_form_is(solvers.SolverForm.GRAM):
                 self.form_matrix = False or self.sr_solve_forced
-            elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
+            elif self._solver_form_is(solvers.SolverForm.MATVEC):
                 self.form_matrix = False or self.sr_solve_forced
             else:
                 self.form_matrix = True
@@ -601,8 +634,8 @@ class TDVP:
             #! set the solver function
             self.sr_solve_lin_fn = self.sr_solve_lin.get_solver_func(
                 backend_module=self.backend,
-                use_matvec=self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value,
-                use_fisher=self.sr_solve_lin_t == solvers.SolverForm.GRAM.value,
+                use_matvec=self._solver_form_is(solvers.SolverForm.MATVEC),
+                use_fisher=self._solver_form_is(solvers.SolverForm.GRAM),
                 use_matrix=self.form_matrix,
                 sigma=self.sr_diag_shift,
             )
@@ -633,15 +666,15 @@ class TDVP:
         if self.sr_precond is not None:
             self.sr_precond.reset_backend(self.backend_str)
 
-            if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value and not self.form_matrix:
+            if self._solver_form_is(solvers.SolverForm.GRAM) and not self.form_matrix:
                 # Returns func(r, s, sp) -> used in Fisher mode
                 self.sr_precond_fn = self.sr_precond.get_apply_gram()
 
-            elif self.sr_solve_lin_t == solvers.SolverForm.MATRIX.value or self.form_matrix:
+            elif self._solver_form_is(solvers.SolverForm.MATRIX) or self.form_matrix:
                 # Returns func(r, a) -> used in Matrix mode
                 self.sr_precond_fn = self.sr_precond.get_apply_mat()
 
-            elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
+            elif self._solver_form_is(solvers.SolverForm.MATVEC):
                 # Returns func(r) -> used in pure Matvec mode
                 self.sr_precond_fn = self.sr_precond.get_apply()
 
@@ -1095,7 +1128,7 @@ class TDVP:
         # Case 2: BatchedJacobian -> Must use MATVEC mode
 
         # If already configured for MATVEC, use the standard function
-        if self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
+        if self._solver_form_is(solvers.SolverForm.MATVEC):
             return self.sr_solve_lin_fn, True
 
         # Case 3: BatchedJacobian but configured for GRAM/MATRIX -> Need override
@@ -1162,7 +1195,7 @@ class TDVP:
 
         # === Standard Mode: Dense Arrays ===
 
-        if self.sr_solve_lin_t == solvers.SolverForm.GRAM.value:
+        if self._solver_form_is(solvers.SolverForm.GRAM):
             # GRAM mode: Standard Logic for Dense Arrays
             if self.use_minsr:
                 s = mat_O.T.conj()
@@ -1183,7 +1216,7 @@ class TDVP:
             }
             solution = actual_solve_func(**solver_kwargs)
 
-        elif self.sr_solve_lin_t == solvers.SolverForm.MATVEC.value:
+        elif self._solver_form_is(solvers.SolverForm.MATVEC):
             # MATVEC mode: We provide the full matrix-vector product function
             mode = "minsr" if self.use_minsr else "standard"
             matvec_fn = self._solve_prepare_matvec(mat_O, mode=mode)
@@ -1331,10 +1364,8 @@ class TDVP:
         # print(mat_O.shape, vec_b.shape)
 
         #! handle the initial guess - use the previous solution
-        with self._time(
-            "x0", self._solve_handle_x0, vec_b, kwargs.get("use_old_result", False)
-        ) as x0:
-            pass
+        with self._time("x0", self._solve_handle_x0, vec_b, kwargs.get("use_old_result", False)) as x0:
+            self._x0 = x0
 
         #! if not using SR, return the negative force vector as the solution
         if not self.use_sr:

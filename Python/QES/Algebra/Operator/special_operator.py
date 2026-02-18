@@ -804,9 +804,11 @@ class SpecialOperator(Operator, ABC):
         if not compute:
             if hasattr(op_module, "correlators"):
                 return op_module.correlators(
-                    indices_pairs=indices_pairs,
-                    correlators=correlators,
-                    type_acting=type_acting,
+                    indices_pairs   =   indices_pairs,
+                    correlators     =   correlators,
+                    type_acting     =   type_acting,
+                    lattice         =   self._lattice,
+                    ns              =   self._ns,
                     **kwargs,
                 )
             else:
@@ -814,15 +816,15 @@ class SpecialOperator(Operator, ABC):
         else:
             if hasattr(op_module, "compute_correlations"):
                 return op_module.compute_correlations(
-                    eigenvalues=self.eigenvalues,
-                    eigenvectors=self.eigenvectors,
-                    correlators=correlators,
-                    hilbert=self.hilbert_space,
-                    lattice=self._lattice,
-                    logger=self._logger,
-                    nstates_to_store=nstates_to_store,
-                    n_susceptibility_states=n_susceptibility_states,
-                    safety_factor=safety_factor,
+                    eigenvalues             =   self.eigenvalues,
+                    eigenvectors            =   self.eigenvectors,
+                    correlators             =   correlators,
+                    hilbert                 =   self.hilbert_space,
+                    lattice                 =   self._lattice,
+                    logger                  =   self._logger,
+                    nstates_to_store        =   nstates_to_store,
+                    n_susceptibility_states =   n_susceptibility_states,
+                    safety_factor           =   safety_factor,
                 )
             else:
                 raise AttributeError(

@@ -183,27 +183,27 @@ def _apply_fun_np(
         The result of the function evaluation, either batched or unbatched, depending on the value of `batch_size`.
     """
 
-    # We assume net_utils.numpy.apply_callable_np/batched_np support *op_args.
-    # If not, this might fail or we should ignore them.
-    # Given the JAX implementation supports it, it's safer to pass them.
+    # NumPy helper kernels do not accept extra operator args directly.
+    # Bind them through a closure to keep API parity with the JAX path.
+    if op_args:
+        func_in = lambda s: func(s, *op_args)
+    else:
+        func_in = func
 
     if batch_size is None:
         funct_in = net_utils.numpy.apply_callable_np
-        return funct_in(
-            func, states, probabilities, logproba_in, logproba_fun, parameters, *op_args
-        )
+        return funct_in(func_in, states, probabilities, logproba_in, logproba_fun, parameters)
 
     # otherwise, we shall use the batched version
     funct_in = net_utils.numpy.apply_callable_batched_np
     return funct_in(
-        func=func,
+        func=func_in,
         states=states,
         sample_probas=probabilities,
         logprobas_in=logproba_in,
         logproba_fun=logproba_fun,
         parameters=parameters,
         batch_size=batch_size,
-        *op_args,
     )
 
 # ----------------------------------------------------------------------

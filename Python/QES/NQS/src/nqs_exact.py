@@ -47,6 +47,9 @@ def get_exact_impl(nqs_instance: "NQS", **kwargs) -> Optional["NQSTrainStats"]:
 
         # Perform exact diagonalization if not already done
         if not stats.has_exact:
+            if nqs_instance.model.ns > kwargs.get("max_exact_size", 20):
+                return stats  # Avoid expensive diagonalization for large systems
+            
             if nqs_instance.model.eig_val is None:
                 nqs_instance.model.diagonalize(
                     method      =   "lanczos",

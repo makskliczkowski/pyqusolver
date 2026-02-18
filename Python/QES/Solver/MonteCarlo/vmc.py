@@ -274,7 +274,7 @@ class VMCSampler(Sampler):
 
         self.set_replicas(pt_betas, pt_replicas)
         self.set_hybrid_proposer(
-            kwargs.get("p_global", 0.0),
+            kwargs.get("global_p", kwargs.get("p_global", 0.0)),
             kwargs.get("global_fraction", 0.5),
             kwargs.get("patterns", None),
             kwargs.get("global_update", None),
@@ -619,8 +619,29 @@ class VMCSampler(Sampler):
         self._static_pt_sampler = None
         self._jit_cache = {}
 
-    def set_global_update(self, p_global: float, global_fraction: float = 0.5):
-        self.set_hybrid_proposer(p_global, global_fraction)
+    def set_global_update(
+        self,
+        p_global            : Optional[float] = None,
+        global_fraction     : float = 0.5,
+        global_update       : Optional[Union[Callable, str]] = None,
+        patterns            : Optional[Union[List, str]] = None,
+        **kwargs,
+    ):
+        """
+        Configure hybrid local/global proposer.
+
+        Supports both ``p_global`` and ``global_p`` naming for compatibility
+        with older and newer ``NQS.train(...)`` call paths.
+        """
+        if p_global is None:
+            p_global = kwargs.pop("global_p", kwargs.pop("p_global", 0.0))
+        
+        self.set_hybrid_proposer(
+            p_global        =   p_global,
+            fraction        =   global_fraction,
+            patterns        =   patterns,
+            global_update   =   global_update,
+        )
 
     @staticmethod
     @jax.jit
