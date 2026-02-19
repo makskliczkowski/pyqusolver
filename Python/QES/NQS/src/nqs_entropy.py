@@ -105,7 +105,6 @@ if TYPE_CHECKING:
 try:
     import jax
     import jax.numpy as jnp
-    import jax.scipy.special as jsp
     JAX_AVAILABLE = True
 except ImportError:
     JAX_AVAILABLE = False
@@ -287,11 +286,17 @@ def compute_renyi_entropy(
         # Accumulate log ratio: log[psi(swapped_r)] - log[psi(original_r)]
         log_ratio_sum   = log_ratio_sum + (log_swapped - replicas_log[r])
     
-    # Estimate Tr[rho_A^q]
-    # Tr[rho_A^q] = <exp(sum_r log_ratio_r)> where average over samples
-    log_trace       = jsp.logsumexp(log_ratio_sum) - jnp.log(float(n_samp))
-    trace_val       = jnp.real(jnp.exp(log_trace))
-    trace_val       = jnp.maximum(trace_val, min_trace_value)
+    # Estimate Tr[rho_A^q] in a centered form for numerical stability:
+    #   Tr = <exp(log_ratio_sum)>
+    #      = exp(shift) * <exp(log_ratio_sum - shift)>,
+    # where shift = max(real(log_ratio_sum)).
+    # This avoids overflow in both mean and variance calculations for q >= 3.
+    shift           = jnp.max(jnp.real(log_ratio_sum))
+    swap_centered   = jnp.exp(log_ratio_sum - shift)
+    mean_centered   = jnp.mean(swap_centered)
+    trace_complex   = jnp.exp(shift) * mean_centered
+    trace_val_real  = jnp.real(trace_complex)
+    trace_val       = jnp.maximum(trace_val_real, min_trace_value)
     trace_val_f     = float(trace_val)
     
     # Compute S_q 
@@ -304,18 +309,25 @@ def compute_renyi_entropy(
     sq_err          = 0.0
 
     if return_error or return_raw:
-        swap_samples    = jnp.real(jnp.exp(log_ratio_sum))
         if JAX_AVAILABLE:
-            swap_np     = np.asarray(jax.device_get(swap_samples))
+            swap_centered_np = np.asarray(jax.device_get(swap_centered))
+            mean_centered_np = np.asarray(jax.device_get(mean_centered))
         else:
-            swap_np     = np.asarray(swap_samples)
+            swap_centered_np = np.asarray(swap_centered)
+            mean_centered_np = np.asarray(mean_centered)
 
+        rel_err = 0.0
         if n_total > 1:
             if n_chain > 1 and (n_total % n_chain) == 0 and (n_total // n_chain) > 1:
-                per_chain = swap_np.reshape(n_chain, n_total // n_chain).mean(axis=1)
-                trace_err = float(np.std(per_chain, ddof=1) / np.sqrt(float(n_chain)))
+                per_chain_centered = swap_centered_np.reshape(n_chain, n_total // n_chain).mean(axis=1)
+                stderr_centered = float(np.std(per_chain_centered, ddof=1) / np.sqrt(float(n_chain)))
             else:
-                trace_err = float(np.std(swap_np, ddof=1) / np.sqrt(float(n_total)))
+                stderr_centered = float(np.std(swap_centered_np, ddof=1) / np.sqrt(float(n_total)))
+
+            mean_abs = max(float(np.abs(mean_centered_np)), np.finfo(float).tiny)
+            rel_err = float(stderr_centered / mean_abs)
+
+        trace_err = float(abs(trace_val_f) * rel_err)
     
     # Error propagation: dS_q = |d(Tr)/((1-q)*Tr)|
     if trace_val_f > 0.0:

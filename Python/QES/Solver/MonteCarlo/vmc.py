@@ -1,4 +1,4 @@
-"""
+r"""
 Variational Monte Carlo Sampler Module
 
 Extends the generic Sampler class to implement a Variational Monte Carlo (VMC)
@@ -23,6 +23,7 @@ Example
 File            : Python/QES/Solver/MonteCarlo/vmc.py
 Author          : Maksymilian Kliczkowski
 License         : MIT
+Version         : 2.0
 ---------------------------------
 """
 
@@ -154,6 +155,8 @@ class VMCSampler(Sampler):
         sample_dtype: Optional[Any] = None,
         **kwargs,
     ):
+        # Keep donation opt-in: enabled only when explicitly requested.
+        donate_buffers = bool(kwargs.pop("donate_buffers", False))
 
         super().__init__(
             shape,
@@ -175,8 +178,8 @@ class VMCSampler(Sampler):
         if net is None:
             raise ValueError("A network (or callable) must be provided for evaluation.")
 
-        # set the network
-        self._net_callable, self._parameters = self._set_net_callable(net)
+        self._donate_buffers                    = donate_buffers
+        self._net_callable, self._parameters    = self._set_net_callable(net)
 
         # Check for fast updates support
         self._log_psi_delta_fun = None
@@ -185,30 +188,34 @@ class VMCSampler(Sampler):
         elif hasattr(net, "get_log_psi_delta"):
             self._log_psi_delta_fun = net.get_log_psi_delta()
 
+        self._log_psi_delta_cache_init_fun = None
+        if hasattr(net, "init_log_psi_delta_cache"):
+            self._log_psi_delta_cache_init_fun = net.init_log_psi_delta_cache
+        elif hasattr(net, "get_log_psi_delta_cache_init"):
+            self._log_psi_delta_cache_init_fun = net.get_log_psi_delta_cache_init()
+
         # User override for delta function
         if "log_psi_delta" in kwargs:
             self._log_psi_delta_fun = kwargs["log_psi_delta"]
+        if "log_psi_delta_cache_init" in kwargs:
+            self._log_psi_delta_cache_init_fun = kwargs["log_psi_delta_cache_init"]
+
+        self._log_psi_delta_supports_cache = self._log_psi_delta_cache_init_fun is not None
 
         # set the parameters - this for modification of the distribution
         self._mu = mu
         if self._mu < 0.0 or self._mu > 2.0:
             raise ValueError(SamplerErrors.NOT_IN_RANGE_MU)
 
-        self._beta = beta
-        self._therm_steps = therm_steps
-        self._sweep_steps = sweep_steps
-        self._logprob_fact = logprob_fact
-        self._logprobas = None
-        self._total_therm_updates = (
-            therm_steps * sweep_steps * self._size
-        )  # Total updates during thermalization
-        self._total_sample_updates_per_sample = (
-            sweep_steps * self._size
-        )  # Updates between collected samples
-        self._updates_per_sample = self._sweep_steps  # Steps between samples
-        self._total_sample_updates_per_chain = (
-            numsamples * self._updates_per_sample * self._numchains
-        )
+        self._beta                  = beta
+        self._therm_steps           = therm_steps
+        self._sweep_steps           = sweep_steps
+        self._logprob_fact          = logprob_fact
+        self._logprobas             = None
+        self._total_therm_updates   = therm_steps * sweep_steps * self._size    # Total updates during thermalization
+        self._total_sample_updates_per_sample = sweep_steps * self._size        # Updates between collected samples
+        self._updates_per_sample    = self._sweep_steps  # Steps between samples
+        self._total_sample_updates_per_chain = numsamples * self._updates_per_sample * self._numchains
 
         # -----------------------------------------------------------------
         # Mixed Precision Setup
@@ -292,6 +299,13 @@ class VMCSampler(Sampler):
 
     def _resolve_fast_update_fun(self, current_fun, upd_rule, **kwargs):
         """Attempts to replace the update function with a version that returns update info."""
+        def _rule_supported(name: str) -> bool:
+            supported = getattr(self._net, "fast_update_supported_rules", None)
+            if supported is None:
+                return True
+            normalized = {str(x).upper() for x in supported}
+            return name.upper() in normalized
+
         # Simple mapping based on function name or rule
         try:
             # If upd_rule is string/Enum, we can map directly
@@ -301,33 +315,36 @@ class VMCSampler(Sampler):
                 if isinstance(upd_rule, str):
                     upd_rule = UpdateRule.from_str(upd_rule)
 
-                if upd_rule == UpdateRule.LOCAL:
+                if upd_rule == UpdateRule.LOCAL and _rule_supported("LOCAL"):
                     return propose_local_flip_with_info
-                elif upd_rule == UpdateRule.EXCHANGE:
+                elif upd_rule == UpdateRule.EXCHANGE and _rule_supported("EXCHANGE"):
                     from .updates import get_neighbor_table
 
                     hilbert = kwargs.get("hilbert")
                     order = kwargs.get("exchange_order", 1)
                     neighbor_table = get_neighbor_table(hilbert.lattice, order=order)
                     return partial(propose_exchange_with_info, neighbor_table=neighbor_table)
-                elif upd_rule == UpdateRule.MULTI_FLIP:
+                elif upd_rule == UpdateRule.MULTI_FLIP and _rule_supported("MULTI_FLIP"):
                     n_flip = kwargs.get("n_flip", 1)
                     return partial(propose_multi_flip_with_info, n_flip=n_flip)
-                elif upd_rule in [UpdateRule.GLOBAL, UpdateRule.PLAQUETTE, UpdateRule.WILSON]:
+                elif (
+                    upd_rule in [UpdateRule.GLOBAL, UpdateRule.PLAQUETTE, UpdateRule.WILSON]
+                    and _rule_supported("GLOBAL")
+                ):
                     if (
                         isinstance(current_fun, partial)
                         and current_fun.func.__name__ == "propose_global_flip"
                     ):
                         return partial(propose_global_flip_with_info, **current_fun.keywords)
                     pass
-                elif upd_rule == UpdateRule.BOND_FLIP:
+                elif upd_rule == UpdateRule.BOND_FLIP and _rule_supported("BOND_FLIP"):
                     from .updates import get_neighbor_table
 
                     hilbert = kwargs.get("hilbert")
                     order = kwargs.get("bond_order", 1)
                     neighbor_table = get_neighbor_table(hilbert.lattice, order=order)
                     return partial(propose_bond_flip_with_info, neighbor_table=neighbor_table)
-                elif upd_rule == UpdateRule.WORM:
+                elif upd_rule == UpdateRule.WORM and _rule_supported("WORM"):
                     from .updates import get_neighbor_table
 
                     hilbert = kwargs.get("hilbert")
@@ -339,7 +356,7 @@ class VMCSampler(Sampler):
                     )
 
             # If default was used
-            if current_fun == propose_local_flip:
+            if current_fun == propose_local_flip and _rule_supported("LOCAL"):
                 return propose_local_flip_with_info
 
         except ImportError:
@@ -661,18 +678,7 @@ class VMCSampler(Sampler):
     ):
         use_beta = beta if beta is not None else self._beta
         if self._isjax:
-            if beta is not None and beta != self._beta:
-
-                @partial(jax.jit, static_argnames=("beta",))
-                def _accept_jax_dynamic_beta(cv, cdv, beta, mu):
-                    log_acceptance_ratio = beta * jnp.real(cdv - cv) * mu
-                    return jnp.exp(jnp.minimum(log_acceptance_ratio, 30.0))
-
-                return _accept_jax_dynamic_beta(current_val, candidate_val, use_beta, mu)
-            else:
-                return self._acceptance_probability_jax(
-                    current_val, candidate_val, beta=use_beta, mu=mu
-                )
+            return self._acceptance_probability_jax(current_val, candidate_val, beta=use_beta, mu=mu)
         else:
             return self._acceptance_probability_np(current_val, candidate_val, beta=use_beta, mu=mu)
 
@@ -707,8 +713,9 @@ class VMCSampler(Sampler):
         return np.array([net_callable(net_params, y) for y in x]).reshape(x.shape[0])
 
     def logprob(self, x, net_callable=None, net_params=None):
-        use_callable = net_callable if net_callable is not None else self._net_callable
-        use_params = net_params if net_params is not None else self._parameters
+        ''' Calculate log-probability (log-amplitude) for a batch of states `x` using the provided or default network callable and parameters.'''
+        use_callable    = net_callable if net_callable is not None else self._net_callable
+        use_params      = net_params if net_params is not None else self._parameters
 
         if use_callable is None:
             raise ValueError("No callable provided for log probability calculation.")
@@ -728,14 +735,17 @@ class VMCSampler(Sampler):
         rng_k_init,
         num_proposed_init,
         num_accepted_init,
+        delta_cache_init,
         params,
         # static args
-        steps: int,
-        update_proposer: Callable,
-        net_callable_fun: Callable,
-        mu: float = 2.0,
-        beta: float = 1.0,
-        log_psi_delta_fun: Optional[Callable] = None,
+        steps               : int,
+        update_proposer     : Callable,
+        net_callable_fun    : Callable,
+        mu                  : float = 2.0,
+        beta                : float = 1.0,
+        log_psi_delta_fun   : Optional[Callable] = None,
+        log_psi_delta_cache_init_fun: Optional[Callable] = None,
+        log_psi_delta_supports_cache: bool = False,
     ):
         r"""
         Runs multiple MCMC steps using lax.scan. JIT-compiled.
@@ -748,7 +758,7 @@ class VMCSampler(Sampler):
         proposer_fn = jax.vmap(update_proposer, in_axes=(0, 0))
 
         def _sweep_chain_jax_step_inner(carry, _):
-            chain_in, current_val_in, current_key, num_prop, num_acc = carry
+            chain_in, current_val_in, current_key, num_prop, num_acc, cache_in = carry
 
             key_step, next_key_carry    = jax.random.split(current_key)
             key_prop_base, key_acc      = jax.random.split(key_step)
@@ -764,16 +774,35 @@ class VMCSampler(Sampler):
             else:
                 new_chain, update_info = proposal_res, None
 
+            cache_prop = None
             # Calculate new log-probability
             if log_psi_delta_fun is not None and update_info is not None:
-                # O(N_hidden) fast update
-                delta_log_psi   = log_psi_delta_fun(params, current_val_in, chain_in, update_info)
+                if log_psi_delta_supports_cache and cache_in is not None:
+                    delta_res = log_psi_delta_fun(
+                        params, current_val_in, chain_in, update_info, cache_in
+                    )
+                else:
+                    delta_res = log_psi_delta_fun(params, current_val_in, chain_in, update_info)
+
+                if isinstance(delta_res, tuple):
+                    delta_log_psi, cache_prop = delta_res
+                else:
+                    delta_log_psi = delta_res
                 new_val         = current_val_in + delta_log_psi
                 delta           = jnp.real(delta_log_psi)
+
+                if (
+                    cache_in is not None
+                    and cache_prop is None
+                    and log_psi_delta_cache_init_fun is not None
+                ):
+                    cache_prop = log_psi_delta_cache_init_fun(params, new_chain)
             else:
                 # O(N_sites * N_hidden) standard update
                 new_val = VMCSampler._flatten_batch_output_jax(logproba_fun(new_chain), num_chains)
                 delta = jnp.real(new_val - current_val_in)
+                if cache_in is not None and log_psi_delta_cache_init_fun is not None:
+                    cache_prop = log_psi_delta_cache_init_fun(params, new_chain)
 
             # Work in log-space for numerical stability:
             # accept iff log(u) < min(0, log_acc).
@@ -790,7 +819,25 @@ class VMCSampler(Sampler):
             proposed_out    = num_prop + 1
             accepted_out    = num_acc + keep.astype(num_acc.dtype)
 
-            new_carry       = (chain_out, val_out, next_key_carry, proposed_out, accepted_out)
+            if cache_in is None:
+                cache_out = None
+            elif cache_prop is None:
+                cache_out = cache_in
+            else:
+                def _select_cache(new_leaf, old_leaf):
+                    cache_mask = keep.reshape((num_chains,) + (1,) * (new_leaf.ndim - 1))
+                    return jnp.where(cache_mask, new_leaf, old_leaf)
+
+                cache_out = jax.tree_util.tree_map(_select_cache, cache_prop, cache_in)
+
+            new_carry       = (
+                chain_out,
+                val_out,
+                next_key_carry,
+                proposed_out,
+                accepted_out,
+                cache_out,
+            )
             return new_carry, None
 
         initial_carry = (
@@ -799,13 +846,14 @@ class VMCSampler(Sampler):
             rng_k_init,
             num_proposed_init,
             num_accepted_init,
+            delta_cache_init,
         )
         final_carry, _ = jax.lax.scan(
             _sweep_chain_jax_step_inner, initial_carry, None, length=steps
         )
-        final_chain, final_val, final_key, final_prop, final_acc = final_carry
+        final_chain, final_val, final_key, final_prop, final_acc, final_cache = final_carry
 
-        return final_chain, final_val, final_key, final_prop, final_acc
+        return final_chain, final_val, final_key, final_prop, final_acc, final_cache
 
     @staticmethod
     @numba.njit
@@ -882,6 +930,7 @@ class VMCSampler(Sampler):
                 rng_k_init=rng_k,
                 num_proposed_init=num_proposed,
                 num_accepted_init=num_accepted,
+                delta_cache_init=None,
                 params=params,
                 steps=steps,
                 update_proposer=use_update_proposer,
@@ -889,6 +938,8 @@ class VMCSampler(Sampler):
                 mu=self._mu,
                 beta=self._beta,
                 log_psi_delta_fun=self._log_psi_delta_fun,
+                log_psi_delta_cache_init_fun=self._log_psi_delta_cache_init_fun,
+                log_psi_delta_supports_cache=self._log_psi_delta_supports_cache,
             )
         return self._run_mcmc_steps_np(
             chain,
@@ -917,6 +968,7 @@ class VMCSampler(Sampler):
         rng_k_init,
         num_proposed_init,
         num_accepted_init,
+        delta_cache_init,
         params,
         num_samples,
         total_therm_updates,
@@ -926,16 +978,26 @@ class VMCSampler(Sampler):
         update_proposer,
         net_callable_fun,
         log_psi_delta_fun=None,
+        log_psi_delta_cache_init_fun=None,
+        log_psi_delta_supports_cache=False,
     ):
 
         #! Thermalization phase
-        states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm = (
+        (
+            states_therm,
+            logprobas_therm,
+            rng_k_therm,
+            num_proposed_therm,
+            num_accepted_therm,
+            delta_cache_therm,
+        ) = (
             VMCSampler._run_mcmc_steps_jax(
                 chain_init=states_init,
                 current_val_init=logprobas_init,
                 rng_k_init=rng_k_init,
                 num_proposed_init=num_proposed_init,
                 num_accepted_init=num_accepted_init,
+                delta_cache_init=delta_cache_init,
                 params=params,
                 steps=total_therm_updates,
                 update_proposer=update_proposer,
@@ -943,21 +1005,38 @@ class VMCSampler(Sampler):
                 mu=mu,
                 beta=beta,
                 log_psi_delta_fun=log_psi_delta_fun,
+                log_psi_delta_cache_init_fun=log_psi_delta_cache_init_fun,
+                log_psi_delta_supports_cache=log_psi_delta_supports_cache,
             )
         )
 
         #! Sampling phase (using lax.scan for collection)
         def sample_scan_body(carry, _):
-            states_carry, logprobas_carry, rng_k_carry, num_proposed_carry, num_accepted_carry = (
+            (
+                states_carry,
+                logprobas_carry,
+                rng_k_carry,
+                num_proposed_carry,
+                num_accepted_carry,
+                delta_cache_carry,
+            ) = (
                 carry
             )
-            states_new, logprobas_new, rng_k_new, num_proposed_new, num_accepted_new = (
+            (
+                states_new,
+                logprobas_new,
+                rng_k_new,
+                num_proposed_new,
+                num_accepted_new,
+                delta_cache_new,
+            ) = (
                 VMCSampler._run_mcmc_steps_jax(
                     chain_init=states_carry,
                     current_val_init=logprobas_carry,
                     rng_k_init=rng_k_carry,
                     num_proposed_init=num_proposed_carry,
                     num_accepted_init=num_accepted_carry,
+                    delta_cache_init=delta_cache_carry,
                     params=params,
                     steps=updates_per_sample,
                     update_proposer=update_proposer,
@@ -965,6 +1044,8 @@ class VMCSampler(Sampler):
                     mu=mu,
                     beta=beta,
                     log_psi_delta_fun=log_psi_delta_fun,
+                    log_psi_delta_cache_init_fun=log_psi_delta_cache_init_fun,
+                    log_psi_delta_supports_cache=log_psi_delta_supports_cache,
                 )
             )
             return (
@@ -973,6 +1054,7 @@ class VMCSampler(Sampler):
                 rng_k_new,
                 num_proposed_new,
                 num_accepted_new,
+                delta_cache_new,
             ), states_new
 
         initial_scan_carry = (
@@ -981,6 +1063,7 @@ class VMCSampler(Sampler):
             rng_k_therm,
             num_proposed_therm,
             num_accepted_therm,
+            delta_cache_therm,
         )
         final_carry, collected_samples = jax.lax.scan(
             f=sample_scan_body, init=initial_scan_carry, xs=None, length=num_samples
@@ -1084,19 +1167,33 @@ class VMCSampler(Sampler):
         update_proposer,
         net_callable_fun,
         log_psi_delta_fun=None,
+        log_psi_delta_cache_init_fun=None,
+        log_psi_delta_supports_cache=False,
     ):
 
         logprobas_init = net_callable_fun(params, states_init)
         logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
+        if log_psi_delta_cache_init_fun is not None:
+            delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
+        else:
+            delta_cache_init = None
 
         #! Phase 1: Thermalization
-        states_therm, logprobas_therm, rng_k_therm, num_proposed_therm, num_accepted_therm = (
+        (
+            states_therm,
+            logprobas_therm,
+            rng_k_therm,
+            num_proposed_therm,
+            num_accepted_therm,
+            delta_cache_therm,
+        ) = (
             VMCSampler._run_mcmc_steps_jax(
                 chain_init=states_init,
                 current_val_init=logprobas_init,
                 rng_k_init=rng_k_init,
                 num_proposed_init=num_proposed_init,
                 num_accepted_init=num_accepted_init,
+                delta_cache_init=delta_cache_init,
                 params=params,
                 steps=total_therm_updates,
                 update_proposer=update_proposer,
@@ -1104,6 +1201,8 @@ class VMCSampler(Sampler):
                 mu=mu,
                 beta=beta,
                 log_psi_delta_fun=log_psi_delta_fun,
+                log_psi_delta_cache_init_fun=log_psi_delta_cache_init_fun,
+                log_psi_delta_supports_cache=log_psi_delta_supports_cache,
             )
         )
 
@@ -1115,6 +1214,7 @@ class VMCSampler(Sampler):
                 rng_k_init=carry[2],
                 num_proposed_init=carry[3],
                 num_accepted_init=carry[4],
+                delta_cache_init=carry[5],
                 params=params,
                 steps=updates_per_sample,
                 update_proposer=update_proposer,
@@ -1122,6 +1222,8 @@ class VMCSampler(Sampler):
                 mu=mu,
                 beta=beta,
                 log_psi_delta_fun=log_psi_delta_fun,
+                log_psi_delta_cache_init_fun=log_psi_delta_cache_init_fun,
+                log_psi_delta_supports_cache=log_psi_delta_supports_cache,
             )
             return new_carry, (new_carry[0], new_carry[1])
 
@@ -1131,6 +1233,7 @@ class VMCSampler(Sampler):
             rng_k_therm,
             num_proposed_therm,
             num_accepted_therm,
+            delta_cache_therm,
         )
         final_carry, collected_samples = jax.lax.scan(
             sample_scan_body, initial_scan_carry, None, length=num_samples
@@ -1150,7 +1253,9 @@ class VMCSampler(Sampler):
         norm_factor = jnp.maximum(jnp.sum(probs), 1e-10)
         probs_normalized = probs / norm_factor * total_samples
 
-        return final_carry, (configs_flat, batched_log_ansatz), probs_normalized
+        fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache = final_carry
+        final_state_tuple = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
+        return final_state_tuple, (configs_flat, batched_log_ansatz), probs_normalized
 
     ###################################################################
     #! PARALLEL TEMPERING (PT) SUPPORT
@@ -1220,13 +1325,20 @@ class VMCSampler(Sampler):
         update_proposer,
         net_callable_fun,
         log_psi_delta_fun=None,
+        log_psi_delta_cache_init_fun=None,
+        log_psi_delta_supports_cache=False,
     ):
 
         # Initial betas: (n_replicas, n_chains)
         # All chains in replica r start with pt_betas[r]
         current_betas = jnp.tile(pt_betas[:, None], (1, num_chains))
 
-        def _single_replica_mcmc(chain, lpsi, key, n_prop, n_acc, beta_r):
+        if log_psi_delta_cache_init_fun is not None:
+            delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
+        else:
+            delta_cache_init = None
+
+        def _single_replica_mcmc(chain, lpsi, key, n_prop, n_acc, delta_cache_r, beta_r):
             # beta_r is now (n_chains,) - per-chain beta
             # But _run_mcmc_steps_jax takes scalar beta or we need to modify it?
             # _run_mcmc_steps_jax takes 'beta'. If we pass array, it propagates?
@@ -1237,6 +1349,7 @@ class VMCSampler(Sampler):
                 rng_k_init=key,
                 num_proposed_init=n_prop,
                 num_accepted_init=n_acc,
+                delta_cache_init=delta_cache_r,
                 params=params,
                 steps=updates_per_sample,
                 update_proposer=update_proposer,
@@ -1244,21 +1357,23 @@ class VMCSampler(Sampler):
                 mu=mu,
                 beta=beta_r,
                 log_psi_delta_fun=log_psi_delta_fun,
+                log_psi_delta_cache_init_fun=log_psi_delta_cache_init_fun,
+                log_psi_delta_supports_cache=log_psi_delta_supports_cache,
             )
 
-        vmapped_mcmc_step = jax.vmap(_single_replica_mcmc, in_axes=(0, 0, 0, 0, 0, 0))
+        vmapped_mcmc_step = jax.vmap(_single_replica_mcmc, in_axes=(0, 0, 0, 0, 0, 0, 0))
 
         states_flat = states_init.reshape((-1,) + shape)
         logprobas_flat = VMCSampler._batched_network_apply(params, states_flat, net_callable_fun)
         logprobas_init = logprobas_flat.reshape((states_init.shape[0], states_init.shape[1]))
 
         def therm_scan_body(carry, _):
-            states, lpsi, key, n_prop, n_acc, betas = carry
+            states, lpsi, key, n_prop, n_acc, delta_cache, betas = carry
             key, subkey = jax.random.split(key)
             replica_keys = jax.random.split(subkey, n_replicas)
 
-            states_new, lpsi_new, keys_new, n_prop_new, n_acc_new = vmapped_mcmc_step(
-                states, lpsi, replica_keys, n_prop, n_acc, betas
+            states_new, lpsi_new, keys_new, n_prop_new, n_acc_new, delta_cache_new = vmapped_mcmc_step(
+                states, lpsi, replica_keys, n_prop, n_acc, delta_cache, betas
             )
 
             key, swap_key = jax.random.split(key)
@@ -1266,7 +1381,15 @@ class VMCSampler(Sampler):
                 lpsi_new, betas, swap_key, mu
             )
 
-            return (states_new, lpsi_new, key, n_prop_new, n_acc_new, betas_swapped), None
+            return (
+                states_new,
+                lpsi_new,
+                key,
+                n_prop_new,
+                n_acc_new,
+                delta_cache_new,
+                betas_swapped,
+            ), None
 
         # Use ceil division so requested thermalization is not truncated.
         n_therm_sweeps = max(1, (total_therm_updates + updates_per_sample - 1) // updates_per_sample)
@@ -1276,24 +1399,33 @@ class VMCSampler(Sampler):
             rng_k_init,
             num_proposed_init,
             num_accepted_init,
+            delta_cache_init,
             current_betas,
         )
         therm_carry, _ = jax.lax.scan(therm_scan_body, initial_carry, None, length=n_therm_sweeps)
 
         def sample_scan_body(carry, _):
-            states, lpsi, key, n_prop, n_acc, betas = carry
+            states, lpsi, key, n_prop, n_acc, delta_cache, betas = carry
             key, subkey = jax.random.split(key)
             replica_keys = jax.random.split(subkey, n_replicas)
 
-            states_new, lpsi_new, keys_new, n_prop_new, n_acc_new = vmapped_mcmc_step(
-                states, lpsi, replica_keys, n_prop, n_acc, betas
+            states_new, lpsi_new, keys_new, n_prop_new, n_acc_new, delta_cache_new = vmapped_mcmc_step(
+                states, lpsi, replica_keys, n_prop, n_acc, delta_cache, betas
             )
 
             key, swap_key = jax.random.split(key)
             betas_swapped = VMCSampler._replica_exchange_kernel_jax_betas(
                 lpsi_new, betas, swap_key, mu
             )
-            new_carry = (states_new, lpsi_new, key, n_prop_new, n_acc_new, betas_swapped)
+            new_carry = (
+                states_new,
+                lpsi_new,
+                key,
+                n_prop_new,
+                n_acc_new,
+                delta_cache_new,
+                betas_swapped,
+            )
 
             # Collect Physical Samples
             # We want samples where beta == pt_betas[0] (1.0)
@@ -1357,7 +1489,7 @@ class VMCSampler(Sampler):
         # Our final_carry has betas at the end. We should strip it.
 
         # Unpack final carry
-        fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, fc_betas = final_carry
+        fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache, fc_betas = final_carry
 
         # Restore canonical order (sort by temperature descending to match pt_betas)
         # pt_betas is assumed sorted descending.
@@ -1558,15 +1690,15 @@ class VMCSampler(Sampler):
             "update_proposer": self._upd_fun,
             "net_callable_fun": self._net_callable,
             "log_psi_delta_fun": self._log_psi_delta_fun,
+            "log_psi_delta_cache_init_fun": self._log_psi_delta_cache_init_fun,
+            "log_psi_delta_supports_cache": self._log_psi_delta_supports_cache,
         }
 
         partial_sampler = partial(VMCSampler._static_sample_pt_jax, **baked_args)
         int_dtype = DEFAULT_JP_INT_TYPE
         n_replicas = self._n_replicas
 
-        # @partial(jax.jit, donate_argnums=(0, 1))
-        @jax.jit
-        def wrapped_pt_sampler(
+        def wrapped_pt_sampler_impl(
             states_init: jax.Array,
             rng_k_init: jax.Array,
             params: Any,
@@ -1593,7 +1725,9 @@ class VMCSampler(Sampler):
                 params=params,
             )
 
-        return wrapped_pt_sampler
+        if self._donate_buffers:
+            return jax.jit(wrapped_pt_sampler_impl, donate_argnums=(0, 1))
+        return jax.jit(wrapped_pt_sampler_impl)
 
     def _get_sampler_jax(
         self, num_samples: Optional[int] = None, num_chains: Optional[int] = None
@@ -1601,34 +1735,34 @@ class VMCSampler(Sampler):
         if not self._isjax:
             raise RuntimeError("Static JAX sampler getter only available for JAX backend.")
 
-        static_num_samples = num_samples if num_samples is not None else self._numsamples
-        static_num_chains = num_chains if num_chains is not None else self._numchains
+        static_num_samples  = num_samples if num_samples is not None else self._numsamples
+        static_num_chains   = num_chains if num_chains is not None else self._numchains
 
         baked_args = {
-            "num_samples": static_num_samples,
-            "num_chains": static_num_chains,
-            "total_therm_updates": self._total_therm_updates,
-            "updates_per_sample": self._updates_per_sample,
-            "shape": self._shape,
-            "update_proposer": self._upd_fun,
-            "net_callable_fun": self._net_callable,
-            "mu": self._mu,
-            "beta": self._beta,
-            "logprob_fact": self._logprob_fact,
-            "log_psi_delta_fun": self._log_psi_delta_fun,
+            "num_samples"           : static_num_samples,
+            "num_chains"            : static_num_chains,
+            "total_therm_updates"   : self._total_therm_updates,
+            "updates_per_sample"    : self._updates_per_sample,
+            "shape"                 : self._shape,
+            "update_proposer"       : self._upd_fun,
+            "net_callable_fun"      : self._net_callable,
+            "mu"                    : self._mu,
+            "beta"                  : self._beta,
+            "logprob_fact"          : self._logprob_fact,
+            "log_psi_delta_fun"     : self._log_psi_delta_fun,
+            "log_psi_delta_cache_init_fun": self._log_psi_delta_cache_init_fun,
+            "log_psi_delta_supports_cache": self._log_psi_delta_supports_cache,
         }
 
         partial_sampler = partial(VMCSampler._static_sample_jax, **baked_args)
-        int_dtype = DEFAULT_JP_INT_TYPE
+        int_dtype       = DEFAULT_JP_INT_TYPE
 
-        # @partial(jax.jit, donate_argnums=(0, 1))
-        @jax.jit
-        def wrapped_sampler(
-            states_init: jax.Array,
-            rng_k_init: jax.Array,
-            params: Any,
-            num_proposed_init: Optional[jax.Array] = None,
-            num_accepted_init: Optional[jax.Array] = None,
+        def wrapped_sampler_impl(
+            states_init         : jax.Array,
+            rng_k_init          : jax.Array,
+            params              : Any,
+            num_proposed_init   : Optional[jax.Array] = None,
+            num_accepted_init   : Optional[jax.Array] = None,
         ):
 
             _num_proposed_init = (
@@ -1651,7 +1785,9 @@ class VMCSampler(Sampler):
             )
             return final_state_tuple, samples_tuple, probs
 
-        return wrapped_sampler
+        if self._donate_buffers:
+            return jax.jit(wrapped_sampler_impl, donate_argnums=(0, 1))
+        return jax.jit(wrapped_sampler_impl)
 
     def _get_sampler_np(
         self, num_samples: Optional[int] = None, num_chains: Optional[int] = None
@@ -1694,8 +1830,9 @@ class VMCSampler(Sampler):
     ) -> Callable:
         cache_key = (
             num_samples if num_samples is not None else self._numsamples,
-            num_chains if num_chains is not None else self._numchains,
+            num_chains  if num_chains  is not None else self._numchains,
             self._isjax,
+            self._donate_buffers if self._isjax else False,
         )
 
         if hasattr(self, "_jit_cache") and cache_key in self._jit_cache:

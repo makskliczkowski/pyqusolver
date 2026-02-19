@@ -55,12 +55,12 @@ except ImportError:
 
 @dataclass
 class TDVPTimes:
-    prepare: float = 0.0
-    gradient: float = 0.0
-    covariance: float = 0.0
-    x0: float = 0.0
-    solve: float = 0.0
-    phase: float = 0.0
+    prepare     : float = 0.0
+    gradient    : float = 0.0
+    covariance  : float = 0.0
+    x0          : float = 0.0
+    solve       : float = 0.0
+    phase       : float = 0.0
 
     def __getitem__(self, key):
         return getattr(self, key)
@@ -70,13 +70,13 @@ class TDVPTimes:
 
     def todict(self):
         return {
-            "prepare": self.prepare,  # time for preparation
-            "gradient": self.gradient,  # gradient computation time
-            "covariance": self.covariance,  # covariance matrix preparation time
-            "x0": self.x0,  # initial guess time
-            "solve": self.solve,  # solve linear system time
-            "phase": self.phase,  # phase estimation time
-            "epoch": self.prepare
+            "prepare"       : self.prepare,     # time for preparation
+            "gradient"      : self.gradient,    # gradient computation time
+            "covariance"    : self.covariance,  # covariance matrix preparation time
+            "x0"            : self.x0,          # initial guess time
+            "solve"         : self.solve,       # solve linear system time
+            "phase"         : self.phase,       # phase estimation time
+            "epoch"         : self.prepare
             + self.gradient
             + self.covariance
             + self.x0
@@ -87,17 +87,17 @@ class TDVPTimes:
 
 @dataclass
 class TDVPStepInfo:
-    mean_energy: Array
-    std_energy: Array
+    mean_energy     : Array
+    std_energy      : Array
     # other
-    failed: Optional[bool] = None
-    sr_converged: Optional[bool] = None
-    sr_executed: Optional[bool] = None
-    sr_iterations: Optional[int] = None
-    timings: TDVPTimes = field(default_factory=TDVPTimes)
+    failed          : Optional[bool] = None
+    sr_converged    : Optional[bool] = None
+    sr_executed     : Optional[bool] = None
+    sr_iterations   : Optional[int] = None
+    timings         : TDVPTimes = field(default_factory=TDVPTimes)
     # Global phase tracking for dynamical correlations Santos, Schmitt, Heyl, PRL 131, 046501 (2023)
-    theta0_dot: Optional[Array] = None  # Time derivative of global phase θ̇₀
-    theta0: Optional[Array] = None  # Global phase parameter θ₀
+    theta0_dot      : Optional[Array] = None  # Time derivative of global phase θ̇₀
+    theta0          : Optional[Array] = None  # Global phase parameter θ₀
 
 
 if JAX_AVAILABLE:
@@ -127,31 +127,29 @@ if JAX_AVAILABLE:
 
 #################################################################
 
-
 @dataclass
 class TDVPLowerPenalty:
     # most important
-    excited_on_lower: Array  # (n_j,) complex; ratios Psi_{W}(\sum _j)
-    lower_on_excited: Array  # (n_j,) complex; ratios Psi_{W_j}(\sigma )
+    excited_on_lower    : Array  # (n_j,) complex; ratios Psi_{W}(\sum _j)
+    lower_on_excited    : Array  # (n_j,) complex; ratios Psi_{W_j}(\sigma )
     # parameters of the lower state
-    lower_on_lower: Array  # (n_j,) complex; ratios Psi_{W_j}(\sum _j)
-    excited_on_excited: Array  # (n_j,) complex; ratios Psi_{W}(\sigma )
+    lower_on_lower      : Array  # (n_j,) complex; ratios Psi_{W_j}(\sum _j)
+    excited_on_excited  : Array  # (n_j,) complex; ratios Psi_{W}(\sigma )
     # samples drawn from pi(.; params_j)
-    params_j: Any
-    configs_j: Array  # (n_j, ...)
+    params_j            : Any
+    configs_j           : Array  # (n_j, ...)
 
     # optional, kept for symmetry
-    probabilities_j: Optional[Array] = None
+    probabilities_j     : Optional[Array] = None
     # penalty parameter
-    beta_j: float = 0.0
+    beta_j              : float = 0.0
     # The final rations r_le (lower to excited) [configs_excited] and r_el (excited to lower) [configs]
-    r_le: np.array = None  # (n_j,) complex; ratios Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs_j
-    r_el: np.array = (
-        None  # (n_j,) complex; ratios E_loc^{W}(\sigma )Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs
-    )
+    r_le                : np.array = None  # (n_j,) complex; ratios Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs_j
+    r_el                : np.array = None  # (n_j,) complex; ratios E_loc^{W}(\sigma )Psi_{W}(\sigma )/Psi_{W_j}(\sigma ) on configs
+
     # backend
-    backend_np: Any = jnp if JAX_AVAILABLE else np
-    dtype: Any = None
+    backend_np          : Any = jnp if JAX_AVAILABLE else np
+    dtype               : Any = None
 
     def compute_ratios(self):
         """
@@ -160,19 +158,13 @@ class TDVPLowerPenalty:
         """
 
         if self.excited_on_lower.shape != self.lower_on_lower.shape:
-            raise ValueError(
-                f"Shapes of excited_on_lower {self.excited_on_lower.shape} and lower_on_lower {self.lower_on_lower.shape} do not match."
-            )
+            raise ValueError(f"Shapes of excited_on_lower {self.excited_on_lower.shape} and lower_on_lower {self.lower_on_lower.shape} do not match.")
 
         if self.excited_on_excited.shape != self.lower_on_excited.shape:
-            raise ValueError(
-                f"Shapes of excited_on_excited {self.excited_on_excited.shape} and lower_on_excited {self.lower_on_excited.shape} do not match."
-            )
+            raise ValueError(f"Shapes of excited_on_excited {self.excited_on_excited.shape} and lower_on_excited {self.lower_on_excited.shape} do not match.")
 
         if self.excited_on_lower.shape != self.excited_on_excited.shape:
-            raise ValueError(
-                f"Shapes of excited_on_lower {self.excited_on_lower.shape} and excited_on_excited {self.excited_on_excited.shape} do not match."
-            )
+            raise ValueError(f"Shapes of excited_on_lower {self.excited_on_lower.shape} and excited_on_excited {self.excited_on_excited.shape} do not match.")
 
         #! compute r_le
         self.r_le = self.backend_np.exp(self.lower_on_excited - self.excited_on_excited)
@@ -202,9 +194,7 @@ class TDVPLowerPenalty:
         self.r_el = backend.zeros_like(self.excited_on_lower, dtype=dtype)
         self.compute_ratios()
 
-
 #################################################################
-
 
 class TDVP:
     r"""
@@ -284,31 +274,29 @@ class TDVP:
         rhs_prefactor: Union[float, complex] = 1.0,
         *,
         # other
-        regularization: float = 0.0,  # maybe used?
+        regularization          : float = 0.0,      # maybe used?
         # Stochastic reconfiguration parameters
-        sr_lin_solver: Optional[Union[solvers.Solver, str]] = None,  # default solver
-        sr_precond: Optional[precond.Preconditioner] = None,  # default preconditioner
-        sr_snr_tol: float = 1e-3,  # for signal-to-noise ratio
-        sr_pinv_tol: float = 1e-14,  # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
-        sr_pinv_cutoff: float = 1e-8,  # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
-        sr_diag_shift: float = 1e-3,  # diagonal shift for the covariance matrix in case of ill-conditioning
-        sr_lin_solver_t: Optional[
-            Union[solvers.SolverForm, str]
-        ] = "gram",  # form of the solver - gram, matrix
-        sr_lin_x0: Optional[Array] = None,  # initial guess for the solver
-        sr_maxiter: int = 100,  # maximum number of iterations for the linear solver
-        sr_form_matrix: bool = False,  # whether to form the full matrix
+        sr_lin_solver           : Optional[Union[solvers.Solver, str]] = None,  # default solver
+        sr_precond              : Optional[precond.Preconditioner] = None,      # default preconditioner
+        sr_snr_tol              : float = 1e-3,     # for signal-to-noise ratio
+        sr_pinv_tol             : float = 1e-14,    # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
+        sr_pinv_cutoff          : float = 1e-8,     # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
+        sr_diag_shift           : float = 1e-3,     # diagonal shift for the covariance matrix in case of ill-conditioning
+        sr_lin_solver_t         : Optional[Union[solvers.SolverForm, str]] = "gram", # form of the solver - gram, matrix
+        sr_lin_x0: Optional[Array] = None,          # initial guess for the solver
+        sr_maxiter              : int = 100,        # maximum number of iterations for the linear solver
+        sr_form_matrix          : bool = False,     # whether to form the full matrix
         # Backend
-        backend: str = "default",  # 'jax' or 'numpy'
-        logger: Optional[Any] = None,
+        backend                 : str = "default",  # 'jax' or 'numpy'
+        logger                  : Optional[Any] = None,
         # Timing
-        use_timing: bool = False,  # whether to time/synchronize operations (can cause overhead)
-        dtype: Any = jnp.complex64 if JAX_AVAILABLE else np.complex64,
+        use_timing              : bool = False,     # whether to time/synchronize operations (can cause overhead)
+        dtype                   : Any = jnp.complex64 if JAX_AVAILABLE else np.complex64,
         # Gradient clipping
-        grad_clip: Optional[float] = None,
-        verbose: bool = False,
+        grad_clip               : Optional[float] = None,
+        verbose                 : bool = False,
     ):
-        """TDVP Initialization Function
+        r"""TDVP Initialization Function
 
         This function initializes the TDVP class with the provided parameters. It sets up the necessary configurations for performing
         time-dependent variational principle calculations on quantum states. The parameters allow customization of the stochastic reconfiguration method, solver options, and backend settings.
@@ -368,43 +356,35 @@ class TDVP:
             Whether to print verbose output. Default is False.
         """
 
-        self.backend = get_backend(backend)
-        self.is_jax = not (backend == "numpy" or backend == "np" or backend == np)
-        self.is_np = not self.is_jax
-        self.backend_str = "jax" if self.is_jax else "numpy"
-        self.dtype = dtype
-        self.verbose = verbose
+        self.backend        = get_backend(backend)
+        self.is_jax         = not (backend == "numpy" or backend == "np" or backend == np)
+        self.is_np          = not self.is_jax
+        self.backend_str    = "jax" if self.is_jax else "numpy"
+        self.dtype          = dtype
+        self.verbose        = verbose
 
         # Mixed precision for SR stability
         # SR covariance operations MUST use float64 to avoid numerical instability
         # during pseudo-inverse. This is critical for stable training.
-        self._sr_dtype = (
-            np.float64 if dtype is None or np.issubdtype(dtype, np.floating) else np.complex128
-        )
+        self._sr_dtype      = np.float64 if dtype is None or np.issubdtype(dtype, np.floating) else np.complex128
         self._sr_real_dtype = np.float64
 
         # Logger
-        self.logger = logger
+        self.logger         = logger
 
-        self.use_sr = use_sr  # flag to indicate if stochastic reconfiguration is used
-        self.use_minsr = (
-            use_minsr  # flag to indicate if minimal SR is used -> reverse O^+O to O O^+
-        )
-        self.rhs_prefactor = rhs_prefactor  # prefactor for the RHS of the TDVP equation (1 for ground state, i for real time)
-        self.form_matrix = False  # flag to indicate if the full matrix is formed
-        self.regularization = regularization  # maybe used?
+        self.use_sr         = use_sr            # flag to indicate if stochastic reconfiguration is used
+        self.use_minsr      = use_minsr         # flag to indicate if minimal SR is used -> reverse O^+O to O O^+
+        self.rhs_prefactor  = rhs_prefactor     # prefactor for the RHS of the TDVP equation (1 for ground state, i for real time)
+        self.form_matrix    = False             # flag to indicate if the full matrix is formed
+        self.regularization = regularization
 
         #! handle the stochastic reconfiguration parameters
-        self.sr_snr_tol = sr_snr_tol  # for signal-to-noise ratio
-        self.sr_pinv_tol = (
-            sr_pinv_tol  # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
-        )
-        self.sr_pinv_cutoff = (
-            sr_pinv_cutoff  # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
-        )
-        self.sr_diag_shift  = sr_diag_shift  # diagonal shift for the covariance matrix in case of ill-conditioning
-        self.sr_maxiter     = sr_maxiter  # maximum number of iterations for the linear solver
-        self.grad_clip      = grad_clip  # gradient clipping threshold (None = no clipping)
+        self.sr_snr_tol     = sr_snr_tol        # for signal-to-noise ratio
+        self.sr_pinv_tol    = sr_pinv_tol       # for Moore-Penrose pseudo-inverse - tolerance of eigenvalues
+        self.sr_pinv_cutoff = sr_pinv_cutoff    # for Moore-Penrose pseudo-inverse - cutoff of eigenvalues
+        self.sr_diag_shift  = sr_diag_shift     # diagonal shift for the covariance matrix in case of ill-conditioning
+        self.sr_maxiter     = sr_maxiter        # maximum number of iterations for the linear solver
+        self.grad_clip      = grad_clip         # gradient clipping threshold (None = no clipping)
 
         # Initialize preconditioner slots before solver setup; solver construction
         # may reference default_precond.
@@ -414,7 +394,7 @@ class TDVP:
         #! handle the solver
         try:
             self.sr_solve_lin       = None              # linear solver for the TDVP equation (A x = b)
-            self.sr_solve_lin_t     = self._normalize_solver_form(sr_lin_solver_t)  # solver form
+            self.sr_solve_lin_t     = self._normalize_solver_form(sr_lin_solver_t)
             self.sr_solve_lin_fn    = None              # function handle for the solver
             self.sr_solve_forced    = sr_form_matrix    # whether the solver is forced to use the specified form
             self.set_solver(sr_lin_solver)
@@ -433,16 +413,19 @@ class TDVP:
         self.use_timing = use_timing  # whether to time/synchronize operations
 
         # Helper storage
-        self._e_local_mean  = None  # mean local energy
-        self._e_local_std   = None  # std local energy
+        self._e_local_mean                  = None  # mean local energy
+        self._e_local_std                   = None  # std local energy
         # ---
-        self._solution      = None  # solution of the TDVP equation
-        self._f0            = None  # force vector obtained from the covariance of loss and derivative
-        self._s0            = None  # Fisher matrix obtained from the covariance of derivatives
-        self._n_samples     = None  # number of samples
-        self._full_size     = None  # full size of the covariance matrix
-        self._x0            = sr_lin_x0
-        self.timings        = TDVPTimes()
+        self._solution                      = None  # solution of the TDVP equation
+        self._f0                            = None  # force vector obtained from the covariance of loss and derivative
+        self._s0                            = None  # Fisher matrix obtained from the covariance of derivatives
+        self._n_samples                     = None  # number of samples
+        self._full_size                     = None  # full size of the covariance matrix
+        self._x0                            = sr_lin_x0
+        self.timings                        = TDVPTimes()
+        self._cached_batched_matvec_obj     = None
+        self._cached_batched_matvec_mode    = None
+        self._cached_batched_matvec_fn      = None
 
         # Global phase parameter tracking for dynamical correlation functions
         # Equation from paper: $|\psi_{\theta_0,\theta}\rangle = e^{\theta_0}|\psi_\theta\rangle$
@@ -526,9 +509,9 @@ class TDVP:
         current backend and configuration.
         """
 
-        self._gradient_fn = sr.gradient_jax if self.is_jax else sr.gradient_np
-        self._loss_c_fn = sr.loss_centered_jax if self.is_jax else sr.loss_centered
-        self._deriv_c_fn = sr.derivatives_centered_jax if self.is_jax else sr.derivatives_centered
+        self._gradient_fn   = sr.gradient_jax if self.is_jax else sr.gradient_np
+        self._loss_c_fn     = sr.loss_centered_jax if self.is_jax else sr.loss_centered
+        self._deriv_c_fn    = sr.derivatives_centered_jax if self.is_jax else sr.derivatives_centered
 
         # covariance functions - standard and minsr (already JIT'd in sr module)
         if self.use_minsr:
@@ -537,10 +520,8 @@ class TDVP:
             self._covariance_fn = sr.covariance_jax if self.is_jax else sr.covariance_np
 
         # modified and standard preparation functions (already JIT'd in sr module)
-        self._prepare_fn = sr.solve_jax_prepare if self.is_jax else sr.solve_numpy_prepare
-        self._prepare_fn_m = (
-            sr.solve_jax_prepare_modified_ratios if self.is_jax else sr.solve_numpy_prepare
-        )
+        self._prepare_fn    = sr.solve_jax_prepare if self.is_jax else sr.solve_numpy_prepare
+        self._prepare_fn_m  = sr.solve_jax_prepare_modified_ratios if self.is_jax else sr.solve_numpy_prepare
 
         try:
             #! store the jitted functions
@@ -586,9 +567,8 @@ class TDVP:
         if self.sr_solve_lin is None:
             # Default to PseudoInverseSolver if no solver is provided
             self.sr_solve_lin_t = solvers.SolverForm.MATRIX
-            self.sr_solve_lin = solvers.PseudoInverseSolver(
-                backend=self.backend, sigma=self.sr_diag_shift
-            )
+            self.sr_solve_lin   = solvers.PseudoInverseSolver(backend=self.backend, sigma=self.sr_diag_shift)
+
             if self.logger and self.verbose:
                 self.logger.info(
                     "No solver provided. Defaulting to PseudoInverseSolver with full matrix formation.",
@@ -694,7 +674,9 @@ class TDVP:
         solver : Callable
             The solver function to be used for the TDVP equation.
         """
-        self.sr_solve_lin = solver
+        # Invalidate specialized batched solver cache when solver definition changes.
+        self.sr_solve_lin               = solver
+        self._cached_batched_solver_fn  = None
         self._init_solver_lin()
 
     def set_preconditioner(self, precond: Callable):
@@ -934,16 +916,16 @@ class TDVP:
 
         #! centered loss and derivative
         if excited_penalty is None or len(excited_penalty) == 0:
-            loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size = self._prepare_fn_j(
-                loss, log_deriv
-            )
+            loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size = self._prepare_fn_j(loss, log_deriv)
         else:
-            betas = self.backend.array([x.beta_j for x in excited_penalty], dtype=self.dtype)
-            r_el = self.backend.array([x.r_el for x in excited_penalty], dtype=self.dtype)
-            r_le = self.backend.array([x.r_le for x in excited_penalty], dtype=self.dtype)
-            loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size = (
-                self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)
-            )
+            betas   = self.backend.array([x.beta_j for x in excited_penalty],   dtype=self.dtype)
+            r_el    = self.backend.array([x.r_el for x in excited_penalty],     dtype=self.dtype)
+            r_le    = self.backend.array([x.r_le for x in excited_penalty],     dtype=self.dtype)
+            loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size = (self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le))
+
+        # Keep BatchedJacobian metadata assignment outside jitted SR prep functions.
+        if hasattr(var_deriv_c, "compute_weighted_sum"):
+            var_deriv_c.mean_val = var_deriv_m
 
         # Compute var_deriv_c_h (Hermitian conjugate of centered variational derivatives)
         # This is O^dag = conj(O^T) for use in MinSR transformation
@@ -977,19 +959,17 @@ class TDVP:
         """
 
         #! state information
-        self._e_local_mean = self.backend.mean(loss, axis=0)
-        self._e_local_std = self.backend.std(loss, axis=0)
+        self._e_local_mean  = self.backend.mean(loss, axis=0)
+        self._e_local_std   = self.backend.std(loss, axis=0)
 
-        with self._time(
-            "prepare", self._get_tdvp_standard_inner, loss, log_deriv, **kwargs
-        ) as prepare:
+        with self._time("prepare", self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
             loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m = prepare
 
         #! CRITICAL: Promote to high precision for SR numerical stability
         var_deriv_c = self._promote_to_sr_precision(var_deriv_c)
-        loss_c = self._promote_to_sr_precision(loss_c)
+        loss_c      = self._promote_to_sr_precision(loss_c)
         if var_deriv_m is not None:
-            var_deriv_m = self._promote_to_sr_precision(var_deriv_m)
+            var_deriv_m     = self._promote_to_sr_precision(var_deriv_m)
 
         # for minsr, it is unnecessary to calculate the force vector, unless specifically requested or if we want to debug
         # Force vector F is O^dag * E_loc. MinSR solves T * lambda = E_loc, then x = O^dag * lambda.
@@ -999,14 +979,10 @@ class TDVP:
             # This now supports BatchedJacobian via sr.gradient_jax or sr.gradient_jax_batched
             if hasattr(var_deriv_c, "compute_weighted_sum"):
                 # Use separate batched path
-                with self._time(
-                    "gradient", sr.gradient_jax_batched, var_deriv_c, loss_c, self._n_samples
-                ) as gradient:
+                with self._time("gradient", sr.gradient_jax_batched, var_deriv_c, loss_c, self._n_samples) as gradient:
                     self._f0 = gradient
             else:
-                with self._time(
-                    "gradient", self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples
-                ) as gradient:
+                with self._time("gradient", self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
                     self._f0 = gradient
         else:
             self._f0 = None
@@ -1015,9 +991,7 @@ class TDVP:
         # MinSR uses T (N_s x N_s)
         # If BatchedJacobian is used, we generally don't form the matrix, but if requested:
         if self.form_matrix:
-            with self._time(
-                "covariance", self._covariance_fn_j, var_deriv_c, self._n_samples
-            ) as covariance:
+            with self._time("covariance", self._covariance_fn_j, var_deriv_c, self._n_samples) as covariance:
                 self._s0 = covariance
 
         return self._f0, self._s0, (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m)
@@ -1055,21 +1029,38 @@ class TDVP:
         is_batched = hasattr(mat_O, "compute_weighted_sum")
 
         if is_batched:
+            if (self._cached_batched_matvec_obj is mat_O and self._cached_batched_matvec_mode == mode and self._cached_batched_matvec_fn is not None):
+                return self._cached_batched_matvec_fn
+
             # Delegate Matrix-Free Construction to Solver Module
             # This keeps algebraic details (centering, complex conjugates) encapsulated
             _matvec_batched = sr.get_matvec_batched(mat_O, mode, n_samples)
 
-            # JIT the returned function
-            return jax.jit(_matvec_batched) if self.is_jax else _matvec_batched
+            def _matvec(v):
+                return _matvec_batched(v, 0.0)
+
+            self._cached_batched_matvec_obj     = mat_O
+            self._cached_batched_matvec_mode    = mode
+            self._cached_batched_matvec_fn      = _matvec
+            return _matvec
 
         # Dense Matrix path
         if self.is_jax:
-            # Use sr.get_matvec_dense for JAX
-            _matvec = sr.get_matvec_dense(mat_O, mode, n_samples)
-            return jax.jit(_matvec)
+            # Keep this as a plain closure to avoid repeated nested jitting.
+            _matvec_dense = sr.get_matvec_dense(mat_O, mode, n_samples)
+
+            def _matvec(v):
+                return _matvec_dense(v, 0.0)
+
+            return _matvec
 
         # Fallback / Numpy path
-        return sr.get_matvec_dense_np(mat_O, mode, n_samples)
+        _matvec_np = sr.get_matvec_dense_np(mat_O, mode, n_samples)
+
+        def _matvec(v):
+            return _matvec_np(v, 0.0)
+
+        return _matvec
 
     def _solve_prepare_s_and_loss(self, vd_c: Array, loss_c: Array, forces: Array):
         """
@@ -1145,10 +1136,10 @@ class TDVP:
 
     def _solve_choice(
         self,
-        vec_b: Array,
-        solve_func: Callable,
-        mat_O: Optional[Array] = None,
-        mat_a: Optional[Array] = None,
+        vec_b       : Array,
+        solve_func  : Callable,
+        mat_O       : Optional[Array] = None,
+        mat_a       : Optional[Array] = None,
     ) -> solvers.SolverResult:
         """
         Solves a linear system dispatching to appropriate solver mode.
@@ -1176,24 +1167,24 @@ class TDVP:
         # Note: 'solve_func' arg is ignored if override is needed for BatchedJacobian
         actual_solve_func, is_batched_mode = self._get_solver_for_state(mat_O)
 
-        # === Specialized Mode: BatchedJacobian (Force MATVEC) ===
+        # Specialized Mode: BatchedJacobian (Force MATVEC)
         if is_batched_mode:
-            mode = "minsr" if self.use_minsr else "standard"
-            matvec_fn = self._solve_prepare_matvec(mat_O, mode=mode)
-            matvec_with_sigma = lambda v, mv=matvec_fn, sig=self.sr_diag_shift: mv(v, sig)
+            mode                = "minsr" if self.use_minsr else "standard"
+            matvec_fn           = self._solve_prepare_matvec(mat_O, mode=mode)
 
             solution = actual_solve_func(
-                matvec=matvec_with_sigma,
-                b=vec_b,
-                x0=self._x0,
-                precond_apply=self.sr_precond_fn,
-                maxiter=self.sr_maxiter,
-                tol=self.sr_pinv_tol,
-                snr_tol=self.sr_snr_tol,
+                matvec          =   matvec_fn,
+                b               =   vec_b,
+                x0              =   self._x0,
+                precond_apply   =   self.sr_precond_fn,
+                maxiter         =   self.sr_maxiter,
+                tol             =   self.sr_pinv_tol,
+                sigma           =   self.sr_diag_shift,
+                snr_tol         =   self.sr_snr_tol,
             )
             return solution
 
-        # === Standard Mode: Dense Arrays ===
+        # Standard Mode: Dense Arrays
 
         if self._solver_form_is(solvers.SolverForm.GRAM):
             # GRAM mode: Standard Logic for Dense Arrays
@@ -1205,31 +1196,31 @@ class TDVP:
                 s_p = mat_O.T.conj()
 
             solver_kwargs = {
-                "s": s,
-                "s_p": s_p,
-                "b": vec_b,
-                "x0": self._x0,
-                "precond_apply": self.sr_precond_fn,
-                "maxiter": self.sr_maxiter,
-                "tol": self.sr_pinv_tol,
-                "sigma": self.sr_diag_shift,
+                "s"             : s,
+                "s_p"           : s_p,
+                "b"             : vec_b,
+                "x0"            : self._x0,
+                "precond_apply" : self.sr_precond_fn,
+                "maxiter"       : self.sr_maxiter,
+                "tol"           : self.sr_pinv_tol,
+                "sigma"         : self.sr_diag_shift,
             }
             solution = actual_solve_func(**solver_kwargs)
 
         elif self._solver_form_is(solvers.SolverForm.MATVEC):
             # MATVEC mode: We provide the full matrix-vector product function
-            mode = "minsr" if self.use_minsr else "standard"
-            matvec_fn = self._solve_prepare_matvec(mat_O, mode=mode)
-            matvec_with_sigma = lambda v, mv=matvec_fn, sig=self.sr_diag_shift: mv(v, sig)
+            mode                = "minsr" if self.use_minsr else "standard"
+            matvec_fn           = self._solve_prepare_matvec(mat_O, mode=mode)
 
             solution = actual_solve_func(
-                matvec=matvec_with_sigma,
-                b=vec_b,
-                x0=self._x0,
-                precond_apply=self.sr_precond_fn,
-                maxiter=self.sr_maxiter,
-                tol=self.sr_pinv_tol,
-                snr_tol=self.sr_snr_tol,
+                matvec          =   matvec_fn,
+                b               =   vec_b,
+                x0              =   self._x0,
+                precond_apply   =   self.sr_precond_fn,
+                maxiter         =   self.sr_maxiter,
+                tol             =   self.sr_pinv_tol,
+                sigma           =   self.sr_diag_shift,
+                snr_tol         =   self.sr_snr_tol,
             )
         return solution
 
@@ -1273,9 +1264,7 @@ class TDVP:
     #! GLOBAL PHASE
     ###############
 
-    def compute_global_phase_evolution(
-        self, mean_energy: Array, param_derivatives: Array, log_derivatives_mean: Array
-    ):
+    def compute_global_phase_evolution(self, mean_energy: Array, param_derivatives: Array, log_derivatives_mean: Array):
         r"""
         Compute the evolution of the global phase parameter $\theta_0$.
 
@@ -1301,13 +1290,13 @@ class TDVP:
             The computed time derivative $\dot{\theta}_0$ for the global phase parameter
         """
         # First term: -i * <H> -> average energy
-        term1 = -1j * mean_energy
+        term1       = -1j * mean_energy
 
         # Second term: - <dot{theta}_k * <psi|d_theta_k psi>>
         # This is the contraction of parameter derivatives with log derivatives
-        term2 = -self.backend.sum(param_derivatives * log_derivatives_mean)
-        theta0_dot = term1 + term2
-        # self._theta0_dot = theta0_dot
+        term2       = -self.backend.sum(param_derivatives * log_derivatives_mean)
+        theta0_dot  = term1 + term2
+        # self._theta0_dot = theta0_dot # -> do not set self when jitted
         return theta0_dot
 
     ###################
@@ -1372,57 +1361,55 @@ class TDVP:
             # Apply prefactor directly for non-SR
             final_b = vec_b * self.rhs_prefactor if self.rhs_prefactor != 1.0 else vec_b
             return solvers.SolverResult(
-                x=-final_b,
-                iterations=0,
-                residual_norm=0.0,
-                converged=True,
+                x               = -final_b,
+                iterations      = 0,
+                residual_norm   = 0.0,
+                converged       = True,
             )
 
         #! solve the linear system
         # We solve the system with unscaled RHS to potentially allow real-arithmetic solvers
         # (e.g. for real-time evolution of real-parameter ansatz)
-        with self._time(
-            "solve", self._solve_choice, vec_b=vec_b, mat_O=mat_O, mat_a=s, solve_func=solve_func
-        ) as solve:
+        with self._time("solve", self._solve_choice, vec_b=vec_b, mat_O=mat_O, mat_a=s, solve_func=solve_func) as solve:
             solution = solve
 
         #! apply rhs_prefactor to the solution
         if solution is not None and self.rhs_prefactor != 1.0:
             solution = solvers.SolverResult(
-                x=solution.x * self.rhs_prefactor,
-                iterations=solution.iterations,
-                residual_norm=solution.residual_norm,
-                converged=solution.converged
+                x               =   solution.x * self.rhs_prefactor,
+                iterations      =   solution.iterations,
+                residual_norm   =   solution.residual_norm,
+                converged       =   solution.converged
             )
 
         if self.use_minsr and solution is not None:
             new_solution = solvers.SolverResult(
-                x=self.backend.matmul(vd_c_h, solution.x),
-                iterations=solution.iterations,
-                residual_norm=solution.residual_norm,
-                converged=solution.converged,
+                x               =   self.backend.matmul(vd_c_h, solution.x),
+                iterations      =   solution.iterations,
+                residual_norm   =   solution.residual_norm,
+                converged       =   solution.converged,
             )
             solution = new_solution
 
         # Apply gradient clipping if enabled
         if solution is not None and self.grad_clip is not None:
-            clipped_x = self._apply_grad_clip(solution.x)
-            solution = solvers.SolverResult(
-                x=clipped_x,
-                iterations=solution.iterations,
-                residual_norm=solution.residual_norm,
-                converged=solution.converged,
+            clipped_x   = self._apply_grad_clip(solution.x)
+            solution    = solvers.SolverResult(
+                x               =   clipped_x,
+                iterations      =   solution.iterations,
+                residual_norm   =   solution.residual_norm,
+                converged       =   solution.converged,
             )
 
         # Compute global phase evolution $\dot{\theta}_0$
         # $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
         theta0_dot = None
         if solution is not None:
-            param_derivatives = solution.x if hasattr(solution, "x") else solution
-            log_derivatives_mean = vd_m
-            theta0_dot = self.compute_global_phase_evolution(
-                self._e_local_mean, param_derivatives, log_derivatives_mean
-            )
+            param_derivatives       = solution.x if hasattr(solution, "x") else solution
+            log_derivatives_mean    = vd_m
+            theta0_dot              = self.compute_global_phase_evolution(
+                                        self._e_local_mean, param_derivatives, log_derivatives_mean
+                                    )
 
         if self.use_timing and self.logger:
             self.logger.info(f"TDVP Solve Timings: {self.timings}", lvl=2, color="cyan")
@@ -1460,9 +1447,7 @@ class TDVP:
         """
         #! get the loss and derivative in the original scenario
         # ? (MonteCarlo return -> (loss, mean_loss, std_loss), log_deriv, (meta))
-        (loss, mean_loss, std_loss), log_deriv, (shapes, sizes, iscpx) = est_fn(
-            net_params, t, configs, configs_ansatze, probabilities
-        )
+        (loss, mean_loss, std_loss), log_deriv, (shapes, sizes, iscpx) = est_fn(net_params, t, configs, configs_ansatze, probabilities)
 
         #! obtain the solution
 
@@ -1471,15 +1456,15 @@ class TDVP:
         #! save solution outside JIT boundary to avoid tracer leaks
         self._solution = solution
         meta = TDVPStepInfo(
-            mean_energy=self._e_local_mean,
-            std_energy=self._e_local_std,
-            failed=False,
-            sr_converged=solution.converged,
-            sr_executed=True,
-            sr_iterations=solution.iterations,
-            timings=self.timings,
-            theta0_dot=theta0_dot,  # Global phase time derivative
-            theta0=self._theta0,  # Current global phase
+            mean_energy     =   self._e_local_mean,
+            std_energy      =   self._e_local_std,
+            failed          =   False,
+            sr_converged    =   solution.converged,
+            sr_executed     =   True,
+            sr_iterations   =   solution.iterations,
+            timings         =   self.timings,
+            theta0_dot      =   theta0_dot,     # Global phase time derivative
+            theta0          =   self._theta0,   # Current global phase
         )
 
         return solution.x, meta, (shapes, sizes, iscpx)

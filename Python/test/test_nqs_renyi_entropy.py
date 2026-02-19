@@ -11,6 +11,7 @@ jsp = pytest.importorskip("jax.scipy.special")
 
 try:
     from QES.NQS.nqs import NQS
+    from QES.NQS.src.nqs_entropy import compute_renyi_entropy
 except ImportError:
     pytest.skip("QES.NQS.nqs module not found, skipping NQS tests.", allow_module_level=True)
 
@@ -180,6 +181,23 @@ class ProductStateDummyNQS:
         return (None, None), (states, log_psi), probs
 
 
+class LargeScaleDummyNQS(DummyNQS):
+    """Dummy NQS with amplified logits to stress numerical stability in q>2 errors."""
+
+    @staticmethod
+    def ansatz(states):
+        s = jnp.asarray(states, dtype=jnp.float64)
+        if s.ndim == 1:
+            s = s.reshape(1, -1)
+        return 80.0 * (
+            1.7 * s[:, 0] * s[:, 2]
+            - 1.3 * s[:, 1] * s[:, 2]
+            + 1.1 * s[:, 2] * s[:, 3]
+            - 0.9 * s[:, 0] * s[:, 1]
+            + 0.6 * s[:, 0] * s[:, 3]
+        )
+
+
 def test_compute_renyi2_subsystem_entropy_product_state_zero():
     """Subsystem Renyi-2 entropy should be zero for an unentangled product state."""
     samples = jnp.array(
@@ -203,3 +221,29 @@ def test_compute_renyi2_subsystem_entropy_product_state_zero():
 
     assert np.isclose(s2, 0.0, atol=1e-12)
     assert np.isclose(s2_err, 0.0, atol=1e-12)
+
+
+def test_compute_renyi3_error_outputs_remain_finite_for_large_logratios():
+    dummy = LargeScaleDummyNQS(SAMPLE_A, SAMPLE_B)
+    s3, s3_err = compute_renyi_entropy(
+        dummy,
+        region=[0, 1],
+        q=3,
+        num_samples=4,
+        num_chains=2,
+        return_error=True,
+    )
+    raw = compute_renyi_entropy(
+        dummy,
+        region=[0, 1],
+        q=3,
+        num_samples=4,
+        num_chains=2,
+        return_raw=True,
+    )
+
+    assert np.isfinite(s3)
+    assert np.isfinite(s3_err)
+    assert s3_err >= 0.0
+    assert np.isfinite(raw["trace_rho_q"])
+    assert np.isfinite(raw["trace_err"])
