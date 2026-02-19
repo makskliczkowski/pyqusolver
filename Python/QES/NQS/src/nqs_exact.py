@@ -156,11 +156,7 @@ def set_exact_impl(nqs_instance: "NQS", info: Optional[dict]):
 
     if isinstance(info, dict):
         nqs_instance._exact_info = info
-        if info is not None:
-            logfun(
-                f"Exact information set: {info.get('exact_predictions', [None] * (nqs_instance._nthstate + 1))[nqs_instance._nthstate]}",
-                lvl=1,
-            )
+
     elif isinstance(info, np.ndarray):
         nqs_instance._exact_info = {
             "exact_predictions" : info,
