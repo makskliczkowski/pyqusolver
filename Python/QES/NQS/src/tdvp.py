@@ -1484,7 +1484,7 @@ class TDVP:
         solution_vec        = solution.x if hasattr(solution, "x") else solution
         if not self._is_tracer_value(solution_vec):
             self._solution = solution
-            
+
         meta = TDVPStepInfo(
             mean_energy     =   self._e_local_mean,
             std_energy      =   self._e_local_std,
