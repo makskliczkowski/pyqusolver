@@ -91,6 +91,8 @@ Date        : 2025-02-12
 -------------------------------------------------------------------------------
 """
 
+import inspect
+
 from    typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 import  numpy as np
 
@@ -152,6 +154,46 @@ def _default_bipartition(Ns: int) -> "jnp.ndarray":
     return jnp.arange(Ns // 2, dtype=jnp.int32)
 
 
+def _sample_supports_reset(sample_fn: Any) -> bool:
+    """Return True if sampler accepts `reset` directly or via **kwargs."""
+    try:
+        signature = inspect.signature(sample_fn)
+    except (TypeError, ValueError):
+        return False
+
+    if "reset" in signature.parameters:
+        return True
+    return any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    )
+
+
+def _sample_replica(
+    nqs: "NQS",
+    *,
+    num_samples: int,
+    num_chains: int,
+    independent_replicas: bool,
+):
+    """
+    Sample one replica while staying compatible with samplers that do not expose
+    a `reset` keyword.
+    """
+    sample_kwargs = {"num_samples": num_samples, "num_chains": num_chains}
+    if independent_replicas and _sample_supports_reset(nqs.sample):
+        sample_kwargs["reset"] = True
+
+    try:
+        return nqs.sample(**sample_kwargs)
+    except TypeError as exc:
+        # Some wrapped samplers may reject `reset` despite a permissive signature.
+        if "reset" in sample_kwargs and "reset" in str(exc):
+            sample_kwargs.pop("reset", None)
+            return nqs.sample(**sample_kwargs)
+        raise
+
+
 # ===========================================================================
 #! Core Rényi entropy estimators
 # ===========================================================================
@@ -163,6 +205,7 @@ def compute_renyi_entropy(
     q               : int               = 2,
     num_samples     : int               = 4096,
     num_chains      : int               = 1,
+    independent_replicas: bool          = True,
     return_error    : bool              = False,
     return_raw      : bool              = False,
     min_trace_value : float             = 1e-15,
@@ -197,6 +240,8 @@ def compute_renyi_entropy(
         Number of Monte Carlo samples per replica.
     num_chains : int
         Number of Markov chains for sampling.
+    independent_replicas : bool
+        If True, request sampler reset between replica draws when supported.
     return_error : bool
         If True, also return the statistical error estimate.
     return_raw : bool
@@ -229,9 +274,19 @@ def compute_renyi_entropy(
     replicas_log    = []  # log-amplitudes
     
     for _ in range(q):
-        (_, _), (s_r, log_r), _ = nqs.sample(
-            num_samples=num_samples, num_chains=num_chains
+        sample_out = _sample_replica(
+            nqs,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            independent_replicas=independent_replicas,
         )
+        try:
+            (_, _), (s_r, log_r), _ = sample_out
+        except Exception as exc:
+            raise RuntimeError(
+                "NQS sampler error: expected sample() to return "
+                "((last_state, last_log), (states, log_psi), probs)."
+            ) from exc
         s_r     = jnp.asarray(s_r)
         log_r   = jnp.asarray(log_r).reshape(-1)
         if s_r.ndim == 1:
