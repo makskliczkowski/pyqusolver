@@ -492,6 +492,20 @@ class TDVP:
             result = fn(*args, **kwargs)
         yield result
 
+    def _is_tracer_value(self, value: Any) -> bool:
+        """
+        Return True when ``value`` is a JAX tracer.
+
+        We avoid persisting traced values on ``self`` because they escape
+        JAX transform scope and can trigger ``UnexpectedTracerError``.
+        """
+        if not self.is_jax:
+            return False
+        try:
+            return isinstance(value, jax.core.Tracer)
+        except Exception:
+            return False
+
     ###################
     #! INITIALIZATION
     ###################
@@ -1140,10 +1154,13 @@ class TDVP:
         solve_func  : Callable,
         mat_O       : Optional[Array] = None,
         mat_a       : Optional[Array] = None,
+        x0          : Optional[Array] = None,
     ) -> solvers.SolverResult:
         """
         Solves a linear system dispatching to appropriate solver mode.
         """
+        if x0 is None:
+            x0 = self._x0
 
         # Use pre-formed matrix if available (e.g. from covariance_jax)
         use_preformed_matrix = self.form_matrix and mat_a is not None
@@ -1154,7 +1171,7 @@ class TDVP:
             solution = solve_func(
                 a=mat_a,
                 b=vec_b,
-                x0=self._x0,
+                x0=x0,
                 precond_apply=self.sr_precond_fn,
                 maxiter=self.sr_maxiter,
                 tol=self.sr_pinv_tol,
@@ -1175,7 +1192,7 @@ class TDVP:
             solution = actual_solve_func(
                 matvec          =   matvec_fn,
                 b               =   vec_b,
-                x0              =   self._x0,
+                x0              =   x0,
                 precond_apply   =   self.sr_precond_fn,
                 maxiter         =   self.sr_maxiter,
                 tol             =   self.sr_pinv_tol,
@@ -1199,7 +1216,7 @@ class TDVP:
                 "s"             : s,
                 "s_p"           : s_p,
                 "b"             : vec_b,
-                "x0"            : self._x0,
+                "x0"            : x0,
                 "precond_apply" : self.sr_precond_fn,
                 "maxiter"       : self.sr_maxiter,
                 "tol"           : self.sr_pinv_tol,
@@ -1215,7 +1232,7 @@ class TDVP:
             solution = actual_solve_func(
                 matvec          =   matvec_fn,
                 b               =   vec_b,
-                x0              =   self._x0,
+                x0              =   x0,
                 precond_apply   =   self.sr_precond_fn,
                 maxiter         =   self.sr_maxiter,
                 tol             =   self.sr_pinv_tol,
@@ -1353,8 +1370,8 @@ class TDVP:
         # print(mat_O.shape, vec_b.shape)
 
         #! handle the initial guess - use the previous solution
-        with self._time("x0", self._solve_handle_x0, vec_b, kwargs.get("use_old_result", False)) as x0:
-            self._x0 = x0
+        with self._time("x0", self._solve_handle_x0, vec_b, kwargs.get("use_old_result", False)) as prepared_x0:
+            x0 = prepared_x0
 
         #! if not using SR, return the negative force vector as the solution
         if not self.use_sr:
@@ -1370,7 +1387,15 @@ class TDVP:
         #! solve the linear system
         # We solve the system with unscaled RHS to potentially allow real-arithmetic solvers
         # (e.g. for real-time evolution of real-parameter ansatz)
-        with self._time("solve", self._solve_choice, vec_b=vec_b, mat_O=mat_O, mat_a=s, solve_func=solve_func) as solve:
+        with self._time(
+            "solve",
+            self._solve_choice,
+            vec_b       =   vec_b,
+            mat_O       =   mat_O,
+            mat_a       =   s,
+            solve_func  =   solve_func,
+            x0          =   x0,
+        ) as solve:
             solution = solve
 
         #! apply rhs_prefactor to the solution
@@ -1453,8 +1478,13 @@ class TDVP:
 
         solution, theta0_dot = self.solve(loss, log_deriv, **kwargs)
 
-        #! save solution outside JIT boundary to avoid tracer leaks
-        self._solution = solution
+        # Persist only concrete host/device arrays (never traced values).
+        # This keeps non-jitted workflows unchanged while avoiding tracer leaks
+        # when TDVP is called from jitted training steps.
+        solution_vec        = solution.x if hasattr(solution, "x") else solution
+        if not self._is_tracer_value(solution_vec):
+            self._solution = solution
+            
         meta = TDVPStepInfo(
             mean_energy     =   self._e_local_mean,
             std_energy      =   self._e_local_std,
