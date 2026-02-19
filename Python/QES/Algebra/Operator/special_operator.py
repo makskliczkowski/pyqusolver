@@ -1089,9 +1089,12 @@ class SpecialOperator(Operator, ABC):
         Returns:
             array to be used latter with corresponding couplings
         """
-        if isinstance(coupling, list) and len(coupling) == self.ns:
-            return self._backend.array(coupling, dtype=self._dtype)
-        elif isinstance(coupling, (float, int, complex)):
+        if isinstance(coupling, (list, tuple, np.ndarray)):
+            arr = np.asarray(coupling)
+            if arr.ndim == 1 and arr.size == self.ns:
+                return self._backend.array(arr, dtype=self._dtype)
+            raise ValueError(self._ERR_COUP_VEC_SIZE)
+        elif np.isscalar(coupling):
             from QES.Algebra.Operator.matrix import DummyVector
 
             return DummyVector(coupling, backend=self._backend).astype(self._dtype)

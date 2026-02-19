@@ -6,13 +6,13 @@ This module implements entanglement entropy estimation for Neural Quantum States
 using replica (swap) tricks. It supports:
 
 1. **Standard bipartition Rényi-2 entropy** via the two-replica swap estimator:
-   $S_2(A) = -\ln \mathrm{Tr}[\rho_A^2]$
-   
+    $S_2(A) = -\ln \mathrm{Tr}[\rho_A^2]$
+
 2. **Rényi-q entropy** for integer $q \ge 2$ using q-replica generalizations:
-   $S_q(A) = \frac{1}{1-q} \ln \mathrm{Tr}[\rho_A^q]$
-   
+    $S_q(A) = \frac{1}{1-q} \ln \mathrm{Tr}[\rho_A^q]$
+
 3. **Topological Entanglement Entropy (TEE)** via the Kitaev-Preskill construction:
-   $\gamma = S_A + S_B + S_C - S_{AB} - S_{BC} - S_{AC} + S_{ABC}$
+    $\gamma = S_A + S_B + S_C - S_{AB} - S_{BC} - S_{AC} + S_{ABC}$
 
 Physics Background
 ------------------
@@ -38,7 +38,7 @@ which gives the Monte Carlo estimator:
 $$
 \mathrm{Tr}[\rho_A^2] \approx \frac{1}{N_s} \sum_{i=1}^{N_s}
 \frac{\Psi(s_A^{(2,i)}, s_B^{(1,i)}) \cdot \Psi(s_A^{(1,i)}, s_B^{(2,i)})}
-     {\Psi(s_A^{(1,i)}, s_B^{(1,i)}) \cdot \Psi(s_A^{(2,i)}, s_B^{(2,i)})}
+    {\Psi(s_A^{(1,i)}, s_B^{(1,i)}) \cdot \Psi(s_A^{(2,i)}, s_B^{(2,i)})}
 $$
 
 where configurations $s^{(1)}$ and $s^{(2)}$ are independently sampled from $|\Psi|^2$.
@@ -91,13 +91,16 @@ Date        : 2025-02-12
 -------------------------------------------------------------------------------
 """
 
-import inspect
-
+from    __future__ import annotations
 from    typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+import  warnings
 import  numpy as np
+from    QES.general_python.physics.density_matrix import mask_subsystem, psi_numpy
+from    QES.general_python.physics.entropy import vn_entropy, renyi_entropy
 
 if TYPE_CHECKING:
     from QES.NQS.nqs import NQS
+    from QES.general_python.lattices import Lattice
 
 try:
     import jax
@@ -107,15 +110,11 @@ try:
 except ImportError:
     JAX_AVAILABLE = False
 
-
 # ===========================================================================
 #! Bipartition helpers
 # ===========================================================================
 
-def bipartition_cuts(
-    lattice,
-    cut_type: str = "half_x",
-) -> Dict[str, np.ndarray]:
+def bipartition_cuts(lattice: "Lattice", cut_type: str = "half_x",) -> Dict[str, np.ndarray]:
     """
     Generate canonical bipartition cuts using the lattice region API.
 
@@ -148,67 +147,26 @@ def bipartition_cuts(
 
     return {label: np.asarray(region, dtype=np.int32) for label, region in raw_cuts.items()}
 
-
 def _default_bipartition(Ns: int) -> "jnp.ndarray":
     """Default half-system bipartition."""
     return jnp.arange(Ns // 2, dtype=jnp.int32)
-
-
-def _sample_supports_reset(sample_fn: Any) -> bool:
-    """Return True if sampler accepts `reset` directly or via **kwargs."""
-    try:
-        signature = inspect.signature(sample_fn)
-    except (TypeError, ValueError):
-        return False
-
-    if "reset" in signature.parameters:
-        return True
-    return any(
-        param.kind == inspect.Parameter.VAR_KEYWORD
-        for param in signature.parameters.values()
-    )
-
-
-def _sample_replica(
-    nqs: "NQS",
-    *,
-    num_samples: int,
-    num_chains: int,
-    independent_replicas: bool,
-):
-    """
-    Sample one replica while staying compatible with samplers that do not expose
-    a `reset` keyword.
-    """
-    sample_kwargs = {"num_samples": num_samples, "num_chains": num_chains}
-    if independent_replicas and _sample_supports_reset(nqs.sample):
-        sample_kwargs["reset"] = True
-
-    try:
-        return nqs.sample(**sample_kwargs)
-    except TypeError as exc:
-        # Some wrapped samplers may reject `reset` despite a permissive signature.
-        if "reset" in sample_kwargs and "reset" in str(exc):
-            sample_kwargs.pop("reset", None)
-            return nqs.sample(**sample_kwargs)
-        raise
-
 
 # ===========================================================================
 #! Core Rényi entropy estimators
 # ===========================================================================
 
 def compute_renyi_entropy(
-    nqs             : "NQS",
-    region          : Optional[Any]     = None,
+    nqs                     : "NQS",
+    region                  : Optional[Any]     = None,
     *,
-    q               : int               = 2,
-    num_samples     : int               = 4096,
-    num_chains      : int               = 1,
-    independent_replicas: bool          = True,
-    return_error    : bool              = False,
-    return_raw      : bool              = False,
-    min_trace_value : float             = 1e-15,
+    q                       : int               = 2,
+    num_samples             : int               = 4096,
+    num_chains              : int               = 1,
+    recompute_log_psi       : bool              = True,
+    independent_replicas    : bool              = True,
+    return_error            : bool              = False,
+    return_raw              : bool              = False,
+    min_trace_value         : float             = 1e-15,
 ) -> Union[float, Tuple[float, float], Dict[str, Any]]:
     r"""
     Compute the q-th Rényi entanglement entropy of subsystem A using the 
@@ -226,7 +184,7 @@ def compute_renyi_entropy(
     
         $\mathrm{Tr}[\rho_A^q] = \langle \prod_{r=0}^{q-1}
         \frac{\Psi(s_A^{((r+1) \bmod q)}, s_B^{(r)})}
-             {\Psi(s_A^{(r)}, s_B^{(r)})} \rangle$
+            {\Psi(s_A^{(r)}, s_B^{(r)})} \rangle$
     
     Parameters
     ----------
@@ -240,8 +198,12 @@ def compute_renyi_entropy(
         Number of Monte Carlo samples per replica.
     num_chains : int
         Number of Markov chains for sampling.
+    recompute_log_psi : bool
+        If True (default), re-evaluate ``log(psi)`` on sampled configurations
+        using ``nqs.ansatz`` for ratio consistency.
     independent_replicas : bool
-        If True, request sampler reset between replica draws when supported.
+        If True (default), reset sampler state before each replica draw.
+        This improves independence between replicas in the swap estimator.
     return_error : bool
         If True, also return the statistical error estimate.
     return_raw : bool
@@ -268,29 +230,36 @@ def compute_renyi_entropy(
     
     if jnp.any(region < 0) or jnp.any(region >= Ns):
         raise ValueError(f"Region contains out-of-bounds indices for n_visible={Ns}.")
+
+    # Replica-swap estimator assumes Born sampling, p(s) ~ |psi(s)|^2 (mu=2).
+    sampler = getattr(nqs, "sampler", None)
+    if sampler is not None:
+        mu = getattr(sampler, "mu", getattr(sampler, "_mu", None))
+        if mu is not None and not np.isclose(float(mu), 2.0, atol=1e-8):
+            warnings.warn(
+                f"compute_renyi_entropy assumes Born sampling (mu=2), got mu={mu}. "
+                "Results may be biased unless reweighting is applied.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     
-    # ---- Sample q independent replicas ----
+    # Sample q independent replicas 
     replicas_s      = []  # configurations
     replicas_log    = []  # log-amplitudes
     
     for _ in range(q):
-        sample_out = _sample_replica(
-            nqs,
-            num_samples=num_samples,
-            num_chains=num_chains,
-            independent_replicas=independent_replicas,
-        )
         try:
-            (_, _), (s_r, log_r), _ = sample_out
-        except Exception as exc:
-            raise RuntimeError(
-                "NQS sampler error: expected sample() to return "
-                "((last_state, last_log), (states, log_psi), probs)."
-            ) from exc
-        s_r     = jnp.asarray(s_r)
-        log_r   = jnp.asarray(log_r).reshape(-1)
+            (_, _), (s_r, log_r), _ = nqs.sample(num_samples=num_samples, num_chains=num_chains, reset=independent_replicas)
+        except TypeError:
+            raise RuntimeError("NQS sampler error: expected sample() to return ((s, log_psi), ...), got different format.")
+        
+        s_r = jnp.asarray(s_r)
         if s_r.ndim == 1:
-            s_r = s_r.reshape(1, -1)
+            s_r     = s_r.reshape(1, -1)
+        if recompute_log_psi:
+            log_r   = jnp.asarray(nqs.ansatz(s_r)).reshape(-1)
+        else:
+            log_r   = jnp.asarray(log_r).reshape(-1)
         replicas_s.append(s_r)
         replicas_log.append(log_r)
     
@@ -305,50 +274,60 @@ def compute_renyi_entropy(
             n_samp = min_n
             break
     
-    # ---- Cyclic permutation of subsystem A ----
+    # Cyclic permutation of subsystem A
     # For replica r, create swapped config: take A from replica (r+1) % q, keep B from replica r
     log_ratio_sum = jnp.zeros(n_samp)
     
     for r in range(q):
-        r_next = (r + 1) % q
+        r_next          = (r + 1) % q
         # Build swapped configuration
-        s_swapped = replicas_s[r].at[:, region].set(replicas_s[r_next][:, region])
+        s_swapped       = replicas_s[r].at[:, region].set(replicas_s[r_next][:, region])
         # Evaluate log-psi on swapped config
-        log_swapped = jnp.asarray(nqs.ansatz(s_swapped)).reshape(-1)
+        log_swapped     = jnp.asarray(nqs.ansatz(s_swapped)).reshape(-1)
         # Accumulate log ratio: log[psi(swapped_r)] - log[psi(original_r)]
-        log_ratio_sum = log_ratio_sum + (log_swapped - replicas_log[r])
+        log_ratio_sum   = log_ratio_sum + (log_swapped - replicas_log[r])
     
-    # ---- Estimate Tr[rho_A^q] ----
+    # Estimate Tr[rho_A^q]
     # Tr[rho_A^q] = <exp(sum_r log_ratio_r)> where average over samples
-    log_trace   = jsp.logsumexp(log_ratio_sum) - jnp.log(float(n_samp))
-    trace_val   = jnp.real(jnp.exp(log_trace))
-    trace_val   = jnp.maximum(trace_val, min_trace_value)
+    log_trace       = jsp.logsumexp(log_ratio_sum) - jnp.log(float(n_samp))
+    trace_val       = jnp.real(jnp.exp(log_trace))
+    trace_val       = jnp.maximum(trace_val, min_trace_value)
+    trace_val_f     = float(trace_val)
     
-    # ---- Compute S_q ----
-    sq_val = (1.0 / (1.0 - q)) * jnp.log(trace_val)
+    # Compute S_q 
+    sq_val          = float(jnp.real((1.0 / (1.0 - q)) * jnp.log(trace_val)))
     
-    # ---- Error estimation (chain-aware) ----
-    swap_samples    = jnp.real(jnp.exp(log_ratio_sum))
+    # Error estimation (chain-aware)
     n_total         = int(n_samp)
     n_chain         = max(int(num_chains), 1)
-    
-    if n_chain > 1 and (n_total % n_chain) == 0:
-        per_chain   = swap_samples.reshape(n_chain, n_total // n_chain).mean(axis=1)
-        trace_err   = jnp.std(per_chain, ddof=1) / jnp.sqrt(float(n_chain))
-    else:
-        trace_err   = jnp.std(swap_samples, ddof=1) / jnp.sqrt(float(max(n_total, 1)))
+    trace_err       = 0.0
+    sq_err          = 0.0
+
+    if return_error or return_raw:
+        swap_samples    = jnp.real(jnp.exp(log_ratio_sum))
+        if JAX_AVAILABLE:
+            swap_np     = np.asarray(jax.device_get(swap_samples))
+        else:
+            swap_np     = np.asarray(swap_samples)
+
+        if n_total > 1:
+            if n_chain > 1 and (n_total % n_chain) == 0 and (n_total // n_chain) > 1:
+                per_chain = swap_np.reshape(n_chain, n_total // n_chain).mean(axis=1)
+                trace_err = float(np.std(per_chain, ddof=1) / np.sqrt(float(n_chain)))
+            else:
+                trace_err = float(np.std(swap_np, ddof=1) / np.sqrt(float(n_total)))
     
     # Error propagation: dS_q = |d(Tr)/((1-q)*Tr)|
-    sq_err = float(jnp.abs(trace_err / ((1.0 - q) * trace_val)))
-    sq_val = float(jnp.real(sq_val))
+    if trace_val_f > 0.0:
+        sq_err = float(abs(trace_err / ((1.0 - q) * trace_val_f)))
     
     if return_raw:
         return {
             "sq"            : sq_val,
             "sq_err"        : sq_err,
             "q"             : q,
-            "trace_rho_q"   : float(trace_val),
-            "trace_err"     : float(trace_err),
+            "trace_rho_q"   : trace_val_f,
+            "trace_err"     : trace_err,
             "n_samples"     : n_total,
             "n_chains"      : n_chain,
             "region_size"   : len(region),
@@ -364,8 +343,8 @@ def compute_renyi_entropy(
 # ===========================================================================
 
 def compute_topological_entropy(
-    nqs     : "NQS",
-    lattice : Any,
+    nqs         : "NQS",
+    lattice     : Any,
     *,
     q           : int   = 2,
     radius      : Optional[float] = None,
@@ -403,8 +382,7 @@ def compute_topological_entropy(
     if not hasattr(lattice, 'regions'):
         raise ValueError("Lattice must have a 'regions' attribute for TEE calculation.")
     
-    regions = lattice.regions.region_kitaev_preskill(radius=radius)
-    
+    regions         = lattice.regions.region_kitaev_preskill(radius=radius)
     required_keys   = ["A", "B", "C", "AB", "BC", "AC", "ABC"]
     entropies       = {}
     errors          = {}
@@ -415,9 +393,7 @@ def compute_topological_entropy(
             errors[key]     = 0.0
             continue
         
-        sq, sq_err = compute_renyi_entropy(
-            nqs, region=regions[key], q=q, return_error=True, **renyi_kwargs
-        )
+        sq, sq_err      = compute_renyi_entropy(nqs, region=regions[key], q=q, return_error=True, **renyi_kwargs)
         entropies[key]  = sq
         errors[key]     = sq_err
     
@@ -483,21 +459,20 @@ def compute_ed_entanglement_entropy(
         Keys: "von_neumann" (array), "renyi_{q}" (array for each q),
         "spectrum" (Schmidt values), "region", "region_size".
     """
-    region = np.asarray(region, dtype=int)
-    complement = np.array([i for i in range(Ns) if i not in region], dtype=int)
+    region                  = np.asarray(region, dtype=int)
+    (size_a, size_b), order = mask_subsystem(region, Ns, local_dim=2, contiguous=False)
+    dim_A                   = 2 ** size_a
+    dim_B                   = 2 ** size_b
     
-    dim_A   = 2 ** len(region)
-    dim_B   = 2 ** len(complement)
+    n_states    = min(n_states, eigenvectors.shape[1] if eigenvectors.ndim > 1 else 1)
     
-    n_states = min(n_states, eigenvectors.shape[1] if eigenvectors.ndim > 1 else 1)
-    
-    results = {
-        "von_neumann"   : np.zeros(n_states),
-        "region"        : region,
-        "region_size"   : len(region),
-        "complement_size": len(complement),
-        "system_size"   : Ns,
-        "spectrum"      : [],
+    results     = {
+        "von_neumann"       : np.zeros(n_states),
+        "region"            : region,
+        "region_size"       : size_a,
+        "complement_size"   : size_b,
+        "system_size"       : Ns,
+        "spectrum"          : [],
     }
     for q in q_values:
         results[f"renyi_{q}"] = np.zeros(n_states)
@@ -508,48 +483,36 @@ def compute_ed_entanglement_entropy(
         else:
             psi = eigenvectors[:, state_idx]
         
-        # Reorder to region|complement factorization
-        # Build mapping: new_index -> old_index
-        # For each computational basis state |b_0 b_1 ... b_{Ns-1}>,
-        # reorder bits so region sites come first
-        all_sites   = np.concatenate([region, complement])
-        dim_H       = len(psi)
-        
-        # Build permuted state vector
-        psi_perm = np.zeros(dim_H, dtype=psi.dtype)
-        for old_idx in range(dim_H):
-            # Extract bit pattern
-            new_idx = 0
-            for new_pos, old_site in enumerate(all_sites):
-                bit = (old_idx >> old_site) & 1
-                new_idx |= (bit << new_pos)
-            psi_perm[new_idx] = psi[old_idx]
-        
-        # Reshape into (dim_A, dim_B) matrix
-        psi_mat = psi_perm.reshape(dim_A, dim_B)
+        psi_mat = psi_numpy(np.asarray(psi), order, size_a, Ns, local_dim=2)
+        if psi_mat.shape != (dim_A, dim_B):
+            raise RuntimeError(f"Unexpected ED reshape: got {psi_mat.shape}, expected {(dim_A, dim_B)}.")
         
         # SVD / Schmidt decomposition
         if method == "svd":
-            U, s, Vh = np.linalg.svd(psi_mat, full_matrices=False)
+            s           = np.linalg.svd(psi_mat, full_matrices=False, compute_uv=False)
         else:
             # eigh method: compute rho_A = psi_mat @ psi_mat^dag
-            rho_A = psi_mat @ psi_mat.conj().T
-            eigvals = np.linalg.eigvalsh(rho_A)
-            s = np.sqrt(np.maximum(eigvals[::-1], 0))
+            rho_A       = psi_mat @ psi_mat.conj().T
+            eigvals     = np.linalg.eigvalsh(rho_A)
+            s           = np.sqrt(np.maximum(eigvals, 0.0))
         
         # Schmidt values (squared = eigenvalues of rho_A)
-        p = s ** 2
-        p = p[p > 1e-15]  # remove numerical zeros
-        p = p / p.sum()    # renormalize
+        p               = s ** 2
+        p               = p[p > 1e-15]  # remove numerical zeros
+        if p.size == 0:
+            p           = np.array([1.0], dtype=float)
+        else:
+            p           = np.sort(p)[::-1]
+            p           = p / p.sum() # renormalize
         
         results["spectrum"].append(p)
         
         # Von Neumann entropy  
-        results["von_neumann"][state_idx] = -np.sum(p * np.log(p))
+        results["von_neumann"][state_idx] = float(vn_entropy(p))
         
         # Rényi entropies
         for q in q_values:
-            results[f"renyi_{q}"][state_idx] = (1.0 / (1.0 - q)) * np.log(np.sum(p ** q))
+            results[f"renyi_{q}"][state_idx] = float(renyi_entropy(p, float(q)))
     
     return results
 
@@ -592,8 +555,7 @@ def compute_entropy_sweep(
     dict
         {"cuts": dict of cut_label -> region, "results": dict of cut_label -> entropy_result}
     """
-    cuts = bipartition_cuts(lattice, cut_type="all")
-    
+    cuts    = bipartition_cuts(lattice, cut_type="all")
     results = {}
     
     for label, region in cuts.items():
