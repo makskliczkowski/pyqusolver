@@ -421,13 +421,14 @@ class NQS(MonteCarloSolver):
                 raise ValueError(self._ERROR_INVALID_NETWORK)
 
             self.log(f"Initializing NQS network backend: {self._nqsbackend.name.upper()}", lvl=1, color="blue")
+            net_param_dtype     = kwargs.pop("param_dtype", None)
 
             self._net = nqs_choose_network(
                 logansatz,
                 input_shape     =   self._shape,
                 backend         =    self._backend_str,
                 dtype           =   dtype,
-                param_dtype     =   kwargs.get("param_dtype", None),
+                param_dtype     =   net_param_dtype,
                 seed            =   seed,
                 **kwargs,
             )
@@ -627,6 +628,72 @@ class NQS(MonteCarloSolver):
         #! Exact information (Ground Truth)
         # --------------------------------------------------
         self._exact_info = None
+
+    # ---
+
+    @classmethod
+    def load_bundle(
+        cls,
+        physics_config      : Any,
+        solver_config       : Any,
+        *,
+        checkpoint_step     : Optional[Union[int, str]] = "latest",
+        checkpoint_file     : Optional[str] = None,
+        load_weights        : bool = True,
+        hamiltonian_kwargs  : Optional[Dict[str, Any]] = None,
+        net_kwargs          : Optional[Dict[str, Any]] = None,
+        nqs_kwargs          : Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Convenience wrapper around :func:`QES.NQS.load_nqs`.
+
+        Returns
+        -------
+        NQSLoadBundle
+            Bundle containing NQS, model, hilbert, lattice and checkpoint metadata.
+        """
+        from . import load_nqs
+
+        return load_nqs(
+            physics_config=physics_config,
+            solver_config=solver_config,
+            checkpoint_step=checkpoint_step,
+            checkpoint_file=checkpoint_file,
+            load_weights=load_weights,
+            hamiltonian_kwargs=hamiltonian_kwargs,
+            net_kwargs=net_kwargs,
+            nqs_kwargs=nqs_kwargs,
+        )
+
+    @classmethod
+    def load_from_configs(
+        cls,
+        physics_config      : Any,
+        solver_config       : Any,
+        *,
+        checkpoint_step     : Optional[Union[int, str]] = "latest",
+        checkpoint_file     : Optional[str] = None,
+        load_weights        : bool = True,
+        hamiltonian_kwargs  : Optional[Dict[str, Any]] = None,
+        net_kwargs          : Optional[Dict[str, Any]] = None,
+        nqs_kwargs          : Optional[Dict[str, Any]] = None,
+    ) -> "NQS":
+        """
+        Convenience constructor returning only ``NQS``.
+
+        For full context (model/lattice/net), use :meth:`load_bundle`.
+        """
+        bundle = cls.load_bundle(
+            physics_config=physics_config,
+            solver_config=solver_config,
+            checkpoint_step=checkpoint_step,
+            checkpoint_file=checkpoint_file,
+            load_weights=load_weights,
+            hamiltonian_kwargs=hamiltonian_kwargs,
+            net_kwargs=net_kwargs,
+            nqs_kwargs=nqs_kwargs,
+        )
+        return bundle.nqs
 
     # ---
 

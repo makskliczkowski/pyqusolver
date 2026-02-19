@@ -801,6 +801,140 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         return {k: v for k, v in train_kwargs.items() if v is not None}
 
 # ----------------------------------------------------------------------------
+# Convenience loading helpers
+# ----------------------------------------------------------------------------
+
+@dataclass
+class NQSLoadBundle:
+    """
+    Convenience container returned by :func:`load_nqs`.
+
+    Attributes
+    ----------
+    nqs : NQS
+        Fully constructed NQS instance.
+    model, hilbert, lattice
+        Physical objects created from :class:`NQSPhysicsConfig`.
+    net : Any
+        Neural ansatz instance used by NQS.
+    physics_config, solver_config
+        Effective configs used to construct the bundle.
+    checkpoint_metadata : Dict[str, Any]
+        Metadata loaded from checkpoint (if available).
+    """
+
+    nqs                 : "NQS"
+    model               : Any
+    hilbert             : Any
+    lattice             : Any
+    net                 : Any
+    physics_config      : NQSPhysicsConfig
+    solver_config       : NQSSolverConfig
+    checkpoint_metadata : Dict[str, Any] = field(default_factory=dict)
+
+
+def _as_physics_config(config: Union[NQSPhysicsConfig, Dict[str, Any]]) -> NQSPhysicsConfig:
+    if isinstance(config, NQSPhysicsConfig):
+        return config
+    if isinstance(config, dict):
+        return NQSPhysicsConfig(**config)
+    raise TypeError("physics_config must be NQSPhysicsConfig or dict.")
+
+def _as_solver_config(config: Union[NQSSolverConfig, Dict[str, Any]]) -> NQSSolverConfig:
+    if isinstance(config, NQSSolverConfig):
+        return config
+    if isinstance(config, dict):
+        return NQSSolverConfig(**config)
+    raise TypeError("solver_config must be NQSSolverConfig or dict.")
+
+def load_nqs(
+    physics_config      : Union[NQSPhysicsConfig, Dict[str, Any]],
+    solver_config       : Union[NQSSolverConfig, Dict[str, Any]],
+    *,
+    checkpoint_step     : Optional[Union[int, str]] = "latest",
+    checkpoint_file     : Optional[str] = None,
+    load_weights        : bool = True,
+    hamiltonian_kwargs  : Optional[Dict[str, Any]] = None,
+    net_kwargs          : Optional[Dict[str, Any]] = None,
+    nqs_kwargs          : Optional[Dict[str, Any]] = None,
+) -> NQSLoadBundle:
+    """
+    Build ``model + lattice + net + NQS`` in one call and optionally restore checkpoint weights.
+
+    Parameters
+    ----------
+    physics_config, solver_config
+        Config objects (or plain dicts) describing the physical system and NQS defaults.
+    checkpoint_step, checkpoint_file
+        Passed to ``NQS.load_weights`` when ``load_weights=True``.
+    load_weights
+        If True, restore NQS parameters from checkpoint after construction.
+    hamiltonian_kwargs, net_kwargs, nqs_kwargs
+        Extra keyword arguments forwarded to
+        ``physics_config.make_hamiltonian(...)``, ``solver_config.make_net(...)``,
+        and ``NQS(...)`` respectively.
+    """
+
+    p_cfg       = _as_physics_config(physics_config)
+    s_cfg       = _as_solver_config(solver_config)
+
+    h_kwargs    = dict(hamiltonian_kwargs or {})
+    net_kws     = dict(net_kwargs or {})
+    nqs_kws     = dict(nqs_kwargs or {})
+
+    dtype       = nqs_kws.get("dtype", None)
+    if dtype is None:
+        dtype = getattr(s_cfg, "dtype", None)
+    if dtype is not None and "dtype" not in h_kwargs:
+        h_kwargs["dtype"] = dtype
+
+    model, hilbert, lattice = p_cfg.make_hamiltonian(**h_kwargs)
+
+    # Avoid backend duplication with NQSSolverConfig.make_net(...),
+    # which already forwards ``backend=self.backend``.
+    if "backend" in net_kws:
+        s_cfg.backend = net_kws.pop("backend")
+
+    net = s_cfg.make_net(p_cfg, **net_kws)
+
+    nqs_kws.setdefault("sampler", s_cfg.sampler)
+    nqs_kws.setdefault("backend", s_cfg.backend)
+    if dtype is not None:
+        nqs_kws.setdefault("dtype", dtype)
+    if hilbert is not None and hasattr(hilbert, "ns"):
+        nqs_kws.setdefault("shape", (int(hilbert.ns),))
+    elif hasattr(model, "lattice") and getattr(model, "lattice") is not None:
+        nqs_kws.setdefault("shape", (int(model.lattice.ns),))
+        
+    # Sampler parameters with solver defaults, but allow train_config overrides in nqs_kwargs
+    nqs_kws.setdefault("s_numchains", s_cfg.n_chains)
+    nqs_kws.setdefault("s_numsamples", s_cfg.n_samples)
+    nqs_kws.setdefault("s_sweep_steps", s_cfg.n_sweep)
+    nqs_kws.setdefault("s_therm_steps", s_cfg.n_therm)
+
+    nqs_cls = __getattr__("NQS")
+    psi     = nqs_cls(logansatz=net, model=model, **nqs_kws)
+
+    metadata: Dict[str, Any] = {}
+    if load_weights:
+        psi.load_weights(step=checkpoint_step, filename=checkpoint_file)
+        try:
+            metadata = psi.ckpt_manager.load_metadata(step=checkpoint_step, filename=checkpoint_file)
+        except Exception:
+            metadata = {}
+
+    return NQSLoadBundle(
+        nqs=psi,
+        model=model,
+        hilbert=hilbert,
+        lattice=lattice,
+        net=net,
+        physics_config=p_cfg,
+        solver_config=s_cfg,
+        checkpoint_metadata=metadata,
+    )
+
+# ----------------------------------------------------------------------------
 # Lazy Import Configuration
 # ----------------------------------------------------------------------------
 
@@ -986,9 +1120,13 @@ __all__ = [
     "TDVPStepInfo",
     "NetworkFactory",
     "VMCSampler",
+    # Configs and loading utilities
     "NQSPhysicsConfig",
     "NQSSolverConfig",
     "NQSTrainConfig",
+    "NQSLoadBundle",
+    "load_nqs",
+    # info and quick start
     "quick_start",
     "info",
 ]

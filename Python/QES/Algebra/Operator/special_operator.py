@@ -471,9 +471,7 @@ class SpecialOperator(Operator, ABC):
 
     # -------------------------------------------------------------------------
 
-    def _log(
-        self, msg: str, log: str = "info", lvl: int = 0, color: str = "white", verbose: bool = True
-    ) -> None:
+    def _log(self, msg: str, log: str = "info", lvl: int = 0, color: str = "white", verbose: bool = True) -> None:
         """
         Log the message.
 
@@ -487,6 +485,15 @@ class SpecialOperator(Operator, ABC):
 
         msg = f"[{self.name}] {msg}"
         self._hilbert_space._log(msg, log=log, lvl=lvl, color=color, append_msg=False)
+
+    def _dtype_is_complex(self) -> bool:
+        """Return True if operator dtype is a complex floating type."""
+        if self._dtype is None:
+            return False
+        try:
+            return np.issubdtype(np.dtype(self._dtype), np.complexfloating)
+        except Exception:
+            return False
 
     # -------------------------------------------------------------------------
     #! Properties
@@ -1335,12 +1342,7 @@ class SpecialOperator(Operator, ABC):
         # _lookup_codes     : Dict[str, int]    - maps operator names to integer codes
         # _instr_function   : Callable          - JIT-compiled composition function
         
-        is_complex = getattr(self, "_iscpx", False)
-        if not is_complex and self._dtype is not None:
-            try:
-                is_complex = np.issubdtype(np.dtype(self._dtype), np.complexfloating)
-            except Exception:
-                pass
+        is_complex = getattr(self, "_iscpx", False) or self._dtype_is_complex()
         self._lookup_codes, self._instr_function = module.get_codes(is_complex=is_complex)
 
         # Set maximum output buffer size:
@@ -1377,7 +1379,7 @@ class SpecialOperator(Operator, ABC):
             The hybrid composition function.
         """
         physics_type    = self._physics_type or self._detect_physics_type()
-        is_complex      = getattr(self, "_iscpx", False) or self._dtype == np.complex128
+        is_complex      = getattr(self, "_iscpx", False) or self._dtype_is_complex()
         try:
             return self.operators.get_composition(
                 is_cpx=is_complex,
@@ -1604,7 +1606,7 @@ class SpecialOperator(Operator, ABC):
 
             # Create the wrapper
             max_out = self._instr_max_out
-            is_complex = getattr(self, "_iscpx", False) or self._dtype == np.complex128
+            is_complex = getattr(self, "_iscpx", False) or self._dtype_is_complex()
 
             if is_complex:
 

@@ -30,7 +30,7 @@ def propose_local_flip_np(state: np.ndarray, rng: np.random.Generator):
     Propose a random flip of a state using numpy.
     """
     if state.ndim == 1:
-        idx = randint_np(rng=rng, low=0, high=state.size, size=1)[0]
+        idx = randint_np(low=0, high=state.size, size=1)[0]
         return Binary.flip_array_np(state, idx)
 
     n_chains, state_size = state.shape[0], state.shape[1]
@@ -38,7 +38,9 @@ def propose_local_flip_np(state: np.ndarray, rng: np.random.Generator):
         # Note: In parallel numba context, we might need thread-safe RNG or
         # allow randint_np to handle it. Assuming implicit handling as per original code.
         idx = randint_np(low=0, high=state_size, size=1)[0]
-        state[i] = Binary.flip_array_np_spin(state[i], idx)
+        state[i] = Binary.flip_array_np(
+            state[i], idx, spin=Binary.BACKEND_DEF_SPIN, spin_value=Binary.BACKEND_REPR
+        )
     return state
 
 
@@ -53,13 +55,13 @@ def propose_multi_flip_np(state: np.ndarray, rng, num=1):
     Propose a random flip of a state using numpy.
     """
     if state.ndim == 1:
-        idx = randint_np(rng=rng, low=0, high=state.size, size=num)
+        idx = randint_np(low=0, high=state.size, size=num)
         return Binary.flip_array_np_multi(
             state, idx, spin=Binary.BACKEND_DEF_SPIN, spin_value=Binary.BACKEND_REPR
         )
     n_chains, state_size = state.shape[0], state.shape[1]
     for i in range(n_chains):
-        idx = randint_np(rng=rng, low=0, high=state_size, size=num)
+        idx = randint_np(low=0, high=state_size, size=num)
         state[i] = Binary.flip_array_np_multi(
             state[i], idx, spin=Binary.BACKEND_DEF_SPIN, spin_value=Binary.BACKEND_REPR
         )
