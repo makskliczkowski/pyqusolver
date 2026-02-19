@@ -287,6 +287,10 @@ If you use QES in research, please cite:
 }
 ```
 
+## Acknowledgements
+
+During the stay at Ohio State University, the authors made significant advancements in the code, especially in the tools for frustrated systems. They extend their sincere gratitude to Nandini Trivedi and her group for their hospitality and invaluable scientific insights. The visit was supported under the Bekker Programme of the Polish National Agency for Academic Exchange, Grant no. BPN/BEK/2024/1/00115.
+
 ## License
 
 This project is licensed under the **CC-BY-4.0 License**. See [LICENSE.md](LICENSE.md) for details.
