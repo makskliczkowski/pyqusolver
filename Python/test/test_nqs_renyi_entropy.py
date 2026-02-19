@@ -64,7 +64,7 @@ class DummyNQS:
             + 0.8 * s[:, 0] * s[:, 3]
         )
 
-    def sample(self, num_samples=None, num_chains=None):
+    def sample(self, num_samples=None, num_chains=None, reset=False, **kwargs):
         if self._counter % 2 == 0:
             states = self._s1
         else:
@@ -173,7 +173,7 @@ class ProductStateDummyNQS:
             s = s.reshape(1, -1)
         return jnp.zeros((s.shape[0],), dtype=jnp.float64)
 
-    def sample(self, num_samples=None, num_chains=None):
+    def sample(self, num_samples=None, num_chains=None, reset=False):
         states = self._samples
         log_psi = self.ansatz(states)
         probs = jnp.ones(states.shape[0], dtype=jnp.float64)
