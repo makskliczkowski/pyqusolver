@@ -268,18 +268,18 @@ class HeisenbergKitaev(HamiltonianSpin):
         # 3 from Heisenberg + 3 from Kitaev + 6 from Gamma + 3 from fields + 3*impurities (x,y,z components each)
         self._max_local_ch = (
             3
-            + (3 if self._j is not None else 0)
+            + (3 if self._j is not None else 0)     # Heisenberg contributions (S_i^x S_j^x, S_i^y S_j^y, S_i^z S_j^z)
             + (2 if self._gx is not None else 0)
             + (2 if self._gy is not None else 0)
-            + (2 if self._gz is not None else 0)
+            + (2 if self._gz is not None else 0)    # Gamma contributions (each can have up to 2 independent components due to symmetry)
             + (1 if self._hz is not None else 0)
-            + (1 if self._hy is not None else 0)
-            + (1 if self._hx is not None else 0)
+            + (1 if self._hy is not None else 0)    
+            + (1 if self._hx is not None else 0)    # magnetic field contributions
             + 3 * len(self._impurities)
         )  # Each impurity can have x, y, z components
         self.set_couplings()
 
-        # functions for local energy calculation in a jitted way (numpy and jax)
+        #! functions for local energy calculation in a jitted way (numpy and jax)
         self._set_local_energy_operators()
         self.setup_instruction_codes()  # automatic physics-based setup
         self._set_local_energy_functions()
@@ -356,13 +356,11 @@ class HeisenbergKitaev(HamiltonianSpin):
         if len(self._impurities) > 0:
             imp_strs = []
             for site, phi, theta, ampl in self._impurities:
-                phi_i = phi % (2 * np.pi)
+                phi_i   = phi % (2 * np.pi)
                 theta_i = theta % np.pi
                 # Concise format for directory naming: s{site}_p{phi}_t{theta}_a{ampl}
                 # using .2f precision to keep it short
-                imp_strs.append(
-                    f"s{site}_p{phi_i:.2f}_t{theta_i:.2f}_a{ampl:.2f}"
-                )
+                imp_strs.append(f"s{site}_p{phi_i:.2f}_t{theta_i:.2f}_a{ampl:.2f}")
             parts.append(f"Imps[{'-'.join(imp_strs)}]")
 
         parts = [p for p in parts if p]
@@ -578,28 +576,14 @@ class HeisenbergKitaev(HamiltonianSpin):
             or HamiltonianSpin._ADD_CONDITION(self._gz)
         )
         if self._spin_operator_family != "spin-1/2" and gamma_requested:
-            raise NotImplementedError(
-                "Gamma anisotropic mixed-axis terms currently require spin-1/2 operators."
-            )
+            raise NotImplementedError("Gamma anisotropic mixed-axis terms currently require spin-1/2 operators.")
         if self._spin_operator_family == "spin-1/2":
-            op_sx_sy_c = spin_mixed_correlation_operator(
-                self._spin_ops_module, self._spin_operator_family, "xy", lattice=lattice
-            )
-            op_sy_sx_c = spin_mixed_correlation_operator(
-                self._spin_ops_module, self._spin_operator_family, "yx", lattice=lattice
-            )
-            op_sz_sx_c = spin_mixed_correlation_operator(
-                self._spin_ops_module, self._spin_operator_family, "zx", lattice=lattice
-            )
-            op_sx_sz_c = spin_mixed_correlation_operator(
-                self._spin_ops_module, self._spin_operator_family, "xz", lattice=lattice
-            )
-            op_sy_sz_c = spin_mixed_correlation_operator(
-                self._spin_ops_module, self._spin_operator_family, "yz", lattice=lattice
-            )
-            op_sz_sy_c = spin_mixed_correlation_operator(
-                self._spin_ops_module, self._spin_operator_family, "zy", lattice=lattice
-            )
+            op_sx_sy_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "xy", lattice=lattice)
+            op_sy_sx_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "yx", lattice=lattice)
+            op_sz_sx_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "zx", lattice=lattice)
+            op_sx_sz_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "xz", lattice=lattice)
+            op_sy_sz_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "yz", lattice=lattice)
+            op_sz_sy_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "zy", lattice=lattice)
         else:
             op_sx_sy_c = op_sy_sx_c = None
             op_sz_sx_c = op_sx_sz_c = None
@@ -608,21 +592,16 @@ class HeisenbergKitaev(HamiltonianSpin):
         def add_local_axis(axis: str, multiplier, site: int) -> None:
             if not HamiltonianSpin._ADD_CONDITION(multiplier):
                 return
-            self.add_local_spin_component(
-                site,
-                axis,
-                multiplier,
-                op_x=op_sx_l,
-                op_y=op_sy_l,
-                op_z=op_sz_l,
-                op_p=op_sp_l,
-                op_m=op_sm_l,
-            )
+            self.add_local_spin_component(site, axis, multiplier, op_x=op_sx_l, op_y=op_sy_l, op_z=op_sz_l, op_p=op_sp_l, op_m=op_sm_l)
         nn_nums     = (
             [lattice.get_nn_forward_num(i) for i in range(self.ns)]
             if self._use_forward
             else [lattice.get_nn_num(i) for i in range(self.ns)]
         )
+        
+        # Adding the Hermitian projection for forward flux if needed to ensure the Hamiltonian remains Hermitian when using complex boundary phases with forward-only neighbor listing.
+        hermitize_forward_flux          = bool(self._use_forward and getattr(lattice, "has_flux", False))
+        warned_complex_forward_phase    = False
 
         #! iterate over all the sites
         elems       = 0
@@ -665,25 +644,19 @@ class HeisenbergKitaev(HamiltonianSpin):
                     imp_z       = -local_scale * ampl * cos_theta
                     if HamiltonianSpin._ADD_CONDITION(imp_z):
                         add_local_axis("z", imp_z, i)
-                        self._log(
-                            f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log=log
-                        )
+                        self._log(f"Adding impurity Sz at {i} with value {imp_z:.4f}", lvl=2, log=log)
 
                     # X-component: sin(theta) * cos(phi) * amplitude
                     imp_x       = -local_scale * ampl * sin_theta * cos_phi
                     if HamiltonianSpin._ADD_CONDITION(imp_x):
                         add_local_axis("x", imp_x, i)
-                        self._log(
-                            f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log=log
-                        )
+                        self._log(f"Adding impurity Sx at {i} with value {imp_x:.4f}", lvl=2, log=log)
 
                     # Y-component: sin(theta) * sin(phi) * amplitude
                     imp_y       = -local_scale * ampl * sin_theta * sin_phi
                     if HamiltonianSpin._ADD_CONDITION(imp_y):
                         add_local_axis("y", imp_y, i)
-                        self._log(
-                            f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log
-                        )
+                        self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log)
 
             # ? now check the correlation operators
             nn_num = nn_nums[i]
@@ -702,6 +675,15 @@ class HeisenbergKitaev(HamiltonianSpin):
 
                 wx, wy, wz  = lattice.bond_winding(i, nei)
                 phase       = lattice.boundary_phase_from_winding(wx, wy, wz)
+                if hermitize_forward_flux and np.iscomplexobj(phase):
+                    # Forward-only bond listing keeps one directed representative per edge.
+                    # For Hermitian two-site spin bilinears we must use the Hermitian part
+                    # of the Peierls phase to avoid a non-Hermitian Hamiltonian.
+                    if not warned_complex_forward_phase and abs(np.imag(phase)) > 1e-14:
+                        self._log("Complex boundary phases detected with use_forward=True; using Hermitian bond-phase projection Re[e^{i phi}] for spin bilinears.", lvl=1, log="warning",)
+                        warned_complex_forward_phase = True
+                        
+                    phase   = 0.5 * (phase + np.conjugate(phase))
 
                 #! Heisenberg - value of SzSz, SxSx, SySy (multipliers)
                 if True:
