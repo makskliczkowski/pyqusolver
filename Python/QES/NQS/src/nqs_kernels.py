@@ -31,6 +31,12 @@ try:
 except ImportError:
     raise ImportError("Could not import cast_for_precision from .nqs_precision.")
 
+# Import optimized kernels if available
+try:
+    from .net_utils_jax_opt import apply_callable_batched_jax as apply_callable_batched_jax_opt
+except ImportError:
+    apply_callable_batched_jax_opt = None
+
 
 @dataclass
 class NQSSingleStepResult:
@@ -141,7 +147,8 @@ def _apply_fun_jax(
             _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args
         )
     else:
-        funct_in = net_utils.jaxpy.apply_callable_batched_jax
+        # Use optimized version if available
+        funct_in = apply_callable_batched_jax_opt if apply_callable_batched_jax_opt else net_utils.jaxpy.apply_callable_batched_jax
         return funct_in(
             _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args
         )
