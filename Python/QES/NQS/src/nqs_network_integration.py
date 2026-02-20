@@ -15,6 +15,7 @@ Available Networks:
 6. RBMPP    (RBM + Pair Product Hybrid)
 7. GCNN     (Graph Convolutional Neural Network)
 8. EqGCNN   (Group-Equivariant CNN — arXiv:2505.23728)
+9. ApproxSymmetric (Chi -> Omega -> Sigma ansatz)
 
 -------------------------------------------------------------------------------
 File        : NQS/src/nqs_network_integration.py
@@ -53,6 +54,13 @@ try:
     _HAS_JAX_EQGCNN = True
 except ImportError:
     _HAS_JAX_EQGCNN = False
+
+try:
+    from QES.general_python.ml.net_impl.networks.net_approx_symmetric import make_translation_symmetry_op
+    _HAS_APPROX_SYMMETRIC           = True
+except ImportError:
+    _HAS_APPROX_SYMMETRIC           = False
+    make_translation_symmetry_op    = None
 
 # ===========================================================================
 #! Network Parameter Estimator
@@ -169,6 +177,10 @@ class SOTANetConfig:
             if self.alpha:
                 kw["alpha"]         = self.alpha
             kw["use_rbm"]           = (self.net_type == "rbmpp")
+
+        elif self.net_type == "approx_symmetric":
+            if self.features:
+                kw["chi_features"] = tuple(self.features)
             
         kw.update(self.extra_kwargs)
         
@@ -197,7 +209,8 @@ def estimate_network_params(
     ----------
     net_type : str
         Architecture: ``'rbm'``, ``'cnn'``, ``'resnet'``, ``'ar'``,
-        ``'pp'``, ``'rbmpp'``, ``'eqgcnn'`` / ``'gcnn'``.
+        ``'pp'``, ``'rbmpp'``, ``'eqgcnn'`` / ``'gcnn'``,
+        ``'approx_symmetric'``.
     num_sites : int
         Total number of lattice sites $N_s$.
     lattice_dims : tuple of int, optional
@@ -269,7 +282,11 @@ def estimate_network_params(
     >>> cfg = estimate_network_params('resnet', 64, lattice_dims=(8,8),
     ...                              model_type='j1j2', base_depth=6)
     """
-    net_type = net_type.lower()
+    net_type = net_type.lower().replace("-", "_")
+    if net_type in ("approxsym", "asym"):
+        net_type = "approx_symmetric"
+    if net_type == "eqgcnn":
+        net_type = "gcnn"
     
     # Determine spatial dimensions for CNN/ResNet reshaping
     if lattice_dims is not None:
@@ -498,6 +515,56 @@ def estimate_network_params(
                 f"Override: alpha."
             ),
         )
+
+    # ================================================================
+    #  Approximate Symmetric Ansatz (Chi -> Omega -> Sigma)
+    # ================================================================
+    elif net_type == "approx_symmetric":
+        if "chi_features" in kwargs and kwargs["chi_features"] is not None:
+            chi_features    = tuple(int(v) for v in kwargs["chi_features"])
+            n_layers        = len(chi_features)
+        else:
+            n_layers        = kwargs.get("n_layers", max(2, min(4, int(2 * tier_mult))))
+            base_hidden     = kwargs.get("base_hidden", max(64, int(4 * math.sqrt(max(1, num_sites)))))
+            if "base_hidden" not in kwargs:
+                chi_features = tuple(int(base_hidden * tier_mult) for _ in range(n_layers))
+            else:
+                chi_features = tuple(int(base_hidden) for _ in range(n_layers))
+
+        # Dense stack + readout (rough parameter estimate).
+        prev        = num_sites
+        n_params    = 0
+        for feat in chi_features:
+            n_params   += prev * feat + feat
+            prev        = feat
+        n_params += prev + 1
+
+        symmetry_mode   = str(kwargs.get("symmetry_mode", "mean"))
+        chi_act         = kwargs.get("chi_act", "tanh")
+        readout_act     = kwargs.get("readout_act", "log_cosh")
+        extra_kwargs    = {
+            "chi_features"  : chi_features,
+            "chi_act"       : chi_act,
+            "readout_act"   : readout_act,
+            "symmetry_mode" : symmetry_mode,
+        }
+        if _HAS_APPROX_SYMMETRIC and make_translation_symmetry_op is not None:
+            extra_kwargs["symmetry_op"] = make_translation_symmetry_op(mode=symmetry_mode)
+
+        return SOTANetConfig(
+            net_type="approx_symmetric",
+            input_shape=(num_sites,),
+            features=chi_features,
+            depth=n_layers,
+            dtype=dtype,
+            estimated_params=n_params,
+            extra_kwargs=extra_kwargs,
+            description=(
+                f"ApproxSymmetric with chi_features={chi_features}, symmetry='{symmetry_mode}', "
+                f"chi_act={chi_act}, readout={readout_act}. Override: base_hidden, n_layers, "
+                f"symmetry_mode, chi_act, readout_act."
+            ),
+        )
     
     # ================================================================
     #  Equivariant GCNN  [R5] Roth et al. 2023, arXiv:2505.23728
@@ -574,7 +641,7 @@ def estimate_network_params(
     else:
         raise ValueError(
             f"Unknown network type '{net_type}'. "
-            f"Supported: rbm, cnn, resnet, ar, pp, rbmpp, eqgcnn/gcnn."
+            f"Supported: rbm, cnn, resnet, ar, pp, rbmpp, eqgcnn/gcnn, approx_symmetric."
         )
 
 # ----------------------------------
@@ -677,6 +744,18 @@ class NetworkFactory:
                 "dtype"             : "Data type for weights ('complex128', etc.)",
             },
         ),
+        "approx_symmetric": NetworkInfo(
+            "ApproxSymmetric",
+            "Approximately symmetric Chi -> Omega -> Sigma ansatz",
+            "Benchmarking against RBM/CNN while enforcing symmetry aggregation in the readout.",
+            arguments={
+                "chi_features"       : "Hidden widths of the Chi block (e.g., `(128, 128)`).",
+                "symmetry_mode"      : "Translation aggregation mode for Omega ('mean' or 'sum').",
+                "chi_act"            : "Activation in Chi block (default: 'tanh' for complex stability).",
+                "readout_act"        : "Readout nonlinearity (default: 'log_cosh').",
+                "dtype"              : "Data type for weights ('complex64', 'complex128', etc.).",
+            },
+        ),
         "activations": list_activations("jax"),
     }
 
@@ -751,9 +830,15 @@ class NetworkFactory:
             ...     dtype           =   'complex64'
             ... )
         """
+        key = str(network_type).lower().replace("-", "_")
+        if key == "eqgcnn":
+            key = "gcnn"
+        if key in ("approxsym", "asym"):
+            key = "approx_symmetric"
+
         # Delegate to the robust implementation in general_python
         return choose_network(
-            network_type, input_shape=input_shape, dtype=dtype, backend=backend, **kwargs
+            key, input_shape=input_shape, dtype=dtype, backend=backend, **kwargs
         )
 
     @staticmethod
@@ -769,7 +854,11 @@ class NetworkFactory:
     @staticmethod
     def get_info(network_type: str) -> Dict[str, str]:
         """Get details about a specific network."""
-        key = network_type.lower()
+        key = network_type.lower().replace("-", "_")
+        if key == "gcnn":
+            key = "eqgcnn"
+        if key in ("approxsym", "asym"):
+            key = "approx_symmetric"
 
         if key in NetworkFactory._INFO:
             info = NetworkFactory._INFO[key]
