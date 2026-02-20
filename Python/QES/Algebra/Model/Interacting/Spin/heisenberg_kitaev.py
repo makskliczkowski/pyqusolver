@@ -11,12 +11,15 @@ The Heisenberg-Kitaev model implementation with additional possible
 File        : Algebra/Model/Interacting/Spin/heisenberg_kitaev.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-02-17
-Version     : 1.0
+Version     : 2.0
+    - 2.0: Added boundary flux support with forward hopping, impurities support, and improved documentation.
+    
 ------------------------------------------------------------------------------
 Changelog   :
 - 2025-02-17 1.0: Initial version.
 - 2025-06-10 1.1: Added impurities support and improved documentation.
 - 2025-11-01 1.2: Refactored code for performance improvements.
+- 2026-02-20 2.0: Added boundary flux support with forward hopping, and improved documentation.
 """
 
 from typing import List, Optional, Tuple, Union
