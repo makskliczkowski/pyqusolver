@@ -1634,7 +1634,7 @@ class GeneralMatrix(spla.LinearOperator):
         return f"{name}={val:.{prec}f}"
 
     @staticmethod
-    def _fmt_array(name, arr, prec=1, tol=1e-6):
+    def _fmt_array(name, arr, prec=1, tol=1e-6, dtype=float):
         """
         Formats a NumPy array or DummyVector into a concise string representation for display.
         Parameters:
@@ -1656,6 +1656,9 @@ class GeneralMatrix(spla.LinearOperator):
         if isinstance(arr, DummyVector):
             return GeneralMatrix._fmt_scalar(name, arr[0])
 
+        if np.iscomplexobj(arr):
+            arr = arr.real
+            
         arr = np.asarray(arr, dtype=float)
         if arr.size == 0:
             return f"{name}=[]"

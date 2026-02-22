@@ -284,17 +284,17 @@ class NQSSolverConfig(_ConfigSchemaMixin):
     n_samples           : int       = 256
     n_sweep             : int       = 48
     n_therm             : int       = 24
-    lr                  : float     = 7e-3
+    lr                  : float     = 1e-2
     epochs              : int       = 300
     dtype               : str       = "complex128"
     backend             : str       = "jax"
 
     # Training / scheduling defaults
-    phases              : Union[str, tuple] = "default"
-    lr_scheduler        : Optional[Union[str, Callable]] = "cosine"
+    phases              : Union[str, tuple, None] = None
+    lr_scheduler        : Optional[Union[str, Callable]] = None
     reg                 : Optional[float] = None
     reg_scheduler       : Optional[Union[str, Callable]] = None
-    diag_shift          : float = 5e-5
+    diag_shift          : float = 5e-3
     diag_scheduler      : Optional[Union[str, Callable]] = None
 
     # Sampler controls used in NQS.train(...)
@@ -442,7 +442,7 @@ class NQSTrainConfig(_ConfigSchemaMixin):
     best_checkpoint_every: Optional[int] = None
     best_checkpoint_min_delta: float = 0.0
     save_best_stats     : bool = False
-    phases              : Union[str, tuple] = "default"
+    phases              : Union[str, tuple, None] = None
     load_checkpoint     : bool = False
     checkpoint_step     : Optional[Union[int, str]] = None
     override            : bool = True
@@ -465,11 +465,11 @@ class NQSTrainConfig(_ConfigSchemaMixin):
     global_fraction     : Optional[float] = None
 
     # Optimisation schedules and values
-    lr                  : Optional[float] = 7e-3
-    lr_scheduler        : Optional[Union[str, Callable]] = "cosine"
+    lr                  : Optional[float] = 1e-2
+    lr_scheduler        : Optional[Union[str, Callable]] = None
     reg                 : Optional[float] = None
     reg_scheduler       : Optional[Union[str, Callable]] = None
-    diag_shift          : float = 5e-5
+    diag_shift          : float = 5e-3
     diag_scheduler      : Optional[Union[str, Callable]] = None
 
     # Scheduler aliases forwarded as prefixed kwargs (consumed in NQSTrainer)
@@ -511,7 +511,7 @@ class NQSTrainConfig(_ConfigSchemaMixin):
     use_sr              : bool = True
     use_minsr           : bool = False
     rhs_prefactor       : float = -1.0
-    grad_clip           : Optional[float] = 1.0
+    grad_clip           : Optional[float] = 10.0
 
     # Utilities
     optimizer           : Optional[Any] = None

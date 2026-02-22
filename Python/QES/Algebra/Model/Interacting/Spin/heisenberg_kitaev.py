@@ -184,13 +184,11 @@ class HeisenbergKitaev(HamiltonianSpin):
                 RuntimeWarning,
             )
 
-        requested_family = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
-        complex_required = self.needs_complex_dtype_from_spin_inputs(
-            hy=hy, impurities=impurities
-        ) or HamiltonianSpin._ADD_CONDITION(Gamma)
+        requested_family    = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
+        complex_required    = self.needs_complex_dtype_from_spin_inputs(hy=hy, impurities=impurities) or HamiltonianSpin._ADD_CONDITION(Gamma)
 
         # Initialize the Hamiltonian
-        self._lattice = lattice
+        self._lattice       = lattice
         super().__init__(
             is_manybody=True,
             hilbert_space=hilbert_space,
@@ -204,40 +202,16 @@ class HeisenbergKitaev(HamiltonianSpin):
         self.init_spin_family(requested_family)
 
         # setup the fields
-        self._hx = (
-            hx
-            if isinstance(hx, (list, np.ndarray, tuple))
-            else [hx] * self.ns if hx is not None else None
-        )
-        self._hy = (
-            hy
-            if isinstance(hy, (list, np.ndarray, tuple))
-            else [hy] * self.ns if hy is not None else None
-        )
-        self._hz = (
-            hz
-            if isinstance(hz, (list, np.ndarray, tuple))
-            else [hz] * self.ns if hz is not None else None
-        )
+        self._hx    = (hx if isinstance(hx, (list, np.ndarray, tuple)) else [hx] * self.ns if hx is not None else None)
+        self._hy    = (hy if isinstance(hy, (list, np.ndarray, tuple)) else [hy] * self.ns if hy is not None else None)
+        self._hz    = (hz if isinstance(hz, (list, np.ndarray, tuple)) else [hz] * self.ns if hz is not None else None)
+        
         # setup the couplings
-        self._j = (
-            J
-            if isinstance(J, (list, np.ndarray, tuple))
-            else [J] * self.ns if J is not None else None
-        )
-        self._gx, self._gy, self._gz = (
-            Gamma
-            if isinstance(Gamma, (list, np.ndarray, tuple))
-            else (Gamma, Gamma, Gamma) if Gamma is not None else (None, None, None)
-        )
-        self._dlt = (
-            dlt
-            if isinstance(dlt, (list, np.ndarray, tuple))
-            else [dlt] * self.ns if dlt is not None else None
-        )
-        self._kx, self._ky, self._kz = (
-            K if isinstance(K, (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K) if K is not None else (None, None, None)
-        )
+        self._gx, self._gy, self._gz = (Gamma if isinstance(Gamma, (list, np.ndarray, tuple)) else (Gamma, Gamma, Gamma) if Gamma is not None else (None, None, None))
+        self._kx, self._ky, self._kz = (K if isinstance(K, (list, np.ndarray, tuple)) and len(K) == 3 else (K, K, K) if K is not None else (None, None, None))
+        
+        self._j     = (J if isinstance(J, (list, np.ndarray, tuple)) else [J] * self.ns if J is not None else None)
+        self._dlt   = (dlt if isinstance(dlt, (list, np.ndarray, tuple)) else [dlt] * self.ns if dlt is not None else None)
 
         # setup the impurities - validate format: either 2-tuple (site, ampl) or (3,4)-tuple (site, phi, theta, ampl)
         self._impurities = []
@@ -284,7 +258,7 @@ class HeisenbergKitaev(HamiltonianSpin):
 
         #! functions for local energy calculation in a jitted way (numpy and jax)
         self._set_local_energy_operators()
-        self.setup_instruction_codes()  # automatic physics-based setup
+        self.setup_instruction_codes()
         self._set_local_energy_functions()
 
     # ----------------------------------------------------------------------------------------------
@@ -404,39 +378,17 @@ class HeisenbergKitaev(HamiltonianSpin):
         """
         Sets the couplings based on their initial value (list, string, value)
         """
-        self._hx = (
-            self._set_some_coupling(self._hx if hx is None else hx) if hx is not None else self._hx
-        )
-        self._hy = (
-            self._set_some_coupling(self._hy if hy is None else hy) if hy is not None else self._hy
-        )
-        self._hz = (
-            self._set_some_coupling(self._hz if hz is None else hz) if hz is not None else self._hz
-        )
-        self._kx = (
-            self._set_some_coupling(self._kx if kx is None else kx) if kx is not None else self._kx
-        )
-        self._ky = (
-            self._set_some_coupling(self._ky if ky is None else ky) if ky is not None else self._ky
-        )
-        self._kz = (
-            self._set_some_coupling(self._kz if kz is None else kz) if kz is not None else self._kz
-        )
-        self._j = self._set_some_coupling(self._j if j is None else j) if j is not None else self._j
-        self._dlt = (
-            self._set_some_coupling(self._dlt if dlt is None else dlt)
-            if dlt is not None
-            else self._dlt
-        )
-        self._gx = (
-            self._set_some_coupling(self._gx if gx is None else gx) if gx is not None else self._gx
-        )
-        self._gy = (
-            self._set_some_coupling(self._gy if gy is None else gy) if gy is not None else self._gy
-        )
-        self._gz = (
-            self._set_some_coupling(self._gz if gz is None else gz) if gz is not None else self._gz
-        )
+        self._hx    = (self._set_some_coupling(self._hx if hx is None else hx) if hx is not None else self._hx)
+        self._hy    = (self._set_some_coupling(self._hy if hy is None else hy) if hy is not None else self._hy)
+        self._hz    = (self._set_some_coupling(self._hz if hz is None else hz) if hz is not None else self._hz)
+        self._kx    = (self._set_some_coupling(self._kx if kx is None else kx) if kx is not None else self._kx)
+        self._ky    = (self._set_some_coupling(self._ky if ky is None else ky) if ky is not None else self._ky)
+        self._kz    = (self._set_some_coupling(self._kz if kz is None else kz) if kz is not None else self._kz)
+        self._j     = self._set_some_coupling(self._j if j is None else j) if j is not None else self._j
+        self._dlt   = (self._set_some_coupling(self._dlt if dlt is None else dlt) if dlt is not None else self._dlt)
+        self._gx    = (self._set_some_coupling(self._gx if gx is None else gx) if gx is not None else self._gx)
+        self._gy    = (self._set_some_coupling(self._gy if gy is None else gy) if gy is not None else self._gy)
+        self._gz    = (self._set_some_coupling(self._gz if gz is None else gz) if gz is not None else self._gz)
 
     def _set_local_energy_operators(self):
         r"""
@@ -489,97 +441,45 @@ class HeisenbergKitaev(HamiltonianSpin):
         if lattice is None:
             raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
 
-        is_spin_one = self._spin_operator_family == "spin-1"
-        local_scale = SINGLE_TERM_MULT if self._spin_operator_family == "spin-1/2" else 1.0
-        corr_scale = CORR_TERM_MULT if self._spin_operator_family == "spin-1/2" else 1.0
+        is_spin_one     = self._spin_operator_family == "spin-1"
+        local_scale     = SINGLE_TERM_MULT if self._spin_operator_family == "spin-1/2" else 1.0
+        corr_scale      = CORR_TERM_MULT if self._spin_operator_family == "spin-1/2" else 1.0
 
         #! define the operators beforehand - to avoid multiple creations
-        op_sx_l     = None
-        op_sy_l     = None
-        op_sp_l     = None
-        op_sm_l     = None
+        op_sx_l         = None
+        op_sy_l         = None
+        op_sp_l         = None
+        op_sm_l         = None
         if is_spin_one:
-            op_sp_l = self.spin_op(
-                "p",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Local,
-            )
-            op_sm_l = self.spin_op(
-                "m",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Local,
-            )
+            op_sp_l = self.spin_op("p", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Local,)
+            op_sm_l = self.spin_op("m", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Local,)
         else:
-            op_sx_l = self.spin_op(
-                "x",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Local,
-            )
-            op_sy_l = self.spin_op(
-                "y",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Local,
-            )
+            op_sx_l = self.spin_op("x", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Local,)
+            op_sy_l = self.spin_op("y", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Local,)
 
-        op_sz_l = self.spin_op(
-            "z",
-            lattice=lattice,
-            type_act=self._spin_ops_module.OperatorTypeActing.Local,
-        )
+        op_sz_l     = self.spin_op("z", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Local,)
 
         # Kitaev and Heisenberg terms - correlation operators (two-site)
-        op_sx_sx_c = None
-        op_sy_sy_c = None
-        op_sp_sp_c = None
-        op_sm_sm_c = None
-        op_sp_sm_c = None
-        op_sm_sp_c = None
+        op_sx_sx_c  = None
+        op_sy_sy_c  = None
+        op_sp_sp_c  = None
+        op_sm_sm_c  = None
+        op_sp_sm_c  = None
+        op_sm_sp_c  = None
         if is_spin_one:
-            op_sp_sp_c = self.spin_op(
-                "p",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
-            )
-            op_sm_sm_c = self.spin_op(
-                "m",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
-            )
-            op_sp_sm_c = self.spin_op(
-                "pm",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
-            )
-            op_sm_sp_c = self.spin_op(
-                "mp",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
-            )
+            op_sp_sp_c = self.spin_op("p", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation,)
+            op_sm_sm_c = self.spin_op("m", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation,)
+            op_sp_sm_c = self.spin_op("pm",lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation,)
+            op_sm_sp_c = self.spin_op("mp",lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation,)
         else:
-            op_sx_sx_c = self.spin_op(
-                "x",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
-            )
-            op_sy_sy_c = self.spin_op(
-                "y",
-                lattice=lattice,
-                type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
-            )
-        op_sz_sz_c = self.spin_op(
-            "z",
-            lattice=lattice,
-            type_act=self._spin_ops_module.OperatorTypeActing.Correlation,
-        )
+            op_sx_sx_c = self.spin_op("x", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation,)
+            op_sy_sy_c = self.spin_op("y", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation,)
+        op_sz_sz_c = self.spin_op("z", lattice=lattice, type_act=self._spin_ops_module.OperatorTypeActing.Correlation,)
 
         # Create Gamma operators as products of correlation operators
-        gamma_requested = (
-            HamiltonianSpin._ADD_CONDITION(self._gx)
-            or HamiltonianSpin._ADD_CONDITION(self._gy)
-            or HamiltonianSpin._ADD_CONDITION(self._gz)
-        )
-        if self._spin_operator_family != "spin-1/2" and gamma_requested:
-            raise NotImplementedError("Gamma anisotropic mixed-axis terms currently require spin-1/2 operators.")
+        gamma_requested = (HamiltonianSpin._ADD_CONDITION(self._gx) or HamiltonianSpin._ADD_CONDITION(self._gy) or HamiltonianSpin._ADD_CONDITION(self._gz))
+        
+        # Check        
         if self._spin_operator_family == "spin-1/2":
             op_sx_sy_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "xy", lattice=lattice)
             op_sy_sx_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "yx", lattice=lattice)
@@ -588,6 +488,8 @@ class HeisenbergKitaev(HamiltonianSpin):
             op_sy_sz_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "yz", lattice=lattice)
             op_sz_sy_c = spin_mixed_correlation_operator(self._spin_ops_module, self._spin_operator_family, "zy", lattice=lattice)
         else:
+            if gamma_requested:
+                raise NotImplementedError("Gamma anisotropic mixed-axis terms currently require spin-1/2 operators.")
             op_sx_sy_c = op_sy_sx_c = None
             op_sz_sx_c = op_sx_sz_c = None
             op_sy_sz_c = op_sz_sy_c = None
@@ -596,11 +498,9 @@ class HeisenbergKitaev(HamiltonianSpin):
             if not HamiltonianSpin._ADD_CONDITION(multiplier):
                 return
             self.add_local_spin_component(site, axis, multiplier, op_x=op_sx_l, op_y=op_sy_l, op_z=op_sz_l, op_p=op_sp_l, op_m=op_sm_l)
-        nn_nums     = (
-            [lattice.get_nn_forward_num(i) for i in range(self.ns)]
-            if self._use_forward
-            else [lattice.get_nn_num(i) for i in range(self.ns)]
-        )
+        
+        # Save nn info
+        nn_nums = ([lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else [lattice.get_nn_num(i) for i in range(self.ns)])
         
         # Adding the Hermitian projection for forward flux if needed to ensure the Hamiltonian remains Hermitian when using complex boundary phases with forward-only neighbor listing.
         hermitize_forward_flux          = bool(self._use_forward and getattr(lattice, "has_flux", False))
@@ -608,7 +508,7 @@ class HeisenbergKitaev(HamiltonianSpin):
 
         #! iterate over all the sites
         elems       = 0
-        # log             =   'info'
+        # log         = 'info'
         log         = "debug"
         for i in range(self.ns):
             self._log(f"Starting i: {i}", lvl=1, log=log)

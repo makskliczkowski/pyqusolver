@@ -16,7 +16,7 @@ Changes :
 """
 
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import scipy as sp
@@ -332,6 +332,213 @@ class Hamiltonian(BasisAwareOperator):
     def randomize(self, **kwargs):
         """Randomize the Hamiltonian matrix."""
         raise NotImplementedError("Randomization is not implemented for this Hamiltonian class.")
+
+    # ----------------------------------------------------------------------------------------------
+    #! Term mutation helpers (cache invalidation + ergonomic adders)
+    # ----------------------------------------------------------------------------------------------
+
+    def invalidate_runtime_cache(self, *, clear_matrix: bool = True) -> None:
+        """
+        Invalidate compiled local-energy and diagonalization caches.
+
+        Call this whenever operator terms are modified after initialization.
+        """
+        self._loc_energy_int_fun = None
+        self._loc_energy_np_fun = None
+        self._loc_energy_jax_fun = None
+
+        if hasattr(self, "_composition_int_fun"):
+            self._composition_int_fun = None
+        if hasattr(self, "_composition_np_fun"):
+            self._composition_np_fun = None
+        if hasattr(self, "_composition_jax_fun"):
+            self._composition_jax_fun = None
+        if hasattr(self, "_cached_matvec_fun"):
+            self._cached_matvec_fun = None
+
+        self._is_built = False
+        self._eig_val = None
+        self._eig_vec = None
+        self._krylov = None
+
+        if clear_matrix:
+            if hasattr(self, "_hamil"):
+                self._hamil = None
+            if hasattr(self, "_hamil_transformed"):
+                self._hamil_transformed = None
+            if hasattr(self, "_operator_transformed"):
+                self._operator_transformed = None
+
+    def add(
+        self,
+        operator: Any,
+        multiplier: Union[float, complex, int],
+        modifies: bool = False,
+        sites=None,
+    ):
+        """
+        Add a Hamiltonian term and invalidate compiled caches when successful.
+        """
+        n_before = len(self._instr_codes) if hasattr(self, "_instr_codes") else 0
+        super().add(operator=operator, multiplier=multiplier, modifies=modifies, sites=sites)
+        n_after = len(self._instr_codes) if hasattr(self, "_instr_codes") else n_before
+        if n_after != n_before:
+            self.invalidate_runtime_cache(clear_matrix=True)
+
+    def _resolve_sites_input(self, sites: Optional[Iterable[int]]) -> List[int]:
+        if sites is None:
+            return list(range(int(self.ns)))
+        out = []
+        for s in sites:
+            si = int(s)
+            if 0 <= si < int(self.ns):
+                out.append(si)
+        return out
+
+    def iter_bonds(self, *, bonds: Optional[Iterable[Sequence[int]]] = None, order: int = 1, unique: bool = True) -> List[Tuple[int, int]]:
+        """
+        Return a list of bonds ``(i, j)``.
+
+        Parameters
+        ----------
+        bonds : iterable, optional
+            Explicit bond list. If None, bonds are taken from lattice geometry.
+        order : int
+            Neighbor order when generating bonds from lattice (1 -> NN, 2 -> NNN).
+        unique : bool
+            If True, keep only undirected bonds with ``i < j``.
+        """
+        out: List[Tuple[int, int]] = []
+        if bonds is not None:
+            for b in bonds:
+                if b is None or len(b) < 2:
+                    continue
+                i, j = int(b[0]), int(b[1])
+                if i == j:
+                    continue
+                out.append((i, j))
+        elif self._lattice is not None:
+            if int(order) == 1 and hasattr(self._lattice, "edges"):
+                try:
+                    out = [(int(i), int(j)) for (i, j) in self._lattice.edges()]
+                except Exception:
+                    out = []
+            if not out:
+                for i in range(int(self.ns)):
+                    neigh = self._lattice.get_nn(i) if int(order) == 1 else self._lattice.get_nnn(i)
+                    if neigh is None:
+                        continue
+                    if isinstance(neigh, (int, np.integer)):
+                        neigh = [int(neigh)]
+                    for j in neigh:
+                        if self._lattice.wrong_nei(j):
+                            continue
+                        j = int(j)
+                        if i == j:
+                            continue
+                        out.append((i, j))
+        else:
+            out = []
+
+        if not unique:
+            return out
+
+        uniq = set()
+        for i, j in out:
+            a, b = (i, j) if i < j else (j, i)
+            if a != b:
+                uniq.add((a, b))
+        return sorted(uniq)
+
+    def _coefficient_for_site(self, coefficient: Any, site: int):
+        if callable(coefficient):
+            return coefficient(int(site))
+        if isinstance(coefficient, Mapping):
+            if site in coefficient:
+                return coefficient[site]
+            return coefficient.get(int(site), 0.0)
+        if isinstance(coefficient, (list, tuple, np.ndarray)):
+            arr = np.asarray(coefficient)
+            if arr.ndim == 0:
+                return arr.item()
+            if arr.size == int(self.ns):
+                return arr[int(site)]
+            raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={arr.shape}.")
+        return coefficient
+
+    def _coefficient_for_bond(self, coefficient: Any, i: int, j: int, idx: int):
+        if callable(coefficient):
+            return coefficient(int(i), int(j), int(idx))
+        if isinstance(coefficient, Mapping):
+            if (i, j) in coefficient:
+                return coefficient[(i, j)]
+            if (j, i) in coefficient:
+                return coefficient[(j, i)]
+            return 0.0
+        if isinstance(coefficient, (list, tuple, np.ndarray)):
+            arr = np.asarray(coefficient)
+            if arr.ndim == 0:
+                return arr.item()
+            if idx < arr.size:
+                return arr[idx]
+            raise ValueError(f"Bond coefficient sequence too short: need index {idx}, size={arr.size}.")
+        return coefficient
+
+    def add_local_term(
+        self,
+        operator: Any,
+        coefficient: Any,
+        *,
+        sites: Optional[Iterable[int]] = None,
+        modifies: bool = False,
+    ) -> int:
+        """
+        Add a single-site term on selected sites.
+
+        ``coefficient`` can be scalar, length-``Ns`` array, mapping ``{site: value}``,
+        or callable ``f(site)``.
+        """
+        added = 0
+        for site in self._resolve_sites_input(sites):
+            coeff = self._coefficient_for_site(coefficient, site)
+            if not Hamiltonian._ADD_CONDITION(coeff):
+                continue
+            self.add(operator=operator, multiplier=coeff, modifies=modifies, sites=[site])
+            added += 1
+        return added
+
+    def add_bond_term(
+        self,
+        operator: Any,
+        coefficient: Any,
+        *,
+        bonds: Optional[Iterable[Sequence[int]]] = None,
+        order: int = 1,
+        modifies: bool = False,
+        unique: bool = True,
+    ) -> int:
+        """
+        Add a two-site term over bonds.
+
+        ``coefficient`` can be scalar, sequence indexed by bond order, mapping
+        ``{(i, j): value}``, or callable ``f(i, j, bond_index)``.
+        """
+        added = 0
+        for idx, (i, j) in enumerate(self.iter_bonds(bonds=bonds, order=order, unique=unique)):
+            coeff = self._coefficient_for_bond(coefficient, i, j, idx)
+            if not Hamiltonian._ADD_CONDITION(coeff):
+                continue
+            self.add(operator=operator, multiplier=coeff, modifies=modifies, sites=[i, j])
+            added += 1
+        return added
+
+    def rebuild_local_energy(self) -> None:
+        """
+        Rebuild local-energy functions from current operator terms.
+        """
+        if self._is_manybody:
+            self.setup_instruction_codes()
+            self._set_local_energy_functions()
 
     def clear(self):
         """
@@ -1774,6 +1981,7 @@ class Hamiltonian(BasisAwareOperator):
         self._loc_energy_int_fun = None
         self._loc_energy_np_fun = None
         self._loc_energy_jax_fun = None
+        self.invalidate_runtime_cache(clear_matrix=True)
 
     def _set_local_energy_operators(self):
         """

@@ -302,6 +302,8 @@ class QuadraticHamiltonian(Hamiltonian):
             self._log("Initialized in BdG (Nambu) mode: matrices will use 2N\times2N structure.", lvl=2, log="info")
 
         self._name                      = f"QuadraticHamiltonian(Ns={self._ns},{'BdG' if not self._particle_conserving else 'N-conserving'})"
+        self._compiled_funcs            = {}
+        self._last_occupation_key       = None
 
     def matrix(
         self,
@@ -520,8 +522,23 @@ class QuadraticHamiltonian(Hamiltonian):
         """Wipe eigenvalues, eigenvectors, and cached state calculators."""
         # Don't call super() - parent doesn't have this method
         # Just clear our own caches
-        self._compiled_funcs.clear()
+        if not hasattr(self, "_compiled_funcs") or self._compiled_funcs is None:
+            self._compiled_funcs = {}
+        else:
+            self._compiled_funcs.clear()
         self._last_occupation_key = None
+        self._is_built = False
+        self._eig_val = None
+        self._eig_vec = None
+        self._krylov = None
+        self._hamil = None
+
+        # many-body state / decomposition caches
+        self._F = None
+        self._G = None
+        self._U = None
+        self._V = None
+        self._Ub = None
 
     def add_term(
         self,
@@ -673,6 +690,67 @@ class QuadraticHamiltonian(Hamiltonian):
     def add_pairing(self, i: int, j: int, value: complex, *, remove: bool = False):
         """Convenience wrapper for adding pairing terms."""
         self.add_term(QuadraticTerm.Pairing, (i, j), value, remove=remove)
+
+    def add_onsite_profile(
+        self,
+        values: Any,
+        *,
+        sites: Optional[List[int]] = None,
+        remove: bool = False,
+    ) -> int:
+        """
+        Add onsite terms from scalar/array/mapping/callable profile.
+        """
+        added = 0
+        for site in self._resolve_sites_input(sites):
+            coeff = self._coefficient_for_site(values, site)
+            if not Hamiltonian._ADD_CONDITION(coeff):
+                continue
+            self.add_onsite(int(site), coeff, remove=remove)
+            added += 1
+        return added
+
+    def add_hopping_on_bonds(
+        self,
+        value: Any,
+        *,
+        bonds: Optional[List[Tuple[int, int]]] = None,
+        order: int = 1,
+        unique: bool = True,
+        remove: bool = False,
+    ) -> int:
+        """
+        Add hopping terms on bonds from scalar/sequence/mapping/callable values.
+        """
+        added = 0
+        for idx, (i, j) in enumerate(self.iter_bonds(bonds=bonds, order=order, unique=unique)):
+            coeff = self._coefficient_for_bond(value, i, j, idx)
+            if not Hamiltonian._ADD_CONDITION(coeff):
+                continue
+            self.add_hopping(int(i), int(j), coeff, remove=remove)
+            added += 1
+        return added
+
+    def add_pairing_on_bonds(
+        self,
+        value: Any,
+        *,
+        bonds: Optional[List[Tuple[int, int]]] = None,
+        order: int = 1,
+        unique: bool = True,
+        remove: bool = False,
+    ) -> int:
+        """
+        Add pairing terms on bonds from scalar/sequence/mapping/callable values.
+        """
+        added = 0
+        for idx, (i, j) in enumerate(self.iter_bonds(bonds=bonds, order=order, unique=unique)):
+            coeff = self._coefficient_for_bond(value, i, j, idx)
+            if not Hamiltonian._ADD_CONDITION(coeff):
+                continue
+            self.add_pairing(int(i), int(j), coeff, remove=remove)
+            added += 1
+        return added
 
     def reset_terms(self):
         """Clear onsite/hopping/pairing matrices."""

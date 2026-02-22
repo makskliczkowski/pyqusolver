@@ -12,13 +12,12 @@ Changes :
 """
 
 from typing import List, Optional, Union
-
 import numpy as np
 
 # Assume these are available from the QES package:
 try:
-    import QES.Algebra.hilbert as hilbert_module
-    from QES.Algebra.Model.Interacting.Spin.hamiltonian_spin import HamiltonianSpin
+    import  QES.Algebra.hilbert as hilbert_module
+    from    QES.Algebra.Model.Interacting.Spin.hamiltonian_spin import HamiltonianSpin
 except ImportError as e:
     raise ImportError("Required QES modules are not available.") from e
 
@@ -53,14 +52,14 @@ class TransverseFieldIsing(HamiltonianSpin):
 
     def __init__(
         self,
-        lattice: Lattice,  # Lattice is required for TFIM neighbors
-        hilbert_space: Optional[hilbert_module.HilbertSpace] = None,
-        j: Union[List[float], float] = 1.0,  # Ising coupling
-        hx: Union[List[float], float] = 1.0,  # Transverse field
-        hz: Union[List[float], float] = 1.0,  # Perpendicular field
-        operator_family: str = "auto",
-        dtype: type = np.float64,  # Default to float64
-        backend: str = "default",
+        lattice         : Lattice,  # Lattice is required for TFIM neighbors
+        hilbert_space   : Optional[hilbert_module.HilbertSpace] = None,
+        j               : Union[List[float], float] = 1.0,  # Ising coupling
+        hx              : Union[List[float], float] = 1.0,  # Transverse field
+        hz              : Union[List[float], float] = 1.0,  # Perpendicular field
+        operator_family : str = "auto",
+        dtype           : type = np.float64,  # Default to float64
+        backend         : str = "default",
         **kwargs,
     ):
         """
@@ -95,37 +94,38 @@ class TransverseFieldIsing(HamiltonianSpin):
         if lattice is None:
             raise ValueError("TFIM requires a 'lattice' object to define neighbors.")
 
-        requested_family = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
-
+        requested_family    = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
+        self.lattice        = lattice
         # Initialize the base Hamiltonian class
         super().__init__(
-            is_manybody=True,
-            hilbert_space=hilbert_space,
-            lattice=lattice,
-            is_sparse=True,
-            dtype=dtype,
-            backend=backend,
+            is_manybody     =   True,
+            hilbert_space   =   hilbert_space,
+            lattice         =   lattice,
+            is_sparse       =   True,
+            dtype           =   dtype,
+            backend         =   backend,
+            use_forward     =   kwargs.get("use_forward", True),
             **kwargs,
         )
         self.init_spin_family(requested_family)
 
         # Set Hamiltonian attributes before base class init
-        self._name = "Transverse Field Ising Model"
+        self._name          = "Transverse Field Ising Model"
 
         # Store model-specific parameters
-        self._j = None  # Initialize before setting
-        self._hx = None  # Initialize before setting
-        self._hz = None  # Initialize before setting
+        self._j             = (j if isinstance(j, (list, np.ndarray, tuple)) else [float(j)] * self.ns if j is not None else None)
+        self._hx            = (hx if isinstance(hx, (list, np.ndarray, tuple)) else [float(hx)] * self.ns if hx is not None else None)
+        self._hz            = (hz if isinstance(hz, (list, np.ndarray, tuple)) else [float(hz)] * self.ns if hz is not None else None)
         # Set Hamiltonian attributes
-        self._is_sparse = True
-        self._is_manybody = True
-        self._max_local_ch = self.cardinality + 1  # Each site can be flipped (ns terms) + diagonal
+        self._is_sparse     = True
+        self._is_manybody   = True
+        self._max_local_ch  = self.cardinality + 1 # Each site can be flipped (ns terms) + diagonal
         # (1 - hx) + (n_neighbors - hz + (n_neighbors - J))
 
         #! Build the Hamiltonian Terms
-        self.set_couplings(j=j, hx=hx, hz=hz)
+        self.set_couplings(j=self._j, hx=self._hx, hz=self._hz)
         self._set_local_energy_operators()
-        self.setup_instruction_codes()  # automatic physics-based setup
+        self.setup_instruction_codes()
         self._set_local_energy_functions()
         self._log(f"TFIM Hamiltonian initialized for {self.ns} sites.", lvl=1, log="debug")
 
@@ -142,17 +142,16 @@ class TransverseFieldIsing(HamiltonianSpin):
         >>> print(tfim) # site-dependent h_x
         TFIM(Ns=32, J=1.000, hx=[min=-0.200, max=0.300])
         """
-        prec = 1
-        sep = ","
-        tol = 1e-10  # tolerance for “all equal”
+        prec    = 3
+        sep     = ","
 
         # fields
-        parts = [f"TFIM(Ns={self.ns}"]
+        parts   = [f"TFIM(Ns={self.ns}"]
 
-        parts += [
-            HamiltonianSpin.fmt("J", self._j, prec=prec),
-            HamiltonianSpin.fmt("hx", self._hx, prec=prec),
-            HamiltonianSpin.fmt("hz", self._hz, prec=prec),
+        parts  += [
+            HamiltonianSpin.fmt("J",  self._j,  prec=prec) if self._j   is not None else "",
+            HamiltonianSpin.fmt("hx", self._hx, prec=prec) if self._hx  is not None else "",
+            HamiltonianSpin.fmt("hz", self._hz, prec=prec) if self._hz  is not None else "",
         ]
 
         return sep.join(parts) + ")"
@@ -184,7 +183,7 @@ class TransverseFieldIsing(HamiltonianSpin):
                 Perpendicular field strength(s).
         """
         if j is not None:
-            self._j = self._set_some_coupling(j)
+            self._j     = self._set_some_coupling(j)
         if hx is not None:
             self._hx    = self._set_some_coupling(hx)
         if hz is not None:
@@ -199,7 +198,7 @@ class TransverseFieldIsing(HamiltonianSpin):
             - Ising coupling:   -J[i] * Sz_i * Sz_j for each nearest-neighbor pair <i,j>
         """
         # Clear existing operators (important if rebuilding)
-        super()._set_local_energy_operators()
+        super()._set_local_energy_operators()    
         self._log("Building TFIM operator list...", lvl=1, log="info")
 
         lattice = self._lattice
@@ -286,10 +285,10 @@ class TransverseFieldIsing(HamiltonianSpin):
                 coupling_j  = self._j[i] * phase # Apply boundary phase to coupling
                 
                 self.add(
-                    operator=op_sz_sz_c,
-                    multiplier=-coupling_j,
-                    sites=[i, j_neighbor],
-                    modifies=False,
+                    operator    = op_sz_sz_c,
+                    multiplier  = -coupling_j,
+                    sites       = [i, j_neighbor],
+                    modifies    = False,
                 )
                 self._log(
                     f"Adding SzSz between sites ({i}, {j_neighbor}) with multiplier {-coupling_j:.3f}",
@@ -315,6 +314,13 @@ class TransverseFieldIsing(HamiltonianSpin):
         if self._hx and all(np.isclose(x, self._hx[0]) for x in self._hx):
             return self._hx[0]
         return self._hx
+    
+    @property
+    def hz(self) -> Union[List[float], float]:
+        """Perpendicular field strength(s) hz."""
+        if self._hz and all(np.isclose(x, self._hz[0]) for x in self._hz):
+            return self._hz[0]
+        return self._hz
 
     # ----------------------------------------------------------------------------------------------
 

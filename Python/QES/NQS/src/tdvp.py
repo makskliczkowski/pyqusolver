@@ -89,6 +89,8 @@ class TDVPTimes:
 class TDVPStepInfo:
     mean_energy     : Array
     std_energy      : Array
+    sigma2          : Optional[Array] = None
+    r_hat           : Optional[Array] = None
     # other
     failed          : Optional[bool] = None
     sr_converged    : Optional[bool] = None
@@ -112,6 +114,8 @@ if JAX_AVAILABLE:
             (
                 n.mean_energy,
                 n.std_energy,
+                n.sigma2,
+                n.r_hat,
                 n.failed,
                 n.sr_converged,
                 n.sr_executed,
@@ -1316,6 +1320,39 @@ class TDVP:
         # self._theta0_dot = theta0_dot # -> do not set self when jitted
         return theta0_dot
 
+    def _compute_step_rhat(self, loss: Array, num_chains: int = 1):
+        """
+        Compute a lightweight Gelman-Rubin statistic from the current local-energy batch.
+
+        Returns NaN when chain partitioning is invalid (e.g. single chain or non-divisible
+        number of samples).
+        """
+        nch     = max(int(num_chains), 1)
+        nan_val = self.backend.asarray(np.nan, dtype=self.backend.real(loss).dtype)
+
+        if nch <= 1:
+            return nan_val
+
+        vals    = self.backend.real(loss).reshape(-1)
+        n_tot   = int(vals.shape[0])
+        if n_tot <= nch or (n_tot % nch) != 0:
+            return nan_val
+
+        chain_len = int(n_tot // nch)
+        if chain_len <= 1:
+            return nan_val
+
+        chains      = vals.reshape((nch, chain_len))
+        chain_means = self.backend.mean(chains, axis=1)
+        chain_vars  = self.backend.var(chains, axis=1, ddof=1)
+
+        w           = self.backend.mean(chain_vars)
+        b           = chain_len * self.backend.var(chain_means, axis=0, ddof=1)
+        var_hat     = ((chain_len - 1.0) / chain_len) * w + b / chain_len
+
+        eps         = self.backend.asarray(1e-12, dtype=w.dtype)
+        return self.backend.sqrt(var_hat / self.backend.maximum(w, eps))
+    
     ###################
     #! MAIN SOLVE
     ###################
@@ -1473,6 +1510,8 @@ class TDVP:
         #! get the loss and derivative in the original scenario
         # ? (MonteCarlo return -> (loss, mean_loss, std_loss), log_deriv, (meta))
         (loss, mean_loss, std_loss), log_deriv, (shapes, sizes, iscpx) = est_fn(net_params, t, configs, configs_ansatze, probabilities)
+        sigma2  = self.backend.var(self.backend.real(loss), axis=0)
+        r_hat   = self._compute_step_rhat(loss, num_chains=kwargs.get("num_chains", 1))
 
         #! obtain the solution
 
@@ -1488,6 +1527,8 @@ class TDVP:
         meta = TDVPStepInfo(
             mean_energy     =   self._e_local_mean,
             std_energy      =   self._e_local_std,
+            sigma2          =   sigma2,
+            r_hat           =   r_hat,
             failed          =   False,
             sr_converged    =   solution.converged,
             sr_executed     =   True,

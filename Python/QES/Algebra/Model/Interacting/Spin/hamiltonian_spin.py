@@ -6,7 +6,7 @@ with consistent operator convenience naming.
 """
 
 from __future__ import annotations
-from typing import Optional, Tuple
+from typing import Any, Iterable, Optional, Sequence, Tuple
 import numpy as np
 
 try:
@@ -135,6 +135,54 @@ class HamiltonianSpin(Hamiltonian):
             op = op_z or self.spin_op("z", type_act=self._spin_ops_module.OperatorTypeActing.Local)
             self.add(op, multiplier=coefficient, modifies=False, sites=[site])
             added  += 1
+        return added
+
+    def add_local_field(
+        self,
+        component   : str,
+        coefficient : Any,
+        *,
+        sites       : Optional[Iterable[int]] = None,
+    ) -> int:
+        """
+        Add a local field term on selected sites.
+
+        ``coefficient`` accepts scalar, length-Ns array, mapping-like objects
+        or callable ``f(site)`` via :meth:`Hamiltonian.add_local_term` logic.
+        """
+        site_list = self._resolve_sites_input(sites)
+        added = 0
+        for site in site_list:
+            coeff = self._coefficient_for_site(coefficient, site)
+            added += self.add_local_spin_component(site, component, coeff)
+        return added
+
+    def add_exchange_component_on_bonds(
+        self,
+        component   : str,
+        coefficient : Any,
+        *,
+        bonds       : Optional[Iterable[Sequence[int]]] = None,
+        order       : int = 1,
+        unique      : bool = True,
+    ) -> int:
+        """
+        Add ``S_i^component S_j^component`` over bonds.
+        """
+        axis = normalize_spin_component_name(component)
+        if axis not in {"x", "y", "z"}:
+            raise ValueError("Bond component must be one of x/y/z.")
+
+        op = self.spin_op(axis, type_act=self._spin_ops_module.OperatorTypeActing.Correlation)
+        modifies_default = axis in {"x", "y"}
+
+        added = 0
+        for idx, (i, j) in enumerate(self.iter_bonds(bonds=bonds, order=order, unique=unique)):
+            coeff = self._coefficient_for_bond(coefficient, i, j, idx)
+            if not Hamiltonian._ADD_CONDITION(coeff):
+                continue
+            self.add(op, multiplier=coeff, modifies=modifies_default, sites=[i, j])
+            added += 1
         return added
 
     def add_xy_exchange(

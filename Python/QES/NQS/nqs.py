@@ -892,26 +892,22 @@ class NQS(MonteCarloSolver):
                 except Exception:
                     auto_cfg = {}
 
-            sampler_kwargs["numchains"]     = kwargs.get("s_numchains", int(auto_cfg.get("s_numchains", 16)))
+            sampler_kwargs["numchains"]     = kwargs.get("s_numchains", int(auto_cfg.get("s_numchains", 32)))
             sampler_kwargs.pop("s_numchains", None)
-            sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", int(auto_cfg.get("s_numsamples", 1000)))
+            sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", int(auto_cfg.get("s_numsamples", 256)))
             sampler_kwargs.pop("s_numsamples", None)
             sampler_kwargs.pop("s_target_total_samples", None)
 
             sampler_kwargs["numupd"]        = kwargs.get("s_numupd", 1)
             sampler_kwargs.pop("s_numupd", None)
 
-            sampler_kwargs["sweep_steps"]   = kwargs.get("s_sweep_steps", int(auto_cfg.get("s_sweep_steps", 10)))
+            sampler_kwargs["sweep_steps"]   = kwargs.get("s_sweep_steps", int(auto_cfg.get("s_sweep_steps", 48)))
             sampler_kwargs.pop("s_sweep_steps", None)
 
-            sampler_kwargs["therm_steps"]   = kwargs.get("s_therm_steps", int(auto_cfg.get("s_therm_steps", 100)))
+            sampler_kwargs["therm_steps"]   = kwargs.get("s_therm_steps", int(auto_cfg.get("s_therm_steps", 24)))
             sampler_kwargs.pop("s_therm_steps", None)
 
-            default_state_dtype             = (
-                                                self._precision_policy.state_dtype
-                                                if hasattr(self, "_precision_policy")
-                                                else (jnp.float32 if self._isjax else np.float32)
-                                            )
+            default_state_dtype             = self._precision_policy.state_dtype if hasattr(self, "_precision_policy") else (jnp.float32 if self._isjax else np.float32)
             sampler_kwargs["statetype"]     = kwargs.get("s_statetype", default_state_dtype)
             sampler_kwargs.pop("s_statetype", None)
 
@@ -2672,7 +2668,7 @@ class NQS(MonteCarloSolver):
         num_sweep: Optional[int] = None,
         pt_betas: Optional[List[float]] = None,
         # Learning Rate and Phase Scheduling
-        phases: Union[str, tuple] = "default",
+        phases: Union[str, tuple, None] = None,
         # Utilities
         timing_mode: str = "detailed",
         early_stopper: Any = None,
@@ -2682,7 +2678,7 @@ class NQS(MonteCarloSolver):
         lr_scheduler: Optional[Callable] = None,
         reg_scheduler: Optional[Callable] = None,
         diag_scheduler: Optional[Callable] = None,
-        lr: Optional[float] = None,
+        lr: Optional[float] = 1e-2,
         reg: Optional[float] = None,
         # Linear Solver options
         lin_sigma: float = None,
@@ -2693,7 +2689,7 @@ class NQS(MonteCarloSolver):
         use_minsr: bool = False,
         rhs_prefactor: float = -1.0,
         # Diagonal shift
-        diag_shift: float = 5e-5,
+        diag_shift: float = 5e-3,
         # Training options
         save_path: str = None,
         reset_stats: bool = True,
@@ -2749,8 +2745,9 @@ class NQS(MonteCarloSolver):
         n_batch : int, default=128
             Batch size for VMC sampling.
 
-        phases : str or tuple, default='default'
-            Phase scheduling preset or custom phases.
+        phases : str, tuple, or None, default=None
+            Phase scheduling preset or custom phases. If None, uses direct
+            LR/diag values (Table-S2-like defaults).
 
         timing_mode : str, default='detailed'
             Timing mode for profiling ('detailed', 'minimal').
