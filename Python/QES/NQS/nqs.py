@@ -481,10 +481,14 @@ class NQS(MonteCarloSolver):
         #! Compile functions
         # --------------------------------------------------
         # Initial compilation of base functions
-        self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(
-            self._net, batch_size=self._batch_size
-        )
+        self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         self._ansatz_base_func = self._ansatz_func  # Keep a reference to the pure ansatz function
+        
+        if self._isjax and JAX_AVAILABLE:
+            self._apply_uniform_func = jax.jit(NQS._apply_fun_jax_uniform, static_argnums=(0, 4, 6),)
+        else:
+            self._apply_uniform_func = None
+        
 
         # Configure symmetries (this will trigger _rebuild_ansatz_function)
         if symmetrize:
@@ -834,9 +838,21 @@ class NQS(MonteCarloSolver):
 
         if batch_size is None or self._batch_size == batch_size:
             return
-        self._batch_size = batch_size
+        self._batch_size        = batch_size
+        self._ansatz_base_func  = self._ansatz_func
         self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
-        self._ansatz_base_func = self._ansatz_func
+        if self._isjax and JAX_AVAILABLE:
+            self._apply_uniform_func = jax.jit(NQS._apply_fun_jax_uniform, static_argnums=(0, 4, 6),)
+        else:
+            self._apply_uniform_func = None
+
+    def _use_uniform_apply_path(self) -> bool:
+        """
+        Whether we can use the faster uniform-weight estimator kernel.
+        """
+        if not (self._isjax and self._apply_uniform_func is not None):
+            return False
+        return bool(getattr(self._sampler, "has_uniform_weights", False))
 
     def set_sampler(
         self,
@@ -882,7 +898,7 @@ class NQS(MonteCarloSolver):
                     net_depth_est = getattr(self._net, "_param_num", 64)
                     auto_cfg = NQS.get_auto_config(
                         system_size=self._size,
-                        target_total_samples=kwargs.get("s_target_total_samples", 8192),
+                        target_total_samples=kwargs.get("s_target_total_samples", 6144),
                         dtype=self._dtype,
                         logger=None,
                         net_depth_estimate=net_depth_est,
@@ -892,9 +908,9 @@ class NQS(MonteCarloSolver):
                 except Exception:
                     auto_cfg = {}
 
-            sampler_kwargs["numchains"]     = kwargs.get("s_numchains", int(auto_cfg.get("s_numchains", 32)))
+            sampler_kwargs["numchains"]     = kwargs.get("s_numchains", int(auto_cfg.get("s_numchains", 24)))
             sampler_kwargs.pop("s_numchains", None)
-            sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", int(auto_cfg.get("s_numsamples", 256)))
+            sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", int(auto_cfg.get("s_numsamples", 192)))
             sampler_kwargs.pop("s_numsamples", None)
             sampler_kwargs.pop("s_target_total_samples", None)
 
@@ -1101,6 +1117,29 @@ class NQS(MonteCarloSolver):
         return nqs_kernels._apply_fun_jax(*args, **kwargs)
 
     @staticmethod
+    def _apply_fun_jax_uniform(
+        func            : Callable,
+        states          : Array,
+        sample_probas   : Array,
+        logprobas_in    : Array,
+        logproba_fun    : Callable,
+        parameters      : Any,
+        batch_size      : int,
+    ):
+        """
+        Compatibility wrapper for uniform-weight JAX estimators.
+        Uses the faster uniform kernel while preserving the regular apply signature.
+        """
+        return net_utils.jaxpy.apply_callable_batched_jax_uniform(
+            func=func,
+            states=states,
+            logprobas_in=logprobas_in,
+            logproba_fun=logproba_fun,
+            parameters=parameters,
+            batch_size=batch_size,
+        )
+
+    @staticmethod
     def _apply_fun_np(*args, **kwargs):
         """Delegate to nqs_kernels"""
         return nqs_kernels._apply_fun_np(*args, **kwargs)
@@ -1157,9 +1196,10 @@ class NQS(MonteCarloSolver):
         Evaluate a set of functions based on the provided states, wavefunction, and probabilities.
         """
 
-        params          = parameters if parameters is not None else self.get_params()
-        batch_size      = batch_size if batch_size is not None else self._batch_size
-        op_args         = args if args is not None else ()
+        params                      = parameters if parameters is not None else self.get_params()
+        batch_size                  = batch_size if batch_size is not None else self._batch_size
+        op_args                     = args if args is not None else ()
+        probabilities_was_provided  = probabilities is not None
 
         #! check if the functions are provided
         if functions is None or (isinstance(functions, list) and len(functions) == 0):
@@ -1212,23 +1252,25 @@ class NQS(MonteCarloSolver):
         if isinstance(op_args, tuple) and len(op_args) == 1 and op_args[0] is None:
             op_args = ()
 
-        output = []
+        output              = []
+        use_uniform_apply   = self._use_uniform_apply_path() and len(op_args) == 0 and (not probabilities_was_provided)
         for i, f in enumerate(functions):
             
             
             if log_progress:
                 t0 = time.time()
 
-            result = self._apply_func(
-                f,
-                states,
-                probabilities,
-                ansatze,
-                self._ansatz_func,
-                params,
-                batch_size,
-                *op_args,
-            )
+            apply_kernel    = self._apply_uniform_func if use_uniform_apply else self._apply_func
+            result          = apply_kernel(
+                                f,
+                                states,
+                                probabilities,
+                                ansatze,
+                                self._ansatz_func,
+                                params,
+                                batch_size,
+                                *op_args,
+                            )
 
             if log_progress:
                 self._logger.info(
@@ -2001,7 +2043,11 @@ class NQS(MonteCarloSolver):
                 result_abstract.params_cpx,
             )
         except Exception as e:
-            self._log(f"Exception during abstract shape inference. Falling back to real data evaluation: {e}", lvl=2, color="red")
+            self.log(
+                f"Exception during abstract shape inference. Falling back to real data evaluation: {e}",
+                lvl=2,
+                color="red",
+            )
                         
             # Fallback: Run it once with real data
             old_chains  = self._sampler.numchains
@@ -2033,7 +2079,7 @@ class NQS(MonteCarloSolver):
         ansatz_fn           = self._ansatz_func
         local_loss_fn       = self._loss_func
         flat_grad_fn        = self._flat_grad_func
-        apply_fn            = self._apply_func
+        apply_fn            = self._apply_uniform_func if self._use_uniform_apply_path() else self._apply_func
         compute_grad_f      = (
                                 net_utils.jaxpy.compute_gradients_batched
                                 if not self._analytic
@@ -2124,26 +2170,26 @@ class NQS(MonteCarloSolver):
 
         # try to reset batch size
         # Pop batch_size from kwargs to avoid multiple values error when calling _single_step
-        batch_size_arg = kwargs.pop("batch_size", self._batch_size)
+        batch_size_arg      = kwargs.pop("batch_size", self._batch_size)
         self._set_batch_size(batch_size_arg)
 
         # check if the parameters are provided
-        params = self.get_params() if params is None else params
+        params              = self.get_params() if params is None else params
 
         # prepare the functions if not provided
-        ansatz_fn = kwargs.get("ansatz_fn", self._ansatz_func)
-        apply_fn = kwargs.get("apply_fn", self._apply_func)
-        loss_function = kwargs.get("loss_function", self._loss_func)
-        flat_grad_fun = kwargs.get("flat_grad_fun", self._flat_grad_func)
-        compute_grad_fun = net_utils.jaxpy.compute_gradients_batched if self._isjax else None
+        ansatz_fn           = kwargs.get("ansatz_fn", self._ansatz_func)
+        use_uniform_step    = (probabilities is None) and self._use_uniform_apply_path()
+        default_apply       = self._apply_uniform_func if use_uniform_step else self._apply_func
+        apply_fn            = kwargs.get("apply_fn", default_apply)
+        loss_function       = kwargs.get("loss_function", self._loss_func)
+        flat_grad_fun       = kwargs.get("flat_grad_fun", self._flat_grad_func)
+        compute_grad_fun    = net_utils.jaxpy.compute_gradients_batched if self._isjax else None
 
         # check if the configurations are provided
         if configs is None or configs_ansatze is None or probabilities is None:
-            num_samples = kwargs.pop("num_samples", self._sampler.numsamples)
-            num_chains = kwargs.pop("num_chains", self._sampler.numchains)
-            (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(
-                parameters=params, num_samples=num_samples, num_chains=num_chains
-            )
+            num_samples     = kwargs.pop("num_samples", self._sampler.numsamples)
+            num_chains      = kwargs.pop("num_chains", self._sampler.numchains)
+            (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains)
 
         # call the appropriate single step function
         if isinstance(self._nqsproblem, WavefunctionPhysics):
@@ -2654,8 +2700,8 @@ class NQS(MonteCarloSolver):
         override: bool = True,
         background: bool = False,
         # Solvers
-        lin_solver: Union[str, Callable] = "minres_qlp",
-        pre_solver: Union[str, Callable] = "jacobi",
+        lin_solver: Union[str, Callable] = "scipy_cg",
+        pre_solver: Optional[Union[str, Callable]] = None,
         ode_solver: Union[str, Any] = "Euler",
         tdvp: Any = None,
         grad_clip: Optional[float] = None,
@@ -2670,9 +2716,9 @@ class NQS(MonteCarloSolver):
         # Learning Rate and Phase Scheduling
         phases: Union[str, tuple, None] = None,
         # Utilities
-        timing_mode: str = "detailed",
+        timing_mode: str = "basic",
         early_stopper: Any = None,
-        optimizer: Optional[Any] = None,
+        optimizer: Optional[Any] = "sgd",
         lower_states: List["NQS"] = None,
         # Schedulers
         lr_scheduler: Optional[Callable] = None,
@@ -2689,7 +2735,7 @@ class NQS(MonteCarloSolver):
         use_minsr: bool = False,
         rhs_prefactor: float = -1.0,
         # Diagonal shift
-        diag_shift: float = 5e-3,
+        diag_shift: float = 1e-3,
         # Training options
         save_path: str = None,
         reset_stats: bool = True,
@@ -2749,8 +2795,8 @@ class NQS(MonteCarloSolver):
             Phase scheduling preset or custom phases. If None, uses direct
             LR/diag values (Table-S2-like defaults).
 
-        timing_mode : str, default='detailed'
-            Timing mode for profiling ('detailed', 'minimal').
+        timing_mode : str, default='basic'
+            Timing mode for profiling ('basic', 'detailed', 'minimal').
 
         early_stopper : Any, optional
             Early stopping callback or configuration.
@@ -2774,7 +2820,7 @@ class NQS(MonteCarloSolver):
         reg_scheduler : str or Callable, optional
             Regularization scheduler for SR matrix.
 
-        diag_shift : float, default=5e-5
+        diag_shift : float, default=1e-3
             Diagonal regularization for SR matrix.
 
         diag_scheduler : str or Callable, optional
@@ -3309,7 +3355,7 @@ class NQS(MonteCarloSolver):
     @staticmethod
     def get_auto_config(
         system_size,
-        target_total_samples        = 8192,
+        target_total_samples        = 6144,
         dtype                       = jnp.complex64,
         logger : Logger             = None,
         *,
@@ -3398,36 +3444,33 @@ class NQS(MonteCarloSolver):
             gpu_specs           = get_gpu_specs()
             precision_factor    = 2.0 if is_double_precision else 1.0
             fixed_overhead_mb   = 1024.0
-            estimated_chain_mb  = max(
-                0.5,
-                (float(system_size) * float(max(1, net_depth_estimate)) * 8.0) / (1024.0 ** 2),
-            ) * precision_factor
+            estimated_chain_mb  = max(0.5, (float(system_size) * float(max(1, net_depth_estimate)) * 8.0) / (1024.0 ** 2),) * precision_factor
 
             available_for_batch = max(512.0, float(gpu_specs["free_memory_mb"]) - fixed_overhead_mb)
-            memory_cap = max(64, int(available_for_batch / max(estimated_chain_mb, 1e-9)))
+            memory_cap          = max(64, int(available_for_batch / max(estimated_chain_mb, 1e-9)))
 
             base_chains = 1024 if not is_double_precision else 512
             if target_total_samples <= 1024:
                 base_chains = min(base_chains, 512)
 
-            optimal_chains = max(64, min(base_chains, memory_cap, target_total_samples))
+            optimal_chains          = max(64, min(base_chains, memory_cap, target_total_samples))
             # power-of-two chains map well to parallel kernels
-            optimal_chains = 2 ** max(0, (int(optimal_chains).bit_length() - 1))
-            optimal_chains = max(64, optimal_chains)
-            optimal_chains = int(min(optimal_chains, target_total_samples))
+            optimal_chains          = 2 ** max(0, (int(optimal_chains).bit_length() - 1))
+            optimal_chains          = max(64, optimal_chains)
+            optimal_chains          = int(min(optimal_chains, target_total_samples))
 
-            s2_target = max(8192, target_total_samples) if is_spin_liquid_profile else target_total_samples
-            num_samples_per_chain = int(max(1, -(-s2_target // optimal_chains)))
+            s2_target               = max(6144, target_total_samples) if is_spin_liquid_profile else target_total_samples
+            num_samples_per_chain   = int(max(1, -(-s2_target // optimal_chains)))
 
-            default_therm = 8
-            default_sweep = 480 if is_spin_liquid_profile else 160
-            config = {
-                "s_numchains"   : optimal_chains,
-                "s_numsamples"  : num_samples_per_chain,
-                "s_therm_steps" : int(num_therm if num_therm is not None else default_therm),
-                "s_sweep_steps" : int(num_sweep if num_sweep is not None else default_sweep),
-                "hardware"      : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}',
-            }
+            default_therm           = 8
+            default_sweep           = 480 if is_spin_liquid_profile else 160
+            config                  = {
+                                        "s_numchains"   : optimal_chains,
+                                        "s_numsamples"  : num_samples_per_chain,
+                                        "s_therm_steps" : int(num_therm if num_therm is not None else default_therm),
+                                        "s_sweep_steps" : int(num_sweep if num_sweep is not None else default_sweep),
+                                        "hardware"      : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}',
+                                    }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
         else:

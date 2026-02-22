@@ -183,11 +183,11 @@ class TransverseFieldIsing(HamiltonianSpin):
                 Perpendicular field strength(s).
         """
         if j is not None:
-            self._j     = self._set_some_coupling(j)
+            self._j     = np.array(self._set_some_coupling(j))
         if hx is not None:
-            self._hx    = self._set_some_coupling(hx)
+            self._hx    = np.array(self._set_some_coupling(hx))
         if hz is not None:
-            self._hz    = self._set_some_coupling(hz)
+            self._hz    = np.array(self._set_some_coupling(hz))
 
     def _set_local_energy_operators(self):
         """
@@ -200,14 +200,14 @@ class TransverseFieldIsing(HamiltonianSpin):
         # Clear existing operators (important if rebuilding)
         super()._set_local_energy_operators()    
         self._log("Building TFIM operator list...", lvl=1, log="info")
-
-        lattice = self._lattice
+        n_terms_added   = 0
+        lattice         = self._lattice
 
         #! Define Base Operators
         # Local operators (act on one site)
-        op_sx_l = None
-        op_sp_l = None
-        op_sm_l = None
+        op_sx_l         = None
+        op_sp_l         = None
+        op_sm_l         = None
         if self.is_spin_one:
             op_sp_l = self.spin_op(
                 "p",
@@ -249,6 +249,7 @@ class TransverseFieldIsing(HamiltonianSpin):
                     op_p=op_sp_l,
                     op_m=op_sm_l,
                 )
+                n_terms_added += 1 if not self.is_spin_one else 2
                 self._log(
                     f"Adding Sx at site {i} with multiplier {-self._hx[i]:.3f}",
                     lvl=2,
@@ -259,6 +260,7 @@ class TransverseFieldIsing(HamiltonianSpin):
         for i in range(self.ns):
             if HamiltonianSpin._ADD_CONDITION(self._hz, i):
                 self.add_local_spin_component(i, "z", -self._hz[i], op_z=op_sz_l)
+                n_terms_added += 1
                 self._log(f"Adding Sz at site {i} with multiplier {-self._hz[i]:.3f}", lvl=2, log="debug")
 
         #! Add Ising Interaction Terms
@@ -282,7 +284,7 @@ class TransverseFieldIsing(HamiltonianSpin):
                 if not HamiltonianSpin._ADD_CONDITION(self._j, i):
                     continue
                 
-                coupling_j  = self._j[i] * phase # Apply boundary phase to coupling
+                coupling_j      = self._j[i] * phase # Apply boundary phase to coupling
                 
                 self.add(
                     operator    = op_sz_sz_c,
@@ -290,11 +292,21 @@ class TransverseFieldIsing(HamiltonianSpin):
                     sites       = [i, j_neighbor],
                     modifies    = False,
                 )
+                n_terms_added += 1
                 self._log(
                     f"Adding SzSz between sites ({i}, {j_neighbor}) with multiplier {-coupling_j:.3f}",
                     lvl=2,
                     log="debug",
                 )
+
+        if n_terms_added == 0:
+            self._log(
+                "No TFIM terms were added (all effective couplings are zero). "
+                "The Hamiltonian is identically zero.",
+                lvl=1,
+                log="warning",
+                color="yellow",
+            )
 
     # ----------------------------------------------------------------------------------------------
     #! Properties

@@ -33,7 +33,6 @@ from enum import Enum
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
 
-import numba
 import numpy as np
 
 try:
@@ -58,7 +57,8 @@ try:
     except ImportError:
         pass
 
-    from .diagnostics import compute_autocorr_time, compute_ess, compute_rhat
+    from .diagnostics import compute_autocorr_time, compute_rhat
+    from . import vmc_numpy as vmc_np_impl
 except ImportError as e:
     raise ImportError("Failed to import Sampler/Updates/Diagnostics from MonteCarlo module.") from e
 
@@ -755,14 +755,10 @@ class VMCSampler(Sampler):
         return ratio
 
     @staticmethod
-    @numba.njit
     def _acceptance_probability_np(current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
-        log_acceptance_ratio = beta * mu * np.real(candidate_val - current_val)
-        return np.exp(np.minimum(log_acceptance_ratio, 30.0))
+        return vmc_np_impl.acceptance_probability_np(current_val=current_val, candidate_val=candidate_val, beta=beta, mu=mu)
 
-    def acceptance_probability(
-        self, current_val, candidate_val, beta: float = 1.0, mu: float = 2.0
-    ):
+    def acceptance_probability(self, current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
         use_beta = beta if beta is not None else self._beta
         if self._isjax:
             return self._acceptance_probability_jax(current_val, candidate_val, beta=use_beta, mu=mu)
@@ -795,9 +791,8 @@ class VMCSampler(Sampler):
         return jnp.real(flat_log_psi)
 
     @staticmethod
-    @numba.njit
     def _logprob_np(x, net_callable, net_params=None):
-        return np.array([net_callable(net_params, y) for y in x]).reshape(x.shape[0])
+        return vmc_np_impl.logprob_np(x, net_callable, net_params)
 
     def logprob(self, x, net_callable=None, net_params=None):
         ''' Calculate log-probability (log-amplitude) for a batch of states `x` using the provided or default network callable and parameters.'''
@@ -943,7 +938,6 @@ class VMCSampler(Sampler):
         return final_chain, final_val, final_key, final_prop, final_acc, final_cache
 
     @staticmethod
-    @numba.njit
     def _run_mcmc_steps_np(
         chain,
         logprobas,
@@ -959,30 +953,21 @@ class VMCSampler(Sampler):
         accept_config_fun,
         net_callable_fun,
     ):
-        current_val = (
-            logprobas
-            if logprobas is not None
-            else log_proba_fun(chain, mu=mu, net_callable=net_callable_fun, net_params=params)
+        return vmc_np_impl.run_mcmc_steps_np(
+            chain=chain,
+            logprobas=logprobas,
+            num_proposed=num_proposed,
+            num_accepted=num_accepted,
+            params=params,
+            rng=rng,
+            steps=steps,
+            mu=mu,
+            beta=beta,
+            update_proposer=update_proposer,
+            log_proba_fun=log_proba_fun,
+            accept_config_fun=accept_config_fun,
+            net_callable_fun=net_callable_fun,
         )
-        n_chains = chain.shape[0] if len(chain.shape) > 1 else 1
-
-        for _ in range(steps):
-            new_chain = update_proposer(chain, rng)
-            new_logprobas = log_proba_fun(
-                new_chain, net_callable=net_callable_fun, net_params=params
-            )
-            acc_probability = accept_config_fun(current_val, new_logprobas, beta, mu)
-
-            rand_vals = rng.random(size=n_chains)
-            accepted = rand_vals < acc_probability
-            num_proposed += 1
-            num_accepted[accepted] += 1
-
-            new_val = np.where(accepted, new_logprobas, current_val)
-            chain = np.where(accepted[:, None], new_chain, chain)
-            current_val = new_val
-
-        return chain, current_val, num_proposed, num_accepted
 
     def _sweep_chain(
         self,
@@ -1158,45 +1143,7 @@ class VMCSampler(Sampler):
         return final_carry, collected_samples
 
     def _generate_samples_np(self, params, num_samples, multiple_of=1):
-        states, logprobas, num_proposed, num_accepted = self._run_mcmc_steps_np(
-            chain=self._states,
-            logprobas=self._logprobas,
-            num_proposed=self._num_proposed,
-            num_accepted=self._num_accepted,
-            params=params,
-            update_proposer=self._upd_fun,
-            log_proba_fun=self.logprob,
-            accept_config_fun=self.acceptance_probability,
-            net_callable_fun=self._net_callable,
-            steps=self._therm_steps * self._sweep_steps,
-            rng=self._rng,
-            mu=self._mu,
-            beta=self._beta,
-        )
-
-        configs_list = []
-        for _ in range(num_samples):
-            states, logprobas, num_proposed, num_accepted = self._run_mcmc_steps_np(
-                chain=states,
-                logprobas=logprobas,
-                num_proposed=num_proposed,
-                num_accepted=num_accepted,
-                params=params,
-                update_proposer=self._upd_fun,
-                log_proba_fun=self.logprob,
-                accept_config_fun=self.acceptance_probability,
-                net_callable_fun=self._net_callable,
-                steps=self._sweep_steps,
-                rng=self._rng,
-                mu=self._mu,
-                beta=self._beta,
-            )
-
-            meta = (states.copy(), logprobas.copy(), num_proposed, num_accepted)
-            configs_list.append(states.copy())
-
-        configs = np.concatenate(configs_list, axis=0)
-        return meta, configs.reshape((num_samples, -1) + self._shape)
+        return vmc_np_impl.generate_samples_np(sampler=self, params=params, num_samples=num_samples, multiple_of=multiple_of)
 
     ###################################################################
     #! STATIC JAX SAMPLING KERNEL
@@ -1732,26 +1679,12 @@ class VMCSampler(Sampler):
             final_state_info = (self._states, self._logprobas)
             return final_state_info, samples_tuple, probs
         else:
-            self._logprobas = self.logprob(
-                self._states, net_callable=net_callable, net_params=current_params
+            return vmc_np_impl.sample_np(
+                self,
+                current_params=current_params,
+                used_num_samples=used_num_samples,
+                net_callable=net_callable,
             )
-
-            (self._states, self._logprobas, self._num_proposed, self._num_accepted), configs = (
-                self._generate_samples_np(current_params, used_num_samples)
-            )
-            configs             = configs.reshape(-1, *configs.shape[2:])
-            configs_log_ansatz  = self.logprob(
-                configs, net_callable=net_callable, net_params=current_params
-            )
-            probs   = np.exp((1.0 / self._logprob_fact - self._mu) * np.real(configs_log_ansatz))
-            probs   = probs.reshape(-1)
-            norm    = max(np.sum(probs), 1e-12)
-            probs   = probs / norm * probs.size
-
-            configs_log_ansatz = configs_log_ansatz.reshape(-1)
-            probs   = probs.reshape(-1)
-
-            return (self._states, self._logprobas), (configs, configs_log_ansatz), probs
 
     # -----------------------------------------------------------------
 
@@ -1879,42 +1812,12 @@ class VMCSampler(Sampler):
     def _get_sampler_np(
         self, num_samples: Optional[int] = None, num_chains: Optional[int] = None
     ) -> Callable:
-        if self._isjax:
-            raise RuntimeError("NumPy sampler getter only available for NumPy backend.")
+        return vmc_np_impl.get_sampler_np(sampler=self, num_samples=num_samples, num_chains=num_chains)
 
-        static_num_samples = num_samples if num_samples is not None else self._numsamples
-        static_num_chains = num_chains if num_chains is not None else self._numchains
-
-        baked_args = {
-            "num_samples": static_num_samples,
-            "num_chains": static_num_chains,
-            "therm_steps": self._therm_steps,
-        }
-
-        def wrapper(states_init, rng_k_init, param, num_proposed_init=None, num_accepted_init=None):
-            self._states = states_init
-            self._rng_k = rng_k_init
-            self._num_proposed = (
-                num_proposed_init
-                if num_proposed_init is not None
-                else np.zeros(static_num_chains, dtype=DEFAULT_NP_INT_TYPE)
-            )
-            self._num_accepted = (
-                num_accepted_init
-                if num_accepted_init is not None
-                else np.zeros(static_num_chains, dtype=DEFAULT_NP_INT_TYPE)
-            )
-            return self.sample(
-                parameters=param,
-                num_samples=baked_args["num_samples"],
-                num_chains=baked_args["num_chains"],
-            )
-
-        return wrapper
-
-    def get_sampler(
-        self, num_samples: Optional[int] = None, num_chains: Optional[int] = None
-    ) -> Callable:
+    def get_sampler(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
+        '''
+        Get a sampler function with the given number of samples and chains baked in as static arguments.
+        '''
         cache_key = (
             num_samples if num_samples is not None else self._numsamples,
             num_chains  if num_chains  is not None else self._numchains,
@@ -2094,6 +1997,22 @@ class VMCSampler(Sampler):
     @property
     def sweep_steps(self):
         return self._sweep_steps
+
+    @property
+    def has_uniform_weights(self):
+        """
+        True when returned sample weights are analytically uniform.
+
+        For the single-temperature sampler this happens when the exponent in
+        ``exp((1/logprob_fact - mu*beta) * Re(log psi))`` is zero.
+        """
+        if self._is_pt:
+            return False
+        try:
+            exponent = 1.0 / float(self._logprob_fact) - float(self._mu) * float(self._beta)
+        except Exception:
+            return False
+        return abs(exponent) < 1e-12
 
 
 #########################################

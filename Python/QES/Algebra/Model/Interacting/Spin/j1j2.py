@@ -46,7 +46,7 @@ class J1J2Model(HamiltonianSpin):
         hz              : Union[List[float], float, None] = None,
         impurities      : Optional[List[Tuple]] = None,
         operator_family : str = "auto",
-        dtyp            : type = np.float64,
+        dtype           : type = np.float64,
         backend         : str = "default",
         use_forward     : bool = True,
         **kwargs,
@@ -55,15 +55,15 @@ class J1J2Model(HamiltonianSpin):
             raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
 
         requested_family = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
-
         complex_required = self.needs_complex_dtype_from_spin_inputs(hy=hy, impurities=impurities)
-
+        self._lattice    = lattice
+        
         super().__init__(
             is_manybody     =   True,
             hilbert_space   =   hilbert_space,
             lattice         =   lattice,
             is_sparse       =   True,
-            dtype           =   (np.complex128 if complex_required else kwargs.get("dtype", dtyp)),
+            dtype           =   (np.complex128 if complex_required else kwargs.get("dtype", dtype)),
             backend         =   backend,
             use_forward     =   use_forward,
             **kwargs,
@@ -73,11 +73,11 @@ class J1J2Model(HamiltonianSpin):
 
         # Couplings and fields are stored as backend arrays or DummyVector.
         self._name  = "J1-J2"
-        self._j1    = self._set_some_coupling(J1)
-        self._j2    = self._set_some_coupling(J2)
-        self._hx    = self._set_some_coupling(hx) if hx is not None else None
-        self._hy    = self._set_some_coupling(hy) if hy is not None else None
-        self._hz    = self._set_some_coupling(hz) if hz is not None else None
+        self._j1    = self._set_some_coupling(J1).real
+        self._j2    = self._set_some_coupling(J2).real
+        self._hx    = self._set_some_coupling(hx).real if hx is not None else None
+        self._hy    = self._set_some_coupling(hy).real if hy is not None else None
+        self._hz    = self._set_some_coupling(hz).real if hz is not None else None
 
         self._impurities: List[Tuple[int, float, float, float]] = []
         self._setup_impurities(impurities or [])
@@ -86,26 +86,6 @@ class J1J2Model(HamiltonianSpin):
         self._set_local_energy_operators()
         self.setup_instruction_codes()
         self._set_local_energy_functions()
-
-    def _setup_impurities(self, impurities: List[Tuple]) -> None:
-        """
-        Normalize impurity tuples:
-        - (site, ampl) -> z-polarized
-        - (site, phi, theta, ampl) -> spherical direction
-        """
-        out = []
-        for imp in impurities:
-            if len(imp) == 2:
-                site, ampl = imp
-                out.append((int(site), 0.0, 0.0, float(ampl)))
-            elif len(imp) == 4:
-                site, phi, theta, ampl = imp
-                out.append((int(site), float(phi), float(theta), float(ampl)))
-            else:
-                raise ValueError(
-                    "Impurity must be (site, ampl) or (site, phi, theta, ampl)."
-                )
-        self._impurities = out
 
     def set_couplings(
         self,
@@ -132,6 +112,9 @@ class J1J2Model(HamiltonianSpin):
         self._set_local_energy_operators()
         self.setup_instruction_codes()
         self._set_local_energy_functions()
+
+    # -------------------------------------------------------------------------
+    # Internal methods for building the Hamiltonian
 
     def _set_local_energy_operators(self):
         """
@@ -233,6 +216,7 @@ class J1J2Model(HamiltonianSpin):
 
         # Local fields
         for i in range(self.ns):
+            
             if HamiltonianSpin._ADD_CONDITION(self._hx, i):
                 add_local_axis("x", -self._hx[i], i)
             if HamiltonianSpin._ADD_CONDITION(self._hy, i):
@@ -243,11 +227,11 @@ class J1J2Model(HamiltonianSpin):
             for imp_site, phi, theta, ampl in self._impurities:
                 if imp_site != i or not HamiltonianSpin._ADD_CONDITION(ampl):
                     continue
-                s_t, c_t = np.sin(theta), np.cos(theta)
-                s_p, c_p = np.sin(phi), np.cos(phi)
-                vx = -ampl * s_t * c_p
-                vy = -ampl * s_t * s_p
-                vz = -ampl * c_t
+                s_t, c_t    = np.sin(theta), np.cos(theta)
+                s_p, c_p    = np.sin(phi), np.cos(phi)
+                vx          = -ampl * s_t * c_p
+                vy          = -ampl * s_t * s_p
+                vz          = -ampl * c_t
                 if HamiltonianSpin._ADD_CONDITION(vx):
                     add_local_axis("x", vx, i)
                 if HamiltonianSpin._ADD_CONDITION(vy):
@@ -270,9 +254,13 @@ class J1J2Model(HamiltonianSpin):
                 )
                 if lattice.wrong_nei(j):
                     continue
-                wx, wy, wz = lattice.bond_winding(i, j)
-                phase = lattice.boundary_phase_from_winding(wx, wy, wz)
-                jj = phase * self._j1[i]
+                j = int(j)
+                # Collapsed dimensions (e.g. Lx=1) can produce self-neighbors.
+                if j == i:
+                    continue
+                wx, wy, wz  = lattice.bond_winding(i, j)
+                phase       = lattice.boundary_phase_from_winding(wx, wy, wz)
+                jj          = -phase * self._j1[i]
                 add_exchange_isotropic(jj, i, j)
 
         # Next-nearest-neighbor J2 exchange if lattice supports NNN.
@@ -295,16 +283,33 @@ class J1J2Model(HamiltonianSpin):
                     )
                     if lattice.wrong_nei(j):
                         continue
-                    wx, wy, wz = lattice.bond_winding(i, j)
-                    phase = lattice.boundary_phase_from_winding(wx, wy, wz)
-                    jj = phase * self._j2[i]
+                    j = int(j)
+                    if j == i:
+                        continue
+                    wx, wy, wz  = lattice.bond_winding(i, j)
+                    phase       = lattice.boundary_phase_from_winding(wx, wy, wz)
+                    jj          = -phase * self._j2[i]
                     add_exchange_isotropic(jj, i, j)
 
+    # -------------------------------------------------------------------------
+    # Representation methods
+
     def __repr__(self) -> str:
-        return (
-            f"J1J2Model(Ns={self.ns}, J1={Hamiltonian.fmt('J1', self._j1)}, "
-            f"J2={Hamiltonian.fmt('J2', self._j2)}, spin_family={self._spin_operator_family})"
-        )
+        prec    = 3
+        sep     = ","
+        
+        parts   = [f"J1J2(Ns={self.ns}"]
+        parts  += [
+                    HamiltonianSpin.fmt("J1", self._j1, prec),
+                    HamiltonianSpin.fmt("J2", self._j2, prec),
+                    HamiltonianSpin.fmt("hx", self._hx, prec),
+                    HamiltonianSpin.fmt("hy", self._hy, prec),
+                    HamiltonianSpin.fmt("hz", self._hz, prec),
+        ]
+        
+        self.repr_impurities(parts)
+        parts = [p for p in parts if p]
+        return sep.join(parts) + ")"
 
     def __str__(self):
         return self.__repr__()

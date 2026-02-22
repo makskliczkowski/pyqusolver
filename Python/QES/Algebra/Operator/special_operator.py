@@ -1585,7 +1585,33 @@ class SpecialOperator(Operator, ABC):
         (e.g., NumPy, JAX versions).
         """
         if not self._instr_codes:
-            self._log("No instruction codes to build composition function.", lvl=2, log="debug")
+            self._log("No instruction codes available; using zero-action composition function.", lvl=2, log="debug",)
+
+            is_complex          = getattr(self, "_iscpx", False) or self._dtype_is_complex()
+            self._instr_max_out = 1
+
+            if is_complex:
+
+                @numba.njit(nogil=True, fastmath=True, boundscheck=False, cache=False)
+                def wrapper_empty(state: int):
+                    states_buf      = np.empty(1, dtype=np.int64)
+                    vals_buf        = np.empty(1, dtype=np.complex128)
+                    states_buf[0]   = state
+                    vals_buf[0]     = 0.0 + 0.0j
+                    return states_buf, vals_buf
+
+            else:
+
+                @numba.njit(nogil=True, fastmath=True, boundscheck=False, cache=False)
+                def wrapper_empty(state: int):
+                    states_buf      = np.empty(1, dtype=np.int64)
+                    vals_buf        = np.empty(1, dtype=np.float64)
+                    states_buf[0]   = state
+                    vals_buf[0]     = 0.0
+                    return states_buf, vals_buf
+
+            _ = wrapper_empty(0)
+            self._composition_int_fun = wrapper_empty
             return
 
         try:

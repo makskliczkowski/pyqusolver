@@ -179,10 +179,7 @@ class HeisenbergKitaev(HamiltonianSpin):
             raise ValueError(self._ERR_LATTICE_NOT_PROVIDED)
 
         if lattice.typek not in [LatticeType.HONEYCOMB, LatticeType.HEXAGONAL]:
-            warnings.warn(
-                f"Non-standard lattice type detected for HeisenbergKitaev: {lattice}",
-                RuntimeWarning,
-            )
+            warnings.warn(f"Non-standard lattice type detected for HeisenbergKitaev: {lattice}", RuntimeWarning,)
 
         requested_family    = self.prepare_spin_family(hilbert_space, operator_family, kwargs)
         complex_required    = self.needs_complex_dtype_from_spin_inputs(hy=hy, impurities=impurities) or HamiltonianSpin._ADD_CONDITION(Gamma)
@@ -263,40 +260,6 @@ class HeisenbergKitaev(HamiltonianSpin):
 
     # ----------------------------------------------------------------------------------------------
 
-    def _setup_impurities(self, impurities: List[Tuple]):
-        """
-        Sets up the impurities list in the required format.
-        Supports two formats:
-            1. Z-polarized (2-tuple): (site_index, amplitude)
-            2. Full spherical coordinates (4-tuple): (site_index, phi, theta, amplitude)
-        """
-        if impurities is None:
-            self._impurities = []
-        else:
-            self._impurities = []
-            for imp in impurities:
-                if isinstance(imp, tuple):
-                    if len(imp) == 2:
-                        # Z-polarized: (site, amplitude) -> convert to (site, 0, 0, amplitude) for z-direction
-                        site, ampl = imp
-                        self._impurities.append((site, 0.0, 0.0, ampl))  # theta=0 means z-polarized
-                    elif len(imp) >= 3:
-                        # Full spherical: (site, phi, theta, amplitude)
-                        if len(imp) == 4:
-                            self._impurities.append(imp)
-                        else:
-                            self._impurities.append(
-                                (imp[0], imp[1], imp[2], 1.0)
-                            )  # default amplitude=1.0
-                    else:
-                        raise ValueError(
-                            f"Impurity tuple must have 2 or 4 elements, got {len(imp)}: {imp}"
-                        )
-                else:
-                    raise ValueError(f"Each impurity must be a tuple, got {type(imp)}: {imp}")
-
-    # ----------------------------------------------------------------------------------------------
-
     def __repr__(self) -> str:
         """
         Human-readable, single-line description of the HeiKit Hamiltonian.
@@ -329,16 +292,8 @@ class HeisenbergKitaev(HamiltonianSpin):
             HamiltonianSpin.fmt("hy",   self._hy,   prec=prec)  if self._hy     is not None else "",
             HamiltonianSpin.fmt("hx",   self._hx,   prec=prec)  if self._hx     is not None else "",
         ]
-        # handle impurities
-        if len(self._impurities) > 0:
-            imp_strs = []
-            for site, phi, theta, ampl in self._impurities:
-                phi_i   = phi % (2 * np.pi)
-                theta_i = theta % np.pi
-                # Concise format for directory naming: s{site}_p{phi}_t{theta}_a{ampl}
-                # using .2f precision to keep it short
-                imp_strs.append(f"s{site}_p{phi_i:.2f}_t{theta_i:.2f}_a{ampl:.2f}")
-            parts.append(f"Imps[{'-'.join(imp_strs)}]")
+
+        self.repr_impurities(parts)
 
         parts = [p for p in parts if p]
         return sep.join(parts) + ")"
@@ -384,7 +339,7 @@ class HeisenbergKitaev(HamiltonianSpin):
         self._kx    = (self._set_some_coupling(self._kx if kx is None else kx) if kx is not None else self._kx)
         self._ky    = (self._set_some_coupling(self._ky if ky is None else ky) if ky is not None else self._ky)
         self._kz    = (self._set_some_coupling(self._kz if kz is None else kz) if kz is not None else self._kz)
-        self._j     = self._set_some_coupling(self._j if j is None else j) if j is not None else self._j
+        self._j     = (self._set_some_coupling(self._j  if j  is None else j)  if j  is not None else self._j)
         self._dlt   = (self._set_some_coupling(self._dlt if dlt is None else dlt) if dlt is not None else self._dlt)
         self._gx    = (self._set_some_coupling(self._gx if gx is None else gx) if gx is not None else self._gx)
         self._gy    = (self._set_some_coupling(self._gy if gy is None else gy) if gy is not None else self._gy)

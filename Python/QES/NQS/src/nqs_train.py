@@ -89,13 +89,21 @@ class NQSTrainTime:
     """Performance timers for profiling."""
 
     n_steps: int = 0
-    step: list = field(default_factory=list)
-    sample: list = field(default_factory=list)
-    update: list = field(default_factory=list)
-    total: list = field(default_factory=list)
+    step            : list = field(default_factory=list)
+    sample          : list = field(default_factory=list)
+    update          : list = field(default_factory=list)
+    tdvp_prepare    : list = field(default_factory=list)
+    tdvp_gradient   : list = field(default_factory=list)
+    tdvp_covariance : list = field(default_factory=list)
+    tdvp_x0         : list = field(default_factory=list)
+    tdvp_solve      : list = field(default_factory=list)
+    tdvp_phase      : list = field(default_factory=list)
+    total           : list = field(default_factory=list)
 
     def reset(self):
-        self.step, self.sample, self.update, self.total = [], [], [], []
+        self.step, self.sample, self.update, self.total             = [], [], [], []
+        self.tdvp_prepare, self.tdvp_gradient, self.tdvp_covariance = [], [], []
+        self.tdvp_x0, self.tdvp_solve, self.tdvp_phase              = [], [], []
         self.n_steps = 0
 
 
@@ -145,20 +153,26 @@ class NQSTrainStats:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert stats to dictionary for HDF5 serialization."""
-        result = {
-            "history/val"       : self.history,
-            "history/std"       : self.history_std,
-            "history/lr"        : self.lr_history,
-            "history/reg"       : self.reg_history,
-            "history/diag_shift": self.diag_history,
-            "history/sigma2": self.sigma2_history,
-            "history/r_hat": self.rhat_history,
-            "history/theta0": np.array(self.global_phase),
-            "timings/n_steps": self.timings.n_steps,
-            "timings/step": self.timings.step,
-            "timings/sample": self.timings.sample,
-            "timings/update": self.timings.update,
-            "timings/total": self.timings.total,
+        result = {  
+            "history/val"               : self.history,
+            "history/std"               : self.history_std,
+            "history/lr"                : self.lr_history,
+            "history/reg"               : self.reg_history,
+            "history/diag_shift"        : self.diag_history,
+            "history/sigma2"            : self.sigma2_history,
+            "history/r_hat"             : self.rhat_history,
+            "history/theta0"            : np.array(self.global_phase),
+            "timings/n_steps"           : self.timings.n_steps,
+            "timings/step"              : self.timings.step,
+            "timings/sample"            : self.timings.sample,
+            "timings/update"            : self.timings.update,
+            "timings/tdvp/prepare"      : self.timings.tdvp_prepare,
+            "timings/tdvp/gradient"     : self.timings.tdvp_gradient,
+            "timings/tdvp/covariance"   : self.timings.tdvp_covariance,
+            "timings/tdvp/x0"           : self.timings.tdvp_x0,
+            "timings/tdvp/solve"        : self.timings.tdvp_solve,
+            "timings/tdvp/phase"        : self.timings.tdvp_phase,
+            "timings/total"             : self.timings.total,
         }
         if self.seed is not None:
             result["seed"] = self.seed
@@ -1000,6 +1014,101 @@ class NQSTrainer:
                 timer_list.append(np.nan)  # Placeholder for no timing
             return fn(*args, **kwargs)
 
+    def _record_tdvp_timings(self, tdvp_info: Any):
+        """
+        Persist TDVP internal timings in per-epoch arrays.
+        """
+        phase_map = (
+            ("tdvp_prepare",    "prepare"),
+            ("tdvp_gradient",   "gradient"),
+            ("tdvp_covariance", "covariance"),
+            ("tdvp_x0",         "x0"),
+            ("tdvp_solve",      "solve"),
+            ("tdvp_phase",      "phase"),
+        )
+
+        tdvp_timings = getattr(tdvp_info, "timings", None)
+        tdvp_enabled = bool(getattr(self.tdvp, "use_timing", False))
+
+        for stats_name, tdvp_name in phase_map:
+            value = np.nan
+            if tdvp_enabled and tdvp_timings is not None:
+                raw = getattr(tdvp_timings, tdvp_name, None)
+                if raw is not None:
+                    try:
+                        candidate = float(np.real(raw))
+                        if np.isfinite(candidate):
+                            value = candidate
+                    except Exception:
+                        value = np.nan
+            getattr(self.stats.timings, stats_name).append(value)
+
+    @staticmethod
+    def _finite_mean(values: List[float]) -> float:
+        if values is None or len(values) == 0:
+            return float("nan")
+        arr = np.asarray(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            return float("nan")
+        return float(np.mean(arr))
+
+    def _timing_window(self, values: List[float], last_n: int) -> List[float]:
+        if values is None or len(values) == 0:
+            return []
+        if last_n is None or last_n <= 0:
+            return values
+        return values[-int(last_n):]
+
+    def _log_timing_breakdown(self, *, last_n: int = 20):
+        """
+        Log compact timing breakdown for the recent timed epochs.
+        """
+        st      = self.stats.timings
+        samp    = self._finite_mean(self._timing_window(st.sample, last_n))
+        step    = self._finite_mean(self._timing_window(st.step, last_n))
+        upd     = self._finite_mean(self._timing_window(st.update, last_n))
+
+        comp_total = 0.0
+        for v in (samp, step, upd):
+            if np.isfinite(v):
+                comp_total += v
+
+        if comp_total <= 0.0:
+            return
+
+        def _pct(value: float, base: float) -> str:
+            if (not np.isfinite(value)) or base <= 0.0:
+                return "nan"
+            return f"{100.0 * value / base:.1f}%"
+
+        # TDVP internals are a subset of "step" when TDVP timing is enabled.
+        t_prepare   = self._finite_mean(self._timing_window(st.tdvp_prepare, last_n))
+        t_grad      = self._finite_mean(self._timing_window(st.tdvp_gradient, last_n))
+        t_cov       = self._finite_mean(self._timing_window(st.tdvp_covariance, last_n))
+        t_x0        = self._finite_mean(self._timing_window(st.tdvp_x0, last_n))
+        t_solve     = self._finite_mean(self._timing_window(st.tdvp_solve, last_n))
+        t_phase     = self._finite_mean(self._timing_window(st.tdvp_phase, last_n))
+
+        has_tdvp    = any(np.isfinite(v) for v in (t_prepare, t_grad, t_cov, t_x0, t_solve, t_phase))
+
+        msg = (
+            f"Timing breakdown (last {last_n} timed epochs): "
+            f"sample={samp:.3f}s ({_pct(samp, comp_total)}), "
+            f"step={step:.3f}s ({_pct(step, comp_total)}), "
+            f"update={upd:.3f}s ({_pct(upd, comp_total)})"
+        )
+        if has_tdvp:
+            msg += (
+                f"; TDVP⊂step: prep={t_prepare:.3f}s ({_pct(t_prepare, step)}), "
+                f"grad={t_grad:.3f}s ({_pct(t_grad, step)}), "
+                f"cov={t_cov:.3f}s ({_pct(t_cov, step)}), "
+                f"x0={t_x0:.3f}s ({_pct(t_x0, step)}), "
+                f"solve={t_solve:.3f}s ({_pct(t_solve, step)}), "
+                f"phase={t_phase:.3f}s ({_pct(t_phase, step)})"
+            )
+        self._log(msg, lvl=1, color="cyan", verbose=True)
+
     # ------------------------------------------------------
     #! Hyperparameter Updates
     # ------------------------------------------------------
@@ -1247,6 +1356,9 @@ class NQSTrainer:
         best_checkpoint_min_delta       = float(kwargs.pop("best_checkpoint_min_delta", 0.0))
         save_best_stats                 = bool(kwargs.pop("save_best_stats", False))
         last_best_save_global_epoch     = -best_checkpoint_every
+        timing_report_every             = int(kwargs.pop("timing_report_every", 0) or 0)
+        timing_report_last_n            = int(kwargs.pop("timing_report_last_n", 20) or 20)
+        timing_report_final             = bool(kwargs.pop("timing_report_final", True))
 
         background_flag = (self.background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0")) or bool(kwargs.pop("background", False)))
         use_pbar        = use_pbar and not background_flag
@@ -1353,6 +1465,7 @@ class NQSTrainer:
                 if sigma2 is None:
                     sigma2 = self.nqs.backend.real(std_loss) ** 2
                 r_hat = tdvp_info.r_hat
+                self._record_tdvp_timings(tdvp_info)
 
                 # Auto-Tuner: Update Logic
                 accepted = True
@@ -1479,6 +1592,9 @@ class NQSTrainer:
                         f"Early stopping triggered at epoch G:{global_epoch},L:{epoch}", lvl=0, color="yellow",)
                     break
 
+                if timing_report_every > 0 and ((epoch + 1) % timing_report_every == 0):
+                    self._log_timing_breakdown(last_n=timing_report_last_n)
+
         except KeyboardInterrupt:
             self._log("Training interrupted by user.", lvl=0, color="red")
         except StopIteration as e:
@@ -1494,6 +1610,9 @@ class NQSTrainer:
             pbar.close()
         self.stats.history          = np.array(self.stats.history).flatten().tolist()
         self.stats.history_std      = np.array(self.stats.history_std).flatten().tolist()
+        if timing_report_final:
+            self._log_timing_breakdown(last_n=timing_report_last_n)
+            
         self.save_checkpoint("final", save_path, fmt="h5", overwrite=True, verbose=True, **kwargs)
         self._log(f"Training completed in {time.time() - t0:.2f} seconds. Total epochs: {len(self.stats.history)} (this run: {n_epochs}, started at: {start_epoch}).", lvl=0, color="green",)
         return self.stats
@@ -1688,11 +1807,17 @@ class NQSTrainer:
                         exact_predictions   =stats_data.get("/exact/predictions", None),
                         exact_method        =stats_data.get("/exact/method", None),
                         timings             =NQSTrainTime(
-                                                n_steps =stats_data.get("/timings/n_steps", 0),
-                                                step    =list(stats_data.get("/timings/step", [])),
-                                                sample  =list(stats_data.get("/timings/sample", [])),
-                                                update  =list(stats_data.get("/timings/update", [])),
-                                                total   =list(stats_data.get("/timings/total", [])),
+                                                n_steps             =stats_data.get("/timings/n_steps", 0),
+                                                step                =list(stats_data.get("/timings/step", [])),
+                                                sample              =list(stats_data.get("/timings/sample", [])),
+                                                update              =list(stats_data.get("/timings/update", [])),
+                                                tdvp_prepare        =list(stats_data.get("/timings/tdvp/prepare", [])),
+                                                tdvp_gradient       =list(stats_data.get("/timings/tdvp/gradient", [])),
+                                                tdvp_covariance     =list(stats_data.get("/timings/tdvp/covariance", [])),
+                                                tdvp_x0             =list(stats_data.get("/timings/tdvp/x0", [])),
+                                                tdvp_solve          =list(stats_data.get("/timings/tdvp/solve", [])),
+                                                tdvp_phase          =list(stats_data.get("/timings/tdvp/phase", [])),
+                                                total               =list(stats_data.get("/timings/total", [])),
                                             ),
             )
             if self.stats.history:

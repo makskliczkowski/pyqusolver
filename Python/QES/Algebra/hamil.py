@@ -108,27 +108,81 @@ class Hamiltonian(BasisAwareOperator):
 
     def _ADD_CONDITION(x, *args):
         import numbers
-        
+
+        def _is_nonzero_like(value):
+            """
+            Robust scalar/array-like non-zero check.
+            Handles Python scalars, NumPy/JAX 0-d arrays, DummyVector-like wrappers,
+            and nested iterables.
+            """
+            if value is None:
+                return False
+
+            # Unwrap DummyVector-like wrappers.
+            if hasattr(value, "val"):
+                value = value.val
+
+            # Fast numeric path.
+            if isinstance(value, (numbers.Number, np.generic)):
+                return not np.isclose(value, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
+
+            # Mapping path.
+            if isinstance(value, Mapping):
+                return any(_is_nonzero_like(v) for v in value.values())
+
+            # Try generic array conversion first (covers NumPy/JAX arrays).
+            try:
+                arr = np.asarray(value)
+            except Exception:
+                arr = None
+
+            if arr is not None:
+                if arr.ndim == 0:
+                    try:
+                        scalar = arr.item()
+                    except Exception:
+                        scalar = value
+                    if hasattr(scalar, "val"):
+                        scalar = scalar.val
+                    try:
+                        return not np.isclose(scalar, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
+                    except Exception:
+                        try:
+                            return bool(scalar)
+                        except Exception:
+                            return False
+                try:
+                    return not np.all(np.isclose(arr, 0.0, rtol=Hamiltonian._ADD_TOLERANCE))
+                except Exception:
+                    # Object arrays or unsupported dtypes: recurse element-wise.
+                    return any(_is_nonzero_like(v) for v in np.ravel(arr))
+
+            # Generic iterable fallback.
+            if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+                try:
+                    return any(_is_nonzero_like(v) for v in value)
+                except Exception:
+                    return False
+
+            # Last-resort truthiness.
+            try:
+                return bool(value)
+            except Exception:
+                return False
+
         if x is None:
             return False
+
+        # Safe indexed access (supports scalars / 0-d arrays / wrappers).
+        y = x
         if args:
-            if len(args) == 1:
-                y = x[args[0]]
-            else:
-                y = x[args]
-        else:
-            y = x
-        if y is None:
-            return False
-        
-        # Ensure y is a numeric type or array
-        if isinstance(y, (numbers.Number, float, int, complex, np.generic)):
-            return not np.isclose(y, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
-        elif isinstance(y, (np.ndarray, list, tuple)):
-            y_arr = np.asarray(y)
-            return not np.all(np.isclose(y_arr, 0.0, rtol=Hamiltonian._ADD_TOLERANCE))
-        else:
-            return False
+            try:
+                y = x[args[0]] if len(args) == 1 else x[args]
+            except Exception:
+                # Fallback to unwrapped scalar-like value when indexing is invalid.
+                y = getattr(x, "val", x)
+
+        return _is_nonzero_like(y)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -243,8 +297,9 @@ class Hamiltonian(BasisAwareOperator):
         self._loc_energy_int_fun    : Optional[Callable] = None
         self._loc_energy_np_fun     : Optional[Callable] = None
         self._loc_energy_jax_fun    : Optional[Callable] = None
-
-    # ----------------------------------------------------------------------------------------------
+        self._impurities            = None
+        
+    ################################################################################################
     #! Representation - helpers
     ################################################################################################
 
@@ -554,6 +609,57 @@ class Hamiltonian(BasisAwareOperator):
         self._delta_sp = None
         self._constant_sp = None
         self._log("Hamiltonian cleared...", lvl=2, color="blue")
+
+    # ----------------------------------------------------------------------------------------------
+
+    def _setup_impurities(self, impurities: List[Tuple]):
+        """
+        Sets up the impurities list in the required format.
+        Supports two formats:
+            1. Z-polarized (2-tuple): (site_index, amplitude)
+            2. Full spherical coordinates (4-tuple): (site_index, phi, theta, amplitude)
+        """
+        if impurities is None:
+            self._impurities = []
+        else:
+            self._impurities = []
+            for imp in impurities:
+                if isinstance(imp, tuple):
+                    if len(imp) == 2:
+                        # Z-polarized: (site, amplitude) -> convert to (site, 0, 0, amplitude) for z-direction
+                        site, ampl = imp
+                        self._impurities.append((site, 0.0, 0.0, ampl))  # theta=0 means z-polarized
+                    elif len(imp) >= 3:
+                        # Full spherical: (site, phi, theta, amplitude)
+                        if len(imp) == 4:
+                            self._impurities.append(imp)
+                        else:
+                            self._impurities.append(
+                                (imp[0], imp[1], imp[2], 1.0)
+                            )  # default amplitude=1.0
+                    else:
+                        raise ValueError(
+                            f"Impurity tuple must have 2 or 4 elements, got {len(imp)}: {imp}"
+                        )
+                else:
+                    raise ValueError(f"Each impurity must be a tuple, got {type(imp)}: {imp}")
+
+    def repr_impurities(self, parts: List[str]):
+        ''' 
+        Helper method to generate a concise string representation of impurities for the Hamiltonian's __repr__.
+        Appends a formatted string to the provided parts list if impurities are present.
+        '''
+        
+        # handle impurities
+        if len(self._impurities) > 0:
+            imp_strs = []
+            for site, phi, theta, ampl in self._impurities:
+                phi_i   = phi % (2 * np.pi)
+                theta_i = theta % np.pi
+                # Concise format for directory naming: s{site}_p{phi}_t{theta}_a{ampl}
+                # using .2f precision to keep it short
+                imp_strs.append(f"s{site}_p{phi_i:.2f}_t{theta_i:.2f}_a{ampl:.2f}")
+            parts.append(f"Imps[{'-'.join(imp_strs)}]")
 
     # ----------------------------------------------------------------------------------------------
     #! Basis Transformation Methods
@@ -1391,9 +1497,20 @@ class Hamiltonian(BasisAwareOperator):
             raise ValueError(f"{Hamiltonian._ERR_HAMILTONIAN_BUILD} : {str(e)}") from e
         ham_duration = time.perf_counter() - ham_start
 
-        if (self._hamil is not None and self._hamil.size > 0) or (
-            self._hamil_sp is not None and self._hamil_sp.size > 0
-        ):
+        def _is_valid_matrix(mat) -> bool:
+            if mat is None:
+                return False
+            # Sparse matrices can be valid with nnz=0 (e.g. identically zero Hamiltonian).
+            if sp.sparse.issparse(mat):
+                return (
+                    hasattr(mat, "shape")
+                    and len(mat.shape) == 2
+                    and mat.shape[0] > 0
+                    and mat.shape[1] > 0
+                )
+            return hasattr(mat, "size") and mat.size > 0
+
+        if _is_valid_matrix(self._hamil) or _is_valid_matrix(self._hamil_sp):
             if verbose:
                 self._log(f"Hamiltonian matrix built in {ham_duration:.6f} seconds.", lvl=1)
         else:

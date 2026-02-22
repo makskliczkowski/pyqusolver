@@ -272,8 +272,11 @@ class JAXBackend(BackendInterface):
         return cls._jit_cache[key]
 
     def eval_batched(self, net: nn.Module, params: Array, states: Array):
+        if getattr(net, "supports_batched_apply", False):
+            jitted = self._get_cached_jit(net_utils.jaxpy.eval_batched_jax_native, (0, 2))
+            return jitted(net, states, states.shape[0], params)
         jitted = self._get_cached_jit(net_utils.jaxpy.eval_batched_jax, (0, 1))
-        return jitted(net, params, states)
+        return jitted(states.shape[0], net, params, states)
 
     def apply_callable(self, func: Callable, params: Array, states: Array):
         jitted = self._get_cached_jit(net_utils.jaxpy.apply_callable_batched_jax, (0, 4, 6))
@@ -308,8 +311,11 @@ class JAXBackend(BackendInterface):
         else:
             apply_func = jax.jit(net_utils.jaxpy.apply_callable_jax, static_argnums=(0, 4, 6))
 
-        # get the eval function
-        eval_func = jax.jit(net_utils.jaxpy.eval_batched_jax, static_argnums=(0, 1))
+        # Flax-backed interfaces evaluate full batches natively; avoid per-sample vmaps.
+        if getattr(net, "supports_batched_apply", False):
+            eval_func = jax.jit(net_utils.jaxpy.eval_batched_jax_native, static_argnums=(0, 2))
+        else:
+            eval_func = jax.jit(net_utils.jaxpy.eval_batched_jax, static_argnums=(0, 1))
 
         return ansatz_func, eval_func, apply_func
 
