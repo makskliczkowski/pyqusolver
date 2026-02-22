@@ -336,11 +336,11 @@ class NQS(MonteCarloSolver):
                 - orbax_max_to_keep:
                     Maximum number of Orbax checkpoints to keep (default: 3).
                 - Sampler-specific parameters:
-                    - s_numchains       : Number of Markov chains (default: 16).
-                    - s_numsamples      : Number of samples per chain (default: 1000).
+                    - s_numchains       : Number of Markov chains (auto-configured by backend; override to set explicitly).
+                    - s_numsamples      : Number of samples per chain (auto-configured by backend; override to set explicitly).
                     - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
-                    - s_sweep_steps     : Number of sweep steps between samples (default: 10).
-                    - s_therm_steps     : Number of thermalization steps (burnin) (default: 100).
+                    - s_sweep_steps     : Sweep steps between collected samples (auto-configured by backend).
+                    - s_therm_steps     : Thermalization steps (burn-in) (auto-configured by backend).
                     - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
                                         Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
                                         See `NQS.help('sampling')` for details.
@@ -873,18 +873,38 @@ class NQS(MonteCarloSolver):
             sampler_kwargs["hilbert"]       = self._hilbert
             sampler_kwargs["backend"]       = self._backend_str
 
-            sampler_kwargs["numchains"]     = kwargs.get("s_numchains", 16)
+            auto_cfg = {}
+            if any(
+                key not in kwargs
+                for key in ("s_numchains", "s_numsamples", "s_sweep_steps", "s_therm_steps")
+            ):
+                try:
+                    net_depth_est = getattr(self._net, "_param_num", 64)
+                    auto_cfg = NQS.get_auto_config(
+                        system_size=self._size,
+                        target_total_samples=kwargs.get("s_target_total_samples", 8192),
+                        dtype=self._dtype,
+                        logger=None,
+                        net_depth_estimate=net_depth_est,
+                        model_hint=(str(self._model).lower() if self._model is not None else None),
+                        ansatz_hint=(str(getattr(self._net, "name", type(self._net).__name__)).lower()),
+                    )
+                except Exception:
+                    auto_cfg = {}
+
+            sampler_kwargs["numchains"]     = kwargs.get("s_numchains", int(auto_cfg.get("s_numchains", 16)))
             sampler_kwargs.pop("s_numchains", None)
-            sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", 1000)
+            sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", int(auto_cfg.get("s_numsamples", 1000)))
             sampler_kwargs.pop("s_numsamples", None)
+            sampler_kwargs.pop("s_target_total_samples", None)
 
             sampler_kwargs["numupd"]        = kwargs.get("s_numupd", 1)
             sampler_kwargs.pop("s_numupd", None)
 
-            sampler_kwargs["sweep_steps"]   = kwargs.get("s_sweep_steps", 10)
+            sampler_kwargs["sweep_steps"]   = kwargs.get("s_sweep_steps", int(auto_cfg.get("s_sweep_steps", 10)))
             sampler_kwargs.pop("s_sweep_steps", None)
 
-            sampler_kwargs["therm_steps"]   = kwargs.get("s_therm_steps", 100)
+            sampler_kwargs["therm_steps"]   = kwargs.get("s_therm_steps", int(auto_cfg.get("s_therm_steps", 100)))
             sampler_kwargs.pop("s_therm_steps", None)
 
             default_state_dtype             = (
@@ -2673,7 +2693,7 @@ class NQS(MonteCarloSolver):
         use_minsr: bool = False,
         rhs_prefactor: float = -1.0,
         # Diagonal shift
-        diag_shift: float = 1e-1,
+        diag_shift: float = 5e-5,
         # Training options
         save_path: str = None,
         reset_stats: bool = True,
@@ -2757,7 +2777,7 @@ class NQS(MonteCarloSolver):
         reg_scheduler : str or Callable, optional
             Regularization scheduler for SR matrix.
 
-        diag_shift : float, default=1e-5
+        diag_shift : float, default=5e-5
             Diagonal regularization for SR matrix.
 
         diag_scheduler : str or Callable, optional
@@ -2854,6 +2874,11 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
         #! Handle force_numerical override
         # --------------------------------------------------
+
+        if isinstance(phases, str) and phases.lower() == "default" and self._model is not None:
+            model_name = str(self._model).lower()
+            if "kitaev" in model_name or "gamma" in model_name:
+                phases = "kitaev"
 
         if reset_weights:
             self.reset()
@@ -3287,24 +3312,28 @@ class NQS(MonteCarloSolver):
     @staticmethod
     def get_auto_config(
         system_size,
-        target_total_samples        = 4096,
+        target_total_samples        = 8192,
         dtype                       = jnp.complex64,
         logger : Logger             = None,
         *,
         net_depth_estimate: int     = 64,
         num_therm: Optional[int]    = None,
         num_sweep: Optional[int]    = None,
+        model_hint: Optional[str]   = None,
+        ansatz_hint: Optional[str]  = None,
     ) -> dict:
         """
-        Automatically detects hardware and returns optimal VMC parameters.
+        Automatically detect hardware and return VMC defaults.
 
         Args:
             system_size (int): Number of spins/sites (N).
-            target_total_samples (int): Total samples desired for the gradient batch.
-            dtype (jax.dtype): The data type used for the network.
+            target_total_samples (int): Target total samples per Monte Carlo evaluation.
+            dtype (jax.dtype): Runtime dtype.
+            model_hint (str, optional): Optional model identifier, e.g. ``'kitaev'``.
+            ansatz_hint (str, optional): Optional ansatz identifier.
 
         Returns:
-            dict: A dictionary of parameters ready to pass to NQS/VMCSampler.
+            dict: ``s_numchains/s_numsamples/s_therm_steps/s_sweep_steps`` and metadata.
         """
         if not JAX_AVAILABLE:
             raise ImportError("JAX is required for automatic configuration. Please install JAX to use this feature.")
@@ -3314,127 +3343,129 @@ class NQS(MonteCarloSolver):
         import psutil
 
         logme = lambda x, lvl=1: print(x) if logger is None else logger.info(x, lvl=lvl, color="green")
-        
+
         try:
             backend         = jax.default_backend()
             devices         = jax.devices()
             device_name     = str(devices[0].device_kind) if devices else "Unknown"
-        except:
+        except Exception:
             backend         = "cpu"
             device_name     = "CPU"
 
         logme(f"Auto-detected backend: {backend.upper()} ({device_name})")
 
-        # 2. Check Precision (Critical for consumer GPUs)
         config = {}
         is_double_precision = (dtype == jnp.complex128) or (dtype == jnp.float64)
         if backend == "gpu" and is_double_precision:
             logme("WARNING: Double precision (complex128) detected on GPU.", 2)
 
-        # =========================================================================
-        # STRATEGY A: GPU (Wide & Shallow)
-        # Goal      : Fill VRAM with chains, minimize sequential loops.
-        # =========================================================================
+        target_total_samples = int(max(256, round(float(target_total_samples))))
+        model_hint_l = str(model_hint).lower() if model_hint is not None else ""
+        ansatz_hint_l = str(ansatz_hint).lower() if ansatz_hint is not None else ""
+        is_spin_liquid_profile = (
+            "kitaev" in model_hint_l
+            or "gamma" in model_hint_l
+            or "approx" in ansatz_hint_l
+            or "asym" in ansatz_hint_l
+        )
 
         if backend == "gpu":
             import subprocess
 
             def get_gpu_specs():
-                """
-                Queries the GPU for Model Name and Total VRAM (in MB).
-                Returns defaults if GPU is not found or nvidia-smi fails.
-                """
                 gpu_info = {
                     "name"              : "Unknown GPU",
-                    "total_memory_mb"   : 4096,  # Safe fallback (4GB)
+                    "total_memory_mb"   : 4096,
                     "free_memory_mb"    : 2048,
                 }
 
-                # Try JAX for Name
                 try:
                     devices = jax.local_devices()
                     if devices and devices[0].platform == "gpu":
                         gpu_info["name"] = devices[0].device_kind
-                except:
+                except Exception:
                     pass
 
-                # Try nvidia-smi for Memory details
                 try:
-                    # Query total and free memory
-                    cmd                         = "nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits"
+                    cmd = "nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits"
                     output                      = (subprocess.check_output(cmd.split()).decode("ascii").strip().split("\n")[0])
                     total, free                 = map(int, output.split(","))
                     gpu_info["total_memory_mb"] = total
                     gpu_info["free_memory_mb"]  = free
                     logme(f"Detected GPU: {gpu_info['name']} with {total} MB VRAM ({free} MB free).", 2)
-
                 except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
                     logme("Warning: Unable to query GPU memory via nvidia-smi. Using default values.")
 
                 return gpu_info
 
             gpu_specs           = get_gpu_specs()
-            precision_factor    = 2 if is_double_precision else 1
-            fixed_overhead_mb   = 1024
+            precision_factor    = 2.0 if is_double_precision else 1.0
+            fixed_overhead_mb   = 1024.0
+            estimated_chain_mb  = max(
+                0.5,
+                (float(system_size) * float(max(1, net_depth_estimate)) * 8.0) / (1024.0 ** 2),
+            ) * precision_factor
 
-            # Cost per chain (variable)
-            # N * depth * width factors... simplified heuristic:
-            # A complex64 number is 8 bytes.
-            estimated_chain_mb  = (system_size * net_depth_estimate * 8) / (1024**2)
-            estimated_chain_mb  = max(0.5, estimated_chain_mb) * precision_factor
+            available_for_batch = max(512.0, float(gpu_specs["free_memory_mb"]) - fixed_overhead_mb)
+            memory_cap = max(64, int(available_for_batch / max(estimated_chain_mb, 1e-9)))
 
-            # Available memory for batching (leaving 1GB buffer)
-            available_for_batch = max(512, gpu_specs["free_memory_mb"] - fixed_overhead_mb)
+            base_chains = 1024 if not is_double_precision else 512
+            if target_total_samples <= 1024:
+                base_chains = min(base_chains, 512)
 
-            # Calculate Max Chains
-            calculated_chains   = int(available_for_batch / estimated_chain_mb)
+            optimal_chains = max(64, min(base_chains, memory_cap, target_total_samples))
+            # power-of-two chains map well to parallel kernels
+            optimal_chains = 2 ** max(0, (int(optimal_chains).bit_length() - 1))
+            optimal_chains = max(64, optimal_chains)
+            optimal_chains = int(min(optimal_chains, target_total_samples))
 
-            # Clamp to hardware reasonable limits (powers of 2)
-            # Even with 24GB VRAM, going > 8192 yields diminishing returns
-            max_limit           = 256 if is_double_precision else 8192
-            optimal_chains      = min(calculated_chains, max_limit)
+            s2_target = max(8192, target_total_samples) if is_spin_liquid_profile else target_total_samples
+            num_samples_per_chain = int(max(1, -(-s2_target // optimal_chains)))
 
-            # Round down to nearest power of 2
-            optimal_chains      = 2 ** (optimal_chains.bit_length() - 1)
-            optimal_chains      = max(32, optimal_chains)  # Minimum 32
-            optimal_chains      = int(min(target_total_samples, optimal_chains))
-            num_samples_per_chain = int(max(1, target_total_samples // optimal_chains))
-
-            # GPU hates sequential loops. Keep these minimal.
+            default_therm = 8
+            default_sweep = 480 if is_spin_liquid_profile else 160
             config = {
                 "s_numchains"   : optimal_chains,
                 "s_numsamples"  : num_samples_per_chain,
-                "s_therm_steps" : num_therm if num_therm is not None else 10,   # Quick re-adjustment
-                "s_sweep_steps" : num_sweep if num_sweep is not None else 1,    # Reliance on ensemble averaging
+                "s_therm_steps" : int(num_therm if num_therm is not None else default_therm),
+                "s_sweep_steps" : int(num_sweep if num_sweep is not None else default_sweep),
                 "hardware"      : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}',
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
-        # =========================================================================
-        # STRATEGY B: CPU (Narrow & Deep)
-        # Goal      : Match CPU cores, run long sequential loops.
-        # =========================================================================
         else:
-            # Detect physical cores
             physical_cores          = psutil.cpu_count(logical=False) or 4
-            optimal_chains          = physical_cores
+            optimal_chains          = max(2, min(64, physical_cores * 2))
 
-            # We need to get all our data from length, not width
-            num_samples_per_chain   = int(max(1, -(-target_total_samples // optimal_chains)))  # Ceiling division
+            cpu_target              = max(target_total_samples, 2048)
+            num_samples_per_chain   = int(max(1, -(-cpu_target // optimal_chains)))
 
-            # CPU needs to sweep to decorrelate because we have few chains
+            default_therm           = max(16, min(96, int(system_size)))
+            default_sweep           = max(24, min(240, int(2 * np.sqrt(max(1, system_size)) * 8)))
             config                  = {
                 "s_numchains"       : optimal_chains,
                 "s_numsamples"      : num_samples_per_chain,
-                "s_therm_steps"     : (num_therm if num_therm is not None else max(20, system_size)),       # Rule of thumb: N
-                "s_sweep_steps"     : (num_sweep if num_sweep is not None else max(1, system_size // 2)),   # Rule of thumb: N/2
+                "s_therm_steps"     : int(num_therm if num_therm is not None else default_therm),
+                "s_sweep_steps"     : int(num_sweep if num_sweep is not None else default_sweep),
                 "hardware"          : "cpu",
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
-        # Calculate actual batch size generated
         total_batch = config["s_numchains"] * config["s_numsamples"]
         logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.", 2)
+
+        if is_spin_liquid_profile:
+            config.update(
+                {
+                    "as_chi_channels": (1, 2, 4),
+                    "as_omega_channels": (4, 4, 4),
+                    "as_chi_kernel_size": 3,
+                    "as_omega_kernel_size": 15 if backend == "gpu" else 9,
+                    "as_nib_act": "c_sigmoid",
+                    "as_ib_act": "c_elu",
+                    "as_ib_init_std": 0.02,
+                }
+            )
 
         return config
 

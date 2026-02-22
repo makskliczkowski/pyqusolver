@@ -51,6 +51,8 @@ def get_exact_impl(nqs_instance: "NQS", **kwargs) -> Optional["NQSTrainStats"]:
                 return stats  # Avoid expensive diagonalization for large systems
             
             if nqs_instance.model.eig_val is None:
+                if hasattr(nqs_instance.model, "build") and callable(nqs_instance.model.build):
+                    nqs_instance.model.build()  # Ensure model is built before diagonalization
                 nqs_instance.model.diagonalize(
                     method      =   "lanczos",
                     k           =   kwargs.get("k", 6),

@@ -138,8 +138,8 @@ class VMCSampler(Sampler):
         # OTHER
         mu: float = 2.0,
         beta: float = 1.0,
-        therm_steps: int = 100,
-        sweep_steps: int = 100,
+        therm_steps: Optional[int] = None,
+        sweep_steps: Optional[int] = None,
         seed=None,
         hilbert: "HilbertSpace" = None,
         numsamples: int = 1,
@@ -206,6 +206,32 @@ class VMCSampler(Sampler):
         self._mu = mu
         if self._mu < 0.0 or self._mu > 2.0:
             raise ValueError(SamplerErrors.NOT_IN_RANGE_MU)
+
+        if therm_steps is None or sweep_steps is None:
+            backend_name = "cpu"
+            if self._isjax:
+                try:
+                    backend_name = jax.default_backend()
+                except Exception:
+                    backend_name = "cpu"
+
+            if backend_name == "gpu":
+                # Table S2-inspired defaults for GPU runs.
+                default_therm   = 8
+                default_sweep   = 480
+            else:
+                # CPU-friendly fallback: fewer sequential updates than GPU profile.
+                size            = max(1, int(np.prod(shape)))
+                default_therm   = max(16, min(64, max(8, size // 2)))
+                default_sweep   = max(24, min(240, max(16, size)))
+
+            if therm_steps is None:
+                therm_steps     = default_therm
+            if sweep_steps is None:
+                sweep_steps     = default_sweep
+
+        therm_steps = max(1, int(therm_steps))
+        sweep_steps = max(1, int(sweep_steps))
 
         self._beta                  = beta
         self._therm_steps           = therm_steps
@@ -564,23 +590,57 @@ class VMCSampler(Sampler):
 
     def set_hybrid_proposer(
         self,
-        p_global: float = 0.0,
-        fraction: float = 0.5,
-        patterns: Optional[Union[List, str]] = None,
-        global_update: Optional[Union[Callable, str]] = None,
+        p_global        : float = 0.0,
+        fraction        : float = 0.5,
+        patterns        : Optional[Union[List, str]] = None,
+        global_update   : Optional[Union[Callable, str]] = None,
     ):
         self._org_upd_fun = self._local_upd_fun
         if p_global > 0.0 and self._isjax:
 
+            def _fun_name(fun):
+                if isinstance(fun, partial):
+                    return getattr(fun.func, "__name__", "")
+                return getattr(fun, "__name__", "")
+
+            local_returns_info = _fun_name(self._local_upd_fun).endswith("_with_info")
+
+            def _resolve_plaquettes():
+                lat = self._hilbert.lattice
+                open_bc = True
+                if hasattr(lat, "periodic_flags"):
+                    try:
+                        pbcx, pbcy, _   = lat.periodic_flags()
+                        open_bc         = not (bool(pbcx) and bool(pbcy))
+                    except Exception:
+                        open_bc         = True
+                try:
+                    return lat.calculate_plaquettes(open_bc=open_bc)
+                except TypeError:
+                    try:
+                        return lat.calculate_plaquettes(use_obc=open_bc)
+                    except Exception:
+                        return lat.calculate_plaquettes()
+                except Exception:
+                    return lat.calculate_plaquettes()
+
             def _resolve_patterns(name):
                 if self._hilbert is None or self._hilbert.lattice is None:
-                    raise ValueError(
-                        f"Hilbert space with lattice is required for '{name}' global updates."
-                    )
-                if name.lower() == "wilson":
+                    raise ValueError(f"Hilbert space with lattice is required for '{name}' global updates.")
+                
+                lname = str(name).lower()
+                if lname == "wilson":
                     return self._hilbert.lattice.calculate_wilson_loops()
-                elif name.lower() == "plaquette":
-                    return self._hilbert.lattice.calculate_plaquettes()
+                
+                elif lname in ("plaquette", "plaquettes"):
+                    return _resolve_plaquettes()
+                
+                elif lname in ("plaquette_all", "all_plaquettes", "plaquettes_all"):
+                    all_plaq = _resolve_plaquettes()
+                    if len(all_plaq) == 0:
+                        raise ValueError("No plaquettes available for 'plaquette_all' update.")
+                    merged = sorted({int(s) for p in all_plaq for s in p})
+                    return [merged]
                 else:
                     raise ValueError(f"Unknown global update pattern: {name}")
 
@@ -593,7 +653,17 @@ class VMCSampler(Sampler):
                 patterns = _resolve_patterns(patterns)
 
             if global_update is not None:
-                global_flip_fn = global_update
+                if local_returns_info:
+
+                    def _custom_global_with_info(state, key):
+                        out = global_update(state, key)
+                        if isinstance(out, tuple):
+                            return out
+                        return out, jnp.zeros((0,), dtype=jnp.int32)
+
+                    global_flip_fn = _custom_global_with_info
+                else:
+                    global_flip_fn = global_update
                 glob_type_str = "Custom Global Update"
                 self._global_name = "custom"
 
@@ -615,12 +685,29 @@ class VMCSampler(Sampler):
                     patterns_arr[i, : len(p)] = p
                 patterns_jax = jnp.array(patterns_arr)
 
-                global_flip_fn = partial(propose_global_flip, patterns=patterns_jax)
+                if local_returns_info:
+                    try:
+                        from .updates.spin_jax import propose_global_flip_with_info as _global_with_info
+                    except ImportError as e:
+                        raise ImportError("Local updater returns update-info but propose_global_flip_with_info is unavailable.") from e
+                    
+                    global_flip_fn = partial(_global_with_info, patterns=patterns_jax)
+                else:
+                    global_flip_fn = partial(propose_global_flip, patterns=patterns_jax)
+                
                 glob_type_str = f"Patterns (N={n_patterns})"
 
             else:
                 n_flip_global = max(1, int(self._size * fraction))
-                global_flip_fn = partial(propose_multi_flip, n_flip=n_flip_global)
+                if local_returns_info:
+                    try:
+                        from .updates.spin_jax import propose_multi_flip_with_info as _multi_with_info
+                    except ImportError as e:
+                        raise ImportError("Local updater returns update-info but propose_multi_flip_with_info is unavailable.") from e
+                    
+                    global_flip_fn = partial(_multi_with_info, n_flip=n_flip_global)
+                else:
+                    global_flip_fn = partial(propose_multi_flip, n_flip=n_flip_global)
                 glob_type_str = f"Multi-Flip (frac={fraction:.2f})"
                 self._global_name = "multi-flip"
 

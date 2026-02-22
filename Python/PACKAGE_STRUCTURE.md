@@ -1,10 +1,12 @@
 # QES Package Structure and Setup
 
 ## Overview
+
 This document describes the complete package structure and setup for the QES (Quantum Eigen Solver) Python package.
 
 ## Package Structure
-```
+
+```bash
 QES/
 ├── QES/                          # Main package directory
 │   ├── __init__.py              # Package initialization with version info
@@ -35,11 +37,13 @@ QES/
 ## Installation Methods
 
 ### 1. Basic Installation
+
 ```bash
 pip install QES
 ```
 
 ### 2. Development Installation
+
 ```bash
 git clone https://github.com/makskliczkowski/QuantumEigenSolver.git
 cd QuantumEigenSolver/Python/QES
@@ -47,6 +51,7 @@ pip install -e ".[dev]"
 ```
 
 ### 3. Specific Feature Sets
+
 ```bash
 pip install "QES[jax]"     # JAX support
 pip install "QES[ml]"      # ML utilities
@@ -56,28 +61,33 @@ pip install "QES[all]"     # Everything
 ## Development Workflow
 
 ### Setup
+
 ```bash
 make dev-setup           # Sets up development environment
 ```
 
 ### Daily Development
+
 ```bash
 make dev                 # Format, lint, and test
 make check              # Full pre-commit checks
 ```
 
 ### Testing
+
 ```bash
 make test               # Quick tests
 make test-all           # Test across Python versions
 ```
 
 ### Documentation
+
 ```bash
 make docs               # Build documentation
 ```
 
 ### Release
+
 ```bash
 make build              # Build distribution packages
 make upload             # Upload to PyPI (test)
@@ -86,11 +96,13 @@ make upload             # Upload to PyPI (test)
 ## Key Features
 
 ### 1. Modern Python Packaging
+
 - Uses `pyproject.toml` for configuration
 - Setuptools with SCM for version management
 - Proper dependency management with extras
 
 ### 2. Code Quality Tools
+
 - Black for code formatting
 - Flake8 for linting
 - MyPy for type checking
@@ -98,17 +110,20 @@ make upload             # Upload to PyPI (test)
 - Pre-commit hooks for automation
 
 ### 3. Testing Infrastructure
+
 - Pytest for testing
 - Tox for multi-Python testing
 - Coverage reporting
 - Test discovery for multiple test directories
 
 ### 4. Documentation
+
 - Sphinx for documentation generation
 - Read the Docs theme
 - Jupyter notebook integration via nbsphinx
 
 ### 5. Development Automation
+
 - Makefile for common tasks
 - Pre-commit hooks
 - Continuous integration ready
@@ -123,7 +138,9 @@ make upload             # Upload to PyPI (test)
 - **all**: All optional dependencies combined
 
 ## Version Management
+
 Version is automatically managed through:
+
 1. Git tags for releases
 2. `setuptools_scm` for automatic version detection
 3. `_version.py` file generation

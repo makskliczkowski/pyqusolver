@@ -51,16 +51,16 @@ try:
         generate_space_group_perms,
         compute_cayley_table,
     )
-    _HAS_JAX_EQGCNN = True
+    _HAS_JAX_EQGCNN         = True
 except ImportError:
-    _HAS_JAX_EQGCNN = False
+    _HAS_JAX_EQGCNN         = False
 
 try:
-    from QES.general_python.ml.net_impl.networks.net_approx_symmetric import make_translation_symmetry_op
-    _HAS_APPROX_SYMMETRIC           = True
+    from QES.general_python.ml.net_impl.networks.net_approx_symmetric import AnsatzApproxSymmetric
+    _HAS_APPROX_SYMMETRIC   = True
 except ImportError:
-    _HAS_APPROX_SYMMETRIC           = False
-    make_translation_symmetry_op    = None
+    _HAS_APPROX_SYMMETRIC   = False
+    AnsatzApproxSymmetric   = None
 
 # ===========================================================================
 #! Network Parameter Estimator
@@ -97,10 +97,10 @@ class SOTANetConfig:
       Sign-structure initialization critical for frustrated phases.
     - **ResNet/GCNN** [R5]: Deep residual + group-equivariant layers.
       LayerSR avoids full Jacobian storage; sample budget
-      1024 -> 4096 -> 16384 as depth grows.  4–16 layers with 6–12
+      1024 -> 4096 -> 16384 as depth grows.  4-16 layers with 6-12
       group-indexed feature maps.
     - **AR/MADE** [R3]: Masked-conv (PixelCNN) blocks; 3x3 filters,
-      32 channels, 10–40 blocks. Exact autoregressive sampling;
+      32 channels, 10-40 blocks. Exact autoregressive sampling;
       staged Adam -> SGD+momentum; batch 100 -> 1000 -> larger.
     - **RNN** [R4]: GRU cells, $d_h$ memory units; batch 500;
       schedules $(\eta^{-1}+0.1t)^{-1}$ or $\eta(1+t/5000)^{-1}$.
@@ -180,7 +180,8 @@ class SOTANetConfig:
 
         elif self.net_type == "approx_symmetric":
             if self.features:
-                kw["chi_features"] = tuple(self.features)
+                # For approx_symmetric, features map to Chi block channels.
+                kw["chi_channels"]  = tuple(self.features)
             
         kw.update(self.extra_kwargs)
         
@@ -239,7 +240,7 @@ def estimate_network_params(
                                kitaev 4, heisenberg 2, j1j2 4, tfi 1 [R1].
 
     **CNN** (convolutional layers):
-        ``n_layers``         : int   — number of conv layers (default 2–4).
+        ``n_layers``         : int   — number of conv layers (default 2-4).
         ``base_feat``        : int   — base channel count (default 12 for
                                frustrated, 8 otherwise) [R2].
         ``activation``       : str   — per-layer activation; default
@@ -256,7 +257,7 @@ def estimate_network_params(
     **AR / MADE** (autoregressive):
         ``base_hidden``      : int   — hidden-layer width
                                (default $\max(32, 2 N_s)$) [R3, R4].
-        ``n_layers``         : int   — depth (default 2–4).
+        ``n_layers``         : int   — depth (default 2-4).
 
     **PairProduct** (``'pp'`` / ``'rbmpp'``):
         ``alpha``            : float — RBM density for hybrid (default
@@ -437,7 +438,7 @@ def estimate_network_params(
         base_features   = kwargs.get('base_features', base_features)    # user override
         features        = int(base_features * (tier_mult if 'base_features' not in kwargs else 1.0))
         
-        # Depth: 4–12 residual blocks for frustrated, 2–4 for simpler [R5]
+        # Depth: 4-12 residual blocks for frustrated, 2-4 for simpler [R5]
         base_depth      = kwargs.get("base_depth", 4 if is_frustrated else 2)
         depth           = max(2, int(base_depth * (tier_mult if 'base_depth' not in kwargs else 1.0)))
 
@@ -520,49 +521,92 @@ def estimate_network_params(
     #  Approximate Symmetric Ansatz (Chi -> Omega -> Sigma)
     # ================================================================
     elif net_type == "approx_symmetric":
-        if "chi_features" in kwargs and kwargs["chi_features"] is not None:
-            chi_features    = tuple(int(v) for v in kwargs["chi_features"])
-            n_layers        = len(chi_features)
+        # Supplementary Table S2-inspired defaults (GPU profile):
+        # NIB channels [1,2,4], kernel size 3, C-sigmoid
+        # IB channels [4,4,4], kernel size 15, C-ELU
+        # For CPU/fast tiers we reduce kernel/channel widths via tier scaling.
+        if "chi_channels" in kwargs and kwargs["chi_channels"] is not None:
+            chi_channels    = tuple(int(v) for v in kwargs["chi_channels"])
+        elif "chi_features" in kwargs and kwargs["chi_features"] is not None:
+            # Backward compatibility
+            feats           = tuple(int(v) for v in kwargs["chi_features"])
+            chi_channels    = (1,) + feats if (not feats or feats[0] != 1) else feats
         else:
-            n_layers        = kwargs.get("n_layers", max(2, min(4, int(2 * tier_mult))))
-            base_hidden     = kwargs.get("base_hidden", max(64, int(4 * math.sqrt(max(1, num_sites)))))
-            if "base_hidden" not in kwargs:
-                chi_features = tuple(int(base_hidden * tier_mult) for _ in range(n_layers))
+            if target_accuracy == "fast":
+                chi_channels = (1, 2, 2)
             else:
-                chi_features = tuple(int(base_hidden) for _ in range(n_layers))
+                chi_channels = (1, 2, 4)
 
-        # Dense stack + readout (rough parameter estimate).
-        prev        = num_sites
-        n_params    = 0
-        for feat in chi_features:
-            n_params   += prev * feat + feat
-            prev        = feat
-        n_params += prev + 1
+        if "omega_channels" in kwargs and kwargs["omega_channels"] is not None:
+            omega_channels = tuple(int(v) for v in kwargs["omega_channels"])
+        else:
+            if target_accuracy == "fast":
+                omega_channels  = (2, 2, 2)
+            else:
+                omega_channels  = (4, 4, 4)
 
-        symmetry_mode   = str(kwargs.get("symmetry_mode", "mean"))
-        chi_act         = kwargs.get("chi_act", "tanh")
-        readout_act     = kwargs.get("readout_act", "log_cosh")
-        extra_kwargs    = {
-            "chi_features"  : chi_features,
-            "chi_act"       : chi_act,
-            "readout_act"   : readout_act,
-            "symmetry_mode" : symmetry_mode,
+        # Keep invariant kernel large by default, but clamp to geometry size.
+        chi_kernel_size         = int(kwargs.get("chi_kernel_size", 3))
+        default_omega_kernel    = 15 if target_accuracy == "high" else 11
+        if target_accuracy == "fast":
+            default_omega_kernel = 7
+
+        if reshape_dims is not None and len(reshape_dims) >= 2:
+            # Enforce odd kernel and avoid uselessly large kernels on tiny systems.
+            size_hint               = int(max(1, min(reshape_dims[0], reshape_dims[1])))
+            default_omega_kernel    = min(default_omega_kernel, 2 * size_hint - 1)
+
+        omega_kernel_size = int(kwargs.get("omega_kernel_size", max(3, default_omega_kernel)))
+        if omega_kernel_size % 2 == 0:
+            omega_kernel_size += 1
+
+        nib_act         = kwargs.get("nib_act", kwargs.get("chi_act", "c_sigmoid"))
+        ib_act          = kwargs.get("ib_act", "c_elu")
+        readout_act     = kwargs.get("readout_act", None)
+
+        # Rough parameter estimate for masked conv layers.
+        n_params = 0
+        for cin, cout in zip(chi_channels[:-1], chi_channels[1:]):
+            n_params += cout * cin * max(1, chi_kernel_size) + cout
+        for cin, cout in zip(omega_channels[:-1], omega_channels[1:]):
+            n_params += cout * cin * max(1, omega_kernel_size) + cout
+
+        if lattice_dims is not None and len(lattice_dims) >= 2:
+            lattice_shape = (int(lattice_dims[0]), int(lattice_dims[1]))
+        else:
+            lattice_shape = None
+
+        extra_kwargs = {
+            "architecture": "combo",
+            "chi_channels": chi_channels,
+            "omega_channels": omega_channels,
+            "chi_kernel_size": chi_kernel_size,
+            "omega_kernel_size": omega_kernel_size,
+            "nib_act": nib_act,
+            "ib_act": ib_act,
+            "readout_act": readout_act,
+            "lattice_type": lattice_type,
+            "lattice_shape": lattice_shape,
+            "bc": kwargs.get("bc", "pbc"),
+            "ib_init_std": kwargs.get("ib_init_std", 0.02),
+            "nib_identity_init": kwargs.get("nib_identity_init", True),
+            "wilson_rescale": kwargs.get("wilson_rescale", 10 ** 1.5),
+            "pool_mode": kwargs.get("pool_mode", "sum"),
+            "wilson_separate_complex": kwargs.get("wilson_separate_complex", True),
         }
-        if _HAS_APPROX_SYMMETRIC and make_translation_symmetry_op is not None:
-            extra_kwargs["symmetry_op"] = make_translation_symmetry_op(mode=symmetry_mode)
 
         return SOTANetConfig(
             net_type="approx_symmetric",
             input_shape=(num_sites,),
-            features=chi_features,
-            depth=n_layers,
+            features=chi_channels,
+            depth=len(chi_channels) + len(omega_channels) - 2,
             dtype=dtype,
             estimated_params=n_params,
             extra_kwargs=extra_kwargs,
             description=(
-                f"ApproxSymmetric with chi_features={chi_features}, symmetry='{symmetry_mode}', "
-                f"chi_act={chi_act}, readout={readout_act}. Override: base_hidden, n_layers, "
-                f"symmetry_mode, chi_act, readout_act."
+                f"ApproxSymmetric(combo) with NIB channels={chi_channels}, "
+                f"IB channels={omega_channels}, kernels=({chi_kernel_size},{omega_kernel_size}), "
+                f"activations=({nib_act},{ib_act})."
             ),
         )
     
@@ -747,12 +791,16 @@ class NetworkFactory:
         "approx_symmetric": NetworkInfo(
             "ApproxSymmetric",
             "Approximately symmetric Chi -> Omega -> Sigma ansatz",
-            "Benchmarking against RBM/CNN while enforcing symmetry aggregation in the readout.",
+            "Geometry-aware combo architecture: non-invariant site block, plaquette-invariant Wilson map, and invariant dual-plaquette block.",
             arguments={
-                "chi_features"       : "Hidden widths of the Chi block (e.g., `(128, 128)`).",
-                "symmetry_mode"      : "Translation aggregation mode for Omega ('mean' or 'sum').",
-                "chi_act"            : "Activation in Chi block (default: 'tanh' for complex stability).",
-                "readout_act"        : "Readout nonlinearity (default: 'log_cosh').",
+                "chi_channels"       : "Non-invariant block channels (Table S2 style: `(1,2,4)`).",
+                "omega_channels"     : "Invariant block channels (Table S2 style: `(4,4,4)`).",
+                "chi_kernel_size"    : "Site-neighborhood kernel size for Chi (default: `3`).",
+                "omega_kernel_size"  : "Dual-plaquette kernel size for Omega (default: `15` for high-accuracy GPU runs).",
+                "nib_act"            : "Non-invariant activation (default: `'c_sigmoid'`).",
+                "ib_act"             : "Invariant activation (default: `'c_elu'`).",
+                "lattice_type"       : "Geometry source (e.g., `'honeycomb'`).",
+                "lattice_shape"      : "Unit-cell lattice size `(Lx, Ly)` for geometry construction.",
                 "dtype"              : "Data type for weights ('complex64', 'complex128', etc.).",
             },
         ),

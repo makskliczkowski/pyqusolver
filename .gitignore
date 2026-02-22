@@ -241,3 +241,4 @@ mcdata/
 *demo*.png
 */demo*
 */tmp
+*.mpack

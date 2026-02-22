@@ -277,23 +277,24 @@ class NQSSolverConfig(_ConfigSchemaMixin):
     This dataclass stores solver-level defaults and can be converted to a
     :class:`NQSTrainConfig` using :meth:`make_train_config`.
     """
-    ansatz              : str = "rbm"
-    sampler             : str = "MCSampler"
-    n_chains            : int = 16
-    n_samples           : int = 1000
-    n_sweep             : int = 10
-    n_therm             : int = 100
-    lr                  : float = 0.01
-    epochs              : int = 300
-    dtype               : str = "complex128"
-    backend             : str = "jax"
+    ansatz              : str       = "rbm"
+    sampler             : str       = "MCSampler"
+    # CPU-friendly defaults. GPU-heavy profiles are selected by NQS.get_auto_config().
+    n_chains            : int       = 32
+    n_samples           : int       = 256
+    n_sweep             : int       = 48
+    n_therm             : int       = 24
+    lr                  : float     = 7e-3
+    epochs              : int       = 300
+    dtype               : str       = "complex128"
+    backend             : str       = "jax"
 
     # Training / scheduling defaults
     phases              : Union[str, tuple] = "default"
     lr_scheduler        : Optional[Union[str, Callable]] = "cosine"
     reg                 : Optional[float] = None
     reg_scheduler       : Optional[Union[str, Callable]] = None
-    diag_shift          : float = 1e-2
+    diag_shift          : float = 5e-5
     diag_scheduler      : Optional[Union[str, Callable]] = None
 
     # Sampler controls used in NQS.train(...)
@@ -464,11 +465,11 @@ class NQSTrainConfig(_ConfigSchemaMixin):
     global_fraction     : Optional[float] = None
 
     # Optimisation schedules and values
-    lr                  : Optional[float] = 1e-2
+    lr                  : Optional[float] = 7e-3
     lr_scheduler        : Optional[Union[str, Callable]] = "cosine"
     reg                 : Optional[float] = None
     reg_scheduler       : Optional[Union[str, Callable]] = None
-    diag_shift          : float = 1e-2
+    diag_shift          : float = 5e-5
     diag_scheduler      : Optional[Union[str, Callable]] = None
 
     # Scheduler aliases forwarded as prefixed kwargs (consumed in NQSTrainer)

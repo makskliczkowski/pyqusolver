@@ -231,22 +231,18 @@ class Hamiltonian(BasisAwareOperator):
         self._sync_symmetry_from_hilbert()
 
         # for the matrix representation of the Hamiltonian
-        self._hamil: np.ndarray = (
-            None  # will store the Hamiltonian matrix with Nh x Nh full Hilbert space
-        )
+        self._hamil: np.ndarray     = None  # will store the Hamiltonian matrix with Nh x Nh full Hilbert space
 
         #! single particle Hamiltonian info
-        self._hamil_sp: np.ndarray = (
-            None  # will store Ns x Ns (2Ns x 2Ns for BdG) matrix for quadratic Hamiltonian
-        )
-        self._delta_sp: np.ndarray = None
-        self._constant_offset = 0.0
-        self._isfermions = True
-        self._isbosons = False
+        self._hamil_sp: np.ndarray  = None  # will store Ns x Ns (2Ns x 2Ns for BdG) matrix for quadratic Hamiltonian
+        self._delta_sp: np.ndarray  = None
+        self._constant_offset       = 0.0
+        self._isfermions            = True
+        self._isbosons              = False
 
-        self._loc_energy_int_fun: Optional[Callable] = None
-        self._loc_energy_np_fun: Optional[Callable] = None
-        self._loc_energy_jax_fun: Optional[Callable] = None
+        self._loc_energy_int_fun    : Optional[Callable] = None
+        self._loc_energy_np_fun     : Optional[Callable] = None
+        self._loc_energy_jax_fun    : Optional[Callable] = None
 
     # ----------------------------------------------------------------------------------------------
     #! Representation - helpers
@@ -990,15 +986,15 @@ class Hamiltonian(BasisAwareOperator):
 
             if self.sparse:
                 if self._is_numpy:
-                    self._hamil_sp = sp.sparse.csr_matrix(ham_shape, dtype=self._dtype)
+                    self._hamil_sp  = sp.sparse.csr_matrix(ham_shape, dtype=self._dtype)
                 else:
-                    indices = self._backend.zeros((0, 2), dtype=np.int64)
-                    data = self._backend.zeros((0,), dtype=self._dtype)
-                    self._hamil_sp = BCOO((data, indices), shape=ham_shape)
-                    self._delta_sp = BCOO((data, indices), shape=ham_shape)
+                    indices         = self._backend.zeros((0, 2), dtype=np.int64)
+                    data            = self._backend.zeros((0,), dtype=self._dtype)
+                    self._hamil_sp  = BCOO((data, indices), shape=ham_shape)
+                    self._delta_sp  = BCOO((data, indices), shape=ham_shape)
             else:
-                self._hamil_sp = self._backend.zeros(ham_shape, dtype=self._dtype)
-                self._delta_sp = self._backend.zeros(ham_shape, dtype=self._dtype)
+                self._hamil_sp      = self._backend.zeros(ham_shape, dtype=self._dtype)
+                self._delta_sp      = self._backend.zeros(ham_shape, dtype=self._dtype)
             self._hamil = None
         else:
             if self.sparse:
@@ -1022,8 +1018,8 @@ class Hamiltonian(BasisAwareOperator):
                         log="debug",
                     )
                     # Create an empty sparse Hamiltonian matrix using JAX's BCOO format
-                    indices = self._backend.zeros((0, 2), dtype=ACTIVE_INT_TYPE)
-                    data = self._backend.zeros((0,), dtype=self._dtype)
+                    indices     = self._backend.zeros((0, 2), dtype=np.int32)
+                    data        = self._backend.zeros((0,), dtype=self._dtype)
                     self._hamil = BCOO((data, indices), shape=(self._nh, self._nh))
 
                 # --------------------------------------------------------------------------------------

@@ -183,9 +183,12 @@ class TransverseFieldIsing(HamiltonianSpin):
             hz : Optional[Union[List[float], float]]:
                 Perpendicular field strength(s).
         """
-        self._j = self._set_some_coupling(j)
-        self._hx = self._set_some_coupling(hx)
-        self._hz = self._set_some_coupling(hz)
+        if j is not None:
+            self._j = self._set_some_coupling(j)
+        if hx is not None:
+            self._hx    = self._set_some_coupling(hx)
+        if hz is not None:
+            self._hz    = self._set_some_coupling(hz)
 
     def _set_local_energy_operators(self):
         """
@@ -238,7 +241,7 @@ class TransverseFieldIsing(HamiltonianSpin):
 
         #! Add Transverse Field Terms
         for i in range(self.ns):
-            if not np.isclose(self._hx[i], 0.0):
+            if HamiltonianSpin._ADD_CONDITION(self._hx, i):
                 self.add_local_spin_component(
                     i,
                     "x",
@@ -255,11 +258,9 @@ class TransverseFieldIsing(HamiltonianSpin):
 
         #! Add Ising Perpendicular Terms
         for i in range(self.ns):
-            if not np.isclose(self._hz[i], 0.0):
+            if HamiltonianSpin._ADD_CONDITION(self._hz, i):
                 self.add_local_spin_component(i, "z", -self._hz[i], op_z=op_sz_l)
-                self._log(
-                    f"Adding Sz at site {i} with multiplier {-self._hz[i]:.3f}", lvl=2, log="debug"
-                )
+                self._log(f"Adding Sz at site {i} with multiplier {-self._hz[i]:.3f}", lvl=2, log="debug")
 
         #! Add Ising Interaction Terms
         # Sum over unique nearest-neighbor pairs <i,j>
@@ -269,30 +270,32 @@ class TransverseFieldIsing(HamiltonianSpin):
 
             for nn_idx in range(nn_forward_num):
 
-                j_neighbor = lattice.get_nn_forward(i, num=nn_idx)
+                j_neighbor  = lattice.get_nn_forward(i, num=nn_idx)
                 if lattice.wrong_nei(j_neighbor):
                     continue
-                j_neighbor = int(j_neighbor)
+                j_neighbor  = int(j_neighbor)
 
-                wx, wy, wz = lattice.bond_winding(i, j_neighbor)
-                phase = lattice.boundary_phase_from_winding(wx, wy, wz)
+                wx, wy, wz  = lattice.bond_winding(i, j_neighbor)
+                phase       = lattice.boundary_phase_from_winding(wx, wy, wz)
 
                 # Use the coupling J associated with site i (or average, depending on convention)
                 # Simplest: use J[i]. Assume coupling belongs to the bond originating from i.
-                coupling_j = self._j[i] * phase
-
-                if not np.isclose(coupling_j, 0.0):
-                    self.add(
-                        operator=op_sz_sz_c,
-                        multiplier=-coupling_j,
-                        sites=[i, j_neighbor],
-                        modifies=False,
-                    )
-                    self._log(
-                        f"Adding SzSz between sites ({i}, {j_neighbor}) with multiplier {-coupling_j:.3f}",
-                        lvl=2,
-                        log="debug",
-                    )
+                if not HamiltonianSpin._ADD_CONDITION(self._j, i):
+                    continue
+                
+                coupling_j  = self._j[i] * phase # Apply boundary phase to coupling
+                
+                self.add(
+                    operator=op_sz_sz_c,
+                    multiplier=-coupling_j,
+                    sites=[i, j_neighbor],
+                    modifies=False,
+                )
+                self._log(
+                    f"Adding SzSz between sites ({i}, {j_neighbor}) with multiplier {-coupling_j:.3f}",
+                    lvl=2,
+                    log="debug",
+                )
 
     # ----------------------------------------------------------------------------------------------
     #! Properties
