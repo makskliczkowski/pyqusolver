@@ -16,21 +16,22 @@ Date        : December 2025
 ------------------------------------------------------------------------
 """
 
-from __future__ import annotations
+from    __future__ import annotations
 
-import time
-from abc import ABC
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
+import  time
+from    abc import ABC
+from    typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, TypeAlias
 
 import numba
 import numpy as np
 
 try:
     import jax
-
     JAX_AVAILABLE = True
 except ImportError:
     JAX_AVAILABLE = False
+
+Array : TypeAlias = Union[np.ndarray, "jax.Array"]
 
 # ---------------------------------------------------------------------------
 # QES imports
@@ -366,24 +367,20 @@ class SpecialOperator(Operator, ABC):
         """
 
         # Pre-compute backend for _handle_system (before calling Operator.__init__)
-        self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k) = (
-            Operator._set_backend(backend, seed)
-        )
-        self._is_jax = JAX_AVAILABLE and self._backend != np
-        self._is_numpy = not self._is_jax
+        self._backendstr, self._backend, self._backend_sp, (self._rng, self._rng_k) = Operator._set_backend(backend, seed)
+        self._is_jax                = JAX_AVAILABLE and self._backend != np
+        self._is_numpy              = not self._is_jax
 
-        self._dtype = dtype
-        self._hilbert_space = None  # Will be set by _handle_system
-        self._logger = (
-            hilbert_space.logger if (logger is None and hilbert_space is not None) else logger
-        )
-        self._verbose = verbose
-        self._iterator = 0  # For tracking iterations in matvec
+        self._dtype                 = dtype
+        self._hilbert_space         = None  # Will be set by _handle_system
+        self._logger                = hilbert_space.logger if (logger is None and hilbert_space is not None) else logger
+        self._verbose               = verbose
+        self._iterator              = 0  # For tracking iterations in matvec
 
         #! general Hamiltonian info
-        self._name = "Hamiltonian" if name is None else name
-        self._is_manybody = is_manybody
-        self._is_quadratic = not is_manybody
+        self._name                  = "Hamiltonian" if name is None else name
+        self._is_manybody           = is_manybody
+        self._is_quadratic          = not is_manybody
         self._particle_conserving = False
 
         # Physics type for local space inference (can be set by subclasses before __init__)
@@ -421,25 +418,21 @@ class SpecialOperator(Operator, ABC):
         self._startns = 0  # for starting hamil calculation (potential loop over sites)
 
         # Instruction code system
-        self._lookup_codes: Dict[str, int] = (
-            {}
-        )  # Name to code mapping -> maps operator names to instruction codes
-        self._instr_codes: List[int] = (
-            []
-        )  # Instruction codes for each term. Defined by each module (see OperatorModule)
-        self._instr_coeffs: List[complex] = []  # Coefficients for each term
-        self._instr_sites: List[List[int]] = []  # Site indices for each term
-        self._instr_max_arity: int = 2  # Default: 2-site correlations
+        self._lookup_codes: Dict[str, int]          = {}    # Name to code mapping -> maps operator names to instruction codes
+        self._instr_codes: List[int]                = []    # Instruction codes for each term. Defined by each module (see OperatorModule)
+        self._instr_coeffs: List[complex]           = []    # Coefficients for each term
+        self._instr_sites: List[List[int]]          = []    # Site indices for each term
+        self._instr_max_arity: int                  = 2     # Default: 2-site correlations
 
         # Composition function (set by subclass or setup method)
-        self._instr_function: Optional[Callable] = None
-        self._instr_max_out: int = self._ns + 1  # Max output size for composition function
+        self._instr_function: Optional[Callable]    = None
+        self._instr_max_out: int                    = self._ns + 1  # Max output size for composition function
 
         # Custom operator registry
-        self._custom_op_registry: Dict[int, Callable] = {}  # Custom operator functions by code
-        self._custom_op_counter: int = CUSTOM_OP_BASE
-        self._custom_op_arity: Dict[int, int] = {}  # Arity of each custom operator
-        self._has_custom_ops: bool = False  # Whether custom operators are present, for optimization
+        self._custom_op_counter: int                    = CUSTOM_OP_BASE
+        self._custom_op_registry: Dict[int, Callable]   = {}    # Custom operator functions by code
+        self._custom_op_arity: Dict[int, int]           = {}    # Arity of each custom operator
+        self._has_custom_ops: bool                      = False # Whether custom operators are present, for optimization
 
         # Operator term lists (organized by site and type)
         # These are used by subclasses like Hamiltonian to build composition functions
@@ -457,11 +450,9 @@ class SpecialOperator(Operator, ABC):
         ]  # Modifying, local operators
 
         # Compiled composition functions for different backends
-        self._composition_int_fun: Optional[Callable] = (
-            None  # JIT-compiled integer state composition
-        )
-        self._composition_np_fun: Optional[Callable] = None  # NumPy composition function
-        self._composition_jax_fun: Optional[Callable] = None  # JAX composition function
+        self._composition_int_fun: Optional[Callable]   = None  # JIT-compiled integer state composition
+        self._composition_np_fun: Optional[Callable]    = None  # NumPy composition function
+        self._composition_jax_fun: Optional[Callable]   = None  # JAX composition function
 
         # Buffers for instruction function to avoid reallocation
         self._instr_buffers: Any = None
@@ -745,9 +736,7 @@ class SpecialOperator(Operator, ABC):
             try:
                 from QES.Algebra.Operator.operator_loader import get_operator_module
             except ImportError as e:
-                raise ImportError(
-                    "Operator module could not be loaded. Ensure QES is properly installed."
-                ) from e
+                raise ImportError("Operator module could not be loaded. Ensure QES is properly installed.") from e
 
             # Get local space type from Hilbert space if available
             if self._hilbert_space is not None and hasattr(self._hilbert_space, "_local_space"):
@@ -755,8 +744,8 @@ class SpecialOperator(Operator, ABC):
             else:
                 # Default to spin-1/2 for many-body, None for quadratic
                 from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
-
                 local_space_type = LocalSpaceTypes.SPIN_1_2 if self._is_manybody else None
+                
             self._operator_module = get_operator_module(local_space_type)
         return self._operator_module
 
@@ -1080,9 +1069,7 @@ class SpecialOperator(Operator, ABC):
     #! Coupling Vector Setup
     # -------------------------------------------------------------------------
 
-    def _set_some_coupling(
-        self, coupling: Union[list, np.ndarray, float, complex, int, str]
-    ) -> "Array":
+    def _set_some_coupling(self, coupling: Union[list, np.ndarray, float, complex, int, str]) -> "Array":
         """
         Distinghuishes between different initial values for the coupling and returns it.
         One distinguishes between:
@@ -1118,10 +1105,10 @@ class SpecialOperator(Operator, ABC):
 
     def add(
         self,
-        operator: Operator,
-        multiplier: Union[float, complex, int],
-        modifies: bool = False,
-        sites=None,
+        operator    : Operator,
+        multiplier  : Union[float, complex, int],
+        modifies    : bool = False,
+        sites       = None,
     ):
         """
         Add an operator to the internal operator collections based on its locality.
@@ -1181,9 +1168,9 @@ class SpecialOperator(Operator, ABC):
             )
 
         # check if the sites are provided, if one sets the operator, we would put it at a given site
-        i = 0 if (sites is None or len(sites) == 0) else sites[0]
-        op_tuple = create_add_operator(operator, multiplier, sites)
-        modifies = modifies or operator.modifies
+        i           = 0 if (sites is None or len(sites) == 0) else int(sites[0])
+        op_tuple    = create_add_operator(operator, multiplier, sites)
+        modifies    = modifies or operator.modifies
         # if the operator is meant to be local, it does not modify the state
         if not modifies:
             if operator.type_acting == OperatorTypeActing.Global:
@@ -1224,15 +1211,13 @@ class SpecialOperator(Operator, ABC):
         self._instr_coeffs.append(multiplier)
 
         # Pad sites to self._instr_max_arity (extend if custom operator has more sites)
-        s_list = list(sites) if sites else [0]
-        arity = len(s_list)
+        s_list  = list(sites) if sites else [0]
+        arity   = len(s_list)
 
         # Update max arity if this operator has more sites than current max
         if arity > self._instr_max_arity:
             self._instr_max_arity = arity
-            self._log(
-                f"Extended max arity to {arity} for operator {operator.name}", lvl=2, log="debug"
-            )
+            self._log(f"Extended max arity to {arity} for operator {operator.name}", lvl=2, log="debug")
 
         while len(s_list) < self._instr_max_arity:
             s_list.append(-1)
