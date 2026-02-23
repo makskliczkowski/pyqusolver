@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 # Mapping of attribute names to (module_relative_path, attribute_name_in_module)
 _LAZY_IMPORTS = {
-    "Test": (".test", None),
-    "QES": (".QES", None),
+    "Test"  : (".test", None),
+    "QES"   : (".QES", None),
 }
 
 # Cache for lazily loaded modules/attributes
