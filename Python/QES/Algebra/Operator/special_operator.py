@@ -1595,61 +1595,52 @@ class SpecialOperator(Operator, ABC):
                     vals_buf[0]     = 0.0
                     return states_buf, vals_buf
 
-            _ = wrapper_empty(0)
+            if self._loc_energy_int_fun_cm:
+                t0  = time.perf_counter()
+                _   = wrapper_empty(0)
+                t1  = time.perf_counter()
+                self._log(f"Empty composition function took {t1 - t0:.6f} seconds to run.", log="debug", lvl=4, color="blue")
+
             self._composition_int_fun = wrapper_empty
             return
 
         try:
-            compile_start = time.perf_counter()
+            compile_start                       = time.perf_counter()
+            sites_arr, coeffs_arr, codes_arr    = self._finalize_instruction_arrays()
+            n_ops                               = len(self._instr_codes)
+            ns_val                              = self.ns
 
-            # Finalize arrays
-            sites_arr, coeffs_arr, codes_arr = self._finalize_instruction_arrays()
-            n_ops = len(self._instr_codes)
-            ns_val = self.ns
-
-            # Get the appropriate instruction function
-            instr_function = self._get_instruction_function()
+            # Get the appropriate instruction function - depending on physics
+            instr_function                      = self._get_instruction_function()
             if instr_function is None:
-                self._log(
-                    "No instruction function available.", lvl=2, log="warning", color="yellow"
-                )
+                self._log("No instruction function available.", lvl=2, log="warning", color="yellow")
                 return
 
             # Create the wrapper
-            max_out = self._instr_max_out
-            is_complex = getattr(self, "_iscpx", False) or self._dtype_is_complex()
+            max_out     = self._instr_max_out
+            is_complex  = getattr(self, "_iscpx", False) or self._dtype_is_complex()
 
             if is_complex:
 
                 @numba.njit(nogil=True, fastmath=True, boundscheck=False, cache=False)
                 def wrapper(state: int):
-                    states_buf = np.empty(max_out, dtype=np.int64)
-                    vals_buf = np.empty(max_out, dtype=np.complex128)
-                    return instr_function(
-                        state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf
-                    )
-
+                    states_buf  = np.empty(max_out, dtype=np.int64)
+                    vals_buf    = np.empty(max_out, dtype=np.complex128)
+                    return instr_function(state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
             else:
-
                 @numba.njit(nogil=True, fastmath=True, boundscheck=False, cache=False)
                 def wrapper(state: int):
-                    states_buf = np.empty(max_out, dtype=np.int64)
-                    vals_buf = np.empty(max_out, dtype=np.float64)
-                    return instr_function(
-                        state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf
-                    )
+                    states_buf  = np.empty(max_out, dtype=np.int64)
+                    vals_buf    = np.empty(max_out, dtype=np.float64)
+                    return instr_function(state, n_ops, codes_arr, sites_arr, coeffs_arr, ns_val, states_buf, vals_buf)
 
             # Compile by calling once
-            _ = wrapper(0)
-            compile_end = time.perf_counter()
-            self._composition_int_fun = wrapper
-            self._log(
-                f"Composition function compiled in {compile_end - compile_start:.6f} seconds.",
-                log="info",
-                lvl=3,
-                color="green",
-                verbose=self._verbose,
-            )
+            if self._loc_energy_int_fun_cm:
+                _ = wrapper(0)
+                compile_end = time.perf_counter()
+                self._log(f"Composition function compiled in {compile_end - compile_start:.6f} seconds.", log="info", lvl=3, color="green", verbose=self._verbose,)
+                
+            self._composition_int_fun   = wrapper
 
         except Exception as e:
             self._log(f"Failed to build composition function: {e}", lvl=3, color="red", log="error")

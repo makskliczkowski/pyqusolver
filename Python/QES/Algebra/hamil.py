@@ -297,6 +297,7 @@ class Hamiltonian(BasisAwareOperator):
         self._loc_energy_int_fun    : Optional[Callable] = None
         self._loc_energy_np_fun     : Optional[Callable] = None
         self._loc_energy_jax_fun    : Optional[Callable] = None
+        self._loc_energy_int_fun_cm = kwargs.get("compile", True)
         self._impurities            = None
         
     ################################################################################################
@@ -398,9 +399,9 @@ class Hamiltonian(BasisAwareOperator):
 
         Call this whenever operator terms are modified after initialization.
         """
-        self._loc_energy_int_fun = None
-        self._loc_energy_np_fun = None
-        self._loc_energy_jax_fun = None
+        self._loc_energy_int_fun    = None
+        self._loc_energy_np_fun     = None
+        self._loc_energy_jax_fun    = None
 
         if hasattr(self, "_composition_int_fun"):
             self._composition_int_fun = None
@@ -2095,9 +2096,9 @@ class Hamiltonian(BasisAwareOperator):
         self.reset_operator_terms()
 
         # Reset Hamiltonian-specific local energy function aliases
-        self._loc_energy_int_fun = None
-        self._loc_energy_np_fun = None
-        self._loc_energy_jax_fun = None
+        self._loc_energy_int_fun    = None
+        self._loc_energy_np_fun     = None
+        self._loc_energy_jax_fun    = None
         self.invalidate_runtime_cache(clear_matrix=True)
 
     def _set_local_energy_operators(self):
@@ -2136,9 +2137,7 @@ class Hamiltonian(BasisAwareOperator):
         self._loc_energy_int_fun = self._composition_int_fun
 
         if self._loc_energy_int_fun is None:
-            self._log(
-                "Integer local energy function not available.", lvl=3, color="red", log="error"
-            )
+            self._log("Integer local energy function not available.", lvl=3, color="red", log="error")
             # return
 
         # Set the NumPy functions
