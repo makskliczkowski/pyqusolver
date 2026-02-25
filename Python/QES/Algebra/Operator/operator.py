@@ -913,6 +913,168 @@ class Operator(GeneralMatrix):
 
     # -------------------------------
 
+    @staticmethod
+    def _as_column_matrix(vec: Any, *, name: str) -> Tuple[Any, bool]:
+        """
+        Return `vec` as (dim, ncol) matrix and whether original input was a vector.
+        """
+        if isinstance(vec, (list, tuple)):
+            vec = np.asarray(vec)
+
+        if not hasattr(vec, "ndim"):
+            raise TypeError(f"{name} must be array-like, got {type(vec)!r}.")
+        if vec.ndim == 1:
+            return vec[:, None], True
+        if vec.ndim == 2:
+            return vec, False
+        raise ValueError(f"{name} must be 1D or 2D, got shape {getattr(vec, 'shape', None)}.")
+
+    @staticmethod
+    def _column_overlap(
+        left_cols: Any,
+        right_cols: Any,
+        *,
+        left_is_vec: bool,
+        right_is_vec: bool,
+        pairwise: bool,
+    ) -> Any:
+        """
+        Compute <left|right> for vector/matrix-column conventions.
+        """
+        n_left = int(left_cols.shape[1])
+        n_right = int(right_cols.shape[1])
+
+        if pairwise and n_left > 1 and n_right > 1:
+            if n_left != n_right:
+                raise ValueError(
+                    f"Pairwise overlap requires equal column counts, got {n_left} and {n_right}."
+                )
+            # Memory-efficient diagonal of left^H @ right without materializing full matrix.
+            out = (left_cols.conj() * right_cols).sum(axis=0)
+            return out
+
+        out = left_cols.conj().T @ right_cols
+
+        if left_is_vec and right_is_vec:
+            return out[0, 0]
+        if left_is_vec:
+            return out[0, :]
+        if right_is_vec:
+            return out[:, 0]
+        return out
+
+    def overlap(
+        self,
+        vec1: np.ndarray,
+        vec2: Optional[np.ndarray] = None,
+        *,
+        pairwise: bool = True,
+    ) -> Any:
+        """
+        Compute overlaps <vec1|vec2> with vector or batched-column inputs.
+
+        Parameters
+        ----------
+        vec1, vec2 : array-like
+            1D vectors or 2D matrices with columns as states.
+        pairwise : bool, default True
+            If both inputs are 2D and have the same number of columns, return
+            only per-column overlaps (diagonal of vec1^H @ vec2) as a 1D array.
+            If False, return the full overlap matrix vec1^H @ vec2.
+        """
+        if vec2 is None:
+            vec2 = vec1
+
+        left_cols, left_is_vec = self._as_column_matrix(vec1, name="vec1")
+        right_cols, right_is_vec = self._as_column_matrix(vec2, name="vec2")
+
+        if left_cols.shape[0] != right_cols.shape[0]:
+            raise ValueError(
+                f"Vector size mismatch: {left_cols.shape[0]} (vec1) vs {right_cols.shape[0]} (vec2)."
+            )
+
+        return self._column_overlap(
+            left_cols,
+            right_cols,
+            left_is_vec=left_is_vec,
+            right_is_vec=right_is_vec,
+            pairwise=pairwise,
+        )
+
+    def expectation_value(
+        self,
+        state: np.ndarray,
+        other_state: Optional[np.ndarray] = None,
+        *,
+        hilbert_in: Optional["HilbertSpace"] = None,
+        hilbert_out: Optional["HilbertSpace"] = None,
+        symmetry_mode: str = "auto",
+        multithreaded: bool = False,
+        pairwise: bool = True,
+        out: Optional[np.ndarray] = None,
+        thread_buffer: Optional[np.ndarray] = None,
+        chunk_size: int = 1,
+        dtype: Optional[Any] = None,
+        hilbert: Optional["HilbertSpace"] = None,
+        **kwargs,
+    ) -> Any:
+        r"""
+        Compute matrix element(s) <state|O|other_state>.
+
+        Fast path:
+            use stored matrix if available and shape-compatible.
+        Fallback path:
+            use `matvec` (no matrix build required), including symmetry-aware paths.
+        """
+        if other_state is None:
+            other_state = state
+
+        left_cols, left_is_vec = self._as_column_matrix(state, name="state")
+        right_cols, right_is_vec = self._as_column_matrix(other_state, name="other_state")
+
+        if left_cols.shape[0] != right_cols.shape[0]:
+            raise ValueError(
+                f"State size mismatch: {left_cols.shape[0]} (state) vs {right_cols.shape[0]} (other_state)."
+            )
+
+        matrix = self._get_matrix_reference()
+        can_use_matrix = matrix is not None and getattr(matrix, "shape", (None, None))[1] == right_cols.shape[0]
+
+        if can_use_matrix:
+            operated = matrix @ right_cols
+        else:
+            try:
+                operated = self.matvec(
+                    right_cols[:, 0] if right_is_vec else right_cols,
+                    hilbert_in=hilbert_in if hilbert_in is not None else hilbert,
+                    hilbert_out=hilbert_out,
+                    symmetry_mode=symmetry_mode,
+                    multithreaded=multithreaded,
+                    out=out,
+                    thread_buffer=thread_buffer,
+                    chunk_size=chunk_size,
+                    dtype=dtype,
+                    **kwargs,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to evaluate expectation value via matvec fallback. "
+                    "Build operator matrix first (op.build(...)) or provide "
+                    "matvec-compatible operator kernels."
+                ) from exc
+            if getattr(operated, "ndim", 1) == 1:
+                operated = operated[:, None]
+
+        return self._column_overlap(
+            left_cols,
+            operated,
+            left_is_vec=left_is_vec,
+            right_is_vec=right_is_vec,
+            pairwise=pairwise,
+        )
+
+    # -------------------------------
+
     def override_matrix_function(self, function: Callable):
         """
         Override the matrix function of the operator.

@@ -205,16 +205,15 @@ def rho_symmetries(
     local_dim       = hilbert.local_space.local_dim
     ns              = hilbert.lattice.ns
 
-    # Normalize va input
-    (size_a, size_b), order = mask_subsystem(va, ns, local_dim, contiguous)
-    sites_a         = np.array(order[:size_a], dtype=np.int64)
-    sites_b         = np.array(order[size_a:], dtype=np.int64)
-    
     # Check if we should fallback to full expansion (for tiny systems or no symmetry)
     if not hilbert.has_sym:
         from ....general_python.physics.density_matrix import rho
         return rho(state, va, ns, local_dim, contiguous)
 
+    # Normalize va input
+    (size_a, size_b), order = mask_subsystem(va, ns, local_dim, contiguous)
+    sites_a         = np.array(order[:size_a], dtype=np.int64)
+    sites_b         = np.array(order[size_a:], dtype=np.int64)
     container       = hilbert.sym_container
     if container is None:
         raise RuntimeError("SymmetryContainer is required for symmetry-reduced RDMs.")

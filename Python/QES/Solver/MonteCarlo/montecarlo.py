@@ -65,6 +65,7 @@ class McsTrain:
         mcsam (int)     : Number of Monte Carlo steps. Default is 10                - this is for samplers.
         mcth (int)      : Number of Monte Carlo steps to thermalize. Default is 0   - this is for samplers.
         bsize (int)     : Size of a single block. Default is 4                      - this is for samplers - autocorrelation.
+        mc_corr (int)   : Number of steps between correlation measurements. Default is 1.
         dir (str)       : Directory for saving the data. Default is an empty string - this is for saving the data.
         nflip (int)     : Number of flips for a single Monte Carlo step. Default is 1.
         nrepl (int)     : Number of replicas.
@@ -79,6 +80,7 @@ class McsTrain:
     )
     mcth: int = 0  # number of mcSteps to thermalize - for samplers
     bsize: int = 4  # single block size (for autocorrelation) - for samplers (correlation)
+    mc_corr: int = 1  # number of steps between correlation measurements
     mcchain: int = 1  # number of chains - for samplers
     direct: str = ""  # saving directory for the data
     nflip: int = 1  # number of flips for a single MC step
@@ -94,6 +96,7 @@ class McsTrain:
             f"  - Samples       : {self.mcsam}\n"
             f"  - Thermal Steps : {self.mcth}\n"
             f"  - Block Size    : {self.bsize}\n"
+            f"  - Corr Steps    : {self.mc_corr}\n"
             f"  - Epochs        : {self.epochs}\n"
             f"  - Flips per Step: {self.nflip}\n"
             f"  - Save Directory: {self.direct or 'Not specified'}\n"

@@ -1023,10 +1023,8 @@ class GeneralMatrix(spla.LinearOperator):
     # Expectation Values and Matrix Operations
     # -------------------------------------------------------
 
-    def expectation_value(
-        self, state: np.ndarray, other_state: Optional[np.ndarray] = None
-    ) -> complex:
-        """
+    def expectation_value(self, state: np.ndarray, other_state: Optional[np.ndarray] = None) -> complex:
+        r"""
         Compute the expectation value ⟨state|M|other_state⟩ or ⟨state|M|state⟩.
 
         Parameters
