@@ -531,33 +531,31 @@ class OperatorModule:
         import numba
 
         # Setup & Dimensions
-        ns = hilbert.ns
+        ns          = hilbert.ns
         nh, n_total = eigenvectors.shape
-        n_states = nstates_to_store if nstates_to_store is not None else n_total
-        n_threads = numba.config.NUMBA_NUM_THREADS
-        has_sym = hilbert.has_sym
+        n_states    = nstates_to_store if nstates_to_store is not None else n_total
+        n_threads   = numba.config.NUMBA_NUM_THREADS
+        has_sym     = hilbert.has_sym
         numba.set_num_threads(n_threads)
 
-        ev = eigenvectors[:, :n_states]
-        ev_c_t = ev.conj().T
+        ev          = eigenvectors[:, :n_states]
+        ev_c_t      = ev.conj().T
 
         # Determine needed operators
-        ops_list = (
+        ops_list    = (
             ["xx", "xy", "xz", "yx", "yy", "yz", "zx", "zy", "zz"]
             if correlators is None
             else correlators
         )
-        values = {op: np.zeros((ns, ns, n_states), dtype=np.complex128) for op in ops_list}
+        values      = {op: np.zeros((ns, ns, n_states), dtype=np.complex128) for op in ops_list}
 
         # Components needed for susceptibility/magnetization (single site)
-        needed_components = sorted(list(set([c for op in ops_list for c in op if c in "xyz"])))
-        ops_module = self._load_spin_operators()
+        needed_components   = sorted(list(set([c for op in ops_list for c in op if c in "xyz"])))
+        ops_module          = self._load_spin_operators()
 
         # Initialize projectors for total magnetization (for susceptibility), correlation operators, etc.
-        mag_ops_matrix = {
-            comp: np.zeros((n_states, n_states), dtype=np.complex128) for comp in needed_components
-        }
-        corr_ops = {}
+        mag_ops_matrix      = { comp: np.zeros((n_states, n_states), dtype=np.complex128) for comp in needed_components }
+        corr_ops            = {}
 
         for op_name in ops_list:
             cache_key = (op_name, ns, "corr")
@@ -568,17 +566,17 @@ class OperatorModule:
             if hasattr(ops_module, f"sig_{op_name}"):
                 # Use standard factory (e.g. sig_xy)
                 factory = getattr(ops_module, f"sig_{op_name}")
-                op = factory(ns=ns, sites=None, type_act="corr")
+                op      = factory(ns=ns, sites=None, type_act="corr")
             elif op_name in ("xx", "yy", "zz"):
                 # Use sig_x, sig_y, sig_z respectively, but with type_act='corr'
-                c1 = op_name[0]
+                c1      = op_name[0]
                 factory = getattr(ops_module, f"sig_{c1}")
-                op = factory(ns=ns, sites=None, type_act="corr")
+                op      = factory(ns=ns, sites=None, type_act="corr")
             else:
                 # Fallback for others not in mixed list
                 # Use make_nsite_correlator
-                c1, c2 = op_name[0], op_name[1]
-                op = ops_module.make_nsite_correlator([c1, c2], ns=ns, sites=None)
+                c1, c2  = op_name[0], op_name[1]
+                op      = ops_module.make_nsite_correlator([c1, c2], ns=ns, sites=None)
 
             self._correlation_ops_cache[cache_key] = op
             corr_ops[op_name] = op
@@ -601,26 +599,22 @@ class OperatorModule:
                 single_ops[comp] = op
 
         # Memory Management
-        vec_gb = (nh * 16) / (1024**3)
+        vec_gb          = (nh * 16) / (1024**3)
         # We need buffers for:
         # 1. Output of correlation op (1 vector per batch)
         # 2. Output of single ops (3 vectors per batch)
-        vecs_per_batch = 1.0 + 4.0  # 1 for corr, 3 for single ops
-        avail_mem = get_available_memory_gb()
-        safe_mem = avail_mem * safety_factor
-        batch_size = int(safe_mem / (vec_gb * vecs_per_batch))
-        batch_size = max(1, min(batch_size, n_states))
+        vecs_per_batch  = 1.0 + 4.0  # 1 for corr, 3 for single ops
+        avail_mem       = get_available_memory_gb()
+        safe_mem        = avail_mem * safety_factor
+        batch_size      = int(safe_mem / (vec_gb * vecs_per_batch))
+        batch_size      = max(1, min(batch_size, n_states))
 
         if logger:
-            logger.info(
-                f"Correlations: Batch size {batch_size} states (avail: {avail_mem:.1f}GB)",
-                lvl=2,
-                color="cyan",
-            )
+            logger.info(f"Correlations: Batch size {batch_size} states (avail: {avail_mem:.1f}GB)", lvl=2, color="cyan",)
 
-        JIT_CHUNK_SIZE = choose_chunk_size(hilbert.nh, n_threads)
-        thread_buf_cache = np.zeros((n_threads, nh, JIT_CHUNK_SIZE), dtype=np.complex128)
-        buf_corr = np.zeros((nh, batch_size), dtype=np.complex128)
+        JIT_CHUNK_SIZE      = choose_chunk_size(hilbert.nh, n_threads)
+        thread_buf_cache    = np.zeros((n_threads, nh, JIT_CHUNK_SIZE), dtype=np.complex128)
+        buf_corr            = np.zeros((nh, batch_size), dtype=np.complex128)
 
         # Loop over sites
         for i in range(ns):
@@ -628,13 +622,13 @@ class OperatorModule:
 
             # Loop over batches
             for b_start in range(0, n_states, batch_size):
-                b_end = min(b_start + batch_size, n_states)
-                curr_width = b_end - b_start
-                ev_batch = ev[:, b_start:b_end]
+                b_end       = min(b_start + batch_size, n_states)
+                curr_width  = b_end - b_start
+                ev_batch    = ev[:, b_start:b_end]
 
                 # Accumulate Magnetization / Susceptibility Terms (Single Site)
                 for comp in needed_components:
-                    buf = buf_corr[:, :curr_width]
+                    buf     = buf_corr[:, :curr_width]
                     buf.fill(0)
                     single_ops[comp].matvec(
                         ev_batch,
@@ -808,6 +802,7 @@ class OperatorModule:
             return self._compute_spin_correlations(
                 eigenvectors=eigenvectors,
                 eigenvalues=eigenvalues,
+                lattice=lattice,
                 hilbert=hilbert,
                 nstates_to_store=nstates_to_store,
                 correlators=correlators,
