@@ -20,13 +20,9 @@ import  sys, os
 import  argparse
 import  numpy as np
 import  pandas as pd
-import  matplotlib as mpl
 import  matplotlib.pyplot as plt
-import  scipy.linalg as la
 from    pathlib import Path
 from    typing import Tuple, List, Dict, Any, Union, Optional
-
-from traitlets import default
 
 #! project import
 # Add project root to sys.path
@@ -36,15 +32,18 @@ if str(_QES_ROOT) not in sys.path:
     sys.path.insert(0, str(_QES_ROOT))
 
 try:
+    import jax
+    import jax.numpy as jnp
     from QES.general_python.common.flog                         import get_global_logger
-    from QES.general_python.physics.density_matrix              import schmidt
+    from QES.general_python.physics                             import density_matrix_jax as density_matrix_mes
+    from QES.general_python.physics                             import entropy_jax as entropy_mes
     from QES.Algebra.Model.Interacting.Spin.heisenberg_kitaev   import HeisenbergKitaev, HoneycombLattice
     from QES.Algebra.Properties.mes                             import find_mes, compute_modular_s_matrix
     from QES.Algebra.Properties.entanglement_spectrum           import (
                                                                     calculate_entanglement_spectrum, 
                                                                     entanglement_entropy_from_spectrum
                                                                 )
-    from QES.general_python.physics.entropy                     import topological_entropy, entropy
+    from QES.general_python.physics.entropy                     import topological_entropy
 except ImportError as e:
     raise ImportError(f"Failed to import required modules: {e}. Please ensure the QES project structure is intact and all dependencies are installed.")
 
@@ -73,15 +72,16 @@ def savefig(fig, name, show=False, q: float = 1.0):
     plt.close(fig)
 
 def get_entropy_function(region: List[int], ns: int, q: float = 1.0):
-    """Factory for entropy function used by find_mes."""
+    """Factory for JAX-traceable entropy function used by find_mes."""
     
     if len(region) == 0 or len(region) == ns:
-        return lambda psi: 0.0
+        return lambda psi: jnp.asarray(0.0)
     
     def s_func(psi):
-        # Use optimized schmidt call from density_matrix
-        eigvals = schmidt(psi, va=region, ns=ns, eig=False, square=True, return_vecs=False)
-        return entropy(eigvals, q=q)
+        eigvals = density_matrix_mes.schmidt(
+            psi, va=region, ns=ns, eig=False, contiguous=False, square=True, return_vecs=False
+        )
+        return entropy_mes.renyi_entropy_jax(eigvals, q=q)
     
     return s_func
 
@@ -105,9 +105,6 @@ def _handle_cut(lat: HoneycombLattice, cut_kind: str, logger, args) -> Union[Lis
     """Handle cut region retrieval with error handling."""
     try:
         region_cut = lat.get_region(kind=cut_kind)
-        
-        # Plot the cut region on the lattice
-        fig_cut, ax_cut = plt.subplots(figsize=(5, 5))
         
         # Visualize the cut region on the lattice
         fig_cut, ax_cut = plt.subplots(figsize=(5, 5))
@@ -210,7 +207,10 @@ def run_demo():
         mes_states, mes_values, coeffs, _ = find_mes(
             V_gs, S_func, 
             n_trials=n_trials, state_max=n_gs, n_restarts=n_restarts, 
-            max_iter=max_iter, verbose=False
+            max_iter=max_iter,
+            method='jax-grad',
+            options={'lr': 0.05, 'patience': 30},
+            verbose=False
         )
         
         for i, S in enumerate(mes_values):
@@ -363,7 +363,7 @@ def run_demo():
         for _ in range(n_samples):
             c           = np.random.randn(n_gs) + 1j*np.random.randn(n_gs)
             c          /= np.linalg.norm(c)
-            entropies_rand.append(S_func_best(V_gs @ c))
+            entropies_rand.append(float(S_func_best(V_gs @ c)))
         
         # Only plot histogram if there is a non-zero range to avoid ValueError
         if np.ptp(entropies_rand) > 1e-10:
