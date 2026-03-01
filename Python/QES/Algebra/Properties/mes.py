@@ -274,7 +274,10 @@ def project_onto_complement(c_raw: np.ndarray, c_list: List[np.ndarray]) -> np.n
 class MESFinder:
     ''' Class to find Minimum Entangled States (MES) by minimizing the entanglement entropy. '''
     
-    def __init__(self, V: np.ndarray, S_func: Callable[[np.ndarray], float], logger: Optional['Logger'] = None):
+    def __init__(self, V: np.ndarray, S_func: Callable[[np.ndarray], float],
+                 *,
+                 S_func_c: Optional[Callable[[np.ndarray], float]] = None,
+                 logger: Optional['Logger'] = None):
         """
         Initialize the MESFinder.
         
@@ -285,11 +288,18 @@ class MESFinder:
             Each column is a basis state of the manifold.
         S_func : Callable[[np.ndarray], float]
             A function that takes a state vector of size Ns and returns its entanglement entropy.
+        S_func_c : Optional[Callable[[np.ndarray], float]]
+            **Fast path**: a JAX-traceable function that takes a *coefficient* vector c of size m
+            and returns the entropy directly (without requiring V @ c first).  When provided, the
+            optimization hot-loop bypasses the large matrix-vector product and the Ns-length gather,
+            dramatically reducing per-step cost for large Hilbert spaces.
+            Build this via :func:`find_mes_save` or manually with precomputed Schmidt matrices.
         logger : Optional['Logger']
             An optional logger object to log messages.
         """
         self.V          = V
         self.S_func     = S_func
+        self._S_func_c  = S_func_c      # coefficient-space fast path (takes c, not psi)
         self.m          = V.shape[1]
         self.nh         = V.shape[0]
         # Pre-allocate buffer for state vector to avoid multiple large allocations.
@@ -336,8 +346,10 @@ class MESFinder:
     def __call__(self, c):
         ''' Compute the entropy S(V @ c) for a given vector c. '''
         
-        # Optimized matrix-vector multiplication into buffer
-        # psi = self.V @ c
+        # Use fast coefficient-space path when available (avoids Ns-length work).
+        if self._S_func_c is not None:
+            return float(self._S_func_c(jnp.asarray(c)))
+        # Fallback: optimized matrix-vector multiplication into pre-allocated buffer.
         np.dot(self.V, c, out=self._psi_buf)
         return self.S_func(self._psi_buf)
 
@@ -398,8 +410,14 @@ class MESFinder:
         # Gauge-fix initial vector to improve optimization landscape smoothness.
         c0                  = _gauge_fix_first_component(c0)
         params              = jnp.concatenate([jnp.asarray(c0.real), jnp.asarray(c0.imag)])
-        Vj                  = jnp.asarray(self.V)
         c_constraints_jax   = [jnp.asarray(c_prev) for c_prev in c_constraints] # Convert constraints to JAX arrays for use in the optimization loop.
+
+        # When a coefficient-space entropy function is available, skip the Ns-length
+        # matrix-vector product and the random gather inside S_func entirely —
+        # the precomputed Schmidt matrices live in a (m, dA, dB) tensor in L2/L3 cache.
+        use_fast_path = self._S_func_c is not None
+        if not use_fast_path:
+            Vj = jnp.asarray(self.V)
 
         # Helper function to convert real parameters back to complex coefficients, applying constraints and gauge-fixing.
         def _params_to_c(theta: "jnp.ndarray") -> "jnp.ndarray":
@@ -420,12 +438,19 @@ class MESFinder:
             c       = c.at[0].set(jnp.real(c[0]).astype(c.dtype))
             return c
 
-        # Loss function for optimization: S(V @ c(theta)) where c(theta) is the complex vector reconstructed from real parameters theta.
-        def _loss(theta: "jnp.ndarray") -> "jnp.ndarray":
-            c   = _params_to_c(theta)
-            psi = Vj @ c
-            val = self.S_func(psi)
-            return jnp.real(jnp.asarray(val))
+        # Loss function: fast path takes c directly (no Ns-length work in hot loop);
+        # fallback does V@c then calls the psi-level S_func.
+        if use_fast_path:
+            def _loss(theta: "jnp.ndarray") -> "jnp.ndarray":
+                c   = _params_to_c(theta)
+                val = self._S_func_c(c)
+                return jnp.real(jnp.asarray(val))
+        else:
+            def _loss(theta: "jnp.ndarray") -> "jnp.ndarray":
+                c   = _params_to_c(theta)
+                psi = Vj @ c
+                val = self.S_func(psi)
+                return jnp.real(jnp.asarray(val))
 
         # Validate that S_func is JAX-traceable by computing value and gradient at the initial point. This will raise an error if S_func cannot be traced.
         # JIT-compile value_and_grad once — eliminates per-step Python re-tracing overhead.
@@ -452,6 +477,9 @@ class MESFinder:
         _stall_rtol = max(tol * 1e6, 1e-6)
         _stall_atol = tol
         every       = int(kwargs.get('every', 10))
+        # Amortise float() device-syncs: only materialise val every check_every steps.
+        # This lets JAX pipeline multiple XLA dispatches between synchronisations.
+        check_every = int(kwargs.get('check_every', 5))
 
         # Optimization loop with Adam updates.
         # float() is called only for logging/convergence checks, not to drive the update —
@@ -468,19 +496,20 @@ class MESFinder:
             mom2_hat    = mom2 / bc2
             params      = params - lr * mom1_hat / (jnp.sqrt(mom2_hat) + adam_eps)
 
-            # Materialize val only now (one sync per step, unavoidable for convergence checks).
-            valf        = float(val)
-            if valf < best_val:
-                best_val    = valf
-                best_params = params
+            # Only sync to host every check_every steps to allow JAX to pipeline dispatches.
+            if step % check_every == 0 or step == max_iter:
+                valf        = float(val)
+                if valf < best_val:
+                    best_val    = valf
+                    best_params = params
 
-            # Relative + absolute improvement criterion — much more likely to fire.
-            improvement = abs(valf - prev_val)
-            if improvement < _stall_atol + _stall_rtol * abs(prev_val):
-                stall += 1
-            else:
-                stall = 0
-            prev_val = valf
+                # Relative + absolute improvement criterion — much more likely to fire.
+                improvement = abs(valf - prev_val)
+                if improvement < _stall_atol + _stall_rtol * abs(prev_val):
+                    stall += check_every
+                else:
+                    stall = 0
+                prev_val = valf
 
             # Print optimization progress if verbose
             if verbose and step % every == 0:
@@ -705,7 +734,7 @@ class MESFinder:
 #! Convenience function to find MES
 # ---------------------------------------
 
-def find_mes(V: np.ndarray, S_func: Callable[[np.ndarray], float], *, logger: Optional['Logger'] = None, **kwargs):
+def find_mes(V: np.ndarray, S_func: Callable[[np.ndarray], float], *, S_func_c: Optional[Callable] = None, logger: Optional['Logger'] = None, **kwargs):
     """
     Convenience function to find MES using MESFinder.
     
@@ -715,6 +744,10 @@ def find_mes(V: np.ndarray, S_func: Callable[[np.ndarray], float], *, logger: Op
         A matrix of shape (Ns, m) where m is the dimension of the degenerate manifold. Each column is a basis state of the manifold.
     S_func : Callable[[np.ndarray], float]
         A function that takes a state vector of size Ns and returns its entanglement entropy.
+    S_func_c : Optional[Callable[[np.ndarray], float]]
+        Fast-path entropy function that takes a coefficient vector c of size m directly,
+        bypassing the expensive V @ c matmul and Ns-length gather in the hot loop.
+        Build with :func:`build_s_func_c` or from :func:`find_mes_save`.
     logger : Optional['Logger']
         An optional logger object to log messages during the optimization process.
     **kwargs
@@ -730,16 +763,17 @@ def find_mes(V: np.ndarray, S_func: Callable[[np.ndarray], float], *, logger: Op
     if not JAX_AVAILABLE:
         raise RuntimeError("find_mes requires JAX for MES optimization (method='jax-grad').")
     
-    finder = MESFinder(V, S_func, logger=logger)
+    finder = MESFinder(V, S_func, S_func_c=S_func_c, logger=logger)
     return finder.find(**kwargs)
 
-def find_mes_save(lattice   : 'Lattice', 
-                  V         : np.ndarray, 
-                  save_path : str,
+def find_mes_save(lattice       : 'Lattice', 
+                  V             : np.ndarray, 
+                  save_path     : str,
                   *,
-                  states    : Optional[int] = None,
-                  mes_cuts  : Optional[List[str]] = None,
-                  logger    : Optional['Logger'] = None,
+                  states        : Optional[int] = None,
+                  mes_cuts      : Optional[List[str]] = None,
+                  logger        : Optional['Logger'] = None,
+                  use_schmidt   : bool = True,
                   **kwargs):
     r'''
     High-level function to find MES for specified cuts and save the results.
@@ -796,8 +830,10 @@ def find_mes_save(lattice   : 'Lattice',
     except ImportError as e:
         if logger:      logger.error(f"JAX is not available: {e}")
 
+    # -------------------------------
+
     def mes_entropy_function(region_sites, ns, q=1.0):
-        '''Returns a JAX-traceable entropy callback for MES search.'''
+        '''Returns a JAX-traceable entropy callback for MES search (psi-level, fallback).'''
         if len(region_sites) == 0 or len(region_sites) == ns:
             return lambda psi: jnp.asarray(0.0)
         
@@ -806,6 +842,39 @@ def find_mes_save(lattice   : 'Lattice',
             probs = density_matrix_jax.schmidt(psi, va=region_sites, ns=ns, eig=False, contiguous=False, square=True, return_vecs=False,)
             return entropy_jax.renyi_entropy_jax(probs, q=q)
         return _s_func
+
+    def build_s_func_c(region_sites, ns, V_basis, q=1.0):
+        """
+        Fast-path: precompute Schmidt matrices for each basis vector once, then
+        evaluate entropy purely in the m-dimensional coefficient space.
+
+        Timeline per optimization step (before vs after):
+          Before: V@c  [Nsxm matvec]  +  gather [Ns random reads] + SVD [dAxdB]
+          After:  einsum [m additions of dAxdB matrices] +  SVD [dAxdB]
+
+        For Ns=2^18, m=3, dA=dB=512 this is ~100x fewer memory ops per step.
+        """
+        if len(region_sites) == 0 or len(region_sites) == ns:
+            return lambda c: jnp.asarray(0.0)
+
+        try:
+            from QES.general_python.physics.density_matrix      import mask_subsystem
+            from QES.general_python.physics.density_matrix_jax  import psi_jax
+        except ImportError:
+            return None     # fall back to psi-level S_func
+
+        # Precompute (m, dA, dB) — done once, lives in device memory.
+        (size_a, _), order  = mask_subsystem(list(region_sites), ns, 2, False)
+        m_basis             = V_basis.shape[1]
+        V_mats              = jnp.stack([psi_jax(V_basis[:, i], size_a, ns, 2, order) for i in range(m_basis)])
+
+        @jax.jit
+        def _s_func_c(c: "jnp.ndarray") -> "jnp.ndarray":
+            # Linear combination of precomputed (dA, dB) matrices — sequential memory access.
+            Psi_mat = jnp.einsum('i,iab->ab', c, V_mats)
+            _, s, _ = jnp.linalg.svd(Psi_mat, full_matrices=False)
+            return entropy_jax.renyi_entropy_jax(s ** 2, q=q)
+        return _s_func_c
     
     # -------------------------------
     mes_cuts        = mes_cuts if mes_cuts is not None else ["half_x", "half_y"]
@@ -813,12 +882,17 @@ def find_mes_save(lattice   : 'Lattice',
 
     # For each specified cut, find the MES and their entropies, and store the results in a dictionary.
     for cut_kind in mes_cuts:
-        if logger:  logger.info(f"Finding MES for cut: {cut_kind}", lvl=0, color='green')
+        if logger:  logger.title(f"Finding MES for cut: {cut_kind}", lvl=0, color='green')
         region_cut  = lattice.get_region(kind=cut_kind).A
         S_func      = mes_entropy_function(region_cut, lattice.ns, q=1.0)
+        # Build fast-path coefficient-space entropy (precomputed Schmidt matrices).
+        S_func_c    = build_s_func_c(region_cut, lattice.ns, V_gs_jax, q=1.0) if use_schmidt else None
+        if S_func_c is not None:
+            if logger: logger.info(f"  Using precomputed Schmidt basis (fast path) for cut '{cut_kind}'.", lvl=2, color='cyan')
         mes_states, mes_values, mes_coeffs, mes_diag = find_mes(
                         V_gs_jax,
                         S_func,
+                        S_func_c        =   S_func_c,
                         n_trials        =   kwargs.get('n_trials', 20),
                         n_restarts      =   kwargs.get('n_restarts', 3),
                         max_iter        =   kwargs.get('max_iter', 100),
