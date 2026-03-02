@@ -69,7 +69,7 @@ class SYK2(QuadraticHamiltonian):
         Create the Hamiltonian matrix for the SYK model.
         """
         self._log("Building SYK2 Hamiltonian...", lvl=2, color="green", log='debug')
-        if self._iscpx:
+        if self.iscpx:
             mat = random_matrix(
                     shape   =   (self._ns, self._ns),
                     typek   =   RMT.GUE,
@@ -96,7 +96,7 @@ class SYK2(QuadraticHamiltonian):
         return f"SYK2(ns={ns},cpx={cpx})"
 
     def __repr__(self):
-        return f"SYK2(ns={self._ns},cpx={self._iscpx})"
+        return f"SYK2(ns={self._ns},cpx={self.iscpx})"
 
     def __str__(self):
         return self.__repr__()
