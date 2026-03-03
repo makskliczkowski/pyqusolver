@@ -39,9 +39,7 @@ try:
         HoneycombLattice,
     )
 except ImportError as e:
-    raise ImportError(
-        "Failed to import QES modules. Ensure that the QES package is correctly installed."
-    ) from e
+    raise ImportError("Failed to import QES modules. Ensure that the QES package is correctly installed.") from e
 
 ##########################################################################################
 #! IMPORTS
