@@ -213,7 +213,8 @@ current = H_real.get_basis_type()         # -> HilbertBasisType.REAL
 H_real.set_basis_type("k-space")          # Updates metadata
 
 
-PARAMETERS:
+Parameters
+----------
 ───────────
 
 to_basis(basis_type, enforce=False, sublattice_positions=None, **kwargs)
