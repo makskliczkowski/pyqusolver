@@ -858,15 +858,19 @@ def find_mes_save(lattice       : 'Lattice',
             return lambda c: jnp.asarray(0.0)
 
         try:
-            from QES.general_python.physics.density_matrix      import mask_subsystem
-            from QES.general_python.physics.density_matrix_jax  import psi_jax
+            from QES.general_python.physics.density_matrix import mask_subsystem, psi_numpy
         except ImportError:
             return None     # fall back to psi-level S_func
 
-        # Precompute (m, dA, dB) — done once, lives in device memory.
+        # Precompute (m, dA, dB) once on host using NumPy reshape/transpose path.
+        # This avoids jitting psi_jax on huge Ns and prevents XLA constant-folding stalls.
         (size_a, _), order  = mask_subsystem(list(region_sites), ns, 2, False)
-        m_basis             = V_basis.shape[1]
-        V_mats              = jnp.stack([psi_jax(V_basis[:, i], size_a, ns, 2, order) for i in range(m_basis)])
+        V_basis_np          = np.asarray(V_basis)
+        m_basis             = int(V_basis_np.shape[1])
+        V_mats_np           = np.empty((m_basis, 2 ** size_a, 2 ** (ns - size_a)), dtype=V_basis_np.dtype)
+        for i in range(m_basis):
+            V_mats_np[i]    = psi_numpy(V_basis_np[:, i], order, size_a, ns, 2)
+        V_mats              = jnp.asarray(V_mats_np)
 
         @jax.jit
         def _s_func_c(c: "jnp.ndarray") -> "jnp.ndarray":
