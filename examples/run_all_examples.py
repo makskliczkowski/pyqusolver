@@ -23,15 +23,15 @@ def _env():
 
 def main():
     scripts = [
-        "examples/algebra/hilbert_and_custom_hamiltonian.py",
-        "examples/algebra/operators_on_states.py",
-        "examples/algebra/sparse_dense_matrix_build.py",
-        "examples/algebra/quadratic_single_particle.py",
-        "examples/physics/entropy_density_matrix.py",
-        "examples/physics/time_evolution_and_spectral_stats.py",
-        "examples/physics/spectral_and_statistical_tools.py",
-        "examples/lattices/lattice_neighbors_and_honeycomb.py",
-        "examples/workflows/lattice_driven_hamiltonian.py",
+        "examples/algebra/example_hilbert_and_custom_hamiltonian.py",
+        "examples/algebra/example_operators_on_states.py",
+        "examples/algebra/example_sparse_dense_matrix_build.py",
+        "examples/algebra/example_quadratic_single_particle.py",
+        "examples/physics/example_entropy_density_matrix.py",
+        "examples/physics/example_time_evolution_and_spectral_stats.py",
+        "examples/physics/example_spectral_and_statistical_tools.py",
+        "examples/lattices/example_lattice_neighbors_and_honeycomb.py",
+        "examples/workflows/example_lattice_driven_hamiltonian.py",
     ]
 
     for rel in scripts:

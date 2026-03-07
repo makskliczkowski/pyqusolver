@@ -1,6 +1,6 @@
 # Quantum EigenSolver (QES) – Python Framework
 
-**Python Quantum EigenSolver (pyqusolver)** is a Python framework for solving quantum many-body eigenvalue problems through exact methods and neural quantum state (NQS) variational approaches. It provides researchers with tools to study quantum systems using both traditional numerical methods and modern machine learning techniques.
+**Python Quantum EigenSolver (pyqusolver)** is a Python framework for solving quantum many-body eigenvalue problems through exact methods and neural quantum state (NQS) variational approaches. It provides researchers with tools to study quantum systems using both traditional numerical methods and modern machine learning techniques. `pyqusolver` provides the Python implementation (`QES`) for quantum many-body and quadratic Hamiltonian workflows.
 
 ## Future
 
@@ -15,7 +15,16 @@ QES bridges exact diagonalization and machine learning-based variational methods
 
 This design enables seamless workflows from small-scale exact benchmarks to large-scale variational simulations on identical Hamiltonian definitions.
 
+
 ## Core Capabilities
+
+## Scope
+
+- Many-body Hilbert spaces with optional symmetry reduction.
+- Operator-based Hamiltonian construction.
+- Quadratic single-particle and BdG Hamiltonians.
+- Entropy, density matrix, and statistical utilities.
+- Time evolution and spectral analysis helpers.
 
 ### 1. Exact Diagonalization
 
@@ -105,9 +114,43 @@ pip install -e "Python/[hdf5]"
 pip install -e "Python/[all,dev]"
 ```
 
-## Getting Started
+## Quick Checks
 
-### Example 1: Exact Ground State of Transverse Field Ising Model
+```bash
+cd pyqusolver
+PYTHONPATH=Python pytest Python/tests -q
+```
+
+Maintained categorized tests live under `pyqusolver/Python/tests/`.
+
+## Getting started
+
+Organized examples are in `pyqusolver/examples/`.
+
+- `examples/algebra/`: Hilbert spaces, Hamiltonians, quadratic systems.
+- `examples/physics/`: density matrices, entropy, time evolution, spectral stats.
+- `examples/lattices/`: square/honeycomb construction and neighbors.
+- `examples/workflows/`: larger end-to-end scripts.
+- `examples/models/`: model-specific examples.
+- `examples/nqs/`: optimization and NQS-oriented examples.
+
+Run all lightweight examples:
+
+```bash
+cd pyqusolver
+PYTHONPATH=Python python examples/run_all_examples.py
+```
+
+***Key scripts used by this runner:***
+
+- `examples/algebra/example_operators_on_states.py`
+- `examples/algebra/example_sparse_dense_matrix_build.py`
+- `examples/workflows/example_lattice_driven_hamiltonian.py`
+- `examples/physics/example_spectral_and_statistical_tools.py`
+
+### Examples
+
+#### Example 1: Exact Ground State of Transverse Field Ising Model
 
 ```python
 import QES
@@ -130,7 +173,7 @@ with QES.run(backend='numpy', seed=42):
     print(f"Ground state energy density: {E0 / H.Ns:.6f}")
 ```
 
-### Example 2: Variational Ground State via Neural Quantum States
+#### Example 2: Variational Ground State via Neural Quantum States
 
 ```python
 import QES
@@ -162,7 +205,7 @@ with QES.run(backend='jax', seed=42):
     print(f"Estimated ground state energy: {results['E_gs']:.6f}")
 ```
 
-### Example 3: Custom Hamiltonian
+#### Example 3: Custom Hamiltonian
 
 ```python
 import QES
@@ -171,15 +214,15 @@ import numpy as np
 
 with QES.run(backend='numpy'):
     # Create Hilbert space for 10 spins
-    hs = HilbertSpace(ns=10, is_manybody=True, dtype=np.complex128)
+    hs  = HilbertSpace(ns=10, is_manybody=True, dtype=np.complex128)
     
     # Build custom Hamiltonian
-    H = Hamiltonian(hilbert_space=hs)
+    H   = Hamiltonian(hilbert_space=hs)
     ops = H.operators
     
     # Add interactions manually
-    Sz = ops.sig_z(ns=10, type_act='local')
-    Sx = ops.sig_x(ns=10, type_act='local')
+    Sz  = ops.sig_z(ns=10, type_act='local')
+    Sx  = ops.sig_x(ns=10, type_act='local')
     
     # Ising interactions along chain
     for i in range(9):
@@ -193,49 +236,136 @@ with QES.run(backend='numpy'):
     evals = H.diagonalize()
 ```
 
-## Architecture & Design Principles
+## Common Usage Patterns
 
-### Lazy Imports
-
-QES uses deferred module loading to minimize startup overhead. Heavy dependencies (JAX, TensorFlow, etc.) are only imported when explicitly requested.
+### 1) Hilbert space with and without symmetries
 
 ```python
-import QES
+from QES.Algebra.hilbert import HilbertSpace
 
-# Submodules loaded on first access, not at import time
-algebra_module = QES.Algebra
-nqs_module = QES.NQS
+hs_full = HilbertSpace(ns=8, is_manybody=True)
+hs_sym  = HilbertSpace(ns=8, is_manybody=True, sym_gen={"translation": 0}, gen_mapping=True)
 ```
 
-### Session Management
-
-Global state (backend selection, seed, precision) is managed via context managers:
+### 2) Custom many-body Hamiltonian from operators
 
 ```python
-with QES.run(backend='jax', seed=123, precision='float32'):
-    # Operations inside use JAX backend with specified seed
-    pass
+import numpy as np
+from QES.Algebra.hamil import Hamiltonian
+from QES.Algebra.hilbert import HilbertSpace
+from QES.general_python.lattices import SquareLattice
+
+ns      = 6
+lat     = SquareLattice(dim=1, lx=ns, bc="pbc")
+hs      = HilbertSpace(lattice=lat, ns=ns, is_manybody=True)
+
+ham     = Hamiltonian(hilbert_space=hs, dtype=np.complex128)
+ops     = ham.operators
+sx      = ops.sig_x(ns=ns, type_act="local")
+sz_corr = ops.sig_z(ns=ns, type_act="correlation")
+
+for i in range(ns):
+    j = (i + 1) % ns
+    ham.add(sz_corr, sites=[i, j], multiplier=1.0)
+    ham.add(sx, sites=[i], multiplier=0.35)
+
+ham.build()
+ham.diagonalize(k=4)
 ```
 
-### Hilbert Space Representation
+### 3) Quadratic single-particle Hamiltonian
 
-- **Binary basis**: Computational basis $|s_1 s_2 \ldots s_N\rangle$ with $s_i \in \{0,1\}$
-- **Sparse matrices**: Hamiltonian stored in COO/CSR format for memory efficiency
-- **Basis caching**: Identical Hamiltonians reuse cached matrix representations
+```python
+import numpy as np
+from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
 
-## Physics Context
+qh = QuadraticHamiltonian(ns=12, particle_conserving=True, particles="fermions", dtype=np.complex128)
+for i in range(12):
+    qh.add_hopping(i, (i + 1) % 12, -1.0)
+qh.add_onsite(0, 0.25)
 
-This framework addresses key computational challenges in quantum many-body physics:
+h_single                = qh.build_single_particle_matrix()
+W_pc, eps_pc, const_pc  = qh.diagonalizing_bogoliubov_transform()
 
-1. **Computational Scaling**: Hilbert space dimension grows exponentially ($2^N$ for $N$ spins); larger systems require variational approaches.
+K       = np.zeros((4, 4), dtype=np.complex128)
+Delta   = np.zeros((4, 4), dtype=np.complex128)
+for i in range(3):
+    K[i, i + 1]     = -1.0
+    K[i + 1, i]     = -1.0
+    Delta[i, i + 1] = 0.2
+    Delta[i + 1, i] = -0.2
 
-2. **Benchmark Problem**: Neural quantum states provide variational upper bounds on ground state energies. Exact results on small systems validate NQS quality.
+qh_bdg = QuadraticHamiltonian.from_bdg_matrices(
+    hermitian_part=K,
+    antisymmetric_part=Delta,
+    constant=0.1,
+    dtype=np.complex128,
+)
+h_bdg                     = qh_bdg.build_bdg_matrix()
+W_bdg, eps_bdg, const_bdg = qh_bdg.diagonalizing_bogoliubov_transform()
+```
 
-3. **Ansatz Expressibility**: RBM ansätze have limited representational capacity for some quantum phases. Framework allows testing multiple architectures and sampling strategies.
+### 4) Density matrices and entropy
 
-4. **Symmetry Exploitation**: Leveraging conserved quantum numbers (spin, parity) reduces computational cost; QES supports custom symmetries via Hilbert space constraints.
+```python
+import numpy as np
+from QES.general_python.physics.density_matrix import rho, rho_spectrum
+from QES.general_python.physics.entropy import entropy, Entanglement
 
-## Limitations & Current Status
+psi   = np.array([1.0, 0.0, 0.0, 1.0], dtype=np.complex128)
+psi  /= np.linalg.norm(psi)
+rho_a = rho(psi, va=[0], ns=2)
+lam   = rho_spectrum(rho_a)
+svn   = entropy(lam, q=1.0, typek=Entanglement.VN)
+```
+
+### 5) Lattice neighbors and geometry
+
+```python
+from QES.general_python.lattices import SquareLattice, HoneycombLattice
+
+sq = SquareLattice(dim=2, lx=3, ly=3, bc="pbc")
+hc = HoneycombLattice(lx=2, ly=2, bc="pbc")
+
+n0_sq = sq.get_nei(0)
+n0_hc = hc.get_nei(0)
+```
+
+### 6) Time evolution and spectral statistics
+
+```python
+import numpy as np
+from QES.general_python.physics.eigenlevels import gap_ratio
+
+# after ham.diagonalize(...)
+psi0 = ham.eigenstates[:, 0]
+times = np.linspace(0.0, 2.0, 9)
+psi_t = ham.time_evo.evolve_batch(psi0, times)
+vals = np.real(np.array(ham.eigenvalues))
+stats = gap_ratio(vals, fraction=0.8, use_mean_lvl_spacing=True)
+```
+
+## Module Map (Python)
+
+- Hilbert spaces:
+  - `Python/QES/Algebra/hilbert.py`
+  - `Python/QES/Algebra/Hilbert/hilbert_base.py`
+- Operators and Hamiltonians:
+  - `Python/QES/Algebra/Operator/operator.py`
+  - `Python/QES/Algebra/Operator/impl/operators_spin.py`
+  - `Python/QES/Algebra/Operator/impl/operators_spinless_fermions.py`
+  - `Python/QES/Algebra/hamil.py`
+  - `Python/QES/Algebra/hamil_quadratic.py`
+- Physics utilities:
+  - `Python/QES/general_python/physics/density_matrix.py`
+  - `Python/QES/general_python/physics/entropy.py`
+  - `Python/QES/general_python/physics/eigenlevels.py`
+- Lattices:
+  - `Python/QES/general_python/lattices/lattice.py`
+  - `Python/QES/general_python/lattices/square.py`
+  - `Python/QES/general_python/lattices/honeycomb.py`
+  
+  ## Limitations & Current Status
 
 **Development Stage**: Core functionality is stable; API may evolve.
 
@@ -256,15 +386,6 @@ make html
 - [NQS](Python/QES/NQS): Neural quantum states, training, TDVP
 - [Solver](Python/QES/Solver): Exact and Monte Carlo solvers
 - [general_python](Python/QES/general_python): Numerical utilities and physics tools
-
-## Testing
-
-Run the test suite:
-
-```bash
-cd Python
-pytest test/ -v
-```
 
 ## Contributing
 
@@ -294,7 +415,3 @@ During the stay at Ohio State University, the authors made significant advanceme
 ## License
 
 This project is licensed under the **CC-BY-4.0 License**. See [LICENSE.md](LICENSE.md) for details.
-
-## References
-
-...

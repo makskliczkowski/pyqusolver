@@ -1,31 +1,50 @@
 # Tutorials
 
-This section contains in-depth tutorials to guide you through specific workflows in QES.
+This section summarizes the main supported workflows and points to maintained example scripts.
 
-*(Note: These are placeholders for now. In a full documentation setup, we would link to Jupyter notebooks or detailed walkthroughs.)*
+## Many-body custom Hamiltonian
 
-## 1. Ground State of the Heisenberg Model
+- Build a `HilbertSpace` on a lattice.
+- Create a `Hamiltonian` and add terms through operator factories.
+- Build the sparse or dense matrix.
+- Diagonalize and inspect the low-energy spectrum.
 
-A step-by-step guide to finding the ground state of a 1D Heisenberg chain using Exact Diagonalization.
+Reference example:
+- `examples/algebra/example_hilbert_and_custom_hamiltonian.py`
 
-* Setting up the Hamiltonian.
-* Understanding the output spectrum.
-* Measuring spin-spin correlations.
+## Quadratic single-particle workflow
 
-## 2. Training an RBM for the Ising Model
+- Construct a `QuadraticHamiltonian`.
+- Add onsite, hopping, or pairing terms.
+- Build either the single-particle matrix or the full BdG matrix.
+- Use `diagonalizing_bogoliubov_transform` for the Qiskit-style orbital transform.
 
-Learn how to use Variational Monte Carlo to train a Restricted Boltzmann Machine (RBM) on the Transverse Field Ising Model.
+Reference example:
+- `examples/algebra/example_quadratic_single_particle.py`
 
-* Defining the RBM ansatz.
-* Setting up the VMC sampler.
-* Monitoring energy convergence.
-* Comparing results with exact values.
+## Density matrix and entropy workflow
 
-## 3. Quench Dynamics with TDVP
+- Build reduced density matrices with `general_python.physics.density_matrix`.
+- Compute von Neumann or Renyi entropies with `general_python.physics.entropy`.
+- Compute mutual information between sites.
 
-Explore time evolution in quantum systems. We will simulate a quantum quench and observe the propagation of correlations.
+Reference example:
+- `examples/physics/example_entropy_density_matrix.py`
 
-* Preparing an initial state.
-* Defining the time-evolution operator.
-* Running the TDVP algorithm.
-* Plotting observables vs. time.
+## Time evolution and spectral statistics
+
+- Diagonalize a Hamiltonian.
+- Use `ham.time_evo` for evolved states.
+- Compute level-spacing diagnostics with `gap_ratio`.
+
+Reference example:
+- `examples/physics/example_time_evolution_and_spectral_stats.py`
+
+## Lattice-driven construction
+
+- Use `SquareLattice` or `HoneycombLattice`.
+- Extract neighbors directly from the lattice.
+- Feed those bonds into Hamiltonian assembly.
+
+Reference example:
+- `examples/workflows/example_lattice_driven_hamiltonian.py`

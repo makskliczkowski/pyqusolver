@@ -54,53 +54,61 @@ class QiskitInterop:
 
         Returns
         -------
-        qiskit_nature.second_q.operators.FermionicOp
-            Qiskit fermionic operator
+        qiskit_nature.second_q.operators.SparseLabelOp
+            Qiskit second-quantized operator
 
         Raises
         ------
         ImportError
             If Qiskit Nature not installed
         """
+        qh = QiskitInterop.to_qiskit_quadratic_hamiltonian(
+            h_matrix,
+            v_matrix=v_matrix,
+            constant=constant,
+            num_spin_orbitals=num_spin_orbitals,
+        )
+        return qh.second_q_op()
+
+    @staticmethod
+    def to_qiskit_quadratic_hamiltonian(
+        h_matrix: np.ndarray,
+        v_matrix: Optional[np.ndarray] = None,
+        constant: float = 0.0,
+        num_spin_orbitals: Optional[int] = None,
+    ):
+        """Convert matrices to Qiskit Nature QuadraticHamiltonian.
+
+        Parameters
+        ----------
+        h_matrix : np.ndarray
+            One-body Hermitian block.
+        v_matrix : np.ndarray, optional
+            Fermionic antisymmetric pairing block.
+        constant : float, optional
+            Scalar constant term.
+        num_spin_orbitals : int, optional
+            Retained for API compatibility. Not used by Qiskit QuadraticHamiltonian.
+
+        Returns
+        -------
+        qiskit_nature.second_q.hamiltonians.QuadraticHamiltonian
+            Qiskit quadratic Hamiltonian object.
+        """
         if not QiskitInterop.is_qiskit_available():
             raise ImportError(
                 "Qiskit Nature required for this operation. " "Install: pip install qiskit-nature"
             )
 
-        from qiskit_nature.second_q.operators import FermionicOp
+        from qiskit_nature.second_q.hamiltonians import QuadraticHamiltonian as QiskitQuadraticHamiltonian
 
-        if num_spin_orbitals is None:
-            num_spin_orbitals = 2 * h_matrix.shape[0]
+        del num_spin_orbitals
 
-        terms = {}
-
-        # One-body terms
-        for i in range(h_matrix.shape[0]):
-            for j in range(h_matrix.shape[1]):
-                if np.abs(h_matrix[i, j]) > 1e-12:
-                    # Spin-up
-                    label_up = f"+_{i} -_{j}"
-                    terms[label_up] = terms.get(label_up, 0) + h_matrix[i, j]
-                    # Spin-down
-                    label_dn = f"+_{i + h_matrix.shape[0]} -_{j + h_matrix.shape[0]}"
-                    terms[label_dn] = terms.get(label_dn, 0) + h_matrix[i, j]
-
-        # Pairing terms (BdG)
-        if v_matrix is not None:
-            for i in range(v_matrix.shape[0]):
-                for j in range(v_matrix.shape[1]):
-                    if np.abs(v_matrix[i, j]) > 1e-12:
-                        # Pairing: (c_i c_j + h.c.)
-                        label_pair = f"+_{i} +_{j}"
-                        terms[label_pair] = terms.get(label_pair, 0) + v_matrix[i, j]
-                        label_pair_hc = f"-_{j} -_{i}"
-                        terms[label_pair_hc] = terms.get(label_pair_hc, 0) + np.conj(v_matrix[i, j])
-
-        # Constant term
-        if np.abs(constant) > 1e-12:
-            terms[""] = constant
-
-        return FermionicOp(terms)
+        return QiskitQuadraticHamiltonian(
+            hermitian_part=np.asarray(h_matrix),
+            antisymmetric_part=None if v_matrix is None else np.asarray(v_matrix),
+            constant=constant,
+        )
 
     @staticmethod
     def from_qiskit_hamiltonian(
@@ -132,14 +140,10 @@ class QiskitInterop:
         if not QiskitInterop.is_qiskit_available():
             raise ImportError("Qiskit Nature required for this operation.")
 
-        # Extract matrices from Qiskit object
-        h_matrix = np.array(qiskit_ham.normal_ordered().matrices[0])
-
-        v_matrix = None
-        if len(qiskit_ham.normal_ordered().matrices) > 1:
-            v_matrix = np.array(qiskit_ham.normal_ordered().matrices[1])
-
-        constant = float(qiskit_ham.normal_ordered().constant)
+        h_matrix = np.array(qiskit_ham.hermitian_part)
+        antisymmetric_part = getattr(qiskit_ham, "antisymmetric_part", None)
+        v_matrix = None if antisymmetric_part is None else np.array(antisymmetric_part)
+        constant = float(qiskit_ham.constant)
 
         return h_matrix, v_matrix, constant
 

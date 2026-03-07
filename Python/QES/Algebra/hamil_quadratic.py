@@ -477,9 +477,7 @@ class QuadraticHamiltonian(Hamiltonian):
 
         ns                  = hermitian_part.shape[0]
 
-        # Auto-detect particle conservation
-        delta_norm          = np.linalg.norm(antisymmetric_part)
-        particle_conserving = bool(delta_norm < 1e-12)
+        particle_conserving = False
 
         # Create instance
         instance            = cls(
@@ -1332,10 +1330,10 @@ class QuadraticHamiltonian(Hamiltonian):
             self.diagonalize()
 
         if self._particle_conserving:
-            # Particle-conserving case: W is NxN
-            W = self._eig_vec if not copy else self._eig_vec.copy()
-            orbital_energies = self._eig_val.copy() if copy else self._eig_val
-            transformed_constant = self._constant_offset
+            h_matrix = np.asarray(self.build_single_particle_matrix(copy=True))
+            orbital_energies, eigvec = np.linalg.eigh(h_matrix)
+            W = eigvec.T.copy() if copy else eigvec.T
+            transformed_constant = float(self._constant_offset)
         else:
             # BdG case: diagonalize full BdG matrix and return a Qiskit-like
             # transformation matrix of shape (N, 2N) where each row k is
@@ -1354,16 +1352,15 @@ class QuadraticHamiltonian(Hamiltonian):
                 # fallback to numpy if scipy unavailable
                 eigvals, eigvecs = np.linalg.eigh(bdg)
 
-            # Eigenvalues come in ± pairs; select N positive-energy modes by
-            # taking indices of the N largest absolute eigenvalues and using
-            # their absolute values as the orbital energies.
-            idx_by_abs = np.argsort(np.abs(eigvals))[-N:]
-            energies = np.abs(eigvals[idx_by_abs])
+            # Qiskit keeps the positive-energy branch. Use a fallback for
+            # numerically delicate zero modes.
+            selected_idx = np.where(eigvals > 0.0)[0]
+            if selected_idx.size != N:
+                selected_idx = np.argsort(eigvals)[-N:]
 
-            # Order energies ascending for consistent output
-            order = np.argsort(energies)
-            selected_idx = idx_by_abs[order]
-            orbital_energies = energies[order]
+            order = np.argsort(eigvals[selected_idx])
+            selected_idx = selected_idx[order]
+            orbital_energies = np.real_if_close(eigvals[selected_idx])
 
             # Corresponding eigenvectors (columns) -> shape (2N, N)
             psi = eigvecs[:, selected_idx]
@@ -1373,10 +1370,14 @@ class QuadraticHamiltonian(Hamiltonian):
             V_mat = psi[N:, :]
 
             # Build transformation matrix W_small of shape (N, 2N): row k = [u_k^T, v_k^T]
-            W_small = np.hstack((U_mat.conj().T, V_mat.conj().T))
+            W_small = np.hstack((U_mat.T, V_mat.T))
 
             W = W_small if copy else self._backend.array(W_small)
-            transformed_constant = self._constant_offset
+            transformed_constant = float(
+                self._constant_offset
+                - 0.5 * np.sum(orbital_energies)
+                + 0.5 * np.trace(np.asarray(self._hamil_sp)).real
+            )
 
         return W, orbital_energies, transformed_constant
 
@@ -1391,12 +1392,7 @@ class QuadraticHamiltonian(Hamiltonian):
         bool
             True if particle number is conserved, False otherwise
         """
-        if self._particle_conserving:
-            return True
-
-        # Check if pairing matrix is effectively zero
-        delta_norm = np.linalg.norm(self._delta_sp)
-        return delta_norm < 1e-12
+        return bool(self._particle_conserving)
 
     ###########################################################################
     #! Block Diagonal Analysis (Band Structure)
@@ -2616,8 +2612,8 @@ class QuadraticHamiltonian(Hamiltonian):
 
         Returns
         -------
-        qiskit_nature.second_q.operators.FermionicOp
-            Qiskit fermionic operator representation
+        qiskit_nature.second_q.hamiltonians.QuadraticHamiltonian
+            Qiskit quadratic Hamiltonian representation
 
         Raises
         ------
@@ -2635,7 +2631,7 @@ class QuadraticHamiltonian(Hamiltonian):
             h_matrix = self._hamil_sp
             v_matrix = None
 
-        return QiskitInterop.to_qiskit_second_quantized_op(
+        return QiskitInterop.to_qiskit_quadratic_hamiltonian(
             h_matrix, v_matrix, self._constant_offset, self._ns
         )
 
