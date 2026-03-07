@@ -26,6 +26,7 @@ Welcome to Quantum EigenSolver (QES)
 
    examples
    tutorials
+   testing
    architecture
    concept_density_matrix
 

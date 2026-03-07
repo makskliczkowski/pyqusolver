@@ -59,9 +59,6 @@ def _get_calculate_permanent():
 def _get_calculate_bogoliubov_amp():
     return _get_hilbert_jit_states().calculate_bogoliubov_amp
 
-def _get_calculate_bogoliubov_amp_exc():
-    return _get_hilbert_jit_states().calculate_bogoliubov_amp_exc
-
 def _get_calculate_bosonic_gaussian_amp():
     return _get_hilbert_jit_states().calculate_bosonic_gaussian_amp
 
@@ -70,12 +67,6 @@ def _get_bogolubov_decompose():
 
 def _get_pairing_matrix():
     return _get_hilbert_jit_states().pairing_matrix
-
-def _get_many_body_state_full():
-    return _get_hilbert_jit_states().many_body_state_full
-
-def _get_many_body_state_mapping():
-    return _get_hilbert_jit_states().many_body_state_mapping
 
 def _get_many_body_state_closure():
     return _get_hilbert_jit_states().many_body_state_closure
@@ -94,10 +85,6 @@ def _get_calculate_slater_det_jax():
 def _get_calculate_permanent_jax():
     jax_mod = _get_jax_states()
     return jax_mod.calculate_permament_jax if jax_mod else None
-
-def _get_calculate_bcs_amp_jax():
-    jax_mod = _get_jax_states()
-    return jax_mod.calculate_bcs_amp_jax if jax_mod else None
 
 ##############################################################################
 #! Core imports (required at module load)

@@ -58,19 +58,27 @@ python -c "import QES; print('QES import OK')"
 
 ## 4) Run tests
 
-From `Python/` (inside the pyqusolver repo):
+From `pyqusolver/`:
 
 ```bash
-pytest
+PYTHONPATH=Python pytest Python/tests -q
 ```
 
 To run a narrower subset:
 
 ```bash
-pytest test/test_imports_lightweight.py -q
+PYTHONPATH=Python pytest Python/tests/algebra -q
 ```
 
-## 5) Build docs locally
+## 5) Run examples
+
+From `pyqusolver/`:
+
+```bash
+PYTHONPATH=Python python examples/run_all_examples.py
+```
+
+## 6) Build docs locally
 
 From `Python/docs/`:
 
