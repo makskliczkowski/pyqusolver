@@ -190,9 +190,9 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["QES"]
-omit = [
-    "*/tests/*",
+source  = ["QES"]
+omit    = [
+    "*/test/*",
     "*/test_*",
     "setup.py",
 ]
