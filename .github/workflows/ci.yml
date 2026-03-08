@@ -39,9 +39,9 @@ jobs:
       run: |
         cd Python
         # stop the build if there are Python syntax errors
-        ruff check QES test --select=E9,F63,F7 --target-version=py310
+        ruff check QES tests --select=E9,F63,F7 --target-version=py310
         # default set of ruff rules with exit-zero (treat as warning for now)
-        ruff check QES test --exit-zero
+        ruff check QES tests --exit-zero
         cd ..
 
     - name: Type check with Mypy
@@ -56,5 +56,5 @@ jobs:
         PYTHONPATH: Python:${{ github.workspace }}/Python
       run: |
         cd Python
-        pytest test/ -v --tb=short
+        pytest tests/ -v --tb=short
         cd ..
