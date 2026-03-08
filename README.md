@@ -123,6 +123,38 @@ PYTHONPATH=Python pytest Python/tests -q
 
 Maintained categorized tests live under `pyqusolver/Python/tests/`.
 
+## Model Coverage and Physics Guarantees
+
+- Maintained spin-model coverage:
+  - `HeisenbergKitaev`
+  - `QSM`
+  - `UltrametricModel`
+- Maintained interacting fermionic coverage:
+  - `ManyBodyFreeFermions`
+  - `HubbardModel`
+- Maintained noninteracting coverage:
+  - `FreeFermions`
+  - `AubryAndre`
+  - `SYK2`
+  - `PowerLawRandomBanded`
+  - `RosenzweigPorter`
+- Physics invariants checked by the maintained Python suite:
+  - Hermiticity
+  - deterministic seeded construction for maintained random ensembles
+  - coupling-update rebuild semantics
+  - total-particle-number conservation for spinless many-body fermion models
+  - analytic cosine-band reproduction for `FreeFermions`
+  - stronger Aubry-Andre localization for large `lmbd`, checked through mean inverse participation ratio
+  - finite middle-spectrum gap statistics for `SYK2`, `PowerLawRandomBanded`, and `RosenzweigPorter`
+  - middle-spectrum entropy, ETH-style local-observable diagnostics, and finite spectral functions for `QSM`
+  - weak-entanglement and basis-local diagnostics for `UltrametricModel`
+
+Maintained model regression files:
+
+- `Python/tests/models/test_heisenberg_kitaev_flux.py`
+- `Python/tests/models/test_random_spin_models.py`
+- `Python/tests/models/test_fermionic_and_noninteracting_models.py`
+
 ## Import Surface
 
 - Stable top-level imports: `QES.Algebra`, `QES.NQS`, `QES.Solver`, `QES.HilbertSpace`, `QES.Hamiltonian`, `QES.Operator`.
@@ -151,6 +183,7 @@ PYTHONPATH=Python python examples/run_all_examples.py
 
 - `examples/algebra/example_operators_on_states.py`
 - `examples/algebra/example_sparse_dense_matrix_build.py`
+- `examples/models/example_random_spin_models.py`
 - `examples/workflows/example_lattice_driven_hamiltonian.py`
 - `examples/physics/example_spectral_and_statistical_tools.py`
 

@@ -58,13 +58,13 @@ class PowerLawRandomBanded(hamil_module.Hamiltonian):
         )
 
         self._is_sparse = False
-        self._a = a
-        self._b = b
+        self._a         = a
+        self._b         = b
 
         # storage for random blocks
-        self._hamil = None
-        self._std_en = None
-        self._seed = kwargs.get("seed", None)
+        self._hamil     = None
+        self._std_en    = None
+        self._seed      = seed
         set_global_seed(self._seed, backend=self._backend)
 
         # set the Hamiltonian operators

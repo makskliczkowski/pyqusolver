@@ -1,3 +1,5 @@
+"""Density-matrix and entropy workflow on a two-qubit Bell state."""
+
 import numpy as np
 
 from QES.general_python.physics.density_matrix import rho, rho_spectrum
@@ -7,6 +9,7 @@ from QES.general_python.physics.entropy import Entanglement, entropy, mutual_inf
 def main():
     print("--- Density Matrix And Entropy ---")
 
+    # Section: Bell-state reduced density matrix
     psi = np.array([1.0, 0.0, 0.0, 1.0], dtype=np.complex128)
     psi /= np.linalg.norm(psi)
 
@@ -17,6 +20,7 @@ def main():
     s_r2 = entropy(lam, q=2.0, typek=Entanglement.RENYI)
     mi, _ = mutual_information(psi, 0, 1, 2, q=1.0)
 
+    # Section: Report entanglement quantities
     print("rho_A eigenvalues:", lam)
     print("S_vN:", float(np.real(s_vn)))
     print("S_R2:", float(np.real(s_r2)))

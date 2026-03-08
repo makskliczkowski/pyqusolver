@@ -148,6 +148,7 @@ def get_entanglement_entropy(
 
 def main():
     QES.qes_reseed(42)
+    # Section: Build a small symmetry-aware honeycomb problem
     # Example usage with a small Honeycomb Kitaev model
     from QES.Algebra.Symmetries.symmetry_container import SymmetryContainer
     from QES.general_python.lattices.honeycomb import HoneycombLattice
@@ -179,9 +180,11 @@ def main():
     logger.info(f"Diagonalizing {model.name} with symmetries...", color="blue")
     model.diagonalize(k=10, method="exact")  # compute first 10 states
 
+    # Section: Compute entanglement diagnostics
     # Compute entanglement properties
     entropies, mut_info, purity, gamma = get_entanglement_entropy(model, hilbert, subsystem=0.5)
 
+    # Section: Report results
     print("\nResults:")
     print(f"Ground State EE: {entropies[0]:.6f}")
     print(f"Ground State Purity: {purity[0]:.6f}")

@@ -88,27 +88,64 @@ class AnsatzModifier:
     # Internal Utilities
     # ----------------------------------------------------------------------
 
+    def _matches_state_shape(self, shape) -> bool:
+        return tuple(shape) == tuple(self.input_shape)
+
+    def _infer_branching_from_states_shape(self, states_shape) -> int:
+        state_rank = len(self.input_shape)
+        if len(states_shape) == state_rank and self._matches_state_shape(states_shape):
+            return 1
+        if len(states_shape) == state_rank + 1 and self._matches_state_shape(states_shape[-state_rank:]):
+            return int(states_shape[0])
+        raise ValueError(
+            f"Operator output shape {states_shape} is incompatible with input_shape={self.input_shape}."
+        )
+
     def _inspect_branching(self) -> int:
         """
         Safely determines the branching factor by tracing a dummy input.
         Returns M (int).
         """
         try:
-            # Create a dummy state on CPU to avoid allocating GPU memory for metadata checks
-            dummy = jnp.ones((1, *self.input_shape), dtype=self.statetype)
-
-            # We use eval_shape to trace without concrete computation (fast & safe)
-            # This handles the case where the operator might crash on zeros
+            dummy_single = jnp.ones(self.input_shape, dtype=self.statetype)
             try:
-                abstract_out            = jax.eval_shape(self.op_func, dummy)
-                states_shape            = abstract_out[0].shape
-                return states_shape[1]
+                abstract_out = jax.eval_shape(self.op_func, dummy_single)
+                branching = self._infer_branching_from_states_shape(abstract_out[0].shape)
+                dummy_batch = jnp.ones((2, *self.input_shape), dtype=self.statetype)
+                try:
+                    batch_out = jax.eval_shape(self.op_func, dummy_batch)
+                    batch_states_shape = batch_out[0].shape
+                    batch_weights_shape = batch_out[1].shape
+                    state_rank = len(self.input_shape)
+                    native_single = (
+                        len(batch_states_shape) == state_rank + 1
+                        and batch_states_shape[0] == 2
+                        and self._matches_state_shape(batch_states_shape[1:])
+                    )
+                    native_branch = (
+                        len(batch_states_shape) == state_rank + 2
+                        and batch_states_shape[0] == 2
+                        and self._matches_state_shape(batch_states_shape[2:])
+                    )
+                    native_weights = (
+                        len(batch_weights_shape) >= 1 and batch_weights_shape[0] == 2
+                    )
+                    self._use_vmap_operator = not ((native_single or native_branch) and native_weights)
+                except Exception:
+                    self._use_vmap_operator = True
+                return branching
             except Exception:
-                dummy_single            = jnp.ones(self.input_shape, dtype=self.statetype)
-                abstract_out            = jax.eval_shape(self.op_func, dummy_single)
-                states_shape            = abstract_out[0].shape
-                self._use_vmap_operator = True
-                return states_shape[0]
+                dummy = jnp.ones((1, *self.input_shape), dtype=self.statetype)
+                abstract_out = jax.eval_shape(self.op_func, dummy)
+                states_shape = abstract_out[0].shape
+                state_rank = len(self.input_shape)
+                if len(states_shape) == state_rank + 1 and self._matches_state_shape(states_shape[1:]):
+                    return 1
+                if len(states_shape) == state_rank + 2 and self._matches_state_shape(states_shape[2:]):
+                    return int(states_shape[1])
+                raise ValueError(
+                    f"Operator output shape {states_shape} is incompatible with input_shape={self.input_shape}."
+                )
 
         except Exception as e:
             warnings.warn(f"Could not inspect branching factor automatically ({e}). Defaulting to General/Sparse mode (M>1).")
@@ -118,6 +155,60 @@ class AnsatzModifier:
         if self._use_vmap_operator and getattr(x, "ndim", 0) > len(self.input_shape):
             return jax.vmap(self.op_func)(x)
         return self.op_func(x)
+
+    def _broadcast_weights(self, weights, batch_size: int, branches: int):
+        w = jnp.asarray(weights)
+        if w.ndim == 0:
+            return jnp.broadcast_to(w.reshape(1, 1), (batch_size, branches))
+        if w.ndim == 1:
+            if w.shape[0] == batch_size and branches == 1:
+                return w.reshape(batch_size, 1)
+            if w.shape[0] == branches:
+                return jnp.broadcast_to(w.reshape(1, branches), (batch_size, branches))
+            if w.shape[0] == 1:
+                return jnp.broadcast_to(w.reshape(1, 1), (batch_size, branches))
+        if w.ndim == 2:
+            if w.shape == (batch_size, branches):
+                return w
+            if w.shape == (batch_size, 1) and branches == 1:
+                return w
+            if w.shape == (1, branches):
+                return jnp.broadcast_to(w, (batch_size, branches))
+            if w.shape == (1, 1):
+                return jnp.broadcast_to(w, (batch_size, branches))
+        raise ValueError(
+            f"Operator weights shape {w.shape} is incompatible with batch_size={batch_size}, branches={branches}."
+        )
+
+    def _standardize_operator_output(self, x, st, w):
+        state_rank = len(self.input_shape)
+        x_ndim = getattr(x, "ndim", 0)
+        st = jnp.asarray(st)
+
+        if x_ndim == state_rank:
+            if st.ndim == state_rank and self._matches_state_shape(st.shape):
+                st = st.reshape((1, 1) + tuple(self.input_shape))
+                w = self._broadcast_weights(w, 1, 1)
+                return st, w
+            if st.ndim == state_rank + 1 and self._matches_state_shape(st.shape[-state_rank:]):
+                branches = int(st.shape[0])
+                st = st.reshape((1, branches) + tuple(self.input_shape))
+                w = self._broadcast_weights(w, 1, branches)
+                return st, w
+        else:
+            batch_size = int(x.shape[0])
+            if st.ndim == state_rank + 1 and st.shape[0] == batch_size and self._matches_state_shape(st.shape[1:]):
+                st = st.reshape((batch_size, 1) + tuple(self.input_shape))
+                w = self._broadcast_weights(w, batch_size, 1)
+                return st, w
+            if st.ndim == state_rank + 2 and st.shape[0] == batch_size and self._matches_state_shape(st.shape[2:]):
+                branches = int(st.shape[1])
+                w = self._broadcast_weights(w, batch_size, branches)
+                return st, w
+
+        raise ValueError(
+            f"Operator states shape {st.shape} is incompatible with input shape {self.input_shape}."
+        )
 
     # ----------------------------------------------------------------------
 
@@ -148,14 +239,9 @@ class AnsatzModifier:
         # Apply Operator
         # st: (Batch, 1, ...), w: (Batch, 1)
         st, w = self._apply_operator(x)
-
-        # Support both single-state outputs (1, ...) and batched outputs (B, 1, ...).
-        if getattr(st, "ndim", 0) == len(self.input_shape) + 1:
-            st  = st[0]
-            w   = w[0]
-        else:
-            st  = jnp.squeeze(st, axis=1)
-            w   = jnp.squeeze(w, axis=1)
+        st, w = self._standardize_operator_output(x, st, w)
+        st = jnp.squeeze(st, axis=1)
+        w = jnp.squeeze(w, axis=1)
 
         # Evaluate Base Ansatz
         log_psi = self.net_apply(params, st)
@@ -178,13 +264,14 @@ class AnsatzModifier:
         # st: (Batch, M, ...), w: (Batch, M)
         # Note: If op_func is not natively vectorized, we might need jax.vmap(self.op_func)(x)
         # But usually high-performance operators in QES handle batching.
-        st, w       = self._apply_operator(x)
-        M           = self.branching_factor
+        st, w = self._apply_operator(x)
+        st, w = self._standardize_operator_output(x, st, w)
+        M = int(st.shape[1])
 
         # Flatten Batch and Branching dimensions
         # We need to feed (Batch * M, ...) into the network
         # Collapse dimensions 0 and 1
-        flat_shape  = (batch_size * M, *st.shape[2:])
+        flat_shape  = (batch_size * M, *self.input_shape)
         st_flat     = jnp.reshape(st, flat_shape)
 
         # Evaluate Base Ansatz

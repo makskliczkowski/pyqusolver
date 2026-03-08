@@ -55,15 +55,15 @@ class RosenzweigPorter(hamil_module.Hamiltonian):
         self._is_sparse = False
 
         #! couplings
-        self._gamma = gamma
-        self._gamma_power = self._nh**self._gamma
+        self._gamma         = gamma
+        self._gamma_power   = self._nh**self._gamma
         self._gamma_power_i = self._nh ** (-0.5 * self._gamma)
 
         # storage for random blocks
-        self._hamil = None
-        self._diagonal = None
-        self._std_en = None
-        self._seed = kwargs.get("seed", None)
+        self._hamil     = None
+        self._diagonal  = None
+        self._std_en    = None
+        self._seed      = seed
         set_global_seed(self._seed, backend=self._backend)
 
         # set the Hamiltonian operators

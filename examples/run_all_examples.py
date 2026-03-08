@@ -1,4 +1,8 @@
-'''Run all examples in one go. This is useful for testing and benchmarking.'''
+'''Run the maintained Python example suite in a fixed order.
+
+The examples are executed in separate subprocesses so each script gets a clean
+environment and failures are isolated to the script that triggered them.
+'''
 
 import os
 import subprocess
@@ -9,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _env():
+    """Build a deterministic environment for example subprocesses."""
     env = os.environ.copy()
     py  = str(ROOT / "Python")
     env["PYTHONPATH"] = py if not env.get("PYTHONPATH") else py + os.pathsep + env["PYTHONPATH"]
@@ -16,12 +21,13 @@ def _env():
     env.setdefault("XDG_CACHE_HOME", "/tmp")
     return env
 
-# Note: We use subprocess to run the examples in separate processes, which is 
-# more realistic and also allows us to test the environment variables and other 
-# settings that might be needed for the examples to run correctly. It also allows us to 
-# catch any exceptions or errors that might occur in the examples without affecting the main script.
+# Note:
+# We use subprocesses so each example runs with the same environment a user
+# would see from the command line. This also keeps one failing example from
+# contaminating the rest of the run.
 
 def main():
+    # Section: Maintained example entrypoints
     scripts = [
         "examples/algebra/example_hilbert_and_custom_hamiltonian.py",
         "examples/algebra/example_operators_on_states.py",
@@ -32,9 +38,11 @@ def main():
         "examples/physics/example_time_evolution_and_spectral_stats.py",
         "examples/physics/example_spectral_and_statistical_tools.py",
         "examples/lattices/example_lattice_neighbors_and_honeycomb.py",
+        "examples/models/example_random_spin_models.py",
         "examples/workflows/example_lattice_driven_hamiltonian.py",
     ]
 
+    # Section: Execute examples one by one
     for rel in scripts:
         cmd = [sys.executable, rel]
         print("\n$", " ".join(cmd))

@@ -1242,9 +1242,16 @@ class NQS(MonteCarloSolver):
                 if hasattr(self, "_precision_policy")
                 else ansatze.dtype
             )
-            probabilities = self._nqsbackend.asarray(
-                self._backend.ones_like(ansatze), dtype=prob_dtype
+            probabilities = self._nqsbackend.asarray(self._backend.ones(ansatze.shape, dtype=prob_dtype), dtype=prob_dtype)
+        else:
+            prob_dtype = (
+                self._precision_policy.prob_dtype
+                if hasattr(self, "_precision_policy")
+                else getattr(probabilities, "dtype", ansatze.dtype)
             )
+            if not np.issubdtype(np.dtype(prob_dtype), np.complexfloating) and np.iscomplexobj(np.asarray(probabilities)):
+                probabilities = self._nqsbackend.real(probabilities)
+            probabilities = self._nqsbackend.asarray(probabilities, dtype=prob_dtype)
 
         # reshape for apply_callable_jax expectations (N, 1)
         # jax.vmap expects (N, 1) to slice into (1,) which allows [0] indexing
@@ -3201,6 +3208,20 @@ class NQS(MonteCarloSolver):
 
         inside the current variational manifold. This is the basic building
         block for time-domain observables and spectral functions.
+
+        The values in ``times`` are physical observation times. They should be
+        compared directly to ED times. To improve the fidelity of the projected
+        evolution without changing the output grid, pass ``max_dt`` or
+        ``n_substeps`` so each observation interval is integrated through
+        smaller internal TDVP updates.
+
+        Notes
+        -----
+        For the present complex-parameter TDVP convention, the real-time
+        Schrödinger evolution uses the effective RHS prefactor ``-2j`` under the
+        hood. This is the convention validated by the exact single-spin Rabi /
+        Larmor benchmark, where the NQS trajectory must reproduce the same
+        physical oscillation frequency as ED on the identical time grid.
         """
         from .src.nqs_spectral import time_evolve_impl
         
@@ -3274,6 +3295,23 @@ class NQS(MonteCarloSolver):
             **kwargs,
         )
 
+    def spectrum_from_correlator(self, times, correlator, **kwargs):
+        r"""
+        Convert a sampled correlator into a finite-time spectral estimate.
+
+        This helper does not evolve the NQS. It simply applies the same
+        discrete Fourier pipeline used by the NQS spectral routines to the
+        supplied correlator, which is useful for comparing ED and NQS on the
+        same time mesh, broadening, and windowing convention.
+        """
+        from .src.nqs_spectral import spectrum_from_correlator_impl
+
+        return spectrum_from_correlator_impl(
+            times,
+            correlator,
+            **kwargs,
+        )
+
     def dynamic_structure_factor(
         self,
         times,
@@ -3295,7 +3333,9 @@ class NQS(MonteCarloSolver):
         to spectral functions and dynamical structure factors. When the probe is
         Hermitian, passing only ``probe_operator`` is sufficient. For
         momentum-resolved spin response use the physically correct pair
-        ``A = S_{-q}``, ``B = S_q``.
+        ``A = S_{-q}``, ``B = S_q``. For tiny benchmark systems one may also
+        pass ``exact_sum=True`` to remove Monte Carlo noise from the correlator
+        estimator and probe-norm restoration.
         """
         from .src.nqs_spectral import dynamic_structure_factor_impl
 
@@ -3325,7 +3365,8 @@ class NQS(MonteCarloSolver):
         Each entry of ``probe_operators`` defines one response channel, usually a
         momentum point. The returned tensor has shape ``(N_k, N_\omega)`` and is
         designed to feed directly into the existing spectral plotting helpers,
-        including ``mode='kpath'`` and ``mode='grid'``.
+        including ``mode='kpath'`` and ``mode='grid'``. For tiny systems,
+        ``exact_sum=True`` provides a deterministic DSF benchmark.
         """
         from .src.nqs_spectral import spectral_map_impl
 

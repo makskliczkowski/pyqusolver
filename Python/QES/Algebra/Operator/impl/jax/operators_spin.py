@@ -64,6 +64,25 @@ else:
     _SIG_M_jnp = np
     _flip_func = None
 
+
+if JAX_AVAILABLE:
+
+    def _array_state_to_bit_jnp(raw_value, spin: bool, spin_value: float):
+        """
+        Map array-state encodings onto the binary convention used by integer kernels.
+        """
+        raw_arr         = jnp.asarray(raw_value)
+        dtype           = jnp.result_type(raw_arr, spin_value, jnp.float32)
+        raw_arr         = raw_arr.astype(dtype)
+        spin_value_arr  = jnp.asarray(spin_value, dtype=dtype)
+        spin_bits       = (raw_arr > 0).astype(dtype)
+        scaled          = jnp.where(
+            (raw_arr > 0) & (raw_arr <= spin_value_arr),
+            raw_arr / jnp.where(spin_value_arr == 0, 1.0, spin_value_arr),
+            raw_arr,
+        )
+        return lax.cond(spin, lambda _: spin_bits, lambda _: scaled, operand=None)
+
 # -----------------------------------------------------------------------------
 #! Sigma-X (sigma _x) operator
 # -----------------------------------------------------------------------------
@@ -218,10 +237,7 @@ if JAX_AVAILABLE:
 
         # 2. Update Coeff (Vectorized)
         # We can replicate check_arr_jax logic efficiently:
-        if spin:
-            bits = (state[sites_arr] > 0).astype(state.dtype)
-        else:
-            bits = state[sites_arr]
+        bits = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
 
         # Factor logic for spin representation [-0.5, 0.5]:
         # if up (bit=1)    :  1j * spin_value
@@ -348,10 +364,7 @@ if JAX_AVAILABLE:
         """
         sites_arr = jnp.asarray(sites)
 
-        if spin:
-            bits = (state[sites_arr] > 0).astype(state.dtype)
-        else:
-            bits = state[sites_arr]
+        bits = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
 
         # Factor logic for spin representation [-0.5, 0.5]:
         # if up (bit=1)    :  spin_value
@@ -807,9 +820,9 @@ if JAX_AVAILABLE:
 
         def body_fun(i, total_val):
             pos = sites_arr[i]
-            bit = _binary.jaxpy.check_arr_jax(state, pos)
-            # Pauli Z eigenvalue: +1 for spin-up (bit=0), -1 for spin-down (bit=1)
-            factor = (1.0 - 2.0 * bit) * spin_value
+            raw = _binary.jaxpy.check_arr_jax(state, pos)
+            bit = _array_state_to_bit_jnp(raw, spin, spin_value)
+            factor = (2.0 * bit - 1.0) * spin_value
             return total_val + factor * jnp.exp(1j * k * pos)
 
         total = lax.fori_loop(0, sites_arr.shape[0], body_fun, total)
@@ -870,7 +883,8 @@ if JAX_AVAILABLE:
         sigma _t  on a JAX array state.
         """
         sites_arr = jnp.asarray(sites)
-        coeff = jnp.sum(state[sites_arr]) * spin_value
+        bits = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
+        coeff = jnp.sum(2.0 * bits - 1.0) * spin_value
         return ensure_operator_output_shape_jax(state, coeff)
 
     def sigma_z_total_int_jnp(

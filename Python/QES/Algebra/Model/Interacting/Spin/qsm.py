@@ -30,7 +30,7 @@ from QES.general_python.algebra.backend_linalg import (
     identity_sparse,
     kron_sparse,
 )
-from QES.general_python.algebra.ran_wrapper import RMT, random_matrix, random_vector
+from QES.general_python.algebra.ran_wrapper import RMT, random_matrix, random_vector, set_global_seed
 
 # ----------------------------------------------------------------------------------------
 #! DEFINE CONSTANTS
@@ -143,6 +143,8 @@ class QSM(hamil_module.Hamiltonian):
         self._startns       = n
         self._is_sparse     = True
         self._max_local_ch  = 2
+        self._seed          = kwargs.get("seed", None)
+        set_global_seed(self._seed, backend=self._backend)
         self.init_particles()
         # test the Hamiltonian and allow jit to be built - trigger the jit compilation
         self._hamil         = None
@@ -259,7 +261,7 @@ class QSM(hamil_module.Hamiltonian):
         hdot = None
         if np.issubdtype(self._dtype, np.complexfloating):
             hdot = random_matrix(
-                (self._dimin, self._dimin), typek=RMT.CUE, backend=self._backend, dtype=self._dtype
+                (self._dimin, self._dimin), typek=RMT.GUE, backend=self._backend, dtype=self._dtype
             )
         else:
             hdot = random_matrix(
@@ -332,7 +334,7 @@ class QSM(hamil_module.Hamiltonian):
         elif isinstance(a, float):
             self._a = [a] * self.nout
         elif isinstance(a, str):
-            self._a = random_vector(self.nout, a, backend=self._backend, dtype=self._dtype)
+            self._a = random_vector(self.nout, a, backend=self._backend, dtype=np.float64)
         else:
             raise ValueError(self._ERR_COUP_VEC_SIZE)
 
@@ -346,10 +348,10 @@ class QSM(hamil_module.Hamiltonian):
             self._h = h
         elif isinstance(h, float) or initialize:
             self._h = random_vector(
-                self.nout, typek=f"r;{h-0.5};{h+0.5}", backend=self._backend, dtype=self._dtype
+                self.nout, typek=f"r;{h-0.5};{h+0.5}", backend=self._backend, dtype=np.float64
             )
         elif isinstance(h, str):
-            self._h = random_vector(self.nout, h, backend=self._backend, dtype=self._dtype)
+            self._h = random_vector(self.nout, h, backend=self._backend, dtype=np.float64)
         else:
             raise ValueError(self._ERR_MAG_FIELD_SIZE)
 
@@ -360,7 +362,7 @@ class QSM(hamil_module.Hamiltonian):
         elif isinstance(xi, float):
             self._xi = [xi] * self.nout
         elif isinstance(xi, str):
-            self._xi = random_vector(self.nout, xi, backend=self._backend, dtype=self._dtype)
+            self._xi = random_vector(self.nout, xi, backend=self._backend, dtype=np.float64)
         else:
             raise ValueError(self._ERR_RAND_BOX_SIZE)
 

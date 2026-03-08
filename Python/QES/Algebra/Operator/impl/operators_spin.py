@@ -130,6 +130,23 @@ _SIG_Z = np.array([[1, 0], [0, -1]], dtype=float)
 _SIG_P = np.array([[0, 1], [0, 0]], dtype=float)
 _SIG_M = np.array([[0, 0], [1, 0]], dtype=float)
 
+@numba.njit(inline="always")
+def _array_state_to_bit_np(raw_value, spin: bool, spin_value: float):
+    """
+    Map array-state encodings onto the binary convention used by integer kernels.
+
+    The NQS stack may feed spin arrays either as signed values (``{-spin_value,
+    +spin_value}``) or as nonnegative local values (``{0, spin_value}``). This
+    helper converts both forms to ``bit in {0, 1}`` so the array-based operator
+    paths reproduce the same physics as the integer/matrix implementations.
+    """
+
+    if spin:
+        return 1.0 if raw_value > 0.0 else 0.0
+    if spin_value > 0.0 and raw_value > 0.0 and raw_value <= spin_value:
+        return raw_value / spin_value
+    return raw_value
+
 # -----------------------------------------------------------------------------
 #! Sigma-X (\sigma _x) operator
 # -----------------------------------------------------------------------------
@@ -348,7 +365,8 @@ def sigma_y_np_real(
     out = state.copy()
     for site in sites:
         # For NumPy arrays, we use the site index directly.
-        factor  = (2.0 * _binary.check_arr_np(state, site) - 1.0) * 1.0j * spin_value
+        bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
+        factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
         coeff   *= factor
         out     = (
             _binary.flip_array_np_nspin(out, site)
@@ -386,7 +404,7 @@ def sigma_y_np(
     coeff = np.ones(1, dtype=DEFAULT_NP_CPX_TYPE)
     out = state.copy()
     for site in sites:
-        bit     = _binary.check_arr_np(state, site)
+        bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
         factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
         coeff  *= factor
         out     = (
@@ -496,8 +514,8 @@ def sigma_z_np(
     """
     coeff = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
     for site in sites:
-        bit     = _binary.check_arr_np(state, site)
-        coeff  *= (2 * bit - 1.0) * spin_value # if spin, vectors are [-1, 1], then 2*bit-1 works correctly
+        bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
+        coeff  *= (2.0 * bit - 1.0) * spin_value
     return ensure_operator_output_shape_numba(state, coeff)
     # return state, coeff
 
@@ -596,8 +614,8 @@ def sigma_z_total_np(
         sites = list(range(state.shape[0]))
     coeff = np.zeros(1, dtype=DEFAULT_NP_FLOAT_TYPE)
     for site in sites:
-        bit = _binary.check_arr_np(state, site)
-        coeff += (2 * bit - 1.0) * spin_value
+        bit = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
+        coeff += (2.0 * bit - 1.0) * spin_value
     return ensure_operator_output_shape_numba(state, coeff)
 
 
@@ -1013,7 +1031,7 @@ def sigma_k_np(
     """
     accum = np.zeros(1, dtype=DEFAULT_NP_CPX_TYPE)
     for i in sites:
-        bit = _binary.check_arr_np(state, i)
+        bit = _array_state_to_bit_np(_binary.check_arr_np(state, i), spin, spin_value)
         sigma_z_i = (2.0 * bit - 1.0) * spin_value
         accum += sigma_z_i * np.exp(1j * k * i)
     norm = np.sqrt(len(sites)) if len(sites) > 0 else 1.0

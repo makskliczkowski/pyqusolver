@@ -97,7 +97,6 @@ import  warnings
 import  numpy as np
 from    QES.general_python.physics.density_matrix import mask_subsystem, psi_numpy
 from    QES.general_python.physics.entropy import vn_entropy, renyi_entropy
-from    QES.general_python.common.binary import int2base
 
 if TYPE_CHECKING:
     from QES.NQS.nqs import NQS
@@ -159,14 +158,31 @@ def _enumerate_basis_states_nqs(nqs: "NQS") -> np.ndarray:
     validate the Rényi machinery without Monte Carlo bias when the Hilbert space
     is tiny.
     """
+    from QES.general_python.common.binary import BACKEND_DEF_SPIN, BACKEND_REPR, int2base
 
     hilbert = getattr(nqs, "hilbert", None)
     if hilbert is None:
         raise ValueError("Exact NQS entropy requires an attached Hilbert space.")
 
+    sampler         = getattr(nqs, "sampler", None)
+    sampler_states  = getattr(sampler, "_states", None)
+    spin            = bool(BACKEND_DEF_SPIN)
+    spin_value      = float(BACKEND_REPR)
+    if sampler_states is not None:
+        sampler_states = np.asarray(sampler_states)
+        if sampler_states.size:
+            flat        = sampler_states.reshape(-1)
+            spin        = bool(np.any(flat < 0.0))
+            max_abs     = float(np.max(np.abs(flat)))
+            if max_abs > 0.0:
+                spin_value = max_abs
+
     basis_int   = np.asarray(list(hilbert), dtype=np.int64).reshape(-1)
     ns          = int(getattr(hilbert, "ns", nqs.nvisible))
-    return np.stack([int2base(int(state), ns, spin=False, backend="np") for state in basis_int], axis=0,).astype(np.float32, copy=False)
+    return np.stack(
+        [int2base(int(state), ns, spin=spin, spin_value=spin_value, backend="np") for state in basis_int],
+        axis=0,
+    ).astype(np.float32, copy=False)
 
 def _exact_nqs_wavefunction(nqs: "NQS") -> np.ndarray:
     """

@@ -1,3 +1,5 @@
+"""Reference tests for density-matrix, entropy, and statistics helpers."""
+
 import numpy as np
 
 from QES.general_python.physics.density_matrix import rho, rho_spectrum
@@ -7,6 +9,8 @@ from QES.Algebra.Properties.statistical import dos, ldos
 
 
 def test_bell_state_density_matrix_entropy_and_mutual_information():
+    # Bell state gives the cleanest two-level reference for reduced-density
+    # matrix spectra and both von Neumann and Renyi entropies.
     psi = np.array([1.0, 0.0, 0.0, 1.0], dtype=np.complex128)
     psi /= np.linalg.norm(psi)
 
@@ -24,6 +28,8 @@ def test_bell_state_density_matrix_entropy_and_mutual_information():
 
 
 def test_gap_ratio_matches_current_python_reference_values():
+    # Keep this as a fixed regression target so the Julia parity layer can use
+    # the same reference numbers.
     vals = np.array([-2.0, -1.25, -0.2, 0.7, 1.5, 2.4, 3.1], dtype=float)
     stats = gap_ratio(vals, fraction=0.8, use_mean_lvl_spacing=True)
 
@@ -33,6 +39,8 @@ def test_gap_ratio_matches_current_python_reference_values():
 
 
 def test_ldos_and_dos_shapes_are_stable():
+    # In the non-degenerate path LDOS reduces to squared overlaps, while DOS
+    # should preserve the requested bin count.
     energies = np.array([-2.0, -1.0, -0.2, 0.1, 0.9, 1.8], dtype=float)
     overlaps = np.array([0.2, 0.4, 0.3, 0.6, 0.5, 0.2], dtype=np.complex128)
 

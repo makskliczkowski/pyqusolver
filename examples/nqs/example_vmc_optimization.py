@@ -43,7 +43,7 @@ def main():
     print("VMC Optimization: Heisenberg Chain (N=10)")
     print("="*60)
 
-    # 1. Setup System
+    # Section: Setup system
     ns = 10
     lattice = SquareLattice(dim=1, lx=ns, bc="pbc")
     # VMC usually works with spin-1/2 (local dim 2)
@@ -51,8 +51,10 @@ def main():
 
     print(f"System: {ns} sites")
 
-    # 2. Hamiltonian (Heisenberg)
-    # Using real parameters for simplicity
+    # Section: Build Heisenberg Hamiltonian
+    #
+    # Use the Pauli-matrix representation with the standard 1/4 conversion
+    # between spin operators and Pauli operators.
     ham = Hamiltonian(hilbert_space=hilbert, name="Heisenberg", dtype=np.complex128)
     ops = ham.operators
 
@@ -73,8 +75,9 @@ def main():
 
     ham.build() # Build matrix/operator structure
 
-    # 3. Initialize NQS (Driver + Ansatz + Sampler)
-    # NQS class handles network creation ('rbm'), sampler ('vmc'), and optimization loop.
+    # Section: Initialize NQS driver
+    #
+    # The NQS class owns the ansatz, sampler, and optimization driver.
     print("Initializing NQS (RBM + VMC)...")
 
     try:
@@ -82,22 +85,21 @@ def main():
             logansatz='rbm',                # Use built-in RBM
             model=ham,                      # Physical model
             sampler='vmc',                  # Use VMC sampler
-        hilbert=hilbert,                # Explicitly pass Hilbert space
+            hilbert=hilbert,                # Explicitly pass Hilbert space
             alpha=2.0,                      # RBM hidden density
-            n_chains=10,                    # Number of MCMC chains
-            n_samples=1000,                 # Samples per step
-            lr=0.01,                        # Learning rate
-        dtype=np.complex128,            # Complex wavefunction
-        seed=42,                        # Explicit seed for JAX RNG
-        backend='jax'                   # Force JAX backend
+            s_numchains=10,                 # Number of MCMC chains
+            s_numsamples=1000,              # Samples per step
+            dtype=np.complex128,            # Complex wavefunction
+            seed=42,                        # Explicit seed for JAX RNG
+            backend='jax'                   # Force JAX backend
         )
 
-        # 4. Run Optimization
+        # Section: Run optimization
         print("\nStarting optimization loop (5 epochs)...")
 
-        # Train for 5 epochs
-        # Disable checkpointing to avoid async I/O issues in example
-        stats = nqs.train(n_epochs=5, checkpoint_every=100)
+        # Train for a few epochs only. Disable checkpointing frequency to keep
+        # the example lightweight.
+        stats = nqs.train(n_epochs=5, checkpoint_every=100, lr=0.01)
 
         # Explicitly close/wait for checkpoint manager if needed
         if hasattr(nqs, 'ckpt_manager') and hasattr(nqs.ckpt_manager, 'wait_until_finished'):
@@ -105,7 +107,7 @@ def main():
 
         print("\nOptimization finished.")
 
-        # Access history from stats object
+        # Section: Report final summary
         if hasattr(stats, 'history') and 'Energy' in stats.history:
             final_E = stats.history['Energy'][-1]
             final_Var = stats.history['EnergyVariance'][-1]
@@ -123,3 +125,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ---------------------------------------------------------------------------
+#! EOF
+# ---------------------------------------------------------------------------

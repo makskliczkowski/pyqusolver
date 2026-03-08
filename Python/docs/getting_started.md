@@ -56,6 +56,17 @@ General contract:
 python -c "import QES; print('QES import OK')"
 ```
 
+Stable top-level imports are:
+
+- `QES.Algebra`
+- `QES.NQS`
+- `QES.Solver`
+- `QES.HilbertSpace`
+- `QES.Hamiltonian`
+- `QES.Operator`
+
+Legacy `gp_*` aliases remain for compatibility, but they should be treated as deprecated convenience imports.
+
 ## 4) Run tests
 
 From `pyqusolver/`:

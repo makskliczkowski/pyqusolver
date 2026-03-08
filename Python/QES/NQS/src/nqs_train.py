@@ -483,7 +483,10 @@ class NQSTrainer:
             Use MinSR (scales O(N_samples) instead of O(N_params)).
 
         rhs_prefactor : float, default=-1.0
-            Prefactor for gradient RHS (imaginary time: -1, real time: -1j).
+            Prefactor for gradient RHS. Ground-state / imaginary-time updates use
+            ``-1``. In the present complex-parameter TDVP convention, physical
+            real-time evolution should use ``-2j``; this is what
+            :meth:`QES.NQS.nqs.NQS.time_evolve` selects by default.
 
         diag_shift : float, default=1e-5
             Initial diagonal regularization for SR matrix.
@@ -705,7 +708,7 @@ class NQSTrainer:
             f, est_fn, y, t, configs, configs_ansatze, probabilities, lower_states, num_chains=1
         ):
             # We pass them down to the solver's **rhs_args
-            new_params, new_t, (info, meta) = self.ode_solver.step(
+            new_params, step_dt, (info, meta) = self.ode_solver.step(
                 f=f,
                 t=t,
                 y=y,
@@ -718,7 +721,7 @@ class NQSTrainer:
                 num_chains=num_chains,
             )
             # info is TDVPStepInfo, meta is (shapes, sizes, iscpx)
-            return new_params, new_t, (info, meta)
+            return new_params, step_dt, (info, meta)
 
         self._step_nojit = train_step_logic
 

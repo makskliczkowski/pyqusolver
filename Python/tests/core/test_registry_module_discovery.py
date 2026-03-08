@@ -6,6 +6,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# ------------------------------------------------------------------
+# Registry discovery
+# ------------------------------------------------------------------
+
 
 def test_list_modules_returns_stable_sorted_records():
     # Arrange
@@ -23,6 +27,7 @@ def test_list_modules_returns_stable_sorted_records():
 
 
 def test_describe_module_curated_and_unknown_paths():
+    # Known modules should resolve to curated descriptions, unknown paths should stay quiet.
     # Arrange
     registry = importlib.import_module("QES.registry")
 
