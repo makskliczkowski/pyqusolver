@@ -1,20 +1,10 @@
 """
-Implementation of quadratic Hamiltonians and related utilities.
-This module provides classes and functions to define, manipulate, and analyze
-quadratic Hamiltonians for fermionic and bosonic systems.
+Quadratic Hamiltonians and related helper workflows.
 
-In principle, quadratic Hamiltonians can be solved exactly by diagonalization,
-but certain special cases allow for closed-form solutions without
-diagonalization. The `SolvabilityInfo` class encapsulates information
-about whether a given quadratic Hamiltonian is solvable in closed form,
-and if so, the method used.
-
-----------------------------------------------------------------------------
-file    : QES/Algebra/hamil_quadratic.py
-author  : Maksymilian Kliczkowski
-email   : maksymilian.kliczkowski@pwr.edu.pl
-date    : 2025-11-01
-----------------------------------------------------------------------------
+This module implements the maintained quadratic-Hamiltonian path for QES. It
+covers particle-conserving free-fermion models, BdG-style pairing models,
+single-particle matrix construction, diagonalization, and many-body amplitude
+helpers used by the higher-level algebra and interop layers.
 """
 
 from __future__     import annotations
@@ -25,22 +15,21 @@ from typing         import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Unio
 import numpy        as np
 import scipy        as sp
 
-##############################################################################
-#! Lazy import infrastructure
-##############################################################################
+# -----------------------------------------------------------------------------
+# Lazy import infrastructure
 
 # Cache for lazily imported modules/functions
 _lazy_cache: Dict[str, Any] = {}
 
 def _get_hilbert_jit_states():
-    """Lazily import hilbert_jit_states module."""
+    """Lazily import the compiled Hilbert-state helper module."""
     if 'hilbert_jit_states' not in _lazy_cache:
         from QES.Algebra.Hilbert import hilbert_jit_states
         _lazy_cache['hilbert_jit_states'] = hilbert_jit_states
     return _lazy_cache['hilbert_jit_states']
 
 def _get_jax_states():
-    """Lazily import JAX-based state calculations."""
+    """Lazily import the JAX-based Hilbert-state helper module."""
     if 'jax_states' not in _lazy_cache:
         try:
             from QES.Algebra.Hilbert import hilbert_jit_states_jax
@@ -49,7 +38,7 @@ def _get_jax_states():
             _lazy_cache['jax_states'] = None
     return _lazy_cache['jax_states']
 
-# Lazy function accessors - import only when first used
+# Lazy function accessors
 def _get_calculate_slater_det():
     return _get_hilbert_jit_states().calculate_slater_det
 
@@ -77,7 +66,7 @@ def _get_nrg_particle_conserving():
 def _get_nrg_bdg():
     return _get_hilbert_jit_states().nrg_bdg
 
-# JAX functions (only load if JAX available)
+# JAX function accessors
 def _get_calculate_slater_det_jax():
     jax_mod = _get_jax_states()
     return jax_mod.calculate_slater_det_jax if jax_mod else None
@@ -86,9 +75,8 @@ def _get_calculate_permanent_jax():
     jax_mod = _get_jax_states()
     return jax_mod.calculate_permament_jax if jax_mod else None
 
-##############################################################################
-#! Core imports (required at module load)
-##############################################################################
+# -----------------------------------------------------------------------------
+# Core imports
 
 try:
     from QES.Algebra.hamil          import JAX_AVAILABLE, Hamiltonian, HilbertSpace
@@ -498,6 +486,103 @@ class QuadraticHamiltonian(Hamiltonian):
             instance.set_bdg_matrices(hermitian_part, antisymmetric_part)
 
         return instance
+
+    @classmethod
+    def from_qiskit_hamiltonian(
+        cls,
+        qiskit_ham,
+        *,
+        particles: str = "fermions",
+        dtype: Optional[np.dtype] = None,
+        backend: str = "default",
+        **kwargs,
+    ) -> "QuadraticHamiltonian":
+        """
+        Create a QuadraticHamiltonian from a Qiskit Nature QuadraticHamiltonian.
+
+        Parameters
+        ----------
+        qiskit_ham
+            Qiskit Nature quadratic Hamiltonian.
+        particles : str, optional
+            Particle family label.
+        dtype : np.dtype, optional
+            Matrix dtype.
+        backend : str, optional
+            Computation backend.
+        **kwargs
+            Additional constructor arguments.
+
+        Returns
+        -------
+        QuadraticHamiltonian
+            Initialized quadratic Hamiltonian.
+        """
+        from .interop import QiskitInterop
+
+        hermitian_part, antisymmetric_part, constant = QiskitInterop.from_qiskit_hamiltonian(
+            qiskit_ham,
+            num_spin_orbitals=0,
+        )
+        return cls.from_bdg_matrices(
+            hermitian_part=hermitian_part,
+            antisymmetric_part=antisymmetric_part,
+            constant=constant,
+            particles=particles,
+            dtype=dtype,
+            backend=backend,
+            **kwargs,
+        )
+
+    @classmethod
+    def from_openfermion_hamiltonian(
+        cls,
+        of_ham,
+        *,
+        num_orbitals: int,
+        particles: str = "fermions",
+        dtype: Optional[np.dtype] = None,
+        backend: str = "default",
+        **kwargs,
+    ) -> "QuadraticHamiltonian":
+        """
+        Create a QuadraticHamiltonian from an OpenFermion FermionOperator.
+
+        Parameters
+        ----------
+        of_ham
+            OpenFermion fermionic operator.
+        num_orbitals : int
+            Number of spatial orbitals.
+        particles : str, optional
+            Particle family label.
+        dtype : np.dtype, optional
+            Matrix dtype.
+        backend : str, optional
+            Computation backend.
+        **kwargs
+            Additional constructor arguments.
+
+        Returns
+        -------
+        QuadraticHamiltonian
+            Initialized quadratic Hamiltonian.
+        """
+        from .interop import OpenFermionInterop
+
+        hermitian_part, antisymmetric_part, constant = OpenFermionInterop.from_openfermion_hamiltonian(
+            of_ham,
+            num_orbitals=num_orbitals,
+        )
+        return cls.from_bdg_matrices(
+            hermitian_part=hermitian_part,
+            antisymmetric_part=antisymmetric_part,
+            constant=constant,
+            particles=particles,
+            dtype=dtype,
+            backend=backend,
+            **kwargs,
+        )
 
     ##########################################################################
     #! Build the Hamiltonian - adding terms to onsite/hopping/pairing matrices

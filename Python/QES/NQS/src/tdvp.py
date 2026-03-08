@@ -1142,7 +1142,7 @@ class TDVP:
 
         # Case 3: BatchedJacobian but configured for GRAM/MATRIX -> Need override
         # We cache this specialized solver to avoid recompilation overhead
-        if not hasattr(self, "_cached_batched_solver_fn"):
+        if not hasattr(self, "_cached_batched_solver_fn") or self._cached_batched_solver_fn is None:
             self._cached_batched_solver_fn = self.sr_solve_lin.get_solver_func(
                 backend_module=self.backend,
                 use_matvec=True,

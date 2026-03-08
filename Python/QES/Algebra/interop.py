@@ -27,17 +27,16 @@ class QiskitInterop:
         """Check if Qiskit Nature is installed."""
         try:
             import qiskit_nature
-
             return True
         except ImportError:
             return False
 
     @staticmethod
     def to_qiskit_second_quantized_op(
-        h_matrix: np.ndarray,
-        v_matrix: Optional[np.ndarray] = None,
-        constant: float = 0.0,
-        num_spin_orbitals: Optional[int] = None,
+        h_matrix            : np.ndarray,
+        v_matrix            : Optional[np.ndarray] = None,
+        constant            : float = 0.0,
+        num_spin_orbitals   : Optional[int] = None,
     ):
         """Convert QuadraticHamiltonian to Qiskit SecondQuantizedOp.
 
@@ -121,7 +120,7 @@ class QiskitInterop:
         qiskit_ham
             Qiskit QuadraticHamiltonian object
         num_spin_orbitals : int
-            Number of spatial orbitals (will be multiplied by 2 for spin)
+            Retained for API compatibility.
 
         Returns
         -------
@@ -140,10 +139,12 @@ class QiskitInterop:
         if not QiskitInterop.is_qiskit_available():
             raise ImportError("Qiskit Nature required for this operation.")
 
-        h_matrix = np.array(qiskit_ham.hermitian_part)
-        antisymmetric_part = getattr(qiskit_ham, "antisymmetric_part", None)
-        v_matrix = None if antisymmetric_part is None else np.array(antisymmetric_part)
-        constant = float(qiskit_ham.constant)
+        del num_spin_orbitals
+
+        h_matrix            = np.array(qiskit_ham.hermitian_part)
+        antisymmetric_part  = getattr(qiskit_ham, "antisymmetric_part", None)
+        v_matrix            = None if antisymmetric_part is None else np.array(antisymmetric_part)
+        constant            = float(qiskit_ham.constant)
 
         return h_matrix, v_matrix, constant
 
@@ -261,7 +262,7 @@ class OpenFermionInterop:
 
         # Constant
         if np.abs(constant) > 1e-12:
-            H += constant * FermionOperator()
+            H += FermionOperator((), constant)
 
         return H
 
@@ -290,23 +291,40 @@ class OpenFermionInterop:
         if not OpenFermionInterop.is_openfermion_available():
             raise ImportError("OpenFermion required.")
 
-        h_matrix = np.zeros((num_orbitals, num_orbitals), dtype=complex)
-        v_matrix = None
-        constant = 0.0
+        h_matrix            = np.zeros((num_orbitals, num_orbitals), dtype=np.complex128)
+        v_create            = np.zeros((num_orbitals, num_orbitals), dtype=np.complex128)
+        v_ann               = np.zeros((num_orbitals, num_orbitals), dtype=np.complex128)
+        has_create          = False
+        has_ann             = False
+        constant            = 0.0
 
         for term, coeff in of_ham.terms.items():
             if len(term) == 0:
                 # Constant term
                 constant = float(np.real(coeff))
             elif len(term) == 2:
-                # One-body or pairing term
                 i, op_i = term[0]
                 j, op_j = term[1]
 
                 if op_i == 1 and op_j == 0:  # c_i^ c_j
                     h_matrix[i, j] += coeff
                 elif op_i == 0 and op_j == 1:  # c_i c_j^
-                    h_matrix[i, j] += coeff
+                    h_matrix[j, i] += np.conj(coeff)
+                elif op_i == 1 and op_j == 1:  # c_i^ c_j^
+                    v_create[i, j] += coeff
+                    has_create = True
+                elif op_i == 0 and op_j == 0:  # c_i c_j
+                    v_ann[j, i] += np.conj(coeff)
+                    has_ann = True
+
+        if has_create and has_ann:
+            v_matrix = 0.5 * (v_create + v_ann)
+        elif has_create:
+            v_matrix = v_create
+        elif has_ann:
+            v_matrix = v_ann
+        else:
+            v_matrix = None
 
         return h_matrix, v_matrix, constant
 

@@ -30,9 +30,8 @@ if TYPE_CHECKING:
     from QES.general_python.common.flog             import Logger
     from QES.general_python.lattices.lattice        import Lattice
 
-# ------------------------------------------------------------------------------------------------------
-#! Base Hilbert Space Class
-# ------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Base Hilbert-space class
 
 
 class BaseHilbertSpace(ABC):
@@ -45,6 +44,8 @@ class BaseHilbertSpace(ABC):
 
     @dataclass
     class SymBasicInfo:
+        """Compact symmetry summary used by Hilbert-space implementations."""
+
         num_operators: int = 0
         num_gens: int = 0
         num_sectors: int = 0
@@ -89,6 +90,11 @@ class BaseHilbertSpace(ABC):
             Boundary flux for lattice
         kwargs : dict
             Additional arguments
+
+        Returns
+        -------
+        None
+            Initializes shared Hilbert-space state.
         """
 
         self._logger = self._check_logger(logger)
@@ -125,7 +131,7 @@ class BaseHilbertSpace(ABC):
     # --------------------------------------------------------------------------------------------------
 
     def _check_logger(self, logger: Optional["Logger"]) -> "Logger":
-        """Check and return the logger instance"""
+        """Return the provided logger or the global QES logger."""
         if logger is None:
             from QES.qes_globals import get_logger as get_global_logger
 
@@ -140,7 +146,7 @@ class BaseHilbertSpace(ABC):
         color: str = "white",
         append_msg=True,
     ):
-        """Log a message."""
+        """Emit a log message through the configured logger."""
         if self._logger is None:
             return
 
@@ -159,7 +165,7 @@ class BaseHilbertSpace(ABC):
 
     @staticmethod
     def reset_backend(backend: str, state_type: Union[str, type]):
-        """Reset the backend for the Hilbert space."""
+        """Resolve backend and state representation for the Hilbert space."""
         if isinstance(backend, str):
             from QES.general_python.algebra.utils import get_backend
 
@@ -174,7 +180,7 @@ class BaseHilbertSpace(ABC):
 
     @staticmethod
     def reset_statetype(state_type: Union[str, type, object], backend):
-        """Reset the state type for the Hilbert space."""
+        """Resolve the active state-representation type."""
         if state_type is int:
             return int
 
@@ -209,6 +215,11 @@ class BaseHilbertSpace(ABC):
     def state_convention(self):
         """
         State encoding convention metadata for the active local space.
+
+        Returns
+        -------
+        dict
+            Convention metadata for the current local space.
         """
         from QES.Algebra.Operator.impl import get_state_convention
 
@@ -219,6 +230,16 @@ class BaseHilbertSpace(ABC):
     def state_convention_text(self, include_examples: bool = True) -> str:
         """
         Human-readable state encoding convention for the active local space.
+
+        Parameters
+        ----------
+        include_examples : bool, optional
+            If True, include short encoding examples.
+
+        Returns
+        -------
+        str
+            Human-readable state-convention description.
         """
         from QES.Algebra.Operator.impl import format_state_convention
 

@@ -50,9 +50,8 @@ except ImportError as e:
 if TYPE_CHECKING:
     from QES.Algebra.hilbert import HilbertSpace
 
-# ------------------------------------------------------------------------------------------
-#! Helper functions
-# ------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Helper functions
 
 
 def _determine_matrix_dtype(
@@ -145,9 +144,8 @@ def _determine_matrix_dtype(
     return alloc_dtype
 
 
-# -----------------------------------------------------------------------------------------------
-#! JITTED FUNCTIONS
-# -----------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# JIT-compiled kernels
 
 
 @numba.njit(nogil=True)
@@ -223,8 +221,9 @@ def _build_sparse_same_sector_compact_py(
 ):
     """
     Python fallback for sparse matrix builder.
-    Used when operator_func is not JIT-compatible.
-    """
+
+    Used when `operator_func` is not JIT-compatible.
+"""
     nh = len(representative_list)
     # Ensure invalid_idx matches the type in repr_map (usually uint32)
     invalid_idx = _INVALID_REPR_IDX_NB

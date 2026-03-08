@@ -1,18 +1,9 @@
 """
-High-level Hilbert space class for quantum many-body systems.
+High-level Hilbert space class for QES algebra workflows.
 
----------------------------------------------------
-File    : QES/Algebra/hilbert.py
-Author  : Maksymilian Kliczkowski
-Email   : maksymilian.kliczkowski@pwr.edu.pl
-Date    : 2025-02-01
-Version : 1.2.0
-Changes :
-    - 2025.02.01 : 1.0.0 - Initial version of the Hilbert space class                       - MK
-    - 2025.10.26 : 1.1.0 - Refactored symmetry group generation and added detailed logging  - MK
-    - 2025.10.28 : 1.1.1 - Working on symmetry compatibility and modular symmetries         - MK
-    - 2025.12.08 : 1.2.0 - Refactored to inherit from BaseHilbertSpace.
----------------------------------------------------
+This module defines the maintained ``HilbertSpace`` class used for many-body
+and quadratic problems. It handles basis construction, optional symmetry
+reduction, local-space metadata, and backend-aware state representations.
 """
 
 import math
@@ -40,9 +31,8 @@ try:
 except ImportError as e:
     raise ImportError(f"Failed to import required modules in hilbert.py: {e}") from e
 
-#####################################################################################################
-#! Hilbert space class
-#####################################################################################################
+# -----------------------------------------------------------------------------
+# Hilbert space class
 
 
 class HilbertSpace(BaseHilbertSpace):

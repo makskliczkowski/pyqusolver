@@ -562,7 +562,7 @@ class NQS(MonteCarloSolver):
         current_ansatz = self._ansatz_base_func
 
         # Apply Modifier if active
-        if self._modifier_wrapper is not None:
+        if self._modifier_source is not None:
 
             # Recreate the modifier to ensure it wraps the correct `_ansatz_base_func`
             self._modifier_wrapper = AnsatzModifier(
@@ -574,9 +574,7 @@ class NQS(MonteCarloSolver):
             current_ansatz = self._modifier_wrapper         # Get the modified ansatz function
 
         # Apply Symmetrization if active
-        current_ansatz = self.symmetry_handler.wrap(
-            current_ansatz
-        )  # Wrap with symmetrizer if needed
+        current_ansatz = self.symmetry_handler.wrap(current_ansatz)  # Wrap with symmetrizer if needed
 
         # JIT compile the final ansatz function
         if self._isjax:
@@ -1045,7 +1043,9 @@ class NQS(MonteCarloSolver):
             return_values=return_values,
             **kwargs,
         )
-        return result if return_stats else result.values
+        if return_stats:
+            return result
+        return result.values if hasattr(result, "values") else result
 
     def ansatz(
         self,
@@ -2258,8 +2258,8 @@ class NQS(MonteCarloSolver):
             return
 
         # Clear references
-        self._modifier_wrapper = None
-        self._modifier_source = None
+        self._modifier_wrapper  = None
+        self._modifier_source   = None
 
         # Rebuild the full ansatz pipeline
         self._rebuild_ansatz_function()
@@ -2287,10 +2287,7 @@ class NQS(MonteCarloSolver):
 
         # Ensure we are using JAX (Modifiers rely on JIT/PyTrees)
         if not self._isjax:
-            raise NotImplementedError(
-                "State modifiers are currently only supported for the JAX backend."
-            )
-
+            raise NotImplementedError("State modifiers are currently only supported for the JAX backend.")
         self.log("Initializing State Modifier...", lvl=1)
 
         try:
@@ -2302,11 +2299,7 @@ class NQS(MonteCarloSolver):
             self._rebuild_ansatz_function()
 
             # Log success
-            self.log(
-                f"Modifier active. Branching factor M={self._modifier_wrapper.branching_factor}",
-                lvl=1,
-                color="green",
-            )
+            self.log(f"Modifier active. Branching factor M={self._modifier_wrapper.branching_factor}", lvl=1, color="green")
 
         except Exception as e:
             self.log(f"Failed to set modifier: {e}", lvl=0, color="red")
@@ -2316,9 +2309,7 @@ class NQS(MonteCarloSolver):
     #! WEIGHTS
     #####################################
 
-    def save_weights(
-        self, step: Union[int, str] = 0, filename: Optional[str] = None, metadata: Optional[dict] = None
-    ):
+    def save_weights(self, step: Union[int, str] = 0, filename: Optional[str] = None, metadata: Optional[dict] = None):
         """
         Delegates saving to the CheckpointManager.
 
@@ -2354,11 +2345,11 @@ class NQS(MonteCarloSolver):
         # Core metadata - always included
         metadata.update(
             {
-                "backend": self._backend_str,
-                "net_type": type(self._net).__name__,
-                "seed": getattr(self, "_net_seed", self._seed),
-                "shape": list(self.shape) if hasattr(self, "shape") else None,
-                "dtype": str(self._dtype),
+                "backend"   : self._backend_str,
+                "net_type"  : type(self._net).__name__,
+                "seed"      : getattr(self, "_net_seed", self._seed),
+                "shape"     : list(self.shape) if hasattr(self, "shape") else None,
+                "dtype"     : str(self._dtype),
             }
         )
 
@@ -2460,10 +2451,10 @@ class NQS(MonteCarloSolver):
         if params is None:
             params = self._net.get_params()
         elif isinstance(params, jnp.ndarray):
-            shapes = shapes if shapes is not None else self._params_shapes
-            sizes = sizes if sizes is not None else self._params_sizes
-            iscpx = iscpx if iscpx is not None else self._params_iscpx
-            params = self.transform_flat_params(params, shapes, sizes, iscpx)
+            shapes  = shapes if shapes is not None else self._params_shapes
+            sizes   = sizes if sizes is not None else self._params_sizes
+            iscpx   = iscpx if iscpx is not None else self._params_iscpx
+            params  = self.transform_flat_params(params, shapes, sizes, iscpx)
 
         # set the parameters
         self._net.set_params(params)
@@ -2625,6 +2616,11 @@ class NQS(MonteCarloSolver):
         """Return the backend as a string."""
         return self._backend_str
 
+    @property
+    def dtype(self):
+        """Return the configured network/accumulation dtype."""
+        return self._dtype
+
     # ---
 
     @property
@@ -2662,9 +2658,117 @@ class NQS(MonteCarloSolver):
 
     #####################################
 
+    def _spawn_network_like(self, *, seed: Optional[int] = None):
+        """
+        Recreate the current network architecture with copied parameters.
+
+        This is used for temporary bra/ket probe states where mutating the
+        original NQS instance would be unsafe.
+        """
+        net = self._net
+        net_kwargs = getattr(net, "net_kwargs", None)
+        if net_kwargs is None:
+            raise RuntimeError(
+                "The current network does not expose enough construction metadata "
+                "to spawn a like-for-like copy."
+            )
+
+        ctor_kwargs = dict(net_kwargs)
+        param_leaves = tree_util.tree_leaves(net.get_params()) if JAX_AVAILABLE else []
+        if "param_dtype" not in ctor_kwargs and len(param_leaves) > 0:
+            ctor_kwargs["param_dtype"] = param_leaves[0].dtype
+        ctor_kwargs["seed"] = seed if seed is not None else getattr(net, "seed", self._seed)
+
+        net_copy = type(net)(
+            input_shape=net.input_shape,
+            *getattr(net, "net_args", ()),
+            **ctor_kwargs,
+        )
+        net_copy.set_params(net.get_params())
+        return net_copy
+
+    def _spawn_sampler_like_kwargs(self) -> Dict[str, Any]:
+        """
+        Capture the current sampler configuration using NQS constructor keys.
+        """
+        sampler = self._sampler
+        kwargs = {
+            "s_numchains": sampler.numchains,
+            "s_numsamples": sampler.numsamples,
+            "s_numupd": getattr(sampler, "_numupd", 1),
+            "s_sweep_steps": getattr(sampler, "sweep_steps", getattr(sampler, "_sweep_steps", 1)),
+            "s_therm_steps": getattr(sampler, "therm_steps", getattr(sampler, "_therm_steps", 1)),
+            "s_statetype": getattr(sampler, "_statetype", None),
+            "s_logprob_fact": getattr(sampler, "_logprob_fact", 0.5),
+            "s_makediffer": getattr(sampler, "_makediffer", True),
+            "s_global_p": getattr(sampler, "_global_p", 0.0),
+        }
+        upd_fun = getattr(sampler, "_org_upd_fun", None)
+        if upd_fun is None:
+            upd_fun = getattr(sampler, "_upd_rule_name", None)
+        if upd_fun is not None:
+            kwargs["s_upd_fun"] = upd_fun
+        if hasattr(sampler, "_sample_dtype") and getattr(sampler, "_sample_dtype", None) is not None:
+            kwargs["s_sample_dtype"] = sampler._sample_dtype
+        if getattr(sampler, "_pt_betas", None) is not None:
+            kwargs["pt_betas"] = sampler._pt_betas
+        return kwargs
+
+    def spawn_like(
+        self,
+        *,
+        modifier: Optional[Union[Operator, Callable]] = None,
+        seed: Optional[int] = None,
+        directory: Optional[str] = "/tmp",
+        use_orbax: bool = False,
+        **overrides,
+    ) -> "NQS":
+        """
+        Spawn an independent NQS copy with the same architecture, parameters,
+        Hamiltonian, and sampler configuration.
+
+        This is intended for physics workflows that require simultaneous bra and
+        ket probe states, for example dynamical correlation functions
+        :math:`\\langle \\psi_0 | A^{\\dag}(t) B(0) | \\psi_0 \\rangle`.
+        """
+
+        new_net     = self._spawn_network_like(seed=seed)
+        init_kwargs = self._spawn_sampler_like_kwargs()
+        init_kwargs.update(
+            {
+                "batch_size"    : overrides.pop("batch_size", self._batch_size),
+                "backend"       : overrides.pop("backend", self._backend_str),
+                "dtype"         : overrides.pop("dtype", self._dtype),
+                "problem"       : overrides.pop("problem", getattr(self._nqsproblem, "typ", "wavefunction")),
+                "symmetrize"    : overrides.pop("symmetrize", self._symmetrize),
+                "seed"          : overrides.pop("seed", self._seed if seed is None else seed),
+                "beta"          : overrides.pop("beta", self._beta),
+                "mu"            : overrides.pop("mu", self._mu),
+                "replica"       : overrides.pop("replica", getattr(self._sampler, "_n_replicas", 1)),
+                "directory"     : overrides.pop("directory", directory),
+                "use_orbax"     : overrides.pop("use_orbax", use_orbax),
+                "verbose"       : overrides.pop("verbose", self._verbose),
+            }
+        )
+        init_kwargs.update(overrides)
+
+        spawned = NQS(
+            logansatz   =new_net,
+            model       =self._model,
+            sampler     ="vmc",
+            hilbert     =self._hilbert,
+            **init_kwargs,
+        )
+        spawned.set_params(self.get_params())
+        if modifier is not None:
+            spawned.set_modifier(modifier)
+        return spawned
+
     def clone(self):
-        """Clone the NQS solver."""
-        return NQS(self._net.clone(), self._sampler.clone(), self._backend, **self._kwargs)
+        """
+        Clone the NQS solver as an independent temporary working copy.
+        """
+        return self.spawn_like()
 
     def swap(self, other):
         """Swap the NQS solver with another one."""
@@ -3082,6 +3186,156 @@ class NQS(MonteCarloSolver):
 
     #####################################
 
+    def time_evolve(self, times, **kwargs):
+        r"""
+        Evolve the current NQS in real time using TDVP.
+
+        The returned trajectory approximates the projected Schrödinger dynamics
+
+            |\psi (t)\rangle \approx e^{-iHt} |\psi (0)\rangle
+
+        inside the current variational manifold. This is the basic building
+        block for time-domain observables and spectral functions.
+        """
+        from .src.nqs_spectral import time_evolve_impl
+        
+        return time_evolve_impl(self, times, **kwargs)
+
+    def compute_transition_correlator(self, trajectory, *, operator=None, **kwargs):
+        r"""
+        Compute the normalized transition correlator of one TDVP trajectory.
+
+        This evaluates
+
+            C_O(t) =
+            \frac{\langle \psi (0) | O | \psi (t) \rangle}
+                 {\sqrt{\langle \psi (0)|\psi (0)\rangle
+                        \langle \psi (t)|\psi (t)\rangle}}.
+
+        It is useful for Loschmidt amplitudes, overlap diagnostics, and as the
+        normalized core from which physical probe-state correlators are built.
+        """
+        from .src.nqs_spectral import transition_correlator_impl
+
+        return transition_correlator_impl(self, trajectory, operator=operator, **kwargs)
+
+    def compute_dynamical_correlator(
+        self,
+        times,
+        *,
+        ket_probe_operator,
+        bra_probe_operator=None,
+        trajectory=None,
+        **kwargs,
+    ):
+        r"""
+        Compute the time-domain probe-state correlator
+
+            C_{AB}(t) = \langle \psi_0 | A^\dagger e^{-iHt} B | \psi_0 \rangle.
+
+        The ket probe state ``B|\psi_0\rangle`` is evolved with TDVP, while the
+        bra probe state ``A|\psi_0\rangle`` remains fixed. For Hermitian probes
+        one may pass only ``ket_probe_operator``. For momentum-resolved
+        structure factors the correct choice is typically
+        ``bra_probe_operator = S_{-q}``, ``ket_probe_operator = S_q``.
+        """
+        from .src.nqs_spectral import dynamical_correlator_impl
+
+        return dynamical_correlator_impl(
+            self,
+            times,
+            ket_probe_operator=ket_probe_operator,
+            bra_probe_operator=bra_probe_operator,
+            trajectory=trajectory,
+            **kwargs,
+        )
+
+    def spectral_function(self, times, *, trajectory=None, operator=None, **kwargs):
+        r"""
+        Compute an FFT-based spectral estimate from a basic transition correlator.
+
+        This is the direct frequency-domain form of
+        :meth:`compute_transition_correlator`. For physical response functions
+        created by operator insertions, prefer :meth:`dynamic_structure_factor`
+        or :meth:`dynamic_structure_factor_kspace`.
+        """
+        from .src.nqs_spectral import spectral_function_impl
+
+        return spectral_function_impl(
+            self,
+            times,
+            trajectory=trajectory,
+            operator=operator,
+            **kwargs,
+        )
+
+    def dynamic_structure_factor(
+        self,
+        times,
+        *,
+        probe_operator=None,
+        ket_probe_operator=None,
+        bra_probe_operator=None,
+        trajectory=None,
+        **kwargs,
+    ):
+        r"""
+        Compute a dynamical response function from TDVP-evolved probe states.
+
+        The general object is
+
+            C_{AB}(t) = \langle \psi_0 | A^\dagger e^{-iHt} B | \psi_0 \rangle,
+
+        followed by a discrete Fourier transform. This is the natural NQS route
+        to spectral functions and dynamical structure factors. When the probe is
+        Hermitian, passing only ``probe_operator`` is sufficient. For
+        momentum-resolved spin response use the physically correct pair
+        ``A = S_{-q}``, ``B = S_q``.
+        """
+        from .src.nqs_spectral import dynamic_structure_factor_impl
+
+        return dynamic_structure_factor_impl(
+            self,
+            times,
+            probe_operator=probe_operator,
+            ket_probe_operator=ket_probe_operator,
+            bra_probe_operator=bra_probe_operator,
+            trajectory=trajectory,
+            **kwargs,
+        )
+
+    def dynamic_structure_factor_kspace(
+        self,
+        times,
+        *,
+        probe_operators,
+        bra_probe_operators=None,
+        k_values=None,
+        labels=None,
+        **kwargs,
+    ):
+        r"""
+        Compute a momentum- or probe-resolved spectral map.
+
+        Each entry of ``probe_operators`` defines one response channel, usually a
+        momentum point. The returned tensor has shape ``(N_k, N_\omega)`` and is
+        designed to feed directly into the existing spectral plotting helpers,
+        including ``mode='kpath'`` and ``mode='grid'``.
+        """
+        from .src.nqs_spectral import spectral_map_impl
+
+        return spectral_map_impl(
+            self,
+            times,
+            probe_operators=probe_operators,
+            bra_probe_operators=bra_probe_operators,
+            k_values=k_values,
+            labels=labels,
+            **kwargs,
+        )
+
+    #####################################
+
     def __repr__(self):
         return f"NQS(logansatz={self._net},sampler={self._sampler},backend={self._backend_str},mod={self.modified})"
 
@@ -3169,6 +3423,8 @@ class NQS(MonteCarloSolver):
         # If apply returned a stats object, extract values. If array, use directly.
         if hasattr(loc_O_ket, "values"):
             loc_O_ket = loc_O_ket.values
+        elif isinstance(loc_O_ket, tuple):
+            loc_O_ket = loc_O_ket[0]
 
         # Weighted average: E[ exp(log_ratio) * loc_val ]
         # Use same shift lmax_1 for stability

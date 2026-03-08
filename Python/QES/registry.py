@@ -31,11 +31,14 @@ from typing import Dict, List, Optional
 
 @dataclass
 class ModuleInfo:
-    name: str  # short name, e.g. "Algebra.Hilbert"
-    path: str  # dotted path, e.g. "QES.Algebra.hilbert"
-    description: str  # one-liner
+    """Compact description of one discoverable QES module."""
+
+    name        : str  # short name, e.g. "Algebra.Hilbert"
+    path        : str  # dotted path, e.g. "QES.Algebra.hilbert"
+    description : str  # one-liner
 
     def to_dict(self) -> Dict[str, str]:
+        """Convert the dataclass payload to a plain dictionary."""
         return asdict(self)
 
 
@@ -68,6 +71,7 @@ _DEF_FALLBACK = "No description available."
 
 
 def _first_line(s: Optional[str]) -> str:
+    """Return the first non-empty line of a docstring-like string."""
     if not s:
         return _DEF_FALLBACK
     for line in s.splitlines():
@@ -81,6 +85,7 @@ def _first_line(s: Optional[str]) -> str:
 
 
 def _desc_from_module(mod) -> str:
+    """Extract a one-line description from an imported module object."""
     # Prefer explicit MODULE_DESCRIPTION if present
     desc = getattr(mod, "MODULE_DESCRIPTION", None)
     if isinstance(desc, str) and desc.strip():
@@ -93,6 +98,7 @@ def _desc_from_module(mod) -> str:
 
 
 def _safe_import(path: str):
+    """Import a module path and return ``None`` on failure."""
     try:
         return importlib.import_module(path)
     except Exception:
@@ -103,6 +109,7 @@ def _safe_import(path: str):
 
 
 def _collect(entries: Dict[str, str]) -> List[ModuleInfo]:
+    """Collect module descriptions for a name-to-path mapping."""
     out: List[ModuleInfo] = []
     for name, path in entries.items():
         mod = _safe_import(path)
@@ -122,6 +129,12 @@ def list_modules(include_submodules: bool = True) -> List[Dict[str, str]]:
     include_submodules : bool
         If True, include commonly used submodules; otherwise only top-level
         QES packages are listed.
+
+    Returns
+    -------
+    List[Dict[str, str]]
+        Stable list of dictionaries with ``name``, ``path``, and
+        ``description`` keys.
     """
     items: List[ModuleInfo] = _collect(_TOP_LEVEL)
     if include_submodules:
@@ -137,8 +150,16 @@ def list_modules(include_submodules: bool = True) -> List[Dict[str, str]]:
 def describe_module(name_or_path: str) -> str:
     """Return a short description for a given module name or dotted path.
 
-    Accepts either the curated short name (e.g., "Algebra.Hilbert") or a
-    fully qualified path (e.g., "QES.Algebra.hilbert").
+    Parameters
+    ----------
+    name_or_path : str
+        Curated short name such as ``"Algebra.Hilbert"`` or a fully qualified
+        import path such as ``"QES.Algebra.hilbert"``.
+
+    Returns
+    -------
+    str
+        One-line module description or the registry fallback string.
     """
     # Try direct path import first
     mod = _safe_import(name_or_path)
@@ -163,5 +184,4 @@ def describe_module(name_or_path: str) -> str:
 
 
 # ----------------------------------------------------------------------------
-#! EOF
-# ----------------------------------------------------------------------------
+# End of file

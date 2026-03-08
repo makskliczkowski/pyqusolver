@@ -35,6 +35,9 @@ from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
 
 import numpy as np
 
+#######################################################################
+#! Update proposers
+#######################################################################
 try:
     from .sampler import Sampler, SamplerErrors, SolverInitState
     from .updates import (
@@ -67,6 +70,7 @@ try:
     import jax
     import jax.numpy as jnp
     from flax import linen as nn
+    from jax import lax
 
     JAX_AVAILABLE = True
 except ImportError:
@@ -421,32 +425,21 @@ class VMCSampler(Sampler):
                 )
 
     def set_numchains(self, numchains):
+        ''' Set the number of parallel chains. Reshapes state and counters if in PT mode. '''
         super().set_numchains(numchains)
         if getattr(self, "_is_pt", False) and self._states.ndim == len(self._shape) + 1:
             if self._isjax:
-                self._states = jnp.tile(
-                    self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim
-                )
-                self._num_proposed = jnp.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_proposed.dtype
-                )
-                self._num_accepted = jnp.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_accepted.dtype
-                )
+                self._states        = jnp.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
             else:
-                self._states = np.tile(
-                    self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim
-                )
-                self._num_proposed = np.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_proposed.dtype
-                )
-                self._num_accepted = np.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_accepted.dtype
-                )
+                self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
 
         self._static_sample_fun = None
         self._static_pt_sampler = None
-        self._jit_cache = {}
+        self._jit_cache         = {}
 
     def autotune_chains(self, max_memory_gb: float = 12.0, safety_factor: float = 0.8):
         """
@@ -455,24 +448,24 @@ class VMCSampler(Sampler):
         if not self._isjax:
             return
 
-        bytes_per_site = 16
-        state_mem = self.size * bytes_per_site
+        bytes_per_site  = 16
+        state_mem       = self.size * bytes_per_site
         overhead_factor = 100
-        mem_per_chain = state_mem * overhead_factor
+        mem_per_chain   = state_mem * overhead_factor
 
-        target_mem = max_memory_gb * 1e9 * safety_factor
-        optimal_chains = int(target_mem / mem_per_chain)
+        target_mem      = max_memory_gb * 1e9 * safety_factor
+        optimal_chains  = int(target_mem / mem_per_chain)
 
-        optimal_chains = max(1, (optimal_chains // 64) * 64)
+        optimal_chains  = max(1, (optimal_chains // 64) * 64)
 
         self.set_numchains(optimal_chains)
         if self._logger:
             self._logger.info(f"Auto-tuned num_chains to {optimal_chains}")
 
     def __repr__(self):
-        init_str = str(self._initstate_t) if self._initstate_t is not None else "RND"
-        glob_p = getattr(self, "_global_p", 0.0)
-        glob_str = f",glob={self._global_name}" + (f"(p={glob_p:.2f})" if glob_p > 0 else "")
+        init_str    = str(self._initstate_t) if self._initstate_t is not None else "RND"
+        glob_p      = getattr(self, "_global_p", 0.0)
+        glob_str    = f",glob={self._global_name}" + (f"(p={glob_p:.2f})" if glob_p > 0 else "")
         return (
             f"VMC(s={self._shape},mu={self._mu},beta={self._beta},"
             f"Nt={self._therm_steps},Ns={self._sweep_steps},"
@@ -506,6 +499,7 @@ class VMCSampler(Sampler):
         )
 
     def _set_net_callable(self, net):
+        ''' Sets the network callable and parameters based on the provided net object. '''
         self._net = net
         if isinstance(net, nn.Module):
             return net.apply, None
@@ -521,9 +515,7 @@ class VMCSampler(Sampler):
             return net.apply, params
         elif callable(net):
             return net, None
-        raise ValueError(
-            "Invalid network object provided. Needs to be callable or have an 'apply' method."
-        )
+        raise ValueError("Invalid network object provided. Needs to be callable or have an 'apply' method.")
 
     def _set_replicas(self, betas: np.ndarray):
         self._pt_betas = betas
@@ -532,27 +524,16 @@ class VMCSampler(Sampler):
 
         if self._is_pt:
             if self._isjax:
-                self._states = jnp.tile(
-                    self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim
-                )
-                self._num_proposed = jnp.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_proposed.dtype
-                )
-                self._num_accepted = jnp.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_accepted.dtype
-                )
+                self._states        = jnp.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
             else:
-                self._states = np.tile(
-                    self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim
-                )
-                self._num_proposed = np.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_proposed.dtype
-                )
-                self._num_accepted = np.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_accepted.dtype
-                )
+                self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
+                self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
+                self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
 
     def set_update_num(self, numupd: int):
+        ''' Set the number of times the update function is applied per update step. '''
         self._numupd = numupd
         if self._org_upd_fun is None:
             raise ValueError("Original update function is not set.")
@@ -595,6 +576,22 @@ class VMCSampler(Sampler):
         patterns        : Optional[Union[List, str]] = None,
         global_update   : Optional[Union[Callable, str]] = None,
     ):
+        ''' 
+        Configure a hybrid local/global update proposer. Global updates are applied with probability 
+        p_global and can be based on predefined patterns or custom functions.
+
+        Parameters
+        ----------
+        p_global : float
+            Probability of applying a global update instead of a local one.
+        fraction : float
+            For multi-flip global updates, the fraction of sites to flip.
+        patterns : list or str
+            If str, can be "wilson", "plaquette", or "plaquette_all" to use lattice-based patterns.
+            If list, should be a list of lists of site indices defining the patterns.
+        global_update : callable or str
+            A custom global update function or a string identifier for a predefined global update.
+        '''
         self._org_upd_fun = self._local_upd_fun
         if p_global > 0.0 and self._isjax:
 
@@ -708,20 +705,20 @@ class VMCSampler(Sampler):
                     global_flip_fn = partial(_multi_with_info, n_flip=n_flip_global)
                 else:
                     global_flip_fn = partial(propose_multi_flip, n_flip=n_flip_global)
-                glob_type_str = f"Multi-Flip (frac={fraction:.2f})"
-                self._global_name = "multi-flip"
+                glob_type_str       = f"Multi-Flip (frac={fraction:.2f})"
+                self._global_name   = "multi-flip"
 
-            self._org_upd_fun = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
-            self._global_name = glob_type_str
-            self._global_p = p_global
+            self._org_upd_fun   = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
+            self._global_name   = glob_type_str
+            self._global_p      = p_global
         else:
-            self._global_name = "none"
-            self._global_p = 0.0
+            self._global_name   = "none"
+            self._global_p      = 0.0
 
         self.set_update_num(self._numupd)
         self._static_sample_fun = None
         self._static_pt_sampler = None
-        self._jit_cache = {}
+        self._jit_cache         = {}
 
     def set_global_update(
         self,
@@ -750,6 +747,7 @@ class VMCSampler(Sampler):
     @staticmethod
     @jax.jit
     def _acceptance_probability_jax(current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
+        ''' Calculate the Metropolis-Hastings acceptance probability for a proposed move. '''
         delta = jnp.real(candidate_val) - jnp.real(current_val)
         ratio = jnp.exp(jnp.minimum(beta * mu * delta, 30.0))
         return ratio
@@ -759,6 +757,7 @@ class VMCSampler(Sampler):
         return vmc_np_impl.acceptance_probability_np(current_val=current_val, candidate_val=candidate_val, beta=beta, mu=mu)
 
     def acceptance_probability(self, current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
+        ''' Public method to calculate acceptance probability, dispatching to the appropriate backend implementation. '''
         use_beta = beta if beta is not None else self._beta
         if self._isjax:
             return self._acceptance_probability_jax(current_val, candidate_val, beta=use_beta, mu=mu)
@@ -795,7 +794,8 @@ class VMCSampler(Sampler):
         return vmc_np_impl.logprob_np(x, net_callable, net_params)
 
     def logprob(self, x, net_callable=None, net_params=None):
-        ''' Calculate log-probability (log-amplitude) for a batch of states `x` using the provided or default network callable and parameters.'''
+        ''' Calculate log-probability (log-amplitude) for a batch of states `x` 
+        using the provided or default network callable and parameters.'''
         use_callable    = net_callable if net_callable is not None else self._net_callable
         use_params      = net_params if net_params is not None else self._parameters
 
@@ -832,12 +832,47 @@ class VMCSampler(Sampler):
         r"""
         Runs multiple MCMC steps using lax.scan. JIT-compiled.
         Supports Fast Updates if log_psi_delta_fun is provided.
+        
+        Parameters
+        ----------
+        chain_init : array
+            Initial states for the MCMC chains, shape (num_chains, ...).
+        current_val_init : array
+            Initial log-probability values for the chains, shape (num_chains,).
+        rng_k_init : PRNGKey
+            Initial random key for JAX random operations.
+        num_proposed_init : int
+            Initial count of proposed moves for the chains.
+        num_accepted_init : int 
+            Initial count of accepted moves for the chains.
+        delta_cache_init : any
+            Initial cache for log_psi_delta calculations, if supported.
+        params : any
+            Parameters to pass to the network and log_psi_delta functions.
+        steps : int
+            Number of MCMC steps to perform.
+        update_proposer : Callable
+            Function that takes (chain_state, rng_key) and returns proposed new state (and optionally update info).
+        net_callable_fun : Callable
+            Function that takes (params, states) and returns log-probabilities for the given states 
+            (should support batching over states).
+        mu : float
+            Exponent for acceptance probability calculation. 
+        beta : float
+            Inverse temperature for acceptance probability calculation.
+        log_psi_delta_fun : Optional[Callable]
+            If provided, a function that calculates the change in log-probability for a proposed move
+            using the current state, proposed state, and update info. Should return either just the delta or a tuple of (delta, cache).
+        log_psi_delta_cache_init_fun : Optional[Callable]
+            If provided, a function that initializes the cache for log_psi_delta calculations based on the current chain state. Used if log_psi_delta_fun supports caching.
+        log_psi_delta_supports_cache : bool
+            If True, indicates that log_psi_delta_fun returns cache information that should be used to update the cache for accepted moves. If False, the cache will only be initialized once and not updated, which is suitable for cases where the cache is static or only depends on the current state and not the proposed state.  
         """
 
-        num_chains = chain_init.shape[0]
         # Optimized: assume net_callable_fun handles batches directly (no vmap)
-        logproba_fun = lambda x: net_callable_fun(params, x)
-        proposer_fn = jax.vmap(update_proposer, in_axes=(0, 0))
+        num_chains      = chain_init.shape[0]
+        logproba_fun    = lambda x: net_callable_fun(params, x)
+        proposer_fn     = jax.vmap(update_proposer, in_axes=(0, 0))
 
         def _sweep_chain_jax_step_inner(carry, _):
             chain_in, current_val_in, current_key, num_prop, num_acc, cache_in = carry
@@ -872,19 +907,10 @@ class VMCSampler(Sampler):
                     delta_log_psi = delta_res
                 new_val         = current_val_in + delta_log_psi
                 delta           = jnp.real(delta_log_psi)
-
-                if (
-                    cache_in is not None
-                    and cache_prop is None
-                    and log_psi_delta_cache_init_fun is not None
-                ):
-                    cache_prop = log_psi_delta_cache_init_fun(params, new_chain)
             else:
                 # O(N_sites * N_hidden) standard update
                 new_val = VMCSampler._flatten_batch_output_jax(logproba_fun(new_chain), num_chains)
                 delta = jnp.real(new_val - current_val_in)
-                if cache_in is not None and log_psi_delta_cache_init_fun is not None:
-                    cache_prop = log_psi_delta_cache_init_fun(params, new_chain)
 
             # Work in log-space for numerical stability:
             # accept iff log(u) < min(0, log_acc).
@@ -901,10 +927,18 @@ class VMCSampler(Sampler):
             proposed_out    = num_prop + 1
             accepted_out    = num_acc + keep.astype(num_acc.dtype)
 
+            #! Update cache: keep old where rejected, update where accepted, or init if no cache.
             if cache_in is None:
                 cache_out = None
             elif cache_prop is None:
-                cache_out = cache_in
+                if log_psi_delta_cache_init_fun is None:
+                    cache_out = cache_in
+                else:
+                    cache_out = lax.cond(jnp.any(keep),
+                        lambda _: log_psi_delta_cache_init_fun(params, chain_out),
+                        lambda _: cache_in,
+                        operand=None,
+                    )
             else:
                 def _select_cache(new_leaf, old_leaf):
                     cache_mask = keep.reshape((num_chains,) + (1,) * (new_leaf.ndim - 1))
@@ -912,7 +946,7 @@ class VMCSampler(Sampler):
 
                 cache_out = jax.tree_util.tree_map(_select_cache, cache_prop, cache_in)
 
-            new_carry       = (
+            new_carry = (
                 chain_out,
                 val_out,
                 next_key_carry,
@@ -930,9 +964,7 @@ class VMCSampler(Sampler):
             num_accepted_init,
             delta_cache_init,
         )
-        final_carry, _ = jax.lax.scan(
-            _sweep_chain_jax_step_inner, initial_carry, None, length=steps
-        )
+        final_carry, _ = jax.lax.scan(_sweep_chain_jax_step_inner, initial_carry, None, length=steps)
         final_chain, final_val, final_key, final_prop, final_acc, final_cache = final_carry
 
         return final_chain, final_val, final_key, final_prop, final_acc, final_cache
@@ -983,12 +1015,10 @@ class VMCSampler(Sampler):
         net_callable_fun,
         steps,
     ):
-        use_log_proba_fun = self.logprob if log_proba_fun is None else log_proba_fun
-        use_accept_config_fun = (
-            self.acceptance_probability if accept_config_fun is None else accept_config_fun
-        )
-        use_net_callable_fun = self._net_callable if net_callable_fun is None else net_callable_fun
-        use_update_proposer = self._upd_fun if update_proposer is None else update_proposer
+        use_log_proba_fun       = self.logprob if log_proba_fun is None else log_proba_fun
+        use_accept_config_fun   = self.acceptance_probability if accept_config_fun is None else accept_config_fun
+        use_net_callable_fun    = self._net_callable if net_callable_fun is None else net_callable_fun
+        use_update_proposer     = self._upd_fun if update_proposer is None else update_proposer
 
         if logprobas is None:
             logprobas = self._logprobas
@@ -1566,8 +1596,8 @@ class VMCSampler(Sampler):
         current_proposed = self._num_proposed
         current_accepted = self._num_accepted
         if self._isjax:
-            self._static_sample_fun = self._get_sampler_jax(self._numsamples, self._numchains)
-            self._static_pt_sampler = self._get_sampler_pt_jax(self._numsamples, self._numchains)
+            self._static_sample_fun = self.get_sampler(self._numsamples, self._numchains)
+            self._static_pt_sampler = self._get_sampler_pt_jax(self._numsamples, self._numchains) if self._is_pt else None
         else:
             self._static_sample_fun = self._get_sampler_np(self._numsamples, self._numchains)
             self._static_pt_sampler = None
@@ -1822,7 +1852,18 @@ class VMCSampler(Sampler):
             num_samples if num_samples is not None else self._numsamples,
             num_chains  if num_chains  is not None else self._numchains,
             self._isjax,
+            self._is_pt,
             self._donate_buffers if self._isjax else False,
+            self._total_therm_updates,
+            self._updates_per_sample,
+            self._mu,
+            self._beta if not self._is_pt else None,
+            tuple(np.asarray(self._pt_betas).tolist()) if self._is_pt and self._pt_betas is not None else None,
+            id(self._upd_fun),
+            id(self._net_callable),
+            id(self._log_psi_delta_fun),
+            id(self._log_psi_delta_cache_init_fun),
+            bool(self._log_psi_delta_supports_cache),
         )
 
         if hasattr(self, "_jit_cache") and cache_key in self._jit_cache:

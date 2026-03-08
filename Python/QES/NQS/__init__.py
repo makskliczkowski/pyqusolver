@@ -940,20 +940,24 @@ def load_nqs(
 # ----------------------------------------------------------------------------
 
 _LAZY_IMPORTS = {
-    "NQS"               : (".nqs", "NQS"),
-    "VMCSampler"        : ("QES.Solver.MonteCarlo.vmc", "VMCSampler"),
-    "NQSTrainer"        : (".src.nqs_train", "NQSTrainer"),
-    "NQSTrainStats"     : (".src.nqs_train", "NQSTrainStats"),
-    "NQSObservable"     : (".src.nqs_engine", "NQSObservable"),
-    "NQSLoss"           : (".src.nqs_engine", "NQSLoss"),
-    "NQSEvalEngine"     : (".src.nqs_engine", "NQSEvalEngine"),
-    "EvaluationResult"  : (".src.nqs_engine", "EvaluationResult"),
-    "NetworkFactory"    : (".src.nqs_network_integration", "NetworkFactory"),
-    "TDVP"              : (".src.tdvp", "TDVP"),
-    "TDVPStepInfo"      : (".src.tdvp", "TDVPStepInfo"),
-    "NQSDataset"        : (".src.nqs_dataset", "NQSDataset"),
-    "EDDataset"         : (".src.nqs_dataset", "EDDataset"),
-    "CommonDataset"     : (".src.nqs_dataset", "CommonDataset"),
+    "NQS"                   : (".nqs", "NQS"),
+    "VMCSampler"            : ("QES.Solver.MonteCarlo.vmc", "VMCSampler"),
+    "NQSTrainer"            : (".src.nqs_train", "NQSTrainer"),
+    "NQSTrainStats"         : (".src.nqs_train", "NQSTrainStats"),
+    "NQSObservable"         : (".src.nqs_engine", "NQSObservable"),
+    "NQSLoss"               : (".src.nqs_engine", "NQSLoss"),
+    "NQSEvalEngine"         : (".src.nqs_engine", "NQSEvalEngine"),
+    "EvaluationResult"      : (".src.nqs_engine", "EvaluationResult"),
+    "NetworkFactory"        : (".src.nqs_network_integration", "NetworkFactory"),
+    "TDVP"                  : (".src.tdvp", "TDVP"),
+    "TDVPStepInfo"          : (".src.tdvp", "TDVPStepInfo"),
+    "NQSCorrelatorResult"   : (".src.nqs_spectral", "NQSCorrelatorResult"),
+    "NQSSpectralMapResult"  : (".src.nqs_spectral", "NQSSpectralMapResult"),
+    "NQSTDVPRecord"         : (".src.nqs_spectral", "NQSTDVPRecord"),
+    "NQSSpectralResult"     : (".src.nqs_spectral", "NQSSpectralResult"),
+    "NQSDataset"            : (".src.nqs_dataset", "NQSDataset"),
+    "EDDataset"             : (".src.nqs_dataset", "EDDataset"),
+    "CommonDataset"         : (".src.nqs_dataset", "CommonDataset"),
 }
 
 _LAZY_CACHE = {}
@@ -966,6 +970,12 @@ if TYPE_CHECKING:
     from .src.nqs_network_integration   import NetworkFactory
     from .src.nqs_train                 import NQSTrainer, NQSTrainStats
     from .src.tdvp                      import TDVP, TDVPStepInfo
+    from .src.nqs_spectral              import (
+        NQSCorrelatorResult,
+        NQSSpectralMapResult,
+        NQSSpectralResult,
+        NQSTDVPRecord,
+    )
     from .src.nqs_dataset               import NQSDataset, EDDataset, CommonDataset
 
 
@@ -1119,6 +1129,10 @@ __all__ = [
     "EvaluationResult",
     "TDVP",
     "TDVPStepInfo",
+    "NQSCorrelatorResult",
+    "NQSSpectralMapResult",
+    "NQSTDVPRecord",
+    "NQSSpectralResult",
     "NetworkFactory",
     "VMCSampler",
     # Configs and loading utilities

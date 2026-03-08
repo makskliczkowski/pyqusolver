@@ -48,6 +48,9 @@ MODULE_DESCRIPTION = (
     "Algebra for quantum many-body: Hilbert spaces, Hamiltonians, operators, symmetries."
 )
 
+# -----------------------------------------------------------------------------
+# Lazy package surface
+
 _LAZY_IMPORTS = {
     "HilbertSpace": (".hilbert", "HilbertSpace"),
     "HilbertConfig": (".hilbert_config", "HilbertConfig"),
@@ -104,6 +107,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    """Resolve public algebra attributes and compatibility exports lazily."""
     if name in _LAZY_CACHE:
         return _LAZY_CACHE[name]
 
@@ -125,6 +129,7 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """Return the stable algebra attribute list including symmetry fallbacks."""
     symm = importlib.import_module(_SYMMETRY_MODULE, package=__name__)
     symmetry_names = [n for n in dir(symm) if not n.startswith("_")]
     return sorted(set(list(globals().keys()) + __all__ + list(_LAZY_IMPORTS.keys()) + symmetry_names))

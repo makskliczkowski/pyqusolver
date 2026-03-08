@@ -28,7 +28,8 @@ import copy
 import numbers
 import time
 
-#####################################################################################################
+# -----------------------------------------------------------------------------
+# Imports
 from enum import Enum, auto
 from typing import (
     TYPE_CHECKING,
@@ -46,7 +47,7 @@ import numba
 import numpy as np
 from numba.core.registry import CPUDispatcher
 
-####################################################################################################
+# -----------------------------------------------------------------------------
 
 try:
     if TYPE_CHECKING:
@@ -63,7 +64,7 @@ except ImportError as e:
         "QES modules are required for this module to function properly. Please ensure QES is installed."
     ) from e
 
-####################################################################################################
+# -----------------------------------------------------------------------------
 
 try:
     import jax
@@ -120,7 +121,7 @@ class SymmetryGenerators(Enum):
         return self in [SymmetryGenerators.Inversion]
 
     def supported_kind(self) -> Set["LocalSpaceTypes"]:
-        """Return the set of LocalSpaceTypes supported by this symmetry generator"""
+        """Return the set of local-space kinds supported by this generator."""
 
         from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
 
@@ -148,7 +149,7 @@ class GlobalSymmetries(Enum):
     Other = auto()
 
 
-####################################################################################################
+# -----------------------------------------------------------------------------
 
 class Operator(GeneralMatrix):
     """
@@ -261,6 +262,11 @@ class Operator(GeneralMatrix):
             Logger instance.
         seed : int, optional
             Random seed for reproducibility.
+
+        Returns
+        -------
+        None
+            Initializes the operator object and its matrix-storage metadata.
         """
 
         # handle the system physical size dimension and the lattice

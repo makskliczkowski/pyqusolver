@@ -47,12 +47,13 @@ except ImportError as e:
 if TYPE_CHECKING:
     from QES.general_python.common.flog import Logger
 
-# ----------------------------------------------------------------------------------------
-#! Diagonalization Engine
-# ----------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Diagonalization engine
 
 
 class DiagonalizationMethods(Enum):
+    """Supported diagonalization methods exposed by the engine."""
+
     AUTO            = "auto"
     EXACT           = "exact"
     LANCZOS         = "lanczos"
@@ -130,7 +131,21 @@ class DiagonalizationEngine:
         verbose: bool = False,
         logger: Optional[Callable[[str], Any]] = None,
     ):
-        """Initialize the diagonalization engine."""
+        """Initialize the diagonalization engine.
+
+        Parameters
+        ----------
+        method : DiagonalizationMethods, optional
+            Default diagonalization method.
+        backend : {"numpy", "scipy", "jax"}, optional
+            Preferred computational backend.
+        use_scipy : bool, optional
+            If True, prefer SciPy implementations when available.
+        verbose : bool, optional
+            If True, emit method-selection and solver diagnostics.
+        logger : callable, optional
+            Logger-compatible callable used for progress reporting.
+        """
 
         if not EIGEN_SOLVERS_AVAILABLE:
             raise ImportError(

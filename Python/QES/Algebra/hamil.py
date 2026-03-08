@@ -1,18 +1,10 @@
 """
-file : Algebra/hamil.py
+High-level Hamiltonian class for QES algebra workflows.
 
-High-level Hamiltonian class for the Quantum Energy Solver (QES) package. This class is used to
-define the Hamiltonian of a system. It may be either a Many-Body Quantum Mechanics Hamiltonian or a
-non-interacting system Hamiltonian. It may generate a Hamiltonian matrix but in addition it defines
-how an operator acts on a state. The Hamiltonian class is an abstract class and is not meant to be
-instantiated. It is meant to be inherited by other classes.
-
-Author  : Maksymilian Kliczkowski
-Email   : maksymilian.kliczkowski@pwr.edu.pl
-Date    : 2025-02-01
-Version : 1.0.0
-Changes :
-    2025-02-01 (1.0.0) : First implementation of the Hamiltonian class. - MK
+This module defines the maintained Hamiltonian base class used for both
+many-body and quadratic models. The class supports matrix materialization,
+matrix-free operator application, basis-aware operator composition, and exact
+diagonalization workflows.
 """
 
 import time
@@ -25,7 +17,8 @@ if TYPE_CHECKING:
     from QES.general_python.common.flog                     import Logger
     from QES.general_python.lattices.lattice                import Lattice
 
-###################################################################################################
+# -----------------------------------------------------------------------------
+# Imports
 
 try:
     from    QES.Algebra.hilbert                             import HilbertSpace, HilbertConfig
@@ -61,9 +54,8 @@ except ImportError:
     local_energy_jax_wrap               = None
     JAX_AVAILABLE                       = False
 
-####################################################################################################
-#! Hamiltonian class - abstract class
-####################################################################################################
+# -----------------------------------------------------------------------------
+# Hamiltonian base class
 
 
 class Hamiltonian(BasisAwareOperator):
