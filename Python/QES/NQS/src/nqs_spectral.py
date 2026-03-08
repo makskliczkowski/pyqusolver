@@ -451,16 +451,21 @@ def _spectrum_from_correlator(
     window: Optional[str] = "hann",
     subtract_initial: bool = False,
     positive_frequencies_only: bool = True,
+    hermitian_extension: bool = False,
 ):
     r"""
     Convert a real-time correlator into a discrete spectral estimate.
 
     The returned frequency grid is the FFT grid associated with the supplied
     evenly spaced time mesh. The transform applies the optional exponential
-    damping ``exp(-eta * t)`` and an optional apodization window before the
-    discrete Fourier sum. This is the finite-time object that should be used
-    when one wants an exact-ED reference on the same numerical footing as an
-    NQS-TDVP correlator.
+    damping and an optional apodization window before the discrete Fourier sum.
+
+    When ``hermitian_extension=True``, the positive-time correlator is extended
+    to negative times using ``C(-t) = C(t)^*`` before the FFT. This is the
+    physically correct finite-time construction for equilibrium correlation
+    functions such as dynamical structure factors, where one usually measures
+    ``C(t)`` only for ``t >= 0`` but the spectrum is defined from the full
+    two-sided transform.
     """
     times_arr = _as_time_array(times)
     if times_arr.size < 2:
@@ -476,14 +481,25 @@ def _spectrum_from_correlator(
 
     if subtract_initial:
         corr_work = corr_work - corr_work[0]
-    if eta and abs(eta) > 0.0:
-        corr_work = corr_work * np.exp(-float(eta) * t_rel)
 
-    window_vals = _window_values(window, corr_work.size)
-    corr_work = corr_work * window_vals
+    if hermitian_extension and corr_work.size > 1:
+        corr_work = np.concatenate([np.conj(corr_work[1:][::-1]), corr_work], axis=0)
+        t_rel = np.concatenate([-t_rel[1:][::-1], t_rel], axis=0)
+        window_vals_pos = _window_values(window, times_arr.size)
+        window_vals = np.concatenate([window_vals_pos[1:][::-1], window_vals_pos], axis=0)
+        if eta and abs(eta) > 0.0:
+            corr_work = corr_work * np.exp(-float(eta) * np.abs(t_rel))
+        corr_work = corr_work * window_vals
+        raw_fft = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(corr_work)) * dt)
+        freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(corr_work.size, d=dt))
+    else:
+        if eta and abs(eta) > 0.0:
+            corr_work = corr_work * np.exp(-float(eta) * t_rel)
+        window_vals = _window_values(window, corr_work.size)
+        corr_work = corr_work * window_vals
+        raw_fft = np.fft.fftshift(np.fft.fft(corr_work) * dt)
+        freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(corr_work.size, d=dt))
 
-    raw_fft = np.fft.fftshift(np.fft.fft(corr_work) * dt)
-    freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(corr_work.size, d=dt))
     spectrum = np.real(raw_fft)
 
     if positive_frequencies_only:
@@ -503,6 +519,7 @@ def spectrum_from_correlator_impl(
     window: Optional[str] = None,
     subtract_initial: bool = False,
     positive_frequencies_only: bool = True,
+    hermitian_extension: bool = False,
 ) -> NQSSpectralResult:
     r"""
     Build a finite-time spectral estimate directly from a supplied correlator.
@@ -518,6 +535,10 @@ def spectrum_from_correlator_impl(
     carries the same finite-time resolution, damping, and windowing as the NQS
     dynamical-response routines and is the right comparison object for ED
     correlators sampled on the same time mesh.
+
+    ``hermitian_extension=True`` is the physically appropriate choice for
+    equilibrium two-point functions measured only for ``t >= 0`` and obeying
+    ``C(-t) = C(t)^*``, for example dynamical structure factors.
     """
 
     times_arr, freqs, spectrum, raw_fft = _spectrum_from_correlator(
@@ -527,6 +548,7 @@ def spectrum_from_correlator_impl(
         window=window,
         subtract_initial=subtract_initial,
         positive_frequencies_only=positive_frequencies_only,
+        hermitian_extension=hermitian_extension,
     )
 
     return NQSSpectralResult(
@@ -540,6 +562,7 @@ def spectrum_from_correlator_impl(
             "window": window,
             "positive_frequencies_only": bool(positive_frequencies_only),
             "subtract_initial": bool(subtract_initial),
+            "hermitian_extension": bool(hermitian_extension),
         },
     )
 
@@ -1269,6 +1292,7 @@ def dynamic_structure_factor_impl(
         window=window,
         subtract_initial=subtract_initial,
         positive_frequencies_only=positive_frequencies_only,
+        hermitian_extension=True,
     )
     metadata.update(result.metadata)
     metadata.update(

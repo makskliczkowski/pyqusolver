@@ -93,6 +93,7 @@ def test_dynamic_structure_factor_modifier_smoke():
         corr.correlator,
         eta=0.1,
         window=None,
+        hermitian_extension=True,
     )
     spectral_map = nqs.dynamic_structure_factor_kspace(
         times,

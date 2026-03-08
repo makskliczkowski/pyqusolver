@@ -259,6 +259,7 @@ def _finite_time_spectrum_map(nqs, times, correlator_map, *, eta, window=None):
             eta=eta,
             window=window,
             positive_frequencies_only=True,
+            hermitian_extension=True,
         )
         if frequencies is None:
             frequencies = np.asarray(result.frequencies, dtype=np.float64)
