@@ -1601,8 +1601,17 @@ class TDVP:
         """Get the current time derivative of global phase θ̇₀."""
         return self._theta0_dot
 
-    def set_global_phase(self, theta0: float):
-        """Set the global phase parameter θ₀ (e.g., when loading from checkpoint)."""
+    def set_global_phase(self, theta0: complex):
+        """
+        Set the TDVP global log-amplitude offset θ₀.
+
+        The stored quantity is the additive scalar entering
+
+            log psi_theta(s) -> log psi_theta(s) + theta_0,
+
+        so for real-time evolution it is generally complex and carries the
+        dynamical phase as well as any scalar normalization drift.
+        """
         self._theta0 = theta0
 
     def update_global_phase(self, dt: float):

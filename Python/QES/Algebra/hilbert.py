@@ -4,6 +4,11 @@ High-level Hilbert space class for QES algebra workflows.
 This module defines the maintained ``HilbertSpace`` class used for many-body
 and quadratic problems. It handles basis construction, optional symmetry
 reduction, local-space metadata, and backend-aware state representations.
+
+File    : QES/Algebra/hilbert.py
+Author  : Maksymilian Kliczkowski
+Email   : maksymilian.kliczkowski@pwr.edu.pl
+Date    : 2025-02-01
 """
 
 import math

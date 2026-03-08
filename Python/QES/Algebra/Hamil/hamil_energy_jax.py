@@ -138,6 +138,11 @@ def local_energy_jax_nonmod(
     All functions passed here already have the signature
 
         f(state) -> (state_like, coeff)
+
+    Returns
+    -------
+    jnp.ndarray
+        Shape ``(1,)`` diagonal local-energy contribution.
     """
 
     e1 = local_energy_jax_nonmod_nosites(state, functions_no_sites, mult_no_sites)
@@ -195,6 +200,12 @@ def local_energy_jax_wrap(
         Maximum number of output states per modifying operator. Default is 1.
     dtype
         Desired JAX dtype for energy calculations. Default is `jnp.complex128`.
+
+    Returns
+    -------
+    Callable
+        JIT-compatible function mapping one state to updated states and
+        corresponding local-energy contributions.
     """
 
     # Grouping operators for vectorization

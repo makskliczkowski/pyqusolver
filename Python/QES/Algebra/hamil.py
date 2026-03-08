@@ -5,6 +5,11 @@ This module defines the maintained Hamiltonian base class used for both
 many-body and quadratic models. The class supports matrix materialization,
 matrix-free operator application, basis-aware operator composition, and exact
 diagonalization workflows.
+
+File    : Algebra/hamil.py
+Author  : Maksymilian Kliczkowski
+Email   : maksymilian.kliczkowski@pwr.edu.pl
+Date    : 2025-02-01
 """
 
 import time

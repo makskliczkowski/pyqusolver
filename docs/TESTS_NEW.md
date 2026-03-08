@@ -1,6 +1,6 @@
 # New / Updated Tests in This Branch
 
-## New Test File: `Python/test/test_numeric_helpers_properties.py`
+## New Test File: `pyqusolver/Python/tests/core/test_numeric_helpers_properties.py`
 
 ### `test_autocorr_constant_series_is_well_defined`
 
@@ -28,7 +28,7 @@
 
 ---
 
-## New Test File: `Python/test/test_registry_module_discovery.py`
+## New Test File: `pyqusolver/Python/tests/core/test_registry_module_discovery.py`
 
 ### `test_list_modules_returns_stable_sorted_records`
 

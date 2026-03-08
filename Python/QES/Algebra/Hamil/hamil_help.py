@@ -1,7 +1,8 @@
 r"""
-Hamiltonian Help Module
-=========================
-This module provides help texts and documentation snippets for the Hamiltonian class.
+Help-text registry for the legacy Hamiltonian Python API.
+
+This module stores topic-organized help strings used by interactive Hamiltonian
+help methods. It contains presentation text only and no computational logic.
 """
 
 hamil_topics = {

@@ -430,7 +430,7 @@ Comprehensive test suite at `test/test_xxz_symmetries.py`:
 
 - **Bethe Ansatz**: Exact solution for XXZ model at $h_x = h_z = 0$
 - **Jordan-Wigner Transform**: Maps XY model to free fermions  
-- **Test File**: `Python/test/test_xxz_symmetries.py`
+- **Test File**: `Python/tests/algebra/test_xxz_symmetries.py`
 - **Model Implementation**: `Python/QES/Algebra/Model/Interacting/Spin/xxz.py`
 
 ---
@@ -666,7 +666,7 @@ print(f"Energy gap: {E_kh[1] - E_kh[0]:.6f}")
 
 - **Original Paper**: A. Kitaev, Ann. Phys. 321, 2 (2006)
 - **Review**: S. Trebst et al., arXiv:1701.07056
-- **Test File**: `Python/test/test_kitaev_symmetries.py`
+- **Test File**: `Python/tests/algebra/test_kitaev_symmetries.py`
 - **Model Implementation**: `Python/QES/Algebra/Model/Interacting/Spin/heisenberg_kitaev.py`
 - **Lattice**: `Python/QES/general_python/lattices/honeycomb.py`
 

@@ -13,6 +13,14 @@ Typical usage
     log = QES.get_logger()
     backend = QES.get_backend_manager()
     modules = QES.list_modules()
+
+----------------------------------------------------------
+Author          : Maks Kliczkowski
+Email           : maxgrom97@gmail.com
+Date            : 01.10.2025
+Modified        : 08.03.2026
+Description     : Quantum Eigen Solver: Comprehensive framework for quantum eigenvalue problem solving.
+----------------------------------------------------------
 """
 
 from __future__ import annotations

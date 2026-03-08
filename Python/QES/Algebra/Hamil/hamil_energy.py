@@ -1,4 +1,11 @@
 """
+Local-energy helper assembly for Hamiltonian workflows.
+
+This module builds the NumPy-side local-energy closures used by Hamiltonian
+and variational workflows. It groups state-modifying and non-modifying
+operator terms into compact helper kernels and returns one callable that
+evaluates local energy contributions efficiently.
+
 file    : Algebra/hamil_energy.py
 author  :
 """
@@ -23,9 +30,8 @@ else:
     jax = None
     jnp = np
 
-################################################################################
-#! NUMPY ARRAY REPRESENTATION
-################################################################################
+# -----------------------------------------------------------------------------
+# NumPy array representation
 
 
 # @numba.njit
@@ -33,19 +39,27 @@ def process_mod_sites(
     state: np.ndarray, sites_args: Any, multiplier: float, op_func: Callable, dtype: np.dtype
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Apply a state-modyfing operator to the given array state.
+    Apply a state-modifying operator to the given array state.
     This implementation needs sites to be passed as a list.
 
-    Parameters:
-        state      : 1D numpy array representing the current state.
-        sites_args : Site-specific argument(s) for the operator.
-        multiplier : Scalar multiplier.
-        op_func    : Function that takes (state, sites_args) and returns (new_state, op_value).
-                    new_state may have shape (m, n) with m>=1.
+    Parameters
+    ----------
+    state : np.ndarray
+        One-dimensional state array.
+    sites_args : Any
+        Site-specific argument payload for the operator.
+    multiplier : float
+        Scalar multiplier applied to the returned operator values.
+    op_func : Callable
+        Operator function taking `(state, sites_args)` and returning
+        `(new_state, op_value)`.
+    dtype : np.dtype
+        Output dtype for generated coefficient arrays.
 
-    Returns:
-        A tuple (new_state, op_value) where new_state is guaranteed to be 2D and
-        op_value is scaled by the multiplier.
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Two-dimensional output states and scaled coefficients.
     """
     if op_func is None:
         return state.reshape(1, -1), np.zeros((1,), dtype=dtype)
@@ -78,18 +92,24 @@ def process_mod_nosites(
     state: np.ndarray, multiplier: float, op_func: Callable, dtype: np.dtype
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Apply a state-modyfing operator to the given array state.
+    Apply a state-modifying operator to the given array state.
     This implementation does not require sites to be passed as a list.
 
-    Parameters:
-        state      : 1D numpy array representing the current state.
-        multiplier : Scalar multiplier.
-        op_func    : Function that takes (state) and returns (new_state, op_value).
-                    new_state may have shape (m, n) with m>=1.
+    Parameters
+    ----------
+    state : np.ndarray
+        One-dimensional state array.
+    multiplier : float
+        Scalar multiplier applied to the returned operator values.
+    op_func : Callable
+        Operator function taking `(state)` and returning `(new_state, op_value)`.
+    dtype : np.dtype
+        Output dtype for generated coefficient arrays.
 
-    Returns:
-        A tuple (new_state, op_value) where new_state is guaranteed to be 2D and
-        op_value is scaled by the multiplier.
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Two-dimensional output states and scaled coefficients.
     """
     if op_func is None:
         return state.reshape(1, -1), np.zeros((1,), dtype=dtype)
@@ -129,16 +149,24 @@ def process_nmod_sites(
     Apply a non-modifying operator to the given array state.
     This implementation needs sites to be passed as a list.
 
-    Parameters:
-        state          : 1D numpy array representing the current state.
-        sites_flat     : List of site-specific arguments for the operator - this is a list of arrays.
-        multipliers    : Scalar multipliers - this is a list of floats or complex numbers.
-        op_funcs       : List of functions that take (state, sites_flat) and return (new_state, op_value).
-                        new_state may have shape (m, n) with m>=1.
+    Parameters
+    ----------
+    state : np.ndarray
+        One-dimensional state array.
+    sites_flat : List[np.ndarray]
+        Site-argument payloads for each operator contribution.
+    multipliers : np.ndarray
+        Scalar multipliers for each operator contribution.
+    op_funcs : List[Callable]
+        Operator functions taking `(state, sites)` and returning
+        `(new_state, op_value)`.
+    dtype : np.dtype
+        Output dtype for accumulated values.
 
-    Returns:
-        A tuple (new_state, op_value) where new_state is guaranteed to be 2D and
-        op_value is scaled by the multipliers.
+    Returns
+    -------
+    np.ndarray
+        Accumulated non-modifying contribution.
     """
 
     value = np.zeros((1,), dtype=dtype)
@@ -165,15 +193,22 @@ def process_nmod_nosites(
     """
     Apply a non-modifying operator to the given array state.
     This implementation does not require sites to be passed as a list.
-    Parameters:
-        state          : 1D numpy array representing the current state.
-        multipliers    : Scalar multipliers - this is a list of floats or complex numbers.
-        op_funcs       : List of functions that take (state) and return (new_state, op_value).
-                        new_state may have shape (m, n) with m>=1.
 
-    Returns:
-        A tuple (new_state, op_value) where new_state is guaranteed to be 2D and
-        op_value is scaled by the multipliers.
+    Parameters
+    ----------
+    state : np.ndarray
+        One-dimensional state array.
+    multipliers : np.ndarray
+        Scalar multipliers for each operator contribution.
+    op_funcs : List[Callable]
+        Operator functions taking `(state)` and returning `(new_state, op_value)`.
+    dtype : np.dtype
+        Output dtype for accumulated values.
+
+    Returns
+    -------
+    np.ndarray
+        Accumulated non-modifying contribution.
     """
 
     value = np.zeros((1,), dtype=dtype)
@@ -192,7 +227,7 @@ def process_nmod_nosites(
     return value
 
 
-################################################################################
+# -----------------------------------------------------------------------------
 
 
 def local_energy_np_wrap(
@@ -205,36 +240,34 @@ def local_energy_np_wrap(
     dtype: Optional[np.dtype] = np.float32,
 ) -> Callable:
     """
-    Generates a JIT-compiled wrapper function for computing the local energy.
+    Generate a local-energy wrapper function for NumPy states.
 
     This function processes various operator term lists by unpacking and flattening them, converting the multiplier
     lists to numpy arrays of the specified dtype, and calculating auxiliary parameters required for energy evaluation.
     It then defines and returns a Numba nopython-mode (njit) compiled wrapper function that executes the local energy
     calculation using the prepared data.
 
-    Parameters:
-        ns (int):
-            The number of sites or degrees of freedom.
-        operator_terms_list (List):
-            List of operator terms for local operators acting on sites.
-        operator_terms_list_ns (List):
-            List of operator terms for non-local operators acting on sites.
-        operator_terms_list_nmod (List):
-            List of operator terms for local operators acting on a modified layout.
-        operator_terms_list_nmod_ns (List):
-            List of operator terms for non-local operators acting on a modified layout.
-        n_max (Optional[int], default=1):
-            The maximum number of local modifications (how many states can a single operator produce).
-        dtype (Optional[np.dtype], default=np.float32):
-            The numpy data type to be used for numerical arrays.
-    Returns:
-        Callable: A Numba JIT-compiled function that takes a numpy array `state` as input and returns a tuple of
-                    numpy arrays (typically representing computed local energies and additional computed metrics).
-    Notes:
-        - The returned function is optimized using Numba's nopython mode for improved performance.
-        - The function internally computes the total number of operator rows (for both local and non-local operators)
-            by multiplying the number of terms by `n_max`.
-        - This wrapper function interfaces with `local_energy_arr`, passing all necessary preprocessed operator data.
+    Parameters
+    ----------
+    ns : int
+        Number of sites or degrees of freedom.
+    operator_terms_list : List
+        Operator terms for state-modifying operators with site arguments.
+    operator_terms_list_ns : List
+        Operator terms for state-modifying operators without site arguments.
+    operator_terms_list_nmod : List
+        Operator terms for non-modifying operators with site arguments.
+    operator_terms_list_nmod_ns : List
+        Operator terms for non-modifying operators without site arguments.
+    n_max : Optional[int], default=1
+        Maximum number of output states produced by one modifying operator.
+    dtype : Optional[np.dtype], default=np.float32
+        Numeric dtype used for working arrays.
+
+    Returns
+    -------
+    Callable
+        Callable taking a state array and returning the local-energy payload.
     """
 
     if not isinstance(dtype, np.dtype):

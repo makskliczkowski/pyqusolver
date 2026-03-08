@@ -1,22 +1,16 @@
 """
 Local Hilbert-space helpers.
 
-This module defines light-weight containers that describe local Hilbert spaces
-and their onsite operators.  They are used both by the operator catalog and by
-high-level Hilbert space builders.
-
-For more details, see the documentation of the `LocalSpace` and `LocalOperator`
-classes below.
+This module defines light-weight containers describing local Hilbert spaces,
+onsite operators, and basis conventions. These objects are used by the
+operator catalog and by higher-level Hilbert-space builders.
 
 ------------------------------------------------------------------
 File        : Algebra/Operator/hilbert_local.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-10-01
 License     : MIT
-Description : Local Hilbert space and operator descriptions. This module defines
-            light-weight containers that describe local Hilbert spaces and their
-            onsite operators.  They are used both by the operator catalog and by
-            high-level Hilbert space builders.
+Description : Local Hilbert space and operator descriptions.
 ------------------------------------------------------------------
 """
 
@@ -34,16 +28,17 @@ from typing import Callable, Dict, Optional, Tuple
 # extra args are operator-specific parameters passed at call-time
 @dataclass(frozen=True)
 class LocalOpKernels:
-    fun_int: Callable
-    fun_np: Optional[Callable] = None
-    fun_jax: Optional[Callable] = None
-    # how many site indices the op needs at call-time (0=global/all-or-preset, 1=local, 2=correlation)
-    site_parity: int = 1
-    # whether applying the op can change the state (helps sparse assembly sizing)
-    modifies_state: bool = True
-    # default extra args bound at operator creation (can be overridden)
-    default_extra_args: Tuple = ()
+    """Kernel bundle for one local operator."""
 
+    fun_int             : Callable
+    fun_np              : Optional[Callable] = None
+    fun_jax             : Optional[Callable] = None
+    # how many site indices the op needs at call-time (0=global/all-or-preset, 1=local, 2=correlation)
+    site_parity         : int = 1
+    # whether applying the op can change the state (helps sparse assembly sizing)
+    modifies_state      : bool = True
+    # default extra args bound at operator creation (can be overridden)
+    default_extra_args  : Tuple = ()
 
 @dataclass(frozen=True)
 class LocalOperator:
@@ -87,6 +82,7 @@ class LocalSpaceTypes(Enum):
 
 
 def choose_chunk_size(nh, n_threads: int) -> int:
+    """Choose a conservative chunk size for threaded state processing."""
     # target ~4 MB per thread max
     bytes_per_thread = 4 * 1024**2 // n_threads
     max_chunk = bytes_per_thread // (16 * nh)
@@ -175,9 +171,11 @@ class LocalSpace:
     onsite_operators    : Dict[str, LocalOperator] = field(default_factory=dict)
 
     def has_op(self, key: str) -> bool:
+        """Return True when the local operator key exists."""
         return key in self.onsite_operators
 
     def get_op(self, key: str) -> LocalOperator:
+        """Return one local operator description by key."""
         if not self.has_op(key):
             raise KeyError(f"Operator '{key}' not found.")
         return self.onsite_operators[key]
@@ -189,9 +187,11 @@ class LocalSpace:
         return self.get_op(key).kernels
 
     def list_operator_keys(self) -> Tuple[str, ...]:
+        """Return the available onsite-operator keys."""
         return tuple(self.onsite_operators.keys())
 
     def describe_operator(self, key: str) -> str:
+        """Return a human-readable operator description."""
         op = self.get_op(key)
         tags = ", ".join(op.tags) if op.tags else "-"
         return (

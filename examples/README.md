@@ -4,6 +4,7 @@
 
 - `algebra/`
   - Hilbert spaces, custom many-body Hamiltonians, quadratic single-particle Hamiltonians.
+  - Qiskit/OpenFermion-style quadratic round trips when optional dependencies are present.
   - Operator action examples for spin-1/2, spinless fermions, and spin-1.
   - Sparse and dense matrix construction paths.
 - `physics/`

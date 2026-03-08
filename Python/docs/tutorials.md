@@ -10,6 +10,7 @@ This section summarizes the main supported workflows and points to maintained ex
 - Diagonalize and inspect the low-energy spectrum.
 
 Reference example:
+
 - `examples/algebra/example_hilbert_and_custom_hamiltonian.py`
 
 ## Quadratic single-particle workflow
@@ -18,8 +19,10 @@ Reference example:
 - Add onsite, hopping, or pairing terms.
 - Build either the single-particle matrix or the full BdG matrix.
 - Use `diagonalizing_bogoliubov_transform` for the Qiskit-style orbital transform.
+- Use `to_qiskit_hamiltonian`, `from_qiskit_hamiltonian`, or `from_openfermion_hamiltonian` for external interoperability when optional dependencies are installed.
 
 Reference example:
+
 - `examples/algebra/example_quadratic_single_particle.py`
 
 ## Density matrix and entropy workflow
@@ -29,6 +32,7 @@ Reference example:
 - Compute mutual information between sites.
 
 Reference example:
+
 - `examples/physics/example_entropy_density_matrix.py`
 
 ## Time evolution and spectral statistics
@@ -38,6 +42,7 @@ Reference example:
 - Compute level-spacing diagnostics with `gap_ratio`.
 
 Reference example:
+
 - `examples/physics/example_time_evolution_and_spectral_stats.py`
 
 ## Lattice-driven construction
@@ -47,4 +52,5 @@ Reference example:
 - Feed those bonds into Hamiltonian assembly.
 
 Reference example:
+
 - `examples/workflows/example_lattice_driven_hamiltonian.py`

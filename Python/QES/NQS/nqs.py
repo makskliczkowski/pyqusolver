@@ -25,6 +25,7 @@ Description     : Neural Quantum State (NQS) Solver implementation.
 
 import time
 import warnings
+import os
 
 import numpy as np
 
@@ -115,6 +116,10 @@ ApplyFunctionType       = Callable[[Callable, Array, Array, Array, int, Any], Ar
 EvalFunctionType        = Callable[[Callable, Array, Any, int], Array]                  # func, states, params, batch_size -> Array [log ansatz values]
 CallableFunctionType    = Callable[[Array], Tuple[Array, Array]]                        # states -> (new_states, coeffs)
 LossFunctionType        = CallableFunctionType                                          # states -> (new_states, coeffs)
+
+DEFAULT_NQS_TMP_DIR     = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "tmp")
+)
 
 #########################################
 
@@ -2719,7 +2724,7 @@ class NQS(MonteCarloSolver):
         *,
         modifier: Optional[Union[Operator, Callable]] = None,
         seed: Optional[int] = None,
-        directory: Optional[str] = "/tmp",
+        directory: Optional[str] = DEFAULT_NQS_TMP_DIR,
         use_orbax: bool = False,
         **overrides,
     ) -> "NQS":
@@ -3361,7 +3366,7 @@ class NQS(MonteCarloSolver):
         operator: "Operator",
         num_samples: int = 4096,
         num_chains: int = 1,
-        operator_args: dict = {},
+        operator_args: Optional[dict] = None,
     ) -> complex:
         """
         Computes the normalized transition matrix element:
@@ -3384,6 +3389,8 @@ class NQS(MonteCarloSolver):
         # ------------------------------------------------------------------
         # Step 1: Sample from BRA distribution (Psi_1)
         # ------------------------------------------------------------------
+
+        op_args = operator_args or {}
 
         if isinstance(operator, Operator):
             operator_fun = operator.jax
@@ -3417,7 +3424,7 @@ class NQS(MonteCarloSolver):
         # We assume standard behavior: returns array of local values
         # NOTE: We pass (s1, log_psi2_s1) so it doesn't re-evaluate ansatz
         loc_O_ket = nqs_ket.apply(
-            operator_fun, states_and_psi=(s1, log_psi2_s1), return_values=True, args=operator_args
+            operator_fun, states_and_psi=(s1, log_psi2_s1), return_values=True, args=op_args
         )
 
         # If apply returned a stats object, extract values. If array, use directly.
@@ -3551,6 +3558,7 @@ class NQS(MonteCarloSolver):
         *,
         num_samples         : int = 4096,
         num_chains          : int = 1,
+        exact_sum           : bool = False,
         return_swap_mean    : bool = False,
         return_error        : bool = False,
         min_swap_value      : float = 1e-15,
@@ -3566,6 +3574,7 @@ class NQS(MonteCarloSolver):
         result          = compute_renyi_entropy(
                             nqs, region=region, q=2,
                             num_samples=num_samples, num_chains=num_chains,
+                            exact_sum=exact_sum,
                             return_error=True, min_trace_value=min_swap_value,
                         )
         s2_val, s2_err  = result

@@ -81,13 +81,13 @@ examples, or tests and should remain import-compatible.
   - import smoke checks
   - Ruff linting
   - MyPy (non-blocking)
-  - pytest run for `Python/test/`
+  - pytest run for `Python/tests/`
 
 ---
 
 ## 4) "Do not break" import paths observed in tests/examples/docs
 
-Observed via repository-wide search in `tests/`, `examples/`, `Python/test/`, and docs.
+Observed via repository-wide search in `tests/`, `examples/`, `Python/tests/`, and docs.
 
 ### Core package paths
 

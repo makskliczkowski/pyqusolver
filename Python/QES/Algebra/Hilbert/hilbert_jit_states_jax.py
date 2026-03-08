@@ -1,6 +1,9 @@
 '''
 Module providing JIT-compiled functions for Hilbert space state amplitudes using JAX.
 
+This module implements the JAX-backed parity layer for selected Hilbert-state
+amplitude routines used by quadratic workflows.
+
 ------------
 Author      : Maksymilian Kliczkowski
 Date        : 2026-01-15
@@ -29,12 +32,17 @@ if JAX_AVAILABLE:
         """
         Get the mapping of the state.
 
-        Args:
-            mapping (list)  : The mapping of the states.
-            state (int)     : The state to get the mapping for.
+        Parameters
+        ----------
+        mapping
+            Mapping array for representative-state lookup.
+        state : int
+            State index.
 
-        Returns:
-            int: The mapping of the state.
+        Returns
+        -------
+        int
+            Representative-state mapping value.
         """
         return mapping[state] if len(mapping) > state else state
 
@@ -51,22 +59,21 @@ if JAX_AVAILABLE:
         Represents the amplitude <Fock(R)|State_F(O)>. See NumPy version docstring
         for mathematical background.
 
-        Args:
-            sp_eigvecs (jnp.ndarray):
-                Eigenvector matrix U (shape: Ns x Norb). Assumes columns are eigenvectors,
-                so sp_eigvecs[i, \alpha] = <i|\psi _\alpha>.
-            occupied_orbitals (jnp.ndarray):
-                1D array (length N) of integer indices of the occupied orbitals {\alpha_k}.
-            org_basis_state (Union[int, jnp.ndarray]):
-                Represents the Fock state R.
-                If int:
-                    Bitmask where bit i is set if site i is occupied.
-                If jnp.ndarray:
-                    Boolean or integer array (length Ns) where entry i is
-                    1 or True if site i is occupied.
-        Returns:
-            jnp.ndarray: Scalar JAX array containing the complex value of the
-                        Slater determinant det(M).
+        Parameters
+        ----------
+        sp_eigvecs : jnp.ndarray
+            Eigenvector matrix with columns representing occupied orbitals.
+        occupied_orbitals : jnp.ndarray
+            Integer indices of occupied orbitals.
+        org_basis_state : Union[int, jnp.ndarray]
+            Fock basis state as bitmask or occupancy array.
+        ns : int
+            Number of sites.
+
+        Returns
+        -------
+        jnp.ndarray
+            Scalar JAX array containing the Slater-determinant amplitude.
         """
         ns = sp_eigvecs.shape[0]
         n_particles = occupied_orbitals.shape[0]

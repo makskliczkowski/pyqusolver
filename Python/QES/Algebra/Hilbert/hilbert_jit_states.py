@@ -1,5 +1,5 @@
 r"""
-Support for JIT-compiled Hilbert space state amplitude calculations.
+JIT-compiled state-amplitude helpers for Hilbert-space workflows.
 
 This module provides efficient routines for computing amplitudes of
 various quantum many-body states, including Slater determinants,
@@ -58,17 +58,15 @@ __all__             = [
                     'nrg_particle_conserving', 'nrg_bdg',
                 ]
 
-# ============================================================================
+# -----------------------------------------------------------------------------
 # Configuration and constants
-# ============================================================================
 
 _TOLERANCE              = 1e-10
 _ZERO_TOL               = 1e-15     # tolerance for Pfaffian pivot detection
 _USE_EIGEN              = False     # Use np.linalg.det (stable) instead of eigvals product
 
-# ============================================================================
-# Import optimized helpers from binary.py (single source of truth)
-# ============================================================================
+# -----------------------------------------------------------------------------
+# Import optimized bit helpers
 
 try:
     from QES.general_python.common.binary import ctz64, popcount64
@@ -76,15 +74,14 @@ try:
 except ImportError:
     raise ImportError("QES.general_python.common.binary module is required but not found. Ensure QES is properly installed.")
 
-# ============================================================================
+# -----------------------------------------------------------------------------
 # Lazy imports for optional heavy dependencies
-# ============================================================================
 
 _pfaffian_module        = None
 _hafnian_module         = None
 
 def _get_pfaffian():
-    """Lazy import of pfaffian module."""
+    """Lazy import of the pfaffian helper module."""
     global _pfaffian_module
     if _pfaffian_module is None:
         try:
@@ -97,7 +94,7 @@ def _get_pfaffian():
     return _pfaffian_module
 
 def _get_hafnian():
-    """Lazy import of hafnian module."""
+    """Lazy import of the hafnian helper module."""
     global _hafnian_module
     if _hafnian_module is None:
         try:
@@ -109,9 +106,8 @@ def _get_hafnian():
                 "Install via: pip install qusolver[full]") from e
     return _hafnian_module
 
-# ============================================================================
+# -----------------------------------------------------------------------------
 # JAX optional support
-# ============================================================================
 
 try:
     from QES.Algebra.Hilbert import hilbert_jit_states_jax as _jax_module
@@ -120,9 +116,8 @@ except Exception:
     _jax_module         = None
     JAX_AVAILABLE       = False
 
-# ============================================================================
-# Core bit operations - unified interface
-# ============================================================================
+# -----------------------------------------------------------------------------
+# Core bit operations
 
 # Re-export for backwards compatibility
 popcount_fast           = popcount64
@@ -199,9 +194,8 @@ def extract_occupied(ns: int, basis: Union[int, np.ndarray], out: Optional[np.nd
 # Backwards compatibility alias
 _extract_occupied       = extract_occupied
 
-# ============================================================================
-# Slater Determinant Calculations
-# ============================================================================
+# -----------------------------------------------------------------------------
+# Slater determinant calculations
 
 @njit(cache=True, fastmath=True)
 def det_bareiss(M: np.ndarray) -> complex:

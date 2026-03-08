@@ -22,12 +22,12 @@ ListType = list
 
 # Define a default operator function.
 def default_operator(x, i):
-    """Default operator function"""
+    """Return the identity-state, zero-value default operator payload."""
     return (x, 0.0)
 
 
 def default_operator_njit(x, i):
-    """Default operator function for numba"""
+    """Return the Numba-friendly identity-state, zero-value default payload."""
     return (x, 0.0)
 
 
@@ -37,20 +37,19 @@ def flatten_operator_terms(
     """
     Flattens the operator terms into a single list of operators, indices, and multiplicative factors.
 
-    Parameters:
-        operators (List[List[Callable]]):
-            A list of lists, where each sublist contains callable operator functions.
-        operator_indices (List[List[List[int]]]):
-            A list of lists, where each sublist contains index lists corresponding to the operator terms.
-        operator_mult (List[List[Any]]):
-            A list of lists, where each sublist contains multiplicative factors for the operator terms.
-    ---
-    Returns:
-        Tuple[List[Callable], List[List[int]], List[Any]]:
-            A tuple containing three lists:
-                - flat_operators: A flattened list of callable operator functions.
-                - flat_operator_indices: A flattened list of index lists.
-                - flat_operator_mult: A flattened list of multiplicative factors.
+    Parameters
+    ----------
+    operators : List[List[Callable]]
+        Nested operator-function lists.
+    operator_indices : List[List[List[int]]]
+        Nested site-index lists matching ``operators``.
+    operator_mult : List[List[Any]]
+        Nested multiplier lists matching ``operators``.
+
+    Returns
+    -------
+    Tuple[List[Callable], List[List[int]], List[Any]]
+        Flattened operator functions, site indices, and multipliers.
     """
 
     # Flatten the operator terms
@@ -82,23 +81,18 @@ def unpack_operator_terms(
         - a list of index lists,
         - a list of multiplicative factors.
 
-    ---
-    Parameters:
-        ns (int):
-            The expected number of operator entries.
-        operator_terms (List[Tuple[List[Callable], List[List[int]], List[Any]]]):
-            A list where each element is a tuple representing an operator term. Each tuple contains:
-                - A list of callable functions.
-                - A list of lists of indices corresponding to the operator term.
-                - A list of factors to multiply the operator term.
+    Parameters
+    ----------
+    ns : int
+        Expected number of operator-entry slots.
+    operator_terms : List[Tuple[List[Callable], List[List[int]], List[Any]]]
+        Operator-term payload grouped by slot.
 
-    ---
-    Returns:
-        Tuple[numba.typed.List, numba.typed.List, numba.typed.List]:
-            A tuple containing three numba.typed.Lists:
-                - operator_funcs: A list of lists, with each sublist containing callable operator functions.
-                - operator_indices: A list of lists, with each sublist containing index lists.
-                - operator_mult: A list of lists, with each sublist containing multiplicative factors.
+    Returns
+    -------
+    Tuple[list, list, list]
+        Function lists, site-index lists, and multiplier lists aligned to the
+        expected ``ns`` slots.
     """
 
     # if len(operator_terms) < ns:

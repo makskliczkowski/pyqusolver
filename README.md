@@ -10,8 +10,8 @@ In the future, the plan is to adapt it to modern Tensor Networ based aproaches a
 
 QES bridges exact diagonalization and machine learning-based variational methods within a unified framework. The architecture employs:
 
-- **NumPy Backend**: CPU-based exact diagonalization and classical computations...
-- **JAX Backend**: GPU-accelerated automatic differentiation, ideal for training neural quantum states...
+- **NumPy Backend**: CPU-based exact diagonalization and classical computations.
+- **JAX Backend**: accelerator-ready automatic differentiation for NQS and variational workflows.
 
 This design enables seamless workflows from small-scale exact benchmarks to large-scale variational simulations on identical Hamiltonian definitions.
 
@@ -28,12 +28,12 @@ This design enables seamless workflows from small-scale exact benchmarks to larg
 
 ### 1. Exact Diagonalization
 
-- Full Hamiltonian construction for quantum spin systems, access to various measures, quantum dynamics, expectaion values, etc.
-- Exact or approximate eigenvalue/eigenvector computation via scipy sparse solvers
-- Access to linear solver packages, Monte Carlo schemes, Neural Network and Machine Learning schemes
+- Full Hamiltonian construction for quantum spin systems, together with observables, dynamics, and expectation values.
+- Exact or approximate eigenvalue/eigenvector computation via SciPy sparse solvers.
+- Access to linear solver packages, Monte Carlo schemes, neural-network workflows, and machine-learning utilities.
 - Support for various lattice geometries (chains, square, hexagonal, triangular, honeycomb)
 - Many-body Hilbert space handling with multiple symmetries implemented. Implement your own symmetry easily!
-- Computation optimized with Numba JIT compilation or JAX JIT compilation
+- Computation optimized with Numba JIT compilation or JAX JIT compilation.
 
 ### 2. Quantum Spin Models
 
@@ -122,6 +122,12 @@ PYTHONPATH=Python pytest Python/tests -q
 ```
 
 Maintained categorized tests live under `pyqusolver/Python/tests/`.
+
+## Import Surface
+
+- Stable top-level imports: `QES.Algebra`, `QES.NQS`, `QES.Solver`, `QES.HilbertSpace`, `QES.Hamiltonian`, `QES.Operator`.
+- Compatibility-only legacy aliases: `QES.gp_*`, `QES.NQS_Model`.
+- New code should import from the concrete submodule instead of the legacy alias surface.
 
 ## Getting started
 
@@ -304,6 +310,12 @@ qh_bdg = QuadraticHamiltonian.from_bdg_matrices(
 h_bdg                     = qh_bdg.build_bdg_matrix()
 W_bdg, eps_bdg, const_bdg = qh_bdg.diagonalizing_bogoliubov_transform()
 ```
+
+- `build_single_particle_matrix` and `build_bdg_matrix` expose the quadratic blocks directly.
+- `diagonalizing_bogoliubov_transform` returns the Qiskit-style orbital transform.
+- `to_qiskit_hamiltonian` returns a Qiskit Nature `QuadraticHamiltonian` when that dependency is installed.
+- `from_qiskit_hamiltonian` and `from_openfermion_hamiltonian` rebuild the quadratic model from external operator objects.
+- Maintained example: `examples/algebra/example_quadratic_single_particle.py`
 
 ### 4) Density matrices and entropy
 

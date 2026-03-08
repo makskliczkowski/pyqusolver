@@ -27,6 +27,7 @@ def main():
         "examples/algebra/example_operators_on_states.py",
         "examples/algebra/example_sparse_dense_matrix_build.py",
         "examples/algebra/example_quadratic_single_particle.py",
+        "examples/algebra/example_quadratic_interop.py",
         "examples/physics/example_entropy_density_matrix.py",
         "examples/physics/example_time_evolution_and_spectral_stats.py",
         "examples/physics/example_spectral_and_statistical_tools.py",

@@ -5,6 +5,13 @@ This module implements the maintained quadratic-Hamiltonian path for QES. It
 covers particle-conserving free-fermion models, BdG-style pairing models,
 single-particle matrix construction, diagonalization, and many-body amplitude
 helpers used by the higher-level algebra and interop layers.
+
+----------------------------------------------------------------------------
+file    : QES/Algebra/hamil_quadratic.py
+author  : Maksymilian Kliczkowski
+email   : maksymilian.kliczkowski@pwr.edu.pl
+date    : 2025-11-01
+----------------------------------------------------------------------------
 """
 
 from __future__     import annotations

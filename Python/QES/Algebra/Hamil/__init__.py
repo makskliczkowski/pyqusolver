@@ -41,9 +41,8 @@ if TYPE_CHECKING:
         check_noninteracting,
     )
 
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Lazy loading infrastructure
-# ---------------------------------------------------------------------------
 
 _LAZY_IMPORTS = {
     # hamil_energy
@@ -77,7 +76,7 @@ _SUBMODULES = {
 }
 
 def __getattr__(name: str) -> Any:
-    """Lazily import functions/classes."""
+    """Resolve Hamiltonian helper exports lazily."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = importlib.import_module(module_path, package=__name__)
@@ -87,12 +86,18 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__():
+    """Return the stable Hamiltonian-helper attribute list."""
     return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
 
 
 def help(verbose: bool = True) -> None:
     """
-    Print help information about the Hamiltonian module.
+    Print help information about the Hamiltonian helper package.
+
+    Parameters
+    ----------
+    verbose : bool, optional
+        If True, also print key function hints.
     """
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -140,6 +145,5 @@ __all__ = [
     "DummyVector",
 ]
 
-##############################################################################
-#! EOF
-##############################################################################
+# -----------------------------------------------------------------------------
+# End of file

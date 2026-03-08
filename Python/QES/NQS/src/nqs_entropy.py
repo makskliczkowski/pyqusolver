@@ -97,6 +97,7 @@ import  warnings
 import  numpy as np
 from    QES.general_python.physics.density_matrix import mask_subsystem, psi_numpy
 from    QES.general_python.physics.entropy import vn_entropy, renyi_entropy
+from    QES.general_python.common.binary import int2base
 
 if TYPE_CHECKING:
     from QES.NQS.nqs import NQS
@@ -150,6 +151,36 @@ def _default_bipartition(Ns: int) -> "jnp.ndarray":
     """Default half-system bipartition."""
     return jnp.arange(Ns // 2, dtype=jnp.int32)
 
+def _enumerate_basis_states_nqs(nqs: "NQS") -> np.ndarray:
+    """
+    Enumerate the full computational basis for exact small-system diagnostics.
+
+    This helper is used by the exact entropy path so that examples and tests can
+    validate the Rényi machinery without Monte Carlo bias when the Hilbert space
+    is tiny.
+    """
+
+    hilbert = getattr(nqs, "hilbert", None)
+    if hilbert is None:
+        raise ValueError("Exact NQS entropy requires an attached Hilbert space.")
+
+    basis_int   = np.asarray(list(hilbert), dtype=np.int64).reshape(-1)
+    ns          = int(getattr(hilbert, "ns", nqs.nvisible))
+    return np.stack([int2base(int(state), ns, spin=False, backend="np") for state in basis_int], axis=0,).astype(np.float32, copy=False)
+
+def _exact_nqs_wavefunction(nqs: "NQS") -> np.ndarray:
+    """
+    Materialize the full normalized NQS wavefunction on the computational basis.
+    """
+
+    states  = _enumerate_basis_states_nqs(nqs)
+    log_psi = np.asarray(nqs.ansatz(states), dtype=np.complex128).reshape(-1)
+    psi     = np.exp(log_psi)
+    norm    = np.linalg.norm(psi)
+    if norm <= 0.0:
+        raise ValueError("Exact NQS entropy received a zero-norm wavefunction.")
+    return psi / norm
+
 # ===========================================================================
 #! Core Rényi entropy estimators
 # ===========================================================================
@@ -163,6 +194,7 @@ def compute_renyi_entropy(
     num_chains              : int               = 1,
     recompute_log_psi       : bool              = True,
     independent_replicas    : bool              = True,
+    exact_sum               : bool              = False,
     return_error            : bool              = False,
     return_raw              : bool              = False,
     min_trace_value         : float             = 1e-15,
@@ -203,6 +235,10 @@ def compute_renyi_entropy(
     independent_replicas : bool
         If True (default), reset sampler state before each replica draw.
         This improves independence between replicas in the swap estimator.
+    exact_sum : bool
+        If True, bypass Monte Carlo and compute the Rényi entropy from the full
+        NQS wavefunction on the computational basis. This is intended for tiny
+        ED-style benchmarks where one wants deterministic validation.
     return_error : bool
         If True, also return the statistical error estimate.
     return_raw : bool
@@ -215,6 +251,32 @@ def compute_renyi_entropy(
     float or (float, float) or dict
         The Rényi-q entropy S_q, optionally with error bar or full diagnostics.
     """
+    if exact_sum:
+        if region is None:
+            region_np = np.arange(nqs.nvisible // 2, dtype=int)
+        else:
+            region_np = np.asarray(region, dtype=int).reshape(-1)
+        exact = compute_ed_entanglement_entropy(_exact_nqs_wavefunction(nqs),
+            region_np, int(nqs.nvisible), q_values=[q], n_states=1,
+        )
+        sq_val = float(exact[f"renyi_{q}"][0])
+        if return_raw:
+            return {
+                "sq": sq_val,
+                "sq_err": 0.0,
+                "q": q,
+                "trace_rho_q": float(np.exp((1.0 - q) * sq_val)),
+                "trace_err": 0.0,
+                "n_samples": int(getattr(nqs.hilbert, "Nh", 2 ** nqs.nvisible)),
+                "n_chains": 1,
+                "region_size": int(region_np.size),
+                "system_size": int(nqs.nvisible),
+                "exact_sum": True,
+            }
+        if return_error:
+            return sq_val, 0.0
+        return sq_val
+
     if not JAX_AVAILABLE:
         raise NotImplementedError("Rényi entropy estimation requires JAX backend.")
     if q < 2 or not isinstance(q, int):

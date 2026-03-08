@@ -74,8 +74,15 @@ def check_noninteracting(model: Hamiltonians) -> bool:
     """
     Check if a model is noninteracting.
 
-    In this implementation, a model is considered noninteracting if its value is
-    greater than or equal to FREE_FERMIONS_M or if it is equal to RP_M.
+    Parameters
+    ----------
+    model : Hamiltonians
+        Hamiltonian model enum value.
+
+    Returns
+    -------
+    bool
+        True when the model is treated as noninteracting by the legacy API.
     """
     return (model.value >= Hamiltonians.FREE_FERMIONS_M.value) or (model == Hamiltonians.RP_M)
 
@@ -84,10 +91,15 @@ def check_dense(model: Hamiltonians) -> bool:
     """
     Check if a model is dense.
 
-    Dense models are defined as those corresponding to:
-        - POWER_LAW_RANDOM_BANDED_M,
-        - ULTRAMETRIC_M, or
-        - RP_M.
+    Parameters
+    ----------
+    model : Hamiltonians
+        Hamiltonian model enum value.
+
+    Returns
+    -------
+    bool
+        True when the model is treated as dense by the legacy API.
     """
     return model in (
         Hamiltonians.POWER_LAW_RANDOM_BANDED_M,
