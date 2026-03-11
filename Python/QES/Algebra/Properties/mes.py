@@ -871,11 +871,13 @@ def find_mes_save(lattice       : 'Lattice',
         dA = 2 ** size_a
         dB = 2 ** (ns - size_a)
 
-        if order is None or order == tuple(range(ns)):
+        normalized_order = None if order is None else tuple(order)
+
+        if normalized_order is None or normalized_order == tuple(range(ns)):
             V_mats_np = V_basis_np.reshape(dA, dB, m_basis, order="F").transpose(2, 0, 1)
         else:
             shape_nd  = (2,) * ns + (m_basis,)
-            perm      = tuple(order) + (ns,)
+            perm      = normalized_order + (ns,)
             psi_nd    = V_basis_np.reshape(shape_nd, order="F")
             psi_perm  = psi_nd.transpose(perm)
             V_mats_np = psi_perm.reshape(dA, dB, m_basis, order="F").transpose(2, 0, 1)
