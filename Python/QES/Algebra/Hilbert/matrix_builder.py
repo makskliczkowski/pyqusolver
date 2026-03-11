@@ -375,22 +375,61 @@ def _build_same_sector(
         else:
             compact_data = hilbert_space.compact_symmetry_data
             if compact_data is not None:
-                # TODO: Implement dense projected builder if needed
                 if check_sym:
-                    # Fallback to sparse for projected build for now, or implement dense projected
-                    raise NotImplementedError(
-                        "Dense matrix building with check_sym=True not yet implemented."
+                    try:
+                        from QES.Algebra.Symmetries.jit.matrix_builder_jit import (
+                            _build_dense_projected_jit,
+                        )
+                    except ImportError:
+                        raise ImportError(
+                            "Projected matrix builder requires QES.Algebra.Symmetries.jit.matrix_builder_jit module."
+                        )
+
+                    sym_c = hilbert_space._sym_container
+                    cg = sym_c.compiled_group
+                    tb = sym_c.tables
+
+                    cg_args = (
+                        cg.n_group,
+                        cg.n_ops,
+                        cg.op_code,
+                        cg.arg0,
+                        cg.arg1,
+                        cg.chi,
+                        cg.chi,
+                    )
+                    tb_args = (
+                        tb.trans_perm,
+                        tb.trans_cross_mask,
+                        tb.refl_perm,
+                        tb.inv_perm,
+                        tb.parity_axis,
+                        tb.boundary_phase,
                     )
 
-                _build_dense_same_sector_compact_jit(
-                    compact_data.representative_list,
-                    compact_data.normalization,
-                    compact_data.repr_map,
-                    compact_data.phase_idx,
-                    compact_data.phase_table,
-                    operator_func,
-                    matrix,  # matrix passed by reference, we fill it in place
-                )
+                    _build_dense_projected_jit(
+                        matrix,
+                        operator_func,
+                        compact_data.representative_list,
+                        compact_data.normalization,
+                        compact_data.repr_map,
+                        compact_data.normalization,
+                        compact_data.representative_list,
+                        np.int64(ns),
+                        cg.n_group,
+                        cg_args,
+                        tb_args,
+                    )
+                else:
+                    _build_dense_same_sector_compact_jit(
+                        compact_data.representative_list,
+                        compact_data.normalization,
+                        compact_data.repr_map,
+                        compact_data.phase_idx,
+                        compact_data.phase_table,
+                        operator_func,
+                        matrix,  # matrix passed by reference, we fill it in place
+                    )
             else:
                 raise ValueError(
                     "Compact symmetry data missing for symmetric Hilbert space in dense build."
@@ -433,71 +472,41 @@ def _build_same_sector(
                 cg = sym_c.compiled_group
                 tb = sym_c.tables
 
-                if sparse:
-                    data_idx = _build_sparse_projected_jit(
-                        rows,
-                        cols,
-                        data,
-                        0,
-                        operator_func,
-                        compact_data.representative_list,
-                        compact_data.normalization,
-                        compact_data.repr_map,
-                        compact_data.normalization,
-                        compact_data.representative_list,
-                        np.int64(ns),
-                        cg.n_group,
-                        cg.n_ops,
-                        cg.op_code,
-                        cg.arg0,
-                        cg.arg1,
-                        cg.chi,
-                        cg.chi,
-                        tb.trans_perm,
-                        tb.trans_cross_mask,
-                        tb.refl_perm,
-                        tb.inv_perm,
-                        tb.parity_axis,
-                        tb.boundary_phase,
-                    )
-                else:
-                    _build_dense_projected_jit(
-                        matrix,
-                        operator_func,
-                        compact_data.representative_list,
-                        compact_data.normalization,
-                        compact_data.repr_map,
-                        compact_data.normalization,
-                        compact_data.representative_list,
-                        np.int64(ns),
-                        cg.n_group,
-                        cg.n_ops,
-                        cg.op_code,
-                        cg.arg0,
-                        cg.arg1,
-                        cg.chi,
-                        cg.chi,
-                        tb.trans_perm,
-                        tb.trans_cross_mask,
-                        tb.refl_perm,
-                        tb.inv_perm,
-                        tb.parity_axis,
-                        tb.boundary_phase,
-                    )
-                    return matrix  # Dense case returns here
-            else:
-                if not sparse:
-                    _build_dense_same_sector_compact_jit(
-                        compact_data.representative_list,
-                        compact_data.normalization,
-                        compact_data.repr_map,
-                        compact_data.phase_idx,
-                        compact_data.phase_table,
-                        operator_func,
-                        matrix,
-                    )
-                    return matrix
+                cg_args = (
+                    cg.n_group,
+                    cg.n_ops,
+                    cg.op_code,
+                    cg.arg0,
+                    cg.arg1,
+                    cg.chi,
+                    cg.chi,
+                )
+                tb_args = (
+                    tb.trans_perm,
+                    tb.trans_cross_mask,
+                    tb.refl_perm,
+                    tb.inv_perm,
+                    tb.parity_axis,
+                    tb.boundary_phase,
+                )
 
+                data_idx = _build_sparse_projected_jit(
+                    rows,
+                    cols,
+                    data,
+                    0,
+                    operator_func,
+                    compact_data.representative_list,
+                    compact_data.normalization,
+                    compact_data.repr_map,
+                    compact_data.normalization,
+                    compact_data.representative_list,
+                    np.int64(ns),
+                    cg.n_group,
+                    cg_args,
+                    tb_args,
+                )
+            else:
                 # Fast path: O(1) lookups using compact structure (~5 bytes/state)
                 try:
                     data_idx = _build_sparse_same_sector_compact_jit(
@@ -598,6 +607,24 @@ def _build_sector_change(
             cg_out = hilbert_out._sym_container.compiled_group
             tb = sym_c_in.tables
 
+            cg_args = (
+                cg_in.n_group,
+                cg_in.n_ops,
+                cg_in.op_code,
+                cg_in.arg0,
+                cg_in.arg1,
+                cg_in.chi,
+                cg_out.chi,
+            )
+            tb_args = (
+                tb.trans_perm,
+                tb.trans_cross_mask,
+                tb.refl_perm,
+                tb.inv_perm,
+                tb.parity_axis,
+                tb.boundary_phase,
+            )
+
             _build_dense_projected_jit(
                 matrix,
                 operator_func,
@@ -608,18 +635,8 @@ def _build_sector_change(
                 compact_data_out.representative_list,
                 np.int64(ns),
                 cg_in.n_group,
-                cg_in.n_ops,
-                cg_in.op_code,
-                cg_in.arg0,
-                cg_in.arg1,
-                cg_in.chi,
-                cg_out.chi,
-                tb.trans_perm,
-                tb.trans_cross_mask,
-                tb.refl_perm,
-                tb.inv_perm,
-                tb.parity_axis,
-                tb.boundary_phase,
+                cg_args,
+                tb_args,
             )
             return matrix
 
@@ -669,6 +686,25 @@ def _build_sector_change(
         cg_in = sym_c_in.compiled_group
         cg_out = hilbert_out._sym_container.compiled_group
         tb = sym_c_in.tables
+
+        cg_args = (
+            cg_in.n_group,
+            cg_in.n_ops,
+            cg_in.op_code,
+            cg_in.arg0,
+            cg_in.arg1,
+            cg_in.chi,
+            cg_out.chi,
+        )
+        tb_args = (
+            tb.trans_perm,
+            tb.trans_cross_mask,
+            tb.refl_perm,
+            tb.inv_perm,
+            tb.parity_axis,
+            tb.boundary_phase,
+        )
+
         data_idx = _build_sparse_projected_jit(
             rows,
             cols,
@@ -682,18 +718,8 @@ def _build_sector_change(
             compact_data_out.representative_list,
             np.int64(ns),
             cg_in.n_group,
-            cg_in.n_ops,
-            cg_in.op_code,
-            cg_in.arg0,
-            cg_in.arg1,
-            cg_in.chi,
-            cg_out.chi,  # chi_in, chi_out
-            tb.trans_perm,
-            tb.trans_cross_mask,
-            tb.refl_perm,
-            tb.inv_perm,
-            tb.parity_axis,
-            tb.boundary_phase,
+            cg_args,
+            tb_args,
         )
 
     else:
