@@ -867,9 +867,21 @@ def find_mes_save(lattice       : 'Lattice',
         (size_a, _), order  = mask_subsystem(list(region_sites), ns, 2, False)
         V_basis_np          = np.asarray(V_basis)
         m_basis             = int(V_basis_np.shape[1])
-        V_mats_np           = np.empty((m_basis, 2 ** size_a, 2 ** (ns - size_a)), dtype=V_basis_np.dtype)
-        for i in range(m_basis):
-            V_mats_np[i]    = psi_numpy(V_basis_np[:, i], order, size_a, ns, 2)
+
+        dA = 2 ** size_a
+        dB = 2 ** (ns - size_a)
+
+        normalized_order = None if order is None else tuple(order)
+
+        if normalized_order is None or normalized_order == tuple(range(ns)):
+            V_mats_np = V_basis_np.reshape(dA, dB, m_basis, order="F").transpose(2, 0, 1)
+        else:
+            shape_nd  = (2,) * ns + (m_basis,)
+            perm      = normalized_order + (ns,)
+            psi_nd    = V_basis_np.reshape(shape_nd, order="F")
+            psi_perm  = psi_nd.transpose(perm)
+            V_mats_np = psi_perm.reshape(dA, dB, m_basis, order="F").transpose(2, 0, 1)
+
         V_mats              = jnp.asarray(V_mats_np)
 
         @jax.jit
