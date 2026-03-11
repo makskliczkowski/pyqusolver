@@ -920,7 +920,7 @@ class HilbertSpace(BaseHilbertSpace):
         for sym in symmetries:
             sym_lower = sym.lower().replace("_", "").replace("-", "")
 
-            if sym_lower in ["translation", "momentum", "trans"]:
+            if sym_lower in {"translation", "momentum", "trans"}:
                 symmetry_types.append(
                     (
                         SymmetryGenerators.Translation_x,
@@ -947,13 +947,13 @@ class HilbertSpace(BaseHilbertSpace):
                     )
                     sector_names[SymmetryGenerators.Translation_z] = "kz"
 
-            elif sym_lower in ["reflection", "parityspatial", "spatial", "mirror"]:
+            elif sym_lower in {"reflection", "parityspatial", "spatial", "mirror"}:
                 symmetry_types.append(
                     (SymmetryGenerators.Reflection, ReflectionSymmetry.get_sectors())
                 )
                 sector_names[SymmetryGenerators.Reflection] = "reflection"
 
-            elif sym_lower in ["inversion", "inv", "spatialinversion"]:
+            elif sym_lower in {"inversion", "inv", "spatialinversion"}:
                 from QES.Algebra.Symmetries.inversion import InversionSymmetry
 
                 symmetry_types.append(
@@ -961,15 +961,15 @@ class HilbertSpace(BaseHilbertSpace):
                 )
                 sector_names[SymmetryGenerators.Inversion] = "inversion"
 
-            elif sym_lower in ["parityz", "spinparity", "pz", "spinflip"]:
+            elif sym_lower in {"parityz", "spinparity", "pz", "spinflip"}:
                 symmetry_types.append((SymmetryGenerators.ParityZ, ParitySymmetry.get_sectors("z")))
                 sector_names[SymmetryGenerators.ParityZ] = "parity_z"
 
-            elif sym_lower in ["parityx", "px"]:
+            elif sym_lower in {"parityx", "px"}:
                 symmetry_types.append((SymmetryGenerators.ParityX, ParitySymmetry.get_sectors("x")))
                 sector_names[SymmetryGenerators.ParityX] = "parity_x"
 
-            elif sym_lower in ["parityy", "py"]:
+            elif sym_lower in {"parityy", "py"}:
                 symmetry_types.append((SymmetryGenerators.ParityY, ParitySymmetry.get_sectors("y")))
                 sector_names[SymmetryGenerators.ParityY] = "parity_y"
 
