@@ -1597,31 +1597,29 @@ class HilbertSpace(BaseHilbertSpace):
     def __str__(self):
         """Short string summary of the Hilbert space."""
         mode = "Many-Body" if self._is_many_body else "Quadratic"
-        info = f"{mode} Hilbert space: Ns={self._ns}, Nh={self._nh}"
+        parts = [f"{mode} Hilbert space: Ns={self._ns}, Nh={self._nh}"]
         if self._is_many_body:
-            info += f", Local={self._local_space}"
+            parts.append(f"Local={self._local_space}")
             try:
                 conv = self.state_convention.get("name", "unknown")
-                info += f", StateConvention={conv}"
+                parts.append(f"StateConvention={conv}")
             except Exception:
                 pass
         if self._global_syms:
             gs = ", ".join(f"{g.get_name_str()}={g.get_val()}" for g in self._global_syms)
-            info += f", GlobalSyms=[{gs}]"
+            parts.append(f"GlobalSyms=[{gs}]")
         if self._sym_container and getattr(self._sym_container, "generators", None):
             ls = ", ".join(
                 f"{gen_type}={sector}" for (_, (gen_type, sector)) in self._sym_container.generators
             )
-            info += f", LocalSyms=[{ls}]"
-        return info
+            parts.append(f"LocalSyms=[{ls}]")
+        return ", ".join(parts)
 
     def __repr__(self):
         sym_info = self.get_sym_info()
         base    = "SP" if self._is_quadratic else "MB"
         txt     = f"{base} Hilbert space with {self._nh} states and {self._ns} sites; {self._local_space}"
-        if sym_info:
-            txt += f". Symmetries: {sym_info}"
-        return txt
+        return f"{txt}. Symmetries: {sym_info}" if sym_info else txt
 
     ####################################################################################################
     #! Find the representative of a state
