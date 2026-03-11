@@ -682,10 +682,8 @@ class TranslationSymmetry(SymmetryOperator):
 
             # Calculate phase using crossing mask
             crossing_mask_jax = jnp.array(self.crossing_mask)
-            # Compute number of occupied sites crossing the boundary using boolean occupancy,
-            # so that non-unit backend representations (e.g. BACKEND_REPR != 1) are handled correctly.
-            occ_mask = (state != 0) & (crossing_mask_jax != 0)
-            occ_cross = jnp.sum(occ_mask.astype(jnp.int32), axis=-1)
+            # sum boolean mask with occupations, cast to int to safely index phase array
+            occ_cross = jnp.sum(state * crossing_mask_jax, axis=-1).astype(jnp.int32)
 
             # Fetch the boundary phases table from lattice
             dir_idx = getattr(self.direction, "value", self.direction)
