@@ -139,6 +139,7 @@ def _exact_local_quench_correlator(model, hilbert, probe, times):
     overlaps = eig_vec.conj().T @ phi0
     phi_t = time_evo_block(eig_vec, eig_val, overlaps, times)
     correlator = np.einsum("i,it->t", np.conj(phi0), phi_t)
+    correlator = correlator * np.exp(1.0j * float(np.real(eig_val[0])) * (times - times[0]))
     return correlator, float(np.real(eig_val[0]))
 
 
@@ -212,6 +213,7 @@ def main():
         sr_maxiter=128,
         exact_predictions=model.eig_vals,
     )
+    model.diagonalize()
 
     probe = sig_x(ns=hilbert.ns, sites=[0])
     probe_nqs = nqs.spawn_like(modifier=probe, verbose=False)
@@ -231,6 +233,7 @@ def main():
         ket_probe_operator=probe,
         bra_probe_operator=probe,
         trajectory=trajectory,
+        reference_energy=float(np.real(model._eig_val[0])),
         exact_sum=True,
     )
 

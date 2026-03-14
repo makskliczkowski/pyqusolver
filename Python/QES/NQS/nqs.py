@@ -3264,6 +3264,10 @@ class NQS(MonteCarloSolver):
         one may pass only ``ket_probe_operator``. For momentum-resolved
         structure factors the correct choice is typically
         ``bra_probe_operator = S_{-q}``, ``ket_probe_operator = S_q``.
+
+        Pass ``reference_energy=E_0`` to obtain the Heisenberg-picture
+        correlator ``\langle \psi_0|A^\dagger(t) B(0)|\psi_0\rangle`` for a
+        reference state of energy ``E_0``.
         """
         from .src.nqs_spectral import dynamical_correlator_impl
 
@@ -3335,7 +3339,9 @@ class NQS(MonteCarloSolver):
         momentum-resolved spin response use the physically correct pair
         ``A = S_{-q}``, ``B = S_q``. For tiny benchmark systems one may also
         pass ``exact_sum=True`` to remove Monte Carlo noise from the correlator
-        estimator and probe-norm restoration.
+        estimator and probe-norm restoration. Pass ``reference_energy=E_0`` for
+        a ground-state response so the returned spectrum is built from the
+        Heisenberg-picture correlator.
         """
         from .src.nqs_spectral import dynamic_structure_factor_impl
 
