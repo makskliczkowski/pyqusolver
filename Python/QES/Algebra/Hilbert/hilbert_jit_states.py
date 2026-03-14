@@ -949,12 +949,54 @@ def _fill_many_body_state_slater(
         # Allocate workspace per thread (always complex for det_bareiss)
         occupied_orbitals   = orbital_configs[i]
         workspace           = np.empty((nfilling, nfilling), dtype=np.complex128)
-        
-        for st in range(nh):
-            if _popcount64(np.int64(st)) == nfilling:
-                result[i, st] = calculate_slater_det(sp_eigvecs, occupied_orbitals, st, ns, workspace)
-            else:
-                result[i, st] = 0.0
+
+        # Fast path: enumerate only fixed-filling bitstrings via Gosper's hack.
+        # This avoids scanning all 2^Ns basis states when only C(Ns, Nfilling)
+        # states have non-zero amplitudes.
+        if 0 < nfilling < ns and ns < 63:
+            x       = (np.uint64(1) << np.uint64(nfilling)) - np.uint64(1)
+            limit   = np.uint64(1) << np.uint64(ns)
+
+            while x < limit:
+                st              = np.int64(x)
+                result[i, st]   = calculate_slater_det(sp_eigvecs, occupied_orbitals, st, ns, workspace)
+
+                c               = x & (np.uint64(0) - x)
+                r               = x + c
+                # Gosper's hack to get next bitstring with same popcount
+                x_next          = (((r ^ x) >> np.uint64(2)) // c) | r
+                if x_next <= x:
+                    break
+                x = x_next
+        else:
+            # Fallback for edge cases (e.g. very large ns where shifts on int64
+            # are problematic): still compute only the physically allowed sector.
+            for st in range(nh):
+                if _popcount64(np.int64(st)) == nfilling:
+                    result[i, st] = calculate_slater_det(sp_eigvecs, occupied_orbitals, st, ns, workspace)
+
+
+@njit(parallel=True, cache=True, fastmath=True)
+def _fill_many_body_state_slater_mapped(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,
+    basis_states        : np.ndarray,   # (nh,) full-basis state labels
+    ns                  : int,
+    nfilling            : int,
+    result              : np.ndarray,
+):
+    '''Fill Slater amplitudes on a provided mapped basis.'''
+
+    chunk_size  = orbital_configs.shape[0]
+    nh          = basis_states.shape[0]
+
+    for i in numba.prange(chunk_size):
+        occupied_orbitals   = orbital_configs[i]
+        workspace           = np.empty((nfilling, nfilling), dtype=np.complex128)
+
+        for j in range(nh):
+            st = np.int64(basis_states[j])
+            result[i, j] = calculate_slater_det(sp_eigvecs, occupied_orbitals, st, ns, workspace)
         
 @njit(parallel=True, cache=True, fastmath=True)
 def _fill_many_body_state_permanent(
@@ -973,12 +1015,48 @@ def _fill_many_body_state_permanent(
         # Allocate workspace per thread (always complex for permanent)
         occupied_orbitals   = orbital_configs[i]
         workspace           = np.empty((nfilling, nfilling), dtype=np.complex128)
-        
-        for st in range(nh):
-            if _popcount64(np.int64(st)) == nfilling:
+
+        if 0 < nfilling < ns and ns < 63:
+            x       = (np.uint64(1) << np.uint64(nfilling)) - np.uint64(1)
+            limit   = np.uint64(1) << np.uint64(ns)
+
+            while x < limit:
+                st = np.int64(x)
                 result[i, st] = calculate_permanent(sp_eigvecs, occupied_orbitals, st, ns, workspace)
-            else:
-                result[i, st] = 0.0
+
+                c = x & (np.uint64(0) - x)
+                r = x + c
+                x_next = (((r ^ x) >> np.uint64(2)) // c) | r
+                if x_next <= x:
+                    break
+                x = x_next
+        else:
+            for st in range(nh):
+                if _popcount64(np.int64(st)) == nfilling:
+                    result[i, st] = calculate_permanent(sp_eigvecs, occupied_orbitals, st, ns, workspace)
+
+
+@njit(parallel=True, cache=True, fastmath=True)
+def _fill_many_body_state_permanent_mapped(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,
+    basis_states        : np.ndarray,
+    ns                  : int,
+    nfilling            : int,
+    result              : np.ndarray,
+):
+    '''Fill permanent amplitudes on a provided mapped basis.'''
+
+    chunk_size  = orbital_configs.shape[0]
+    nh          = basis_states.shape[0]
+
+    for i in numba.prange(chunk_size):
+        occupied_orbitals   = orbital_configs[i]
+        workspace           = np.empty((nfilling, nfilling), dtype=np.complex128)
+
+        for j in range(nh):
+            st = np.int64(basis_states[j])
+            result[i, j] = calculate_permanent(sp_eigvecs, occupied_orbitals, st, ns, workspace)
 
 # BdG / Gaussian parallel fillers
 
@@ -1359,17 +1437,27 @@ def many_body_states(
         if single_particle_eigvecs is None:
             raise ValueError("single_particle_eigvecs required for SLATER.")
         nfilling = orbital_configs.shape[1]
-        _fill_many_body_state_slater(
-            single_particle_eigvecs, orbital_configs, ns, nfilling, out
-        )
+        if mapping_array is not None:
+            basis_states = np.asarray(mapping_array, dtype=np.int64)
+            if basis_states.ndim != 1:
+                raise ValueError("mapping_array must be 1D when provided.")
+            _fill_many_body_state_slater_mapped(single_particle_eigvecs, orbital_configs, basis_states, ns, nfilling, out)
+        else:
+            out.fill(0.0)
+            _fill_many_body_state_slater(single_particle_eigvecs, orbital_configs, ns, nfilling, out)
     
     elif state_type == ManyBodyStateType.PERMANENT:
         if single_particle_eigvecs is None:
             raise ValueError("single_particle_eigvecs required for PERMANENT.")
         nfilling = orbital_configs.shape[1]
-        _fill_many_body_state_permanent(
-            single_particle_eigvecs, orbital_configs, ns, nfilling, out
-        )
+        if mapping_array is not None:
+            basis_states = np.asarray(mapping_array, dtype=np.int64)
+            if basis_states.ndim != 1:
+                raise ValueError("mapping_array must be 1D when provided.")
+            _fill_many_body_state_permanent_mapped(single_particle_eigvecs, orbital_configs, basis_states, ns, nfilling, out)
+        else:
+            out.fill(0.0)
+            _fill_many_body_state_permanent(single_particle_eigvecs, orbital_configs, ns, nfilling, out)
     
     elif state_type == ManyBodyStateType.BOGOLIUBOV:
         if pairing_matrix_F is None:

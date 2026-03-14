@@ -2090,8 +2090,6 @@ class QuadraticHamiltonian(Hamiltonian):
         target_basis        : str = "sites",
         resulting_states    : Optional[np.ndarray] = None,
         occupations         : Union[List[int], List[List[int]], np.ndarray] = None,
-        many_body_hilbert   : Optional[HilbertSpace] = None,
-        cache_states        : bool = True,
         **kwargs
     ) -> np.ndarray:
         r"""
@@ -2204,6 +2202,18 @@ class QuadraticHamiltonian(Hamiltonian):
         
         dtype           = kwargs.get("dtype", self._dtype)
         mapping_array   = kwargs.get("mapping_array", None)
+
+        # Backward-compatible path: if caller provides a Hilbert-space object
+        # but no explicit mapping_array, use its representative mapping.
+        if mapping_array is None:
+            many_body_hilbert = kwargs.get("many_body_hilbert", None)
+            if many_body_hilbert is not None and hasattr(many_body_hilbert, "mapping"):
+                try:
+                    mb_map = many_body_hilbert.mapping
+                    if mb_map is not None:
+                        mapping_array = np.asarray(mb_map, dtype=np.int64)
+                except Exception:
+                    mapping_array = None
         
         # Convert occupations to proper numpy array
         occ_array = None
