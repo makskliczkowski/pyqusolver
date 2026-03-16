@@ -45,6 +45,7 @@ __all__             = [
                     'extract_occupied', 'popcount_fast',
                     # Slater determinant
                     'calculate_slater_det', 'calculate_slater_det_batch',
+                    'calculate_slater_superposition_states', 'calculate_permanent_superposition_states',
                     # Bogoliubov
                     'bogolubov_decompose', 'pairing_matrix',
                     'calculate_bogoliubov_amp', 'calculate_bogoliubov_amp_exc',
@@ -932,6 +933,28 @@ def calculate_bosonic_gaussian_amp(
 # Many-Body State Construction
 # ============================================================================
 
+def _fixed_filling_basis_states(ns: int, nfilling: int) -> np.ndarray:
+    """Return all bitstrings with fixed popcount using Gosper enumeration."""
+    if not (0 <= nfilling <= ns):
+        raise ValueError(f"Invalid nfilling={nfilling} for ns={ns}.")
+    if ns >= 63:
+        raise ValueError("_fixed_filling_basis_states currently supports ns < 63.")
+
+    if nfilling == 0:
+        return np.array([0], dtype=np.int64)
+    if nfilling == ns:
+        return np.array([(1 << ns) - 1], dtype=np.int64)
+
+    count   = int(np.math.comb(ns, nfilling))
+    out     = np.empty(count, dtype=np.int64)
+    x       = (1 << nfilling) - 1
+    for idx in range(count):
+        out[idx]    = x
+        c           = x & -x
+        r           = x + c
+        x           = (((r ^ x) >> 2) // c) | r
+    return out
+
 @njit(parallel=True, cache=True, fastmath=True)
 def _fill_many_body_state_slater(
     sp_eigvecs          : np.ndarray,   # (orbital_size, n_orb) - single-particle eigenvectors
@@ -974,7 +997,6 @@ def _fill_many_body_state_slater(
             for st in range(nh):
                 if _popcount64(np.int64(st)) == nfilling:
                     result[i, st] = calculate_slater_det(sp_eigvecs, occupied_orbitals, st, ns, workspace)
-
 
 @njit(parallel=True, cache=True, fastmath=True)
 def _fill_many_body_state_slater_mapped(
@@ -1035,7 +1057,6 @@ def _fill_many_body_state_permanent(
                 if _popcount64(np.int64(st)) == nfilling:
                     result[i, st] = calculate_permanent(sp_eigvecs, occupied_orbitals, st, ns, workspace)
 
-
 @njit(parallel=True, cache=True, fastmath=True)
 def _fill_many_body_state_permanent_mapped(
     sp_eigvecs          : np.ndarray,
@@ -1057,6 +1078,272 @@ def _fill_many_body_state_permanent_mapped(
         for j in range(nh):
             st = np.int64(basis_states[j])
             result[i, j] = calculate_permanent(sp_eigvecs, occupied_orbitals, st, ns, workspace)
+
+# ----------------------------------------------------------------------------
+
+@njit(parallel=True, cache=True, fastmath=True)
+def _accumulate_slater_superposition_full(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,   # (gamma, nfilling)
+    coefficients        : np.ndarray,   # (num_coeffs, gamma)
+    basis_states        : np.ndarray,   # (n_basis,)
+    ns                  : int,
+    result              : np.ndarray,   # (num_coeffs, nh)
+):
+    """Accumulate linear combinations of Slater amplitudes in a single basis sweep."""
+
+    num_coeffs  = coefficients.shape[0]
+    gamma       = orbital_configs.shape[0]
+    nfilling    = orbital_configs.shape[1]
+    n_basis     = basis_states.shape[0]
+
+    for j in numba.prange(n_basis):
+        st              = np.int64(basis_states[j])
+        sites_buffer    = np.empty(nfilling, dtype=np.int64)
+        sites           = extract_occupied(ns, st, sites_buffer)
+        workspace       = np.empty((nfilling, nfilling), dtype=np.complex128)
+        accumulators    = np.zeros(num_coeffs, dtype=np.complex128)
+
+        for k in range(gamma):
+            amp = _slater_core(sp_eigvecs, orbital_configs[k], sites, workspace)
+            for cc in range(num_coeffs):
+                accumulators[cc] += coefficients[cc, k] * amp
+
+        for cc in range(num_coeffs):
+            result[cc, st] = accumulators[cc]
+
+@njit(parallel=True, cache=True, fastmath=True)
+def _accumulate_slater_superposition_mapped(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,   # (gamma, nfilling)
+    coefficients        : np.ndarray,   # (num_coeffs, gamma)
+    basis_states        : np.ndarray,   # (n_basis,)
+    ns                  : int,
+    result              : np.ndarray,   # (num_coeffs, n_basis)
+):
+    """Accumulate Slater superpositions directly on a mapped basis ordering."""
+
+    num_coeffs  = coefficients.shape[0]
+    gamma       = orbital_configs.shape[0]
+    nfilling    = orbital_configs.shape[1]
+    n_basis     = basis_states.shape[0]
+
+    for j in numba.prange(n_basis):
+        st              = np.int64(basis_states[j])
+        sites_buffer    = np.empty(nfilling, dtype=np.int64)
+        sites           = extract_occupied(ns, st, sites_buffer)
+        workspace       = np.empty((nfilling, nfilling), dtype=np.complex128)
+        accumulators    = np.zeros(num_coeffs, dtype=np.complex128)
+
+        for k in range(gamma):
+            amp = _slater_core(sp_eigvecs, orbital_configs[k], sites, workspace)
+            for cc in range(num_coeffs):
+                accumulators[cc] += coefficients[cc, k] * amp
+
+        for cc in range(num_coeffs):
+            result[cc, j] = accumulators[cc]
+
+@njit(parallel=True, cache=True, fastmath=True)
+def _accumulate_permanent_superposition_full(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,   # (gamma, nfilling)
+    coefficients        : np.ndarray,   # (num_coeffs, gamma)
+    basis_states        : np.ndarray,   # (n_basis,)
+    ns                  : int,
+    result              : np.ndarray,   # (num_coeffs, nh)
+):
+    """Accumulate linear combinations of permanent amplitudes in a single basis sweep."""
+
+    num_coeffs  = coefficients.shape[0]
+    gamma       = orbital_configs.shape[0]
+    nfilling    = orbital_configs.shape[1]
+    n_basis     = basis_states.shape[0]
+
+    for j in numba.prange(n_basis):
+        st              = np.int64(basis_states[j])
+        workspace       = np.empty((nfilling, nfilling), dtype=np.complex128)
+        accumulators    = np.zeros(num_coeffs, dtype=np.complex128)
+
+        for k in range(gamma):
+            amp = calculate_permanent(sp_eigvecs, orbital_configs[k], st, ns, workspace)
+            for cc in range(num_coeffs):
+                accumulators[cc] += coefficients[cc, k] * amp
+
+        for cc in range(num_coeffs):
+            result[cc, st] = accumulators[cc]
+
+@njit(parallel=True, cache=True, fastmath=True)
+def _accumulate_permanent_superposition_mapped(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,   # (gamma, nfilling)
+    coefficients        : np.ndarray,   # (num_coeffs, gamma)
+    basis_states        : np.ndarray,   # (n_basis,)
+    ns                  : int,
+    result              : np.ndarray,   # (num_coeffs, n_basis)
+):
+    """Accumulate permanent superpositions directly on a mapped basis ordering."""
+
+    num_coeffs  = coefficients.shape[0]
+    gamma       = orbital_configs.shape[0]
+    nfilling    = orbital_configs.shape[1]
+    n_basis     = basis_states.shape[0]
+
+    for j in numba.prange(n_basis):
+        st              = np.int64(basis_states[j])
+        workspace       = np.empty((nfilling, nfilling), dtype=np.complex128)
+        accumulators    = np.zeros(num_coeffs, dtype=np.complex128)
+
+        for k in range(gamma):
+            amp = calculate_permanent(sp_eigvecs, orbital_configs[k], st, ns, workspace)
+            for cc in range(num_coeffs):
+                accumulators[cc] += coefficients[cc, k] * amp
+
+        for cc in range(num_coeffs):
+            result[cc, j] = accumulators[cc]
+
+def calculate_slater_superposition_states(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,
+    coefficients        : np.ndarray,
+    basis_states        : np.ndarray,
+    ns                  : int,
+    result              : Optional[np.ndarray] = None,
+) -> np.ndarray:
+    r"""
+    Build superposition many-body states without materializing all component states.
+
+    Computes:
+        ``psi_c[st] = sum_k coefficients[c, k] * <st|phi_k>``
+    for each coefficient set ``c`` and each basis state index ``st`` listed in
+    ``basis_states``. This avoids allocating/intermediate ``(gamma, nh)`` arrays.
+
+    Parameters
+    ----------
+    sp_eigvecs : np.ndarray
+        Single-particle eigenvector matrix ``U`` with shape ``(ns, n_orb)``.
+    orbital_configs : np.ndarray
+        Occupied-orbital configurations with shape ``(gamma, nfilling)``.
+    coefficients : np.ndarray
+        Superposition coefficients with shape ``(num_coeffs, gamma)``.
+    basis_states : np.ndarray
+        1D integer basis-state labels to evaluate.
+    ns : int
+        Number of sites.
+    result : Optional[np.ndarray]
+        Pre-allocated output with shape ``(num_coeffs, 2**ns)``.
+
+    Returns
+    -------
+    np.ndarray
+        Output array with accumulated many-body superposition states.
+    """
+
+    orbital_configs_i = np.asarray(orbital_configs, dtype=np.int64)
+    coefficients_c    = np.asarray(coefficients, dtype=np.complex128)
+    basis_states_i    = np.asarray(basis_states, dtype=np.int64)
+    sp_eigvecs_c      = np.asarray(sp_eigvecs, dtype=np.complex128)
+
+    if orbital_configs_i.ndim != 2:
+        raise ValueError("orbital_configs must be a 2D array of shape (gamma, nfilling).")
+    if coefficients_c.ndim != 2:
+        raise ValueError("coefficients must be a 2D array of shape (num_coeffs, gamma).")
+    if basis_states_i.ndim != 1:
+        raise ValueError("basis_states must be a 1D array of integer basis labels.")
+    if coefficients_c.shape[1] != orbital_configs_i.shape[0]:
+        raise ValueError("coefficients second dimension must match orbital_configs first dimension (gamma).")
+
+    num_coeffs      = coefficients_c.shape[0]
+    nh_full         = 1 << ns
+    n_basis_states  = basis_states_i.shape[0]
+
+    if result is None:
+        out = np.zeros((num_coeffs, nh_full), dtype=np.complex128)
+    else:
+        out = result if result.dtype == np.complex128 else result.astype(np.complex128, copy=False)
+        valid_shapes = ((num_coeffs, nh_full), (num_coeffs, n_basis_states))
+        if out.shape not in valid_shapes:
+            raise ValueError(f"result shape mismatch: expected one of {valid_shapes}, got {out.shape}.")
+        out.fill(0.0)
+
+    if out.shape[1] == nh_full:
+        _accumulate_slater_superposition_full(
+            sp_eigvecs      = sp_eigvecs_c,
+            orbital_configs = orbital_configs_i,
+            coefficients    = coefficients_c,
+            basis_states    = basis_states_i,
+            ns              = ns,
+            result          = out,
+        )
+    else:
+        _accumulate_slater_superposition_mapped(
+            sp_eigvecs      = sp_eigvecs_c,
+            orbital_configs = orbital_configs_i,
+            coefficients    = coefficients_c,
+            basis_states    = basis_states_i,
+            ns              = ns,
+            result          = out,
+        )
+    return out
+
+def calculate_permanent_superposition_states(
+    sp_eigvecs          : np.ndarray,
+    orbital_configs     : np.ndarray,
+    coefficients        : np.ndarray,
+    basis_states        : np.ndarray,
+    ns                  : int,
+    result              : Optional[np.ndarray] = None,
+) -> np.ndarray:
+    r"""
+    Build superposition many-body states for bosonic permanents without
+    materializing all component states.
+    """
+
+    orbital_configs_i = np.asarray(orbital_configs, dtype=np.int64)
+    coefficients_c    = np.asarray(coefficients, dtype=np.complex128)
+    basis_states_i    = np.asarray(basis_states, dtype=np.int64)
+    sp_eigvecs_c      = np.asarray(sp_eigvecs, dtype=np.complex128)
+
+    if orbital_configs_i.ndim != 2:
+        raise ValueError("orbital_configs must be a 2D array of shape (gamma, nfilling).")
+    if coefficients_c.ndim != 2:
+        raise ValueError("coefficients must be a 2D array of shape (num_coeffs, gamma).")
+    if basis_states_i.ndim != 1:
+        raise ValueError("basis_states must be a 1D array of integer basis labels.")
+    if coefficients_c.shape[1] != orbital_configs_i.shape[0]:
+        raise ValueError("coefficients second dimension must match orbital_configs first dimension (gamma).")
+
+    num_coeffs      = coefficients_c.shape[0]
+    nh_full         = 1 << ns
+    n_basis_states  = basis_states_i.shape[0]
+
+    if result is None:
+        out = np.zeros((num_coeffs, nh_full), dtype=np.complex128)
+    else:
+        out = result if result.dtype == np.complex128 else result.astype(np.complex128, copy=False)
+        valid_shapes = ((num_coeffs, nh_full), (num_coeffs, n_basis_states))
+        if out.shape not in valid_shapes:
+            raise ValueError(f"result shape mismatch: expected one of {valid_shapes}, got {out.shape}.")
+        out.fill(0.0)
+
+    if out.shape[1] == nh_full:
+        _accumulate_permanent_superposition_full(
+            sp_eigvecs      = sp_eigvecs_c,
+            orbital_configs = orbital_configs_i,
+            coefficients    = coefficients_c,
+            basis_states    = basis_states_i,
+            ns              = ns,
+            result          = out,
+        )
+    else:
+        _accumulate_permanent_superposition_mapped(
+            sp_eigvecs      = sp_eigvecs_c,
+            orbital_configs = orbital_configs_i,
+            coefficients    = coefficients_c,
+            basis_states    = basis_states_i,
+            ns              = ns,
+            result          = out,
+        )
+    return out
 
 # BdG / Gaussian parallel fillers
 
@@ -1281,21 +1568,22 @@ class ManyBodyStateType:
 
 
 def many_body_states(
-    ns                      : int,
+    ns                          : int,
     *,
-    state_type              : int = ManyBodyStateType.SLATER,
-    orbital_configs         : Optional[np.ndarray] = None,
-    result                  : Optional[np.ndarray] = None,
-    dtype                   : np.dtype = np.complex128,
+    state_type                  : int = ManyBodyStateType.SLATER,
+    orbital_configs             : Optional[np.ndarray] = None,
+    result                      : Optional[np.ndarray] = None,
+    dtype                       : np.dtype = np.complex128,
+    superposition_coefficients  : Optional[np.ndarray] = None,
     # Particle-conserving (Slater / Permanent)
-    single_particle_eigvecs : Optional[np.ndarray] = None,
+    single_particle_eigvecs     : Optional[np.ndarray] = None,
     # BdG fermionic (Bogoliubov)
-    pairing_matrix_F        : Optional[np.ndarray] = None,
-    u_bdg_matrix            : Optional[np.ndarray] = None,
+    pairing_matrix_F            : Optional[np.ndarray] = None,
+    u_bdg_matrix                : Optional[np.ndarray] = None,
     # BdG bosonic (Gaussian)
-    gaussian_matrix_G       : Optional[np.ndarray] = None,
+    gaussian_matrix_G           : Optional[np.ndarray] = None,
     # Hilbert-space mapping
-    mapping_array           : Optional[np.ndarray] = None,
+    mapping_array               : Optional[np.ndarray] = None,
 ) -> np.ndarray:
     r'''Construct many-body state vectors for multiple configurations in parallel.
     
@@ -1426,6 +1714,63 @@ def many_body_states(
     
     nh = mapping_array.shape[0] if mapping_array is not None else (1 << ns)
     
+    # Optional superposition mode (particle-conserving only) - this is a bit of a special case since it bypasses the normal filling logic and dispatches directly to the superposition accumulators.
+    if superposition_coefficients is not None:
+        if state_type not in (ManyBodyStateType.SLATER, ManyBodyStateType.PERMANENT):
+            raise ValueError("superposition_coefficients is supported only for SLATER/PERMANENT.")
+        if orbital_configs is None:
+            raise ValueError("orbital_configs are required with superposition_coefficients.")
+
+        coeffs = np.asarray(superposition_coefficients, dtype=np.complex128)
+        if coeffs.ndim == 1:
+            coeffs = coeffs.reshape(1, -1)
+        if coeffs.ndim != 2:
+            raise ValueError("superposition_coefficients must be 1D or 2D.")
+        if coeffs.shape[1] != orbital_configs.shape[0]:
+            raise ValueError("superposition_coefficients shape mismatch: second dimension must equal number of orbital configurations.")
+
+        # If mapped basis is provided, use that ordering directly; otherwise
+        # enumerate only the fixed-filling sector to avoid scanning the full basis.
+        if mapping_array is not None:
+            basis_states    = np.asarray(mapping_array, dtype=np.int64)
+            if basis_states.ndim != 1:
+                raise ValueError("mapping_array must be 1D when provided.")
+            out_shape       = (coeffs.shape[0], basis_states.shape[0])
+        else:
+            nfilling        = orbital_configs.shape[1]
+            basis_states    = _fixed_filling_basis_states(ns, nfilling)
+            out_shape       = (coeffs.shape[0], 1 << ns)
+
+        if result is not None:
+            out = result if result.dtype == dtype else result.astype(dtype, copy=False)
+            if out.shape != out_shape:
+                raise ValueError(f"result shape mismatch for superposition mode: expected {out_shape}, got {out.shape}.")
+        else:
+            out = np.zeros(out_shape, dtype=dtype)
+
+        if state_type == ManyBodyStateType.SLATER:
+            if single_particle_eigvecs is None:
+                raise ValueError("single_particle_eigvecs required for SLATER.")
+            return calculate_slater_superposition_states(
+                sp_eigvecs      = single_particle_eigvecs,
+                orbital_configs = orbital_configs,
+                coefficients    = coeffs,
+                basis_states    = basis_states,
+                ns              = ns,
+                result          = out,
+            )
+
+        if single_particle_eigvecs is None:
+            raise ValueError("single_particle_eigvecs required for PERMANENT.")
+        return calculate_permanent_superposition_states(
+            sp_eigvecs      = single_particle_eigvecs,
+            orbital_configs = orbital_configs,
+            coefficients    = coeffs,
+            basis_states    = basis_states,
+            ns              = ns,
+            result          = out,
+        )
+
     # ── Allocate or validate output ───────────────────────────────────
     if result is not None:
         out = result if result.dtype == dtype else result.astype(dtype, copy=False)

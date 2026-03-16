@@ -2191,17 +2191,13 @@ class QuadraticHamiltonian(Hamiltonian):
         # Import unified dispatcher (single source of truth)
         
         try:
-            from QES.Algebra.Hilbert.hilbert_jit_states import (
-                many_body_states as _many_body_states, ManyBodyStateType,
-            )
+            from QES.Algebra.Hilbert.hilbert_jit_states import many_body_states as _many_body_states, ManyBodyStateType
         except ImportError as e:
-            raise ImportError(
-                "Could not import many_body_states from "
-                "hilbert_jit_states_refactored. Ensure QES is properly installed."
-            ) from e
+            raise ImportError("Could not import many_body_states from hilbert_jit_states. Ensure QES is properly installed.") from e
         
-        dtype           = kwargs.get("dtype", self._dtype)
-        mapping_array   = kwargs.get("mapping_array", None)
+        dtype                   = kwargs.get("dtype", self._dtype)
+        mapping_array           = kwargs.get("mapping_array", None)
+        superposition_coeffs    = kwargs.get("superposition_coefficients", kwargs.get("coefficients", None))
 
         # Backward-compatible path: if caller provides a Hilbert-space object
         # but no explicit mapping_array, use its representative mapping.
@@ -2232,25 +2228,27 @@ class QuadraticHamiltonian(Hamiltonian):
         # 1. FERMION + PARTICLE CONSERVING  →  Slater determinant (det M)
         if self._isfermions and self._particle_conserving:
             return _many_body_states(
-                ns                      = self._ns,
-                state_type              = ManyBodyStateType.SLATER,
-                orbital_configs         = occ_array,
-                result                  = resulting_states,
-                dtype                   = dtype,
-                single_particle_eigvecs = self._eig_vec,
-                mapping_array           = mapping_array,
+                ns                          = self._ns,
+                state_type                  = ManyBodyStateType.SLATER,
+                orbital_configs             = occ_array,
+                result                      = resulting_states,
+                dtype                       = dtype,
+                superposition_coefficients  = superposition_coeffs,
+                single_particle_eigvecs     = self._eig_vec,
+                mapping_array               = mapping_array,
             )
         
         # 2. BOSON + PARTICLE CONSERVING  →  Permanent (perm M)
         if self._isbosons and self._particle_conserving:
             return _many_body_states(
-                ns                      = self._ns,
-                state_type              = ManyBodyStateType.PERMANENT,
-                orbital_configs         = occ_array,
-                result                  = resulting_states,
-                dtype                   = dtype,
-                single_particle_eigvecs = self._eig_vec,
-                mapping_array           = mapping_array,
+                ns                          = self._ns,
+                state_type                  = ManyBodyStateType.PERMANENT,
+                orbital_configs             = occ_array,
+                result                      = resulting_states,
+                dtype                       = dtype,
+                superposition_coefficients  = superposition_coeffs,
+                single_particle_eigvecs     = self._eig_vec,
+                mapping_array               = mapping_array,
             )
         
         # 3. FERMION + BdG  →  Bogoliubov vacuum / excitations (Pfaffian)
