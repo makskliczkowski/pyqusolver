@@ -1035,16 +1035,14 @@ class Operator(GeneralMatrix):
         if other_state is None:
             other_state = state
 
-        left_cols, left_is_vec = self._as_column_matrix(state, name="state")
-        right_cols, right_is_vec = self._as_column_matrix(other_state, name="other_state")
+        left_cols, left_is_vec      = self._as_column_matrix(state, name="state")
+        right_cols, right_is_vec    = self._as_column_matrix(other_state, name="other_state")
 
         if left_cols.shape[0] != right_cols.shape[0]:
-            raise ValueError(
-                f"State size mismatch: {left_cols.shape[0]} (state) vs {right_cols.shape[0]} (other_state)."
-            )
+            raise ValueError(f"State size mismatch: {left_cols.shape[0]} (state) vs {right_cols.shape[0]} (other_state).")
 
-        matrix = self._get_matrix_reference()
-        can_use_matrix = matrix is not None and getattr(matrix, "shape", (None, None))[1] == right_cols.shape[0]
+        matrix          = self._get_matrix_reference()
+        can_use_matrix  = matrix is not None and getattr(matrix, "shape", (None, None))[1] == right_cols.shape[0]
 
         if can_use_matrix:
             operated = matrix @ right_cols
@@ -1288,13 +1286,9 @@ class Operator(GeneralMatrix):
             dummy_hilbert._log("Calculating the Operator matrix using NumPy...", lvl=2)
 
         # calculate the time to create the matrix
-        t1 = time.time()
-        matrix = build_operator_matrix(
-            hilbert_space=dummy_hilbert,
-            operator_func=wrapped_funct,
-            sparse=is_sparse,
-            max_local_changes=max_loc_upd,
-            dtype=dtype,
+        t1      = time.time()
+        matrix  = build_operator_matrix(hilbert_space=dummy_hilbert, operator_func=wrapped_funct,
+            sparse=is_sparse, max_local_changes=max_loc_upd, dtype=dtype,
         )
         time_taken = time.time() - t1
         if verbose:
@@ -1312,14 +1306,7 @@ class Operator(GeneralMatrix):
         return self._matrix
 
     def compute_matrix(
-        self,
-        *args,
-        dim=None,
-        matrix_type="sparse",
-        dtype=None,
-        hilbert_1=None,
-        hilbert_2=None,
-        use_numpy: bool = True,
+        self, *args, dim=None, matrix_type="sparse", dtype=None, hilbert_1=None, hilbert_2=None, use_numpy: bool = True,
         **kwargs,
     ) -> Array | None:
         """

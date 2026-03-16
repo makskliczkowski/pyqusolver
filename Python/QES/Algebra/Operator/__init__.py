@@ -33,16 +33,17 @@ Usage
 File    : QES/Algebra/Operator/__init__.py
 Author  : Maksymilian Kliczkowski
 Email   : maksymilian.kliczkowski@pwr.edu.pl
+Version : 1.1
 -----------------------------------------------------------
 """
+
+from __future__ import annotations
 
 import importlib
 from typing import TYPE_CHECKING, Any
 
 # A short, user-facing description used by QES.registry
-MODULE_DESCRIPTION = (
-    "Operator classes and concrete operators (spin, fermions) with matrix builders."
-)
+MODULE_DESCRIPTION = "Operator classes and concrete operators (spin, fermions) with matrix builders."
 
 # ---------------------------------------------------------------------------
 # Lazy loading infrastructure
@@ -53,48 +54,41 @@ from .operator import Operator, SymmetryGenerators
 
 if TYPE_CHECKING:
     from . import catalog, matrix, phase_utils, special_operator
-    from .impl import (
-        jax,
-        operators_anyon,
-        operators_hardcore,
-        operators_spin,
-        operators_spin_1,
-        operators_spinless_fermions,
-    )
+    from .impl import jax, operators_anyon, operators_hardcore, operators_spin, operators_spin_1, operators_spinless_fermions
     from .operator import Operator, SymmetryGenerators
 
 # Available submodules (loaded on demand)
 _SUBMODULES = {
-    "operator": "Base Operator class and SymmetryGenerators",
+    "operator"                      : "Base Operator class and SymmetryGenerators",
     # concrete operator submodules
-    "operators_spin": "Spin-1/2 operators (Pauli matrices)",
-    "operators_spin_1": "Spin-1 operators (S=1 matrices)",
-    "operators_spinless_fermions": "Spinless fermion operators (c, c†, n)",
-    "operators_hardcore": "Hardcore boson operators",
-    "operators_anyon": "Anyonic operators",
+    "operators_spin"                : "Spin-1/2 operators (Pauli matrices)",
+    "operators_spin_1"              : "Spin-1 operators (S=1 matrices)",
+    "operators_spinless_fermions"   : "Spinless fermion operators (c, c†, n)",
+    "operators_hardcore"            : "Hardcore boson operators",
+    "operators_anyon"               : "Anyonic operators",
     # JAX backends (in jax/ subfolder)
-    "jax": "JAX-accelerated operators subpackage",
+    "jax"                           : "JAX-accelerated operators subpackage",
     # helpers
-    "catalog": "Operator catalog and registry",
-    "phase_utils": "Fermionic parity and sign utilities",
-    "special_operator": "Special/custom operator support",
-    "matrix": "Matrix representation utilities",
+    "catalog"                       : "Operator catalog and registry",
+    "phase_utils"                   : "Fermionic parity and sign utilities",
+    "special_operator"              : "Special/custom operator support",
+    "matrix"                        : "Matrix representation utilities",
 }
 
 # Map public names to (module_path, attribute_name)
 # If attribute_name is None, return the module itself.
 _LAZY_IMPORTS = {
-    "operator": (".operator", None),
-    "operators_spin": (".impl.operators_spin", None),
-    "operators_spin_1": (".impl.operators_spin_1", None),
-    "operators_spinless_fermions": (".impl.operators_spinless_fermions", None),
-    "operators_hardcore": (".impl.operators_hardcore", None),
-    "operators_anyon": (".impl.operators_anyon", None),
-    "jax": (".impl.jax", None),
-    "phase_utils": (".phase_utils", None),
-    "catalog": (".catalog", None),
-    "special_operator": (".special_operator", None),
-    "matrix": (".matrix", None),
+    "operator"                      : (".operator", None),
+    "operators_spin"                : (".impl.operators_spin", None),
+    "operators_spin_1"              : (".impl.operators_spin_1", None),
+    "operators_spinless_fermions"   : (".impl.operators_spinless_fermions", None),
+    "operators_hardcore"            : (".impl.operators_hardcore", None),
+    "operators_anyon"               : (".impl.operators_anyon", None),
+    "jax"                           : (".impl.jax", None),
+    "phase_utils"                   : (".phase_utils", None),
+    "catalog"                       : (".catalog", None),
+    "special_operator"              : (".special_operator", None),
+    "matrix"                        : (".matrix", None),
 }
 
 # Operator types available in each submodule (for help/introspection)
@@ -102,42 +96,43 @@ _OPERATOR_TYPES = {
     "operators_spin": [
         "sig_x",
         "sig_y",
-        "sig_z",  # Pauli matrices
+        "sig_z",                    # Pauli matrices
         "sig_plus",
-        "sig_minus",  # Raising/lowering
-        "make_sigma_mixed",  # Mixed correlators (e.g., sigma_x_i sigma_y_j)
+        "sig_minus",                # Raising/lowering
+        "make_sigma_mixed",         # Mixed correlators (e.g., sigma_x_i sigma_y_j)
+        "pauli_string",             # General Pauli string builder
     ],
     "operators_spin_1": [
         "s1_x",
         "s1_y",
-        "s1_z",  # Spin-1 matrices
+        "s1_z",                     # Spin-1 matrices
         "s1_plus",
-        "s1_minus",  # Raising/lowering (S_+, S_-)
-        "s1_squared",  # S^2 operator
+        "s1_minus",                 # Raising/lowering (S_+, S_-)
+        "s1_squared",               # S^2 operator
         "s1_xy",
         "s1_yx",
-        "s1_xz",  # Two-site correlators
+        "s1_xz",                    # Two-site correlators
         "s1_zx",
         "s1_yz",
-        "s1_zy",  # Two-site correlators
-        "s1_quadrupole",  # Quadrupole operators (Q_zz, etc.)
+        "s1_zy",                    # Two-site correlators
+        "s1_quadrupole",            # Quadrupole operators (Q_zz, etc.)
     ],
     "operators_spinless_fermions": [
         "c",
-        "cdag",  # Annihilation/creation
-        "n_op",  # Number operator
-        "hopping",  # Hopping term
+        "cdag",                     # Annihilation/creation
+        "n_op",                     # Number operator
+        "hopping",                  # Hopping term
     ],
     "operators_hardcore": [
         "b",
         "b_dag",
-        "n_hc",  # Hardcore boson operators
+        "n_hc",                     # Hardcore boson operators
     ],
     "phase_utils": [
-        "bit_popcount",  # Count set bits
-        "bit_popcount_mask",  # Masked bit count
-        "fermionic_parity_int",  # Fermionic sign for integer state
-        "fermionic_parity_array",  # Fermionic sign for array state
+        "bit_popcount",             # Count set bits
+        "bit_popcount_mask",        # Masked bit count
+        "fermionic_parity_int",     # Fermionic sign for integer state
+        "fermionic_parity_array",   # Fermionic sign for array state
     ],
 }
 

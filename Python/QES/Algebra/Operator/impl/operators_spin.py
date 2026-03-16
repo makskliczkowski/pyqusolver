@@ -1261,12 +1261,12 @@ def sig_y(
 # -----------------------------------------------------------------------------
 
 def sig_z(
-    lattice: Optional[Lattice] = None,
-    ns: Optional[int] = None,
-    type_act: OperatorTypeActing = OperatorTypeActing.Global,
-    sites: Optional[List[int]] = None,
-    spin: bool = BACKEND_DEF_SPIN,
-    spin_value: float = _SPIN,
+    lattice     : Optional[Lattice] = None,
+    ns          : Optional[int] = None,
+    type_act    : OperatorTypeActing = OperatorTypeActing.Global,
+    sites       : Optional[List[int]] = None,
+    spin        : bool = BACKEND_DEF_SPIN,
+    spin_value  : float = _SPIN,
 ) -> Operator:
     r"""
     Factory function for \sigma _x.
