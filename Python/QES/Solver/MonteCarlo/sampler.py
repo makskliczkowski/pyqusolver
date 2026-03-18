@@ -949,14 +949,13 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
         # Get n (sub-sequence length)
         n = kwargs.get("n_flip", 3)
 
-        subpatterns = []
-        for p in plaquettes:
-            L = len(p)
-            eff_n = min(n, L)
-            for i in range(L):
-                # Cyclic slice
-                sub = [p[(i + j) % L] for j in range(eff_n)]
-                subpatterns.append(sub)
+        subpatterns = [
+            p_ext[i : i + eff_n]
+            for p in plaquettes
+            for L, eff_n in [(len(p), min(n, len(p)))]
+            for p_ext in [p + p[: eff_n - 1]]
+            for i in range(L)
+        ]
 
         patterns_jax = _to_padded_pattern(subpatterns, pad_value=-1)
         return partial(propose_global_flip, patterns=patterns_jax)
