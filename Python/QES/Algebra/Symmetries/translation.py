@@ -639,10 +639,40 @@ class TranslationSymmetry(SymmetryOperator):
 
         if not isinstance(state, np.ndarray):
             state = np.array(state)
-        # TODO: Handle multi-dimensional numpy arrays if needed
-        # For numpy arrays, delegate to integer operations
-        new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
-        return np.array(new_state), phase
+
+        # Check if state is vector-encoded (last dim == ns)
+        if state.ndim >= 1 and state.shape[-1] == self.ns:
+            # Use precomputed permutation
+            perm_np = np.array(self.perm)
+            inverse_perm = np.argsort(perm_np)
+            new_state = np.take(state, inverse_perm, axis=-1)
+
+            # Calculate phase using crossing mask
+            crossing_mask_np = np.array(self.crossing_mask)
+            occ_cross = np.sum(state * crossing_mask_np, axis=-1).astype(np.int32)
+
+            # Fetch the boundary phases table from lattice
+            dir_idx = getattr(self.direction, "value", self.direction)
+            if isinstance(dir_idx, str):
+                dir_map = {'x': 0, 'y': 1, 'z': 2}
+                dir_idx = dir_map.get(dir_idx.lower(), 0)
+
+            boundary_phases = np.array(self.lattice.boundary_phases()[dir_idx])
+            phase = boundary_phases[occ_cross]
+
+            return new_state, phase
+        else:
+            # Fallback for integer encoding (handles scalar or batch of integers)
+            if state.ndim == 0:
+                new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
+                return np.array(new_state), phase
+
+            # Use vectorization for array of integer states
+            def _apply_int_wrapper(s):
+                return self.apply_int(int(s), self.ns, **kwargs)
+
+            vec_apply = np.vectorize(_apply_int_wrapper, otypes=[np.int64, complex])
+            return vec_apply(state)
 
     def apply_jax(self, state, **kwargs):
         """
