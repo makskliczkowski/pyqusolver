@@ -1982,9 +1982,7 @@ class VMCSampler(Sampler):
 
         metrics["r_hat"] = float(compute_rhat(chains))
 
-        taus = []
-        for c in chains:
-            taus.append(compute_autocorr_time(c))
+        taus = [compute_autocorr_time(c) for c in chains]
         avg_tau = np.mean(taus)
         metrics["tau"] = float(avg_tau)
 
