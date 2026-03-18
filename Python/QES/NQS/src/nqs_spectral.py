@@ -459,23 +459,13 @@ def _spectrum_from_correlator(
     The returned frequency grid is the FFT grid associated with the supplied
     evenly spaced time mesh. The transform applies the optional exponential
     damping and an optional apodization window before the discrete Fourier sum.
-    The discrete implementation follows the physics convention
 
-        S(\omega) = \int dt e^{+i \omega t} C(t),
-
-    so a correlator ``C(t) ~ exp(-i omega_0 t)`` produces a peak at the
-    positive excitation energy ``omega_0``.
-
-    When ``hermitian_extension=True``, the routine uses the equilibrium
-    identity ``C(-t) = C(t)^*`` to evaluate the corresponding two-sided
-    transform from positive-time data only. Numerically this is implemented as
-    the one-sided quadrature
-
-        S(\omega) = 2 Re \int_0^T dt e^{+i \omega t} C(t) - C(0) dt,
-
-    with the same damping and windowing applied on the measured ``t >= 0``
-    branch. This is the physically correct finite-time construction for
-    Hermitian equilibrium correlators such as dynamical structure factors.
+    When ``hermitian_extension=True``, the positive-time correlator is extended
+    to negative times using ``C(-t) = C(t)^*`` before the FFT. This is the
+    physically correct finite-time construction for equilibrium correlation
+    functions such as dynamical structure factors, where one usually measures
+    ``C(t)`` only for ``t >= 0`` but the spectrum is defined from the full
+    two-sided transform.
     """
     times_arr = _as_time_array(times)
     if times_arr.size < 2:
@@ -493,21 +483,21 @@ def _spectrum_from_correlator(
         corr_work = corr_work - corr_work[0]
 
     if hermitian_extension and corr_work.size > 1:
-        n_full = 2 * corr_work.size - 1
-        freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(n_full, d=dt))
-        window_vals = _window_values(window, corr_work.size)
-        corr_pos = corr_work * window_vals
+        corr_work = np.concatenate([np.conj(corr_work[1:][::-1]), corr_work], axis=0)
+        t_rel = np.concatenate([-t_rel[1:][::-1], t_rel], axis=0)
+        window_vals_pos = _window_values(window, times_arr.size)
+        window_vals = np.concatenate([window_vals_pos[1:][::-1], window_vals_pos], axis=0)
         if eta and abs(eta) > 0.0:
-            corr_pos = corr_pos * np.exp(-float(eta) * t_rel)
-
-        phases = np.exp(1.0j * np.outer(freqs, t_rel))
-        raw_fft = 2.0 * phases @ (corr_pos * dt) - corr_pos[0] * dt
+            corr_work = corr_work * np.exp(-float(eta) * np.abs(t_rel))
+        corr_work = corr_work * window_vals
+        raw_fft = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(corr_work)) * dt)
+        freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(corr_work.size, d=dt))
     else:
         if eta and abs(eta) > 0.0:
             corr_work = corr_work * np.exp(-float(eta) * t_rel)
         window_vals = _window_values(window, corr_work.size)
         corr_work = corr_work * window_vals
-        raw_fft = np.fft.fftshift(np.fft.ifft(corr_work) * corr_work.size * dt)
+        raw_fft = np.fft.fftshift(np.fft.fft(corr_work) * dt)
         freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(corr_work.size, d=dt))
 
     spectrum = np.real(raw_fft)
@@ -967,7 +957,6 @@ def _probe_correlator_impl(
     spawn_directory: str = DEFAULT_NQS_TMP_DIR,
     spawn_use_orbax: bool = False,
     seed: Optional[int] = None,
-    reference_energy: Optional[float] = None,
     stitch_direct_t0: bool = False,
     **time_evolve_kwargs,
 ) -> NQSCorrelatorResult:
@@ -987,13 +976,6 @@ def _probe_correlator_impl(
     For diagonal single-branch probes such as S_q^z the norm factors are
     estimated automatically from <psi_0|A^\dagger A|psi_0> and
     <psi_0|B^\dagger B|psi_0>.
-
-    If ``reference_energy`` is provided, the returned correlator is rotated by
-    ``exp(+i E_ref t)`` so it matches the Heisenberg-picture convention
-
-        <psi_0| A^\dagger(t) B(0) |psi_0>,
-
-    for a reference state ``|psi_0>`` with energy ``E_ref``.
     """
 
     if ket_probe_operator is None:
@@ -1126,12 +1108,8 @@ def _probe_correlator_impl(
         if stitch_direct_t0 and direct_t0 is not None and correlator.size > 0:
             correlator[0] = complex(direct_t0)
 
-    times_arr = np.asarray(trajectory.times, dtype=np.float64)
-    if reference_energy is not None:
-        correlator = correlator * np.exp(1.0j * float(reference_energy) * (times_arr - times_arr[0]))
-
     return NQSCorrelatorResult(
-        times=times_arr,
+        times=np.asarray(trajectory.times, dtype=np.float64),
         correlator=correlator,
         trajectory=trajectory,
         metadata={
@@ -1145,7 +1123,6 @@ def _probe_correlator_impl(
             "bra_probe_operator": repr(bra_probe_operator),
             "ket_probe_operator": repr(ket_probe_operator),
             "exact_sum": bool(exact_sum),
-            "reference_energy": None if reference_energy is None else float(reference_energy),
             "stitch_direct_t0": bool(stitch_direct_t0),
         },
     )
@@ -1235,7 +1212,6 @@ def dynamic_structure_factor_impl(
     spawn_use_orbax: bool = False,
     seed: Optional[int] = None,
     exact_sum: bool = False,
-    reference_energy: Optional[float] = None,
     **time_evolve_kwargs,
 ) -> NQSSpectralResult:
     r"""
@@ -1268,11 +1244,6 @@ def dynamic_structure_factor_impl(
         deterministic full-basis summation. This is intended for tiny systems
         where one wants to diagnose the DSF machinery itself without additional
         Monte Carlo noise in the correlator estimator.
-
-    ``reference_energy``:
-        Energy of the reference state ``|psi_0>``. When provided, the correlator
-        is converted from the Schr\"odinger-picture overlap into the physical
-        Heisenberg-picture response by multiplying by ``exp(+i E_ref t)``.
     """
 
     ket_probe = ket_probe_operator if ket_probe_operator is not None else probe_operator
@@ -1310,7 +1281,6 @@ def dynamic_structure_factor_impl(
         spawn_use_orbax=spawn_use_orbax,
         seed=seed,
         exact_sum=exact_sum,
-        reference_energy=reference_energy,
         **time_evolve_kwargs,
     )
 
@@ -1356,16 +1326,13 @@ def dynamical_correlator_impl(
     spawn_directory: str = DEFAULT_NQS_TMP_DIR,
     spawn_use_orbax: bool = False,
     seed: Optional[int] = None,
-    reference_energy: Optional[float] = None,
     **time_evolve_kwargs,
 ) -> NQSCorrelatorResult:
-    r"""
+    """
     Public helper for the time-domain probe-state correlator.
 
     This is the direct interface for monitoring real-time response before any
-    Fourier transform or broadening is applied. When ``reference_energy`` is
-    supplied, the returned correlator is in the Heisenberg-picture convention
-    appropriate for observables such as ``<psi_0|A^\dagger(t) B(0)|psi_0>``.
+    Fourier transform or broadening is applied.
     """
 
     return _probe_correlator_impl(
@@ -1386,7 +1353,6 @@ def dynamical_correlator_impl(
         spawn_directory=spawn_directory,
         spawn_use_orbax=spawn_use_orbax,
         seed=seed,
-        reference_energy=reference_energy,
         **time_evolve_kwargs,
     )
 

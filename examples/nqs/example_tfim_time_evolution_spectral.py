@@ -70,7 +70,7 @@ def _fft_correlator(times, correlator, *, eta=0.2, window="hann"):
     elif window == "hamming":
         corr = corr * np.hamming(corr.size)
 
-    raw_fft = np.fft.fftshift(np.fft.ifft(corr) * corr.size * dt)
+    raw_fft = np.fft.fftshift(np.fft.fft(corr) * dt)
     freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(corr.size, d=dt))
     mask = freqs >= -1e-12
     return freqs[mask], np.real(raw_fft[mask])

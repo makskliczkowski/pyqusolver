@@ -180,13 +180,13 @@ class FreeFermions(QuadraticHamiltonian):
         # check if t and t2 are uniform
         t_diff  = np.diff(self._t) if hasattr(self._t, '__len__') and len(self._t) > 1 else np.array([0.0])
         t2_diff = np.diff(self._t2) if hasattr(self._t2, '__len__') and len(self._t2) > 1 else np.array([0.0])
-        
         if (t_diff.size > 0 and t_diff.max() != 0.0) or (t2_diff.size > 0 and t2_diff.max() != 0.0):
-            self._log("FreeFermions: Non-uniform hopping amplitudes break translational invariance. Falling back to numerical diagonalization.", lvl = 1, log = "warning",)
-            self._has_analytic_spectrum = False
-            
-        if self._bc is not None and self._bc != "PBC":
-            self._log("FreeFermions: Non-periodic boundary conditions break translational invariance. Falling back to numerical diagonalization.", lvl = 1, log = "warning",)
+            self._log(
+                "FreeFermions: Non-uniform hopping amplitudes break translational invariance. "
+                "Falling back to numerical diagonalization.",
+                lvl = 1,
+                log = "warning",
+            )
             self._has_analytic_spectrum = False
         
         # set the spectrum
@@ -263,7 +263,6 @@ class FreeFermions(QuadraticHamiltonian):
         try:
             from QES.general_python.lattices.lattice import LatticeBC, handle_boundary_conditions
             bc_enum = handle_boundary_conditions(self._bc)
-            
         except ImportError as e:
             raise ImportError("Could not import LatticeBC or handle_boundary_conditions. Ensure that QES package is properly installed.") from e
         
@@ -329,8 +328,6 @@ class FreeFermions(QuadraticHamiltonian):
             e2_str = ""
     
         param_str = ",".join(filter(None, [t_str, t2_str, e1_str, e2_str]))
-        if self._bc is not None and self._bc != "PBC":
-            param_str += f",bc={self._bc}"
         return f"FreeFermions(ns={self._ns},{param_str},c={self._constant_offset})"
 
     def __str__(self):

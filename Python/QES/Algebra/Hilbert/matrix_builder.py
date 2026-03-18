@@ -380,10 +380,10 @@ def _build_same_sector(
                         from QES.Algebra.Symmetries.jit.matrix_builder_jit import (
                             _build_dense_projected_jit,
                         )
-                    except ImportError as e:
+                    except ImportError:
                         raise ImportError(
                             "Projected matrix builder requires QES.Algebra.Symmetries.jit.matrix_builder_jit module."
-                        ) from e
+                        )
 
                     sym_c = hilbert_space._sym_container
                     cg = sym_c.compiled_group

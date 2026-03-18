@@ -795,7 +795,9 @@ class QuadraticSelection:
             return QuadraticSelection._haar_random_coeff_real(gamma, rng=rng, dtype=dtype)
     
     @staticmethod
-    def haar_random_coeff_batch(batch: int, gamma: int, *, rng: np.random.Generator | None = None, dtype=np.complex128) -> np.ndarray:
+    def haar_random_coeff_batch(
+        batch: int, gamma: int, *, rng: np.random.Generator | None = None, dtype=np.complex128
+    ) -> np.ndarray:
         r"""
         Generate multiple Haar-random coefficient vectors (batch generation).
         

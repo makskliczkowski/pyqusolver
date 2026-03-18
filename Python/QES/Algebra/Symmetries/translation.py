@@ -674,27 +674,12 @@ class TranslationSymmetry(SymmetryOperator):
             perm_jax = jnp.array(self.perm)
 
             # Apply permutation along last axis
-            # Note: perm_jax means site i maps to site perm_jax[i]
-            # When taking from state array, we need the inverse permutation
-            # to ensure the new state at index perm_jax[i] gets the value from index i
-            inverse_perm = jnp.argsort(perm_jax)
-            new_state = jnp.take(state, inverse_perm, axis=-1)
+            new_state = jnp.take(state, perm_jax, axis=-1)
 
-            # Calculate phase using crossing mask
-            crossing_mask_jax = jnp.array(self.crossing_mask)
-            # sum boolean mask with occupations, cast to int to safely index phase array
-            occ_cross = jnp.sum(state * crossing_mask_jax, axis=-1).astype(jnp.int32)
-
-            # Fetch the boundary phases table from lattice
-            dir_idx = getattr(self.direction, "value", self.direction)
-            if isinstance(dir_idx, str):
-                dir_map = {'x': 0, 'y': 1, 'z': 2}
-                dir_idx = dir_map.get(dir_idx.lower(), 0)
-
-            # boundary_phases has shape (3, ns+1) -> (direction, winding_number)
-            boundary_phases = jnp.array(self.lattice.boundary_phases()[dir_idx])
-            phase = boundary_phases[occ_cross]
-
+            # Phase: For spins (bosonic representation), phase is 1.0
+            # TODO: Implement fermion sign / boundary phase for JAX
+            # For now, return 1.0 (valid for spins)
+            phase = jnp.ones(state.shape[:-1], dtype=complex)
             return new_state, phase
 
         else:

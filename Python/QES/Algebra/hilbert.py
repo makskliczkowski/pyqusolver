@@ -920,7 +920,7 @@ class HilbertSpace(BaseHilbertSpace):
         for sym in symmetries:
             sym_lower = sym.lower().replace("_", "").replace("-", "")
 
-            if sym_lower in {"translation", "momentum", "trans"}:
+            if sym_lower in ["translation", "momentum", "trans"]:
                 symmetry_types.append(
                     (
                         SymmetryGenerators.Translation_x,
@@ -947,13 +947,13 @@ class HilbertSpace(BaseHilbertSpace):
                     )
                     sector_names[SymmetryGenerators.Translation_z] = "kz"
 
-            elif sym_lower in {"reflection", "parityspatial", "spatial", "mirror"}:
+            elif sym_lower in ["reflection", "parityspatial", "spatial", "mirror"]:
                 symmetry_types.append(
                     (SymmetryGenerators.Reflection, ReflectionSymmetry.get_sectors())
                 )
                 sector_names[SymmetryGenerators.Reflection] = "reflection"
 
-            elif sym_lower in {"inversion", "inv", "spatialinversion"}:
+            elif sym_lower in ["inversion", "inv", "spatialinversion"]:
                 from QES.Algebra.Symmetries.inversion import InversionSymmetry
 
                 symmetry_types.append(
@@ -961,15 +961,15 @@ class HilbertSpace(BaseHilbertSpace):
                 )
                 sector_names[SymmetryGenerators.Inversion] = "inversion"
 
-            elif sym_lower in {"parityz", "spinparity", "pz", "spinflip"}:
+            elif sym_lower in ["parityz", "spinparity", "pz", "spinflip"]:
                 symmetry_types.append((SymmetryGenerators.ParityZ, ParitySymmetry.get_sectors("z")))
                 sector_names[SymmetryGenerators.ParityZ] = "parity_z"
 
-            elif sym_lower in {"parityx", "px"}:
+            elif sym_lower in ["parityx", "px"]:
                 symmetry_types.append((SymmetryGenerators.ParityX, ParitySymmetry.get_sectors("x")))
                 sector_names[SymmetryGenerators.ParityX] = "parity_x"
 
-            elif sym_lower in {"parityy", "py"}:
+            elif sym_lower in ["parityy", "py"]:
                 symmetry_types.append((SymmetryGenerators.ParityY, ParitySymmetry.get_sectors("y")))
                 sector_names[SymmetryGenerators.ParityY] = "parity_y"
 
@@ -1597,29 +1597,31 @@ class HilbertSpace(BaseHilbertSpace):
     def __str__(self):
         """Short string summary of the Hilbert space."""
         mode = "Many-Body" if self._is_many_body else "Quadratic"
-        parts = [f"{mode} Hilbert space: Ns={self._ns}, Nh={self._nh}"]
+        info = f"{mode} Hilbert space: Ns={self._ns}, Nh={self._nh}"
         if self._is_many_body:
-            parts.append(f"Local={self._local_space}")
+            info += f", Local={self._local_space}"
             try:
                 conv = self.state_convention.get("name", "unknown")
-                parts.append(f"StateConvention={conv}")
+                info += f", StateConvention={conv}"
             except Exception:
                 pass
         if self._global_syms:
             gs = ", ".join(f"{g.get_name_str()}={g.get_val()}" for g in self._global_syms)
-            parts.append(f"GlobalSyms=[{gs}]")
+            info += f", GlobalSyms=[{gs}]"
         if self._sym_container and getattr(self._sym_container, "generators", None):
             ls = ", ".join(
                 f"{gen_type}={sector}" for (_, (gen_type, sector)) in self._sym_container.generators
             )
-            parts.append(f"LocalSyms=[{ls}]")
-        return ", ".join(parts)
+            info += f", LocalSyms=[{ls}]"
+        return info
 
     def __repr__(self):
         sym_info = self.get_sym_info()
         base    = "SP" if self._is_quadratic else "MB"
         txt     = f"{base} Hilbert space with {self._nh} states and {self._ns} sites; {self._local_space}"
-        return f"{txt}. Symmetries: {sym_info}" if sym_info else txt
+        if sym_info:
+            txt += f". Symmetries: {sym_info}"
+        return txt
 
     ####################################################################################################
     #! Find the representative of a state

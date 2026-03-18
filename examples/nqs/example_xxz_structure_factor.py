@@ -134,18 +134,6 @@ def _build_spin_probes(lattice, hilbert):
     return k_values, q_values, ket_probes, bra_probes, labels
 
 
-def _momentum_distance(q_values, target_q):
-    """
-    Return the shortest wrapped distance to ``target_q`` on the ``2*pi`` circle.
-
-    This is needed because the lattice momentum list may represent the
-    antiferromagnetic point as ``-pi`` rather than ``+pi``.
-    """
-
-    q_arr = np.asarray(q_values, dtype=np.float64)
-    return np.abs(np.angle(np.exp(1.0j * (q_arr - float(target_q)))))
-
-
 def _exact_time_correlator_map(model, hilbert, ket_probes, bra_probes, times):
     r"""
     Evaluate the exact finite-time correlator map
@@ -154,15 +142,13 @@ def _exact_time_correlator_map(model, hilbert, ket_probes, bra_probes, times):
 
     for the supplied probe family.
 
-    This is the exact Heisenberg-picture reference for comparing with
-    NQS-TDVP on the same time mesh before any Fourier transform is applied.
+    This is the correct ED reference for comparing with NQS-TDVP on the same
+    time mesh before any Fourier transform is applied.
     """
 
     eig_vec = np.asarray(model._eig_vec, dtype=np.complex128)
     eig_val = np.asarray(model._eig_val, dtype=np.float64)
     psi0 = np.asarray(eig_vec[:, 0], dtype=np.complex128)
-    energy0 = float(np.real(eig_val[0]))
-    times_arr = np.asarray(times, dtype=np.float64)
 
     from QES.Algebra.Properties.time_evo import time_evo_block
 
@@ -181,9 +167,8 @@ def _exact_time_correlator_map(model, hilbert, ket_probes, bra_probes, times):
         psi_probe = ket_matrix @ psi0
         bra_probe_state = bra_matrix @ psi0
         overlaps_probe = eig_vec.conj().T @ psi_probe
-        psi_probe_t = time_evo_block(eig_vec, eig_val, overlaps_probe, times_arr)
-        corr_raw = np.einsum("i,it->t", np.conj(bra_probe_state), psi_probe_t)
-        corr_rows.append(corr_raw * np.exp(1.0j * energy0 * (times_arr - times_arr[0])))
+        psi_probe_t = time_evo_block(eig_vec, eig_val, overlaps_probe, times)
+        corr_rows.append(np.einsum("i,it->t", np.conj(bra_probe_state), psi_probe_t))
     return np.asarray(corr_rows, dtype=np.complex128)
 
 
@@ -398,7 +383,7 @@ def main():
     )
 
     k_values, q_values, ket_probes, bra_probes, labels = _build_spin_probes(lattice, hilbert)
-    q_pi_idx = int(np.argmin(_momentum_distance(q_values, np.pi)))
+    q_pi_idx = int(np.argmin(np.abs(q_values - np.pi)))
     q_pi = float(q_values[q_pi_idx])
     ket_probe = ket_probes[q_pi_idx]
     bra_probe = bra_probes[q_pi_idx]
@@ -407,7 +392,6 @@ def main():
         times,
         ket_probe_operator=ket_probe,
         bra_probe_operator=bra_probe,
-        reference_energy=float(np.real(model._eig_val[0])),
         exact_sum=True,
         num_samples=128,
         num_chains=8,
