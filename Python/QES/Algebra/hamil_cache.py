@@ -44,13 +44,11 @@ def generate_cache_key(hamiltonian: 'Hamiltonian') -> Tuple:
     ns = hamiltonian.ns
 
     # 2. Hilbert space signature
-    # Assuming hilbert_space has a representation or we use its str/repr if unique enough.
-    # Better: use properties.
     if hamiltonian.hilbert_space:
-        # TODO: Need a robust way to key Hilbert space configuration
-        # For now, using str(hilbert_space) + basis info
-        hs_key = (str(hamiltonian.hilbert_space),)
-        # Ideally HilbertSpace should have a .signature() method
+        if hasattr(hamiltonian.hilbert_space, "signature"):
+            hs_key = hamiltonian.hilbert_space.signature
+        else:
+            hs_key = (str(hamiltonian.hilbert_space),)
     else:
         hs_key = ("NoHilbert",)
 

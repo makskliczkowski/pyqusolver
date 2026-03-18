@@ -274,6 +274,38 @@ class BaseHilbertSpace(ABC):
     def nhfull(self) -> Union[int, float]:
         return self._nhfull
 
+    @property
+    def signature(self) -> Tuple:
+        """
+        Generate a unique signature for the Hilbert space configuration.
+
+        This tuple is used as a robust key for caching matrix elements and must uniquely
+        identify the Hilbert space properties that affect matrix construction.
+        """
+        # Is this a many-body or quadratic space? (handled gracefully if missing)
+        is_mb = getattr(self, "_is_many_body", None)
+
+        # Local space type
+        local_typ = self._local_space.typ.value if self._local_space else None
+
+        # Symmetries
+        sym_info = self.get_sym_info()
+
+        # Basis type
+        basis = str(getattr(self, "_basis_type", "real"))
+
+        # Combine all parts that define the configuration
+        return (
+            self._ns,
+            self._nhfull,
+            is_mb,
+            local_typ,
+            basis,
+            sym_info,
+            self._boundary_flux,
+            id(self._state_filter) if self._state_filter else None
+        )
+
     # --------------------------------------------------------------------------------------------------
     #! Symmetry Properties
     # --------------------------------------------------------------------------------------------------
