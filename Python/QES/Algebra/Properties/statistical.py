@@ -371,16 +371,39 @@ def pair_histogram(
     eigvals,
     overlaps,
     ldos,
-    indices_alloc=None,
-    bins=None,
-    mode: int = 0,  # 0=f, 1=k, 2=s
-    typical=False,
-    uniform_bins=False,
-    uniform_log_bins=False,
-    log_eps=1e-24,
+    indices_alloc   =   None,
+    bins            =   None,
+    mode            :   int = 0,    # 0=f, 1=k, 2=s
+    typical         =   False,      # uses logarithmic values if true for typical mean
+    uniform_bins    =   False,      # if true, bins are uniform and we can use O(1) binning instead of binary search
+    uniform_log_bins=   False,
+    log_eps         =   1e-24,
 ):
     r"""
-    Generic pairwise histogram/scatter accumulator.
+    Generic pairwise histogram/scatter accumulator. In
+    pairwise mode (indices_alloc=None), it iterates over all pairs (i,j) with i<j and computes
+    \Omega = |E_i - E_j| and value = value_fn(arr, i, j, log_eps, typical), then either
+    accumulates value into the appropriate bin if bins are given, or stores (\Omega, value) pairs
+    in the values array. In pre-allocated mode (indices_alloc provided), it iterates only over the specified
+    (i, j) pairs given by indices_alloc, which should be an array of shape (M, 3) with rows of the form
+    (i, j_start, j_end) indicating that for each i, we should consider pairs (i, j) with j in [j_start, j_end).
+    
+    The function for accumulation is determined by the `mode` parameter: mode=0 for f-function, mode=1 for k-function, and mode=2 for s-function.
+    
+    - f-function: 
+    .. math::
+        f_{ij} = |\langle i | O | j \rangle|^2
+    - k-function:
+    .. math::
+        k_{ij} = \mathrm{LDOS}_i \cdot \mathrm{LDOS}_j
+    - s-function:
+    .. math::
+        S_{ij} = \mathrm{LDOS}_i \cdot \mathrm{LDOS}_j \cdot |\langle i | O | j \rangle|^2
+        
+    Within a given omega bin, the values are summed, and if `typical` is True, the logarithm of the value is taken before summation 
+    to compute a typical mean. The function returns either the histogram counts and sums or the list of (\Omega, value) 
+    pairs depending on whether bins are provided.
+    
     Parameters
     ----------
     eigvals : (N,) float
@@ -408,48 +431,49 @@ def pair_histogram(
     sums : (nbins,) float
         Bin sums (width-normalized, counts-normalization left for later).
     """
-    nh = eigvals.shape[0]
-    use_hist = (bins is not None) and (bins.shape[0] >= 2)
+    nh                                      = eigvals.shape[0]
+    use_hist                                = (bins is not None) and (bins.shape[0] >= 2)
 
-    (counts, sums, nbins), values = _alloc_values_or_bins(nh, bins, indices_alloc)
-    bin0, inv_binw, (is_uniform, is_log) = _alloc_bin_info(uniform_bins, uniform_log_bins, bins)
+    (counts, sums, nbins), values           = _alloc_values_or_bins(nh, bins, indices_alloc)
+    bin0, inv_binw, (is_uniform, is_log)    = _alloc_bin_info(uniform_bins, uniform_log_bins, bins)
 
     #!path 1: indices_alloc provided
     if indices_alloc is not None and indices_alloc.shape[0] > 0 and indices_alloc.shape[1] == 3:
         if use_hist:
             for k in range(indices_alloc.shape[0]):
-                i = indices_alloc[k, 0]
-                j0 = indices_alloc[k, 1]
-                j1 = indices_alloc[k, 2]
-                ei = eigvals[i]
+                i   = indices_alloc[k, 0]
+                j0  = indices_alloc[k, 1]
+                j1  = indices_alloc[k, 2]
+                ei  = eigvals[i]
                 for j in range(j0, j1):
                     omega = ei - eigvals[j]
                     if omega < 0.0:
                         omega = -omega
                     b = _bin_index(omega, bins, bin0, inv_binw, is_uniform, is_log)
                     if 0 <= b < nbins:
-                        val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
-                        sums[b] += val
-                        counts[b] += 1
+                        val         = _value(mode, overlaps, ldos, i, j, log_eps, typical)
+                        sums[b]    += val
+                        counts[b]  += 1
+                        
             # _normalize_by_bin_width(sums, bins)
             return np.empty((0, 2), dtype=np.float64), counts, sums
         else:
             cnt = 0
             cap = values.shape[0]
             for k in range(indices_alloc.shape[0]):
-                i = indices_alloc[k, 0]
-                j0 = indices_alloc[k, 1]
-                j1 = indices_alloc[k, 2]
+                i   = indices_alloc[k, 0]
+                j0  = indices_alloc[k, 1]
+                j1  = indices_alloc[k, 2]
                 for j in range(j0, j1):
                     if cnt >= cap:
                         break
                     omega = eigvals[i] - eigvals[j]
                     if omega < 0.0:
                         omega = -omega
-                    val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
-                    values[cnt, 0] = omega
-                    values[cnt, 1] = val
-                    cnt += 1
+                    val             = _value(mode, overlaps, ldos, i, j, log_eps, typical)
+                    values[cnt, 0]  = omega
+                    values[cnt, 1]  = val
+                    cnt            += 1
             return values[:cnt], counts, sums
 
     #!path 2: generate pairs on the fly
@@ -462,9 +486,9 @@ def pair_histogram(
                     omega = -omega
                 b = _bin_index(omega, bins, bin0, inv_binw, is_uniform, is_log)
                 if 0 <= b < nbins:
-                    val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
-                    sums[b] += val
-                    counts[b] += 1
+                    val         = _value(mode, overlaps, ldos, i, j, log_eps, typical)
+                    sums[b]    += val
+                    counts[b]  += 1
         # _normalize_by_bin_width(sums, bins)
         return np.empty((0, 2), dtype=np.float64), counts, sums
     else:
@@ -478,15 +502,13 @@ def pair_histogram(
                 omega = ei - eigvals[j]
                 if omega < 0.0:
                     omega = -omega
-                val = _value(mode, overlaps, ldos, i, j, log_eps, typical)
-                values[cnt, 0] = omega
-                values[cnt, 1] = val
-                cnt += 1
+                val             = _value(mode, overlaps, ldos, i, j, log_eps, typical)
+                values[cnt, 0]  = omega
+                values[cnt, 1]  = val
+                cnt            += 1
         return values[:cnt], counts, sums
 
-
 # -----------------------------------------------------------------------------
-
 
 @numba.njit(fastmath=True)
 def f_function(
