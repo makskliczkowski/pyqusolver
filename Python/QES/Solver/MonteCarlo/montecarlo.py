@@ -236,7 +236,7 @@ class MonteCarloSolver(Solver):
         self._logger            = logger or self._hilbert.logger if self._hilbert is not None else logging.getLogger(__name__)
         self._verbose           = kwargs.get("verbose", False)
 
-        # initialize the solver #!TODO : check whether this is necessary
+        # initialize the solver
         self.init()
 
     # ----------------------------------------------------------------------
