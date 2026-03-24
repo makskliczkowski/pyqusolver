@@ -93,12 +93,20 @@ class ARSampler(Sampler):
         else:
             self._net_apply = net  # Assuming it is a raw callable
 
+        try:
+            import QES.general_python.common.binary as Binary
+            self._spin = kwargs.get("spin", Binary.BACKEND_DEF_SPIN)
+            self._mode_repr = kwargs.get("mode_repr", Binary.BACKEND_REPR)
+        except ImportError:
+            self._spin = kwargs.get("spin", True)
+            self._mode_repr = kwargs.get("mode_repr", 0.5)
+
         # Pre-compile the sampling kernel
         self._dtype = dtype
         self._mu = kwargs.get("mu", 2.0)  # Scaling factor for log-prob to log-psi
         self._sample_jit = jax.jit(
             self._static_sample_ar,
-            static_argnames=["net_apply", "shape", "total_count", "statetype"],
+            static_argnames=["net_apply", "shape", "total_count", "statetype", "spin"],
         )
         self._name = "AR"
 
@@ -111,6 +119,8 @@ class ARSampler(Sampler):
         total_count,
         statetype: Any = jnp.float32,
         mu: float = 2.0,
+        spin: bool = True,
+        mode_repr: float = 0.5,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         JIT-compiled sequential autoregressive sampling.
@@ -177,10 +187,12 @@ class ARSampler(Sampler):
         # Combine Amplitude (log_prob / mu) and Phase
         final_log_psi = final_log_psi / mu + 1j * phases
 
-        # Convert 0/1 to physical spins (-0.5/+0.5) for Hamiltonian compatibility
-        # The Hamiltonian expects spin values in (-0.5, +0.5) format
-        # The AR network internally works with (0,1) but we return physical spins
-        final_configs_phys = final_configs - 0.5  # Convert (0,1) -> (-0.5, +0.5)
+        # Convert 0/1 to physical representation for Hamiltonian compatibility
+        # The AR network internally works with (0,1)
+        if spin:
+            final_configs_phys = (final_configs * 2.0 - 1.0) * mode_repr
+        else:
+            final_configs_phys = final_configs * mode_repr
 
         return final_configs_phys, final_log_psi
 
@@ -208,12 +220,14 @@ class ARSampler(Sampler):
             total_samples,
             self._statetype,
             self._mu,
+            self._spin,
+            self._mode_repr,
         )
 
         # Reshape to (Chains, Samples, N)
         configs_reshaped = configs.reshape(
             (n_c, n_s) + self._shape
-        )  # Convert back to physical spins (-1/+1) #!TODO: Make general
+        )
 
         # Handle Amplitudes
         # AR gives P(s) = |psi(s)|^2.
