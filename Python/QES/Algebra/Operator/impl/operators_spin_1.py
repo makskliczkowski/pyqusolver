@@ -344,23 +344,39 @@ def _spin1_y_single_site_array(state: np.ndarray, site: int):
 
 def _spin1_apply_array_superposition(state: np.ndarray, sites, single_site_fun, dtype):
     """Apply a possibly branching single-site action sequentially on selected sites."""
-    states = state.reshape(1, -1).astype(state.dtype, copy=True)
-    coeffs = np.ones((1,), dtype=dtype)
+    # Start with input state as the only state in the superposition
+    # Use lists for intermediate storage to avoid repeated NumPy allocations
+    current_states = [state.astype(state.dtype, copy=True)]
+    current_coeffs = [1.0]
+
     for site in sites:
         new_states = []
         new_coeffs = []
-        for idx in range(states.shape[0]):
-            out_states, out_coeffs = single_site_fun(states[idx], int(site))
+        site_idx = int(site)
+
+        for idx in range(len(current_states)):
+            st = current_states[idx]
+            cf = current_coeffs[idx]
+            out_states, out_coeffs = single_site_fun(st, site_idx)
+
             if out_states.shape[0] == 0:
                 continue
+
             for j in range(out_states.shape[0]):
                 new_states.append(out_states[j])
-                new_coeffs.append(coeffs[idx] * out_coeffs[j])
+                new_coeffs.append(cf * out_coeffs[j])
+
         if not new_states:
             return ensure_operator_output_shape_numba(state, np.zeros((1,), dtype=dtype))
-        states = np.asarray(new_states, dtype=state.dtype).reshape(len(new_states), -1)
-        coeffs = np.asarray(new_coeffs, dtype=dtype)
-    return ensure_operator_output_shape_numba(states, coeffs)
+
+        current_states = new_states
+        current_coeffs = new_coeffs
+
+    # Final conversion to NumPy arrays
+    final_states = np.asarray(current_states, dtype=state.dtype).reshape(len(current_states), -1)
+    final_coeffs = np.asarray(current_coeffs, dtype=dtype)
+
+    return ensure_operator_output_shape_numba(final_states, final_coeffs)
 
 
 def spin1_plus_np(state: np.ndarray, sites: Union[List[int], tuple], spin_value: float = _SPIN_1):
