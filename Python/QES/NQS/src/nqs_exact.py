@@ -33,14 +33,12 @@ def get_exact_impl(nqs_instance: "NQS", **kwargs) -> Optional["NQSTrainStats"]:
         Additional keyword arguments forwarded to the diagonalization method.
 
     Note:
-        Currently only supports 'wavefunction' physics type.
-
-    #!TODO: Support other physics types (e.g., density matrices)
+        Currently supports 'wavefunction' and 'density_matrix' physics types.
     """
 
     logfun = nqs_instance.log if nqs_instance._logger else lambda x, **kw: print(x)
 
-    if nqs_instance._nqsproblem.typ == "wavefunction":
+    if nqs_instance._nqsproblem.typ in ["wavefunction", "density_matrix"]:
         from .nqs_train import NQSTrainStats
 
         stats = nqs_instance.trainer.stats if nqs_instance.trainer is not None else NQSTrainStats()
