@@ -105,13 +105,27 @@ class WavefunctionPhysics(PhysicsInterface):
 class DensityMatrixPhysics(PhysicsInterface):
     def setup(self, model, net):
         # Model could be Lindbladian or other operator
+        if model is None:
+            raise ValueError("DensityMatrix mode requires an operator (e.g. Lindbladian) or callable.")
+
+        if callable(model):
+            sig = inspect.signature(model)
+            if len(sig.parameters) != 1:
+                raise ValueError("Custom loss function must accept exactly one argument (the state).")
+            self.local_energy_fn = model
+        elif hasattr(model, 'is_diagonal') or hasattr(model, 'get_conn'):
+            # Duck-typing for Operator-like objects
+            self.local_energy_fn = self.backend.local_energy(model)
+        else:
+            raise ValueError(f"Invalid model type: {type(model)}. Must be Operator-like or callable.")
+
         self.operator = model
         self.net = net
         self.name = "DensityMatrixPhysics"
         self.typ = "density_matrix"
 
     def loss(self, params, states):
-        pass
+        return self.local_energy_fn(states, params)
 
 
 # --------------------------------------------------------------
