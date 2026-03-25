@@ -436,8 +436,6 @@ class VMCSampler(Sampler):
                 self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
                 self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
                 self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
-        else:
-            self.reset()
 
         self._static_sample_fun = None
         self._static_pt_sampler = None
