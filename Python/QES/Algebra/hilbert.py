@@ -1190,7 +1190,7 @@ class HilbertSpace(BaseHilbertSpace):
             self.representative_list, self.representative_norms = (
                 self._sym_container.generate_symmetric_basis(
                     nh_full=int(self._nhfull),
-                    state_filter=self._state_filter,  #!TODO: use filter if necesssary
+                    state_filter=self._state_filter,
                     return_map=gen_mapping,
                 )
             )
