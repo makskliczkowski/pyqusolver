@@ -744,7 +744,7 @@ class NQS(MonteCarloSolver):
         self._dir           = base
         self._dir_detailed  = final_dir
         self.defdir         = self._dir_detailed
-        self.defdirpar      = self._dir_detailed.parent().resolve()
+        self.defdirpar      = self._dir_detailed.parent.resolve()
 
     # ---
 

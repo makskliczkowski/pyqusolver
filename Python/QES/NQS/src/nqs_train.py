@@ -1702,10 +1702,10 @@ class NQSTrainer:
 
         # Save training history/stats
         if save_stats:
-            HDF5Manager.save_hdf5(
+            HDF5Manager.save_data_to_file(
                 directory=os.path.dirname(final_path_stats),
                 filename=os.path.basename(final_path_stats),
-                data=self.stats.to_dict(),
+                data_to_save=self.stats.to_dict(),
             )
             self._log(
                 f"Saved training stats to {final_path_stats}",
