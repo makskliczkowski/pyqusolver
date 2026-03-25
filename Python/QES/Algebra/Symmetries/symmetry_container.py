@@ -1654,6 +1654,12 @@ class SymmetryContainer:
             # Reset repr_chunker for each chunk to avoid overcounting
             repr_chunker = np.zeros((actual_chunk_size,), dtype=np.bool_)
 
+            # Build filter mask
+            if state_filter is not None:
+                filter_mask = np.fromiter((state_filter(s) for s in range(start, end)), dtype=np.bool_, count=actual_chunk_size)
+            else:
+                filter_mask = None
+
             scan_chunk_find_representatives(
                 start,
                 end,
@@ -1671,6 +1677,7 @@ class SymmetryContainer:
                 repr_map=compact_repr_map,
                 repr_chunker=repr_chunker,
                 phase_idx=compact_phase_idx,
+                filter_mask=filter_mask,
             )
 
             cnt = np.sum(repr_chunker)

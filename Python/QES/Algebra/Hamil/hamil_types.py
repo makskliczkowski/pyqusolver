@@ -6,14 +6,6 @@ A Hamiltonian model is defined as a class of Hamiltonians that share a common st
 Date: 2025-02-01
 """
 
-
-try:
-    from QES.general_python.algebra.utils import distinguish_type
-except ImportError:
-    raise ImportError(
-        "Could not import 'distinguish_type' from 'QES.general_python.algebra.utils'. Please ensure the module is available."
-    )
-
 from enum import Enum, unique
 
 ###########################################################################
@@ -37,7 +29,6 @@ class Hamiltonians(Enum):
     XYZ_M                       = 2  # XYZ model
     HEI_KIT_M                   = 3  # Heisenberg model with Kitaev interaction
     QSM_M                       = 4  # Quantum Summer Model (QSM)
-    RP_M                        = 5  # Rosenzweig-Porter Model
     ULTRAMETRIC_M               = 6  # Ultrametric Model (UM)
     # quadratic (or noninteracting) models:
     FREE_FERMIONS_M             = 100  # Free Fermions Model
@@ -45,6 +36,7 @@ class Hamiltonians(Enum):
     SYK2_M                      = 102  # Sachdev-Ye-Kitaev (SYK) Model
     ANDERSON_M                  = 103  # Anderson Model
     POWER_LAW_RANDOM_BANDED_M   = 104  # Power-law Random Banded Model
+    RP_M                        = 105  # Rosenzweig-Porter Model
 
 
 MY_MODELS_LIST = [
@@ -52,13 +44,13 @@ MY_MODELS_LIST = [
     Hamiltonians.XYZ_M,
     Hamiltonians.HEI_KIT_M,
     Hamiltonians.QSM_M,
-    Hamiltonians.RP_M,
     Hamiltonians.ULTRAMETRIC_M,
     Hamiltonians.FREE_FERMIONS_M,
     Hamiltonians.AUBRY_ANDRE_M,
     Hamiltonians.SYK2_M,
     Hamiltonians.ANDERSON_M,
     Hamiltonians.POWER_LAW_RANDOM_BANDED_M,
+    Hamiltonians.RP_M,
     Hamiltonians.NONE,
 ]
 
@@ -84,7 +76,7 @@ def check_noninteracting(model: Hamiltonians) -> bool:
     bool
         True when the model is treated as noninteracting by the legacy API.
     """
-    return (model.value >= Hamiltonians.FREE_FERMIONS_M.value) or (model == Hamiltonians.RP_M)
+    return model.value >= Hamiltonians.FREE_FERMIONS_M.value
 
 
 def check_dense(model: Hamiltonians) -> bool:
@@ -105,6 +97,8 @@ def check_dense(model: Hamiltonians) -> bool:
         Hamiltonians.POWER_LAW_RANDOM_BANDED_M,
         Hamiltonians.ULTRAMETRIC_M,
         Hamiltonians.RP_M,
+        Hamiltonians.SYK2_M,
+        Hamiltonians.NONE,
     )
 
 ##################################################################################
