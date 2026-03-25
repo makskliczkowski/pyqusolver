@@ -67,20 +67,93 @@ class DensityMatrix:
 
     def trace(self) -> float:
         """Compute the trace of the density matrix."""
-        raise NotImplementedError("DensityMatrix logic is not yet implemented.")
+        if self._representation == "dense":
+            return float(np.real(np.trace(self._data)))
+        elif self._representation == "ensemble":
+            if isinstance(self._data, tuple):
+                states, weights = self._data
+                return float(np.sum(weights))
+            else:
+                # single pure state
+                return 1.0
+        raise ValueError(f"Unknown representation {self._representation}")
 
     def purity(self) -> float:
         """Compute the purity Tr(rho^2)."""
-        raise NotImplementedError("DensityMatrix logic is not yet implemented.")
+        if self._representation == "dense":
+            return float(np.real(np.trace(self._data @ self._data)))
+        elif self._representation == "ensemble":
+            if isinstance(self._data, tuple):
+                states, weights = self._data
+                purity = 0.0
+                for i, w_i in enumerate(weights):
+                    for j, w_j in enumerate(weights):
+                        overlap = np.vdot(states[i], states[j])
+                        purity += w_i * w_j * np.abs(overlap)**2
+                return float(purity)
+            else:
+                # single pure state
+                return 1.0
+        raise ValueError(f"Unknown representation {self._representation}")
+
+    def matrix(self) -> np.ndarray:
+        """
+        Return the dense matrix representation.
+        """
+        if self._representation == "dense":
+            return self._data
+        elif self._representation == "ensemble":
+            if isinstance(self._data, tuple):
+                states, weights = self._data
+                # Assuming states are column vectors
+                dim = len(states[0])
+                rho = np.zeros((dim, dim), dtype=complex)
+                for w, s in zip(weights, states):
+                    rho += w * np.outer(s, np.conj(s))
+                return rho
+            else:
+                s = self._data
+                return np.outer(s, np.conj(s))
+        raise ValueError(f"Unknown representation {self._representation}")
 
     def expectation(self, op: "Operator") -> complex:
         """
         Compute the expectation value Tr(rho * op).
         """
-        raise NotImplementedError("DensityMatrix logic is not yet implemented.")
+        # We assume `op` can be converted to a matrix via `.matrix()` if it's an Operator,
+        # or we can apply it to states.
+        if self._representation == "dense":
+            op_mat = op.matrix() if hasattr(op, "matrix") else op
+            return np.trace(self._data @ op_mat)
+        elif self._representation == "ensemble":
+            if isinstance(self._data, tuple):
+                states, weights = self._data
+                op_mat = op.matrix() if hasattr(op, "matrix") else op
+                return sum(w * np.vdot(s, op_mat @ s) for w, s in zip(weights, states))
+            else:
+                s = self._data
+                op_mat = op.matrix() if hasattr(op, "matrix") else op
+                return np.vdot(s, op_mat @ s)
+        raise ValueError(f"Unknown representation {self._representation}")
 
     def evolve(self, hamiltonian: "Hamiltonian", t: float) -> "DensityMatrix":
         """
         Evolve the density matrix: rho(t) = U(t) rho(0) U^dagger(t).
         """
-        raise NotImplementedError("DensityMatrix logic is not yet implemented.")
+        from scipy.linalg import expm
+        H_mat = hamiltonian.matrix() if hasattr(hamiltonian, "matrix") else hamiltonian
+        U = expm(-1j * H_mat * t)
+        U_dag = U.conj().T
+
+        if self._representation == "dense":
+            new_data = U @ self._data @ U_dag
+            return DensityMatrix(data=new_data, representation="dense", **self._kwargs)
+        elif self._representation == "ensemble":
+            if isinstance(self._data, tuple):
+                states, weights = self._data
+                new_states = [U @ s for s in states]
+                return DensityMatrix(data=(new_states, weights), representation="ensemble", **self._kwargs)
+            else:
+                s = self._data
+                return DensityMatrix(data=(U @ s), representation="ensemble", **self._kwargs)
+        raise ValueError(f"Unknown representation {self._representation}")
