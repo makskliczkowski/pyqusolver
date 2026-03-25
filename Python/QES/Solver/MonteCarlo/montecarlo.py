@@ -233,7 +233,12 @@ class MonteCarloSolver(Solver):
         self._info              = "a general Monte Carlo Solver"
 
         # create the logger
-        self._logger            = logger or self._hilbert.logger if self._hilbert is not None else logging.getLogger(__name__)
+        if logger:
+            self._logger = logger
+        elif self._hilbert is not None:
+            self._logger = self._hilbert.logger
+        else:
+            self._logger = logging.getLogger(__name__)
         self._verbose           = kwargs.get("verbose", False)
 
         # initialize the solver
