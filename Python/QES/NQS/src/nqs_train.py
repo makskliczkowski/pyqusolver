@@ -1706,6 +1706,7 @@ class NQSTrainer:
                 directory=os.path.dirname(final_path_stats),
                 filename=os.path.basename(final_path_stats),
                 data_to_save=self.stats.to_dict(),
+                overwrite=True,
             )
             self._log(
                 f"Saved training stats to {final_path_stats}",

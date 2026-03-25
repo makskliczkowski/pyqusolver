@@ -66,7 +66,7 @@ class CommonDataset:
         directory.mkdir(exist_ok=True)
         data        = self._prepare_data_dict()
         try:
-            HDF5Manager.save_hdf5(str(directory.path), filename, data, override=True)
+            HDF5Manager.save_data_to_file(str(directory.path), filename, data, overwrite=True)
             logger.info(f"Saved dataset to {directory.path / filename}", color='green', lvl=1)
         except Exception as e:
             logger.error(f"Failed to save dataset: {e}")

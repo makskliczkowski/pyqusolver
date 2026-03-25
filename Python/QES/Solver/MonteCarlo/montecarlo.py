@@ -442,6 +442,42 @@ class MonteCarloSolver(Solver):
         """
         return self._losses_std
 
+    @property
+    def mcchain(self):
+        """
+        Returns the number of Monte Carlo chains.
+        """
+        return self._mcparams.mcchain
+
+    @mcchain.setter
+    def mcchain(self, value):
+        """
+        Sets the number of Monte Carlo chains.
+        """
+        if value <= 0:
+            raise ValueError("Number of chains must be positive.")
+        self._mcparams.mcchain = value
+        if hasattr(self, "_sampler") and self._sampler is not None:
+            self._sampler.set_numchains(value)
+
+    @property
+    def mcsam(self):
+        """
+        Returns the number of Monte Carlo samples.
+        """
+        return self._mcparams.mcsam
+
+    @mcsam.setter
+    def mcsam(self, value):
+        """
+        Sets the number of Monte Carlo samples.
+        """
+        if value <= 0:
+            raise ValueError("Number of samples must be positive.")
+        self._mcparams.mcsam = value
+        if hasattr(self, "_sampler") and self._sampler is not None:
+            self._sampler.set_numsamples(value)
+
     # ----------------
 
     @beta.setter
