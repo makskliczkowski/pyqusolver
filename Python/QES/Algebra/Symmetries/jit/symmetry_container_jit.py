@@ -218,11 +218,16 @@ def scan_chunk_find_representatives(
     repr_map: np.ndarray,
     repr_chunker: np.ndarray,
     phase_idx: np.ndarray,
+    filter_mask: np.ndarray,
 ):
 
     chi = cg_args[5]
 
     for state in numba.prange(start_state, end_state):
+        if filter_mask is not None:
+            if not filter_mask[state - start_state]:
+                continue
+
         if violates_global_syms(state, global_op_codes, global_op_vals, ns):
             continue
 

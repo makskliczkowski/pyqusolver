@@ -744,7 +744,7 @@ class NQS(MonteCarloSolver):
         self._dir           = base
         self._dir_detailed  = final_dir
         self.defdir         = self._dir_detailed
-        self.defdirpar      = self._dir_detailed.parent.resolve()
+        self.defdirpar      = getattr(self._dir_detailed, "parent", lambda: self._dir_detailed)() if callable(getattr(self._dir_detailed, "parent", None)) else self._dir_detailed.parent
 
     # ---
 

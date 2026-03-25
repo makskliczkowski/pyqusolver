@@ -233,10 +233,15 @@ class MonteCarloSolver(Solver):
         self._info              = "a general Monte Carlo Solver"
 
         # create the logger
-        self._logger            = logger or self._hilbert.logger if self._hilbert is not None else logging.getLogger(__name__)
+        if logger:
+            self._logger = logger
+        elif self._hilbert is not None:
+            self._logger = self._hilbert.logger
+        else:
+            self._logger = logging.getLogger(__name__)
         self._verbose           = kwargs.get("verbose", False)
 
-        # initialize the solver #!TODO : check whether this is necessary
+        # initialize the solver
         self.init()
 
     # ----------------------------------------------------------------------
@@ -436,6 +441,42 @@ class MonteCarloSolver(Solver):
         Returns the list of standard deviations of losses.
         """
         return self._losses_std
+
+    @property
+    def mcchain(self):
+        """
+        Returns the number of Monte Carlo chains.
+        """
+        return self._mcparams.mcchain
+
+    @mcchain.setter
+    def mcchain(self, value):
+        """
+        Sets the number of Monte Carlo chains.
+        """
+        if value <= 0:
+            raise ValueError("Number of chains must be positive.")
+        self._mcparams.mcchain = value
+        if hasattr(self, "_sampler") and self._sampler is not None:
+            self._sampler.set_numchains(value)
+
+    @property
+    def mcsam(self):
+        """
+        Returns the number of Monte Carlo samples.
+        """
+        return self._mcparams.mcsam
+
+    @mcsam.setter
+    def mcsam(self, value):
+        """
+        Sets the number of Monte Carlo samples.
+        """
+        if value <= 0:
+            raise ValueError("Number of samples must be positive.")
+        self._mcparams.mcsam = value
+        if hasattr(self, "_sampler") and self._sampler is not None:
+            self._sampler.set_numsamples(value)
 
     # ----------------
 

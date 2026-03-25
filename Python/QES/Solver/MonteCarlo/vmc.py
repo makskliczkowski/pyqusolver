@@ -436,6 +436,10 @@ class VMCSampler(Sampler):
                 self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
                 self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
                 self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+        else:
+            int_dtype = DEFAULT_JP_INT_TYPE if self._isjax else DEFAULT_NP_INT_TYPE
+            self._num_proposed = self._backend.zeros(self._numchains, dtype=int_dtype)
+            self._num_accepted = self._backend.zeros(self._numchains, dtype=int_dtype)
 
         self._static_sample_fun = None
         self._static_pt_sampler = None
