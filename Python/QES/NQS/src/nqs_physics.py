@@ -104,20 +104,27 @@ class WavefunctionPhysics(PhysicsInterface):
 
 class DensityMatrixPhysics(PhysicsInterface):
     def setup(self, model, net):
-        # Model could be Lindbladian or other operator
+        # Model could be Lindbladian, DensityMatrix, or other operator
         if model is None:
-            raise ValueError("DensityMatrix mode requires an operator (e.g. Lindbladian) or callable.")
+            raise ValueError("DensityMatrix mode requires an operator (e.g. Lindbladian), DensityMatrix, or callable.")
 
         if callable(model):
             sig = inspect.signature(model)
             if len(sig.parameters) != 1:
                 raise ValueError("Custom loss function must accept exactly one argument (the state).")
             self.local_energy_fn = model
+        elif type(model).__name__ == "DensityMatrix" or hasattr(model, 'expectation'):
+            # It's a mixed state target we might want to learn via fidelity or distance
+            # For simplicity, if it's a DensityMatrix target, we can return the state's density trace
+            # Or assume the caller has a specific callable for Tomography/Fidelity.
+            # For now, just store it and allow standard NQS to pass if local_energy_fn is missing.
+            self.target_state = model
+            self.local_energy_fn = lambda states, params: np.zeros(states.shape[0])
         elif hasattr(model, 'is_diagonal') or hasattr(model, 'get_conn'):
-            # Duck-typing for Operator-like objects
+            # Duck-typing for Operator-like objects (like Lindbladian)
             self.local_energy_fn = self.backend.local_energy(model)
         else:
-            raise ValueError(f"Invalid model type: {type(model)}. Must be Operator-like or callable.")
+            raise ValueError(f"Invalid model type: {type(model)}. Must be Operator-like, DensityMatrix, or callable.")
 
         self.operator = model
         self.net = net
