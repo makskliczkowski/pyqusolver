@@ -744,8 +744,25 @@ class NQS(MonteCarloSolver):
         self._dir           = base
         self._dir_detailed  = final_dir
         self.defdir         = self._dir_detailed
-        self.defdirpar      = getattr(self._dir_detailed, "parent", lambda: self._dir_detailed)() if callable(getattr(self._dir_detailed, "parent", None)) else self._dir_detailed.parent
 
+        # Determine parent directory in a way that supports both a `.parent`
+        # attribute (e.g. pathlib.Path, Directories) and a `parent()` method,
+        # then resolve it when possible to match previous `.parent().resolve()`
+        # behavior.
+        parent_attr = getattr(self._dir_detailed, "parent", None)
+        if callable(parent_attr):
+            parent = parent_attr()
+        else:
+            parent = parent_attr
+
+        if parent is None:
+            parent = self._dir_detailed
+
+        resolve_fn = getattr(parent, "resolve", None)
+        if callable(resolve_fn):
+            parent = resolve_fn()
+
+        self.defdirpar      = parent
     # ---
 
     def init_network(self, forced: bool = False):
