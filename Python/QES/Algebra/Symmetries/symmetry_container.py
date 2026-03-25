@@ -1656,7 +1656,7 @@ class SymmetryContainer:
 
             # Build filter mask
             if state_filter is not None:
-                filter_mask = np.array([state_filter(s) for s in range(start, end)], dtype=np.bool_)
+                filter_mask = np.fromiter((state_filter(s) for s in range(start, end)), dtype=np.bool_, count=actual_chunk_size)
             else:
                 filter_mask = None
 

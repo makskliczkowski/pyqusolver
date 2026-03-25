@@ -263,6 +263,9 @@ class HilbertSpace(BaseHilbertSpace):
             Optional Peierls phase specification applied to lattice boundary crossings.
         state_filter (Optional[Callable[[int], bool]]):
             Optional predicate applied to integer-encoded basis labels during symmetry reduction.
+            **Important**: The `state_filter` must be symmetry-invariant (i.e., its evaluation must yield
+            the same result for all states within a given symmetry orbit) to prevent undefined behavior
+            or broken partial orbits.
         logger (Optional[Logger], optional):
             Logger instance for logging. Default is None.
         **kwargs:
