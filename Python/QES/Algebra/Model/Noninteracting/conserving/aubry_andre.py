@@ -39,6 +39,11 @@ class AubryAndre(QuadraticHamiltonian):
     - phi: 
         phase offset (default 0.0)
     - lattice geometry and size (via Lattice or lx, ly, lz, pbc_x/y/z)
+    
+    Model is:
+        H = -J * sum_{<i,j>} (c_i^† c_j + h.c.) + lambda * sum_i cos(2*pi*beta*x_i + phi) n_i  (1D)
+        H = -J * sum_{<i,j>} (c_i^† c_j + h.c.) + lambda * sum_i [cos(2*pi*beta*(x_i+y_i) + phi) + cos(2*pi*beta*(x_i-y_i) + phi)] n_i / 4  (2D)
+        H = -J * sum_{<i,j>} (c_i^† c_j + h.c.) + lambda * sum_i [cos(2*pi*beta*x_i + phi) + cos(2*pi*beta*y_i + phi) + cos(2*pi*beta*z_i + phi)] n_i / 3  (3D)
     '''
     
 
@@ -79,7 +84,9 @@ class AubryAndre(QuadraticHamiltonian):
             self._ly    = int(ly) if ly is not None else 1
             self._lz    = int(lz) if lz is not None else 1
             self._ns    = self._lx * self._ly * self._lz
-            self._bc    = (bool(pbc_x), bool(pbc_y), bool(pbc_z))
+            # Force periodic boundary conditions for the native AA lattice path.
+            # This keeps the model definition consistent even if callers pass OBC.
+            self._bc    = (True, True, True)
 
         self._name      = "AubryAndre"
         self._J         = float(J)
