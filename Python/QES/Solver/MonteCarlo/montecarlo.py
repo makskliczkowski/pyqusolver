@@ -449,6 +449,8 @@ class MonteCarloSolver(Solver):
         """
         Sets the number of Monte Carlo chains.
         """
+        if value <= 0:
+            raise ValueError("Number of chains must be positive.")
         self._mcparams.mcchain = value
         if hasattr(self, "_sampler") and self._sampler is not None:
             self._sampler.set_numchains(value)
@@ -465,6 +467,8 @@ class MonteCarloSolver(Solver):
         """
         Sets the number of Monte Carlo samples.
         """
+        if value <= 0:
+            raise ValueError("Number of samples must be positive.")
         self._mcparams.mcsam = value
         if hasattr(self, "_sampler") and self._sampler is not None:
             self._sampler.set_numsamples(value)
