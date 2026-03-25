@@ -1,13 +1,16 @@
 """
-QES/Algebra/Properties/statistical.py
+This module contains functions for calculating statistical properties of quantum systems.
 
+------------------------------------------------------------------------------
+file    : QES/Algebra/Properties/statistical.py
 author  : Maksymilian Kliczkowski
 email   : maksymilian.kliczkowski@pwr.edu.pl
-This module contains functions for calculating statistical properties of quantum systems.
+version : 1.0
+-------------------------------------------------------------------------------
 """
 
-import math
-from enum import Enum
+import  math
+from    enum import Enum
 from functools import partial
 from typing import List, Optional, Tuple, Union
 
@@ -27,13 +30,11 @@ else:
     jax = None
     jnp = np
 
-
 class StatTypes(Enum):
-    MEAN = "mean"
-    MEDIAN = "median"
-    VARIANCE = "variance"
-    STD = "std"
-
+    MEAN        = "mean"
+    MEDIAN      = "median"
+    VARIANCE    = "variance"
+    STD         = "std"
 
 # -----------------------------------------------------------------------------
 #! LDOS
@@ -784,46 +785,23 @@ else:
 
 
 @numba.njit(parallel=True, fastmath=True)
-def inverse_participation_ratio(
+def _inverse_participation_ratio_2d(
     states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True
 ) -> np.ndarray:
     """
-    Compute IPR_j = ∑_i |\\psi _{i j}|^{2q} for each column j of `states`.
-    If `new_basis` is provided (shape n \times n), then \\psi  -> B^T\\cdot \\psi  is used
-    before raising to the 2q power.  Works on 1D or 2D `states`.
-
-    Parameters
-    ----------
-    states : np.ndarray
-        Complex array, shape (n,) or (n, m).
-    q : float
-        Exponent in the IPR definition (default 1.0).
-    new_basis : np.ndarray, optional
-        Change-of-basis matrix (n \times n).  If not None, each state \\psi _j is
-        transformed via B^T\\cdot \\psi _j before computing |\\cdot |^(2q).
-
-    Returns
-    -------
-    np.ndarray
-        If input was 1D, returns a scalar in a 0-d array; if 2D, returns
-        a length-m array of IPR values.
+    Compute IPR_j = ∑_i |\\psi _{i j}|^{2q} for each column j of a 2D state array.
     """
-
-    # reshape 1D->2D so we can always write m-parallel loops
-    if states.ndim == 1:
-        states = states.reshape(states.shape[0], 1)
-
-    n, m = states.shape
-    out = np.zeros(m, dtype=np.float64)
-    two_q = 2.0 * q if square else q
+    n, m    = states.shape
+    out     = np.zeros(m, dtype=np.float64)
+    two_q   = 2.0 * q if square else q
 
     if new_basis is None:
         # no transform
         for j in numba.prange(m):
             acc = 0.0
             for i in range(n):
-                c = states[i, j]
-                p = np.abs(c) ** two_q
+                c    = states[i, j]
+                p    = np.abs(c) ** two_q
                 acc += p
             out[j] = acc
     else:
@@ -837,16 +815,96 @@ def inverse_participation_ratio(
                 im = 0.0
                 # compute (B^T\cdot \psi )_i = ∑_k B[k,i] * \psi [k,j]
                 for k in range(n):
-                    b = B[k, i]
-                    s = states[k, j]
+                    b   = B[k, i]
+                    s   = states[k, j]
                     # complex multiply: (b_r + i b_i)*(s_r + i s_i)
                     re += b.real * s.real - b.imag * s.imag
                     im += b.real * s.imag + b.imag * s.real
-                p = re * re + im * im
-                acc += p**q
+                    
+                # now re + i im is the transformed coefficient phi_i
+                p       = re * re + im * im
+                acc    += p**q
             out[j] = acc
 
     return out
+
+
+@numba.njit(fastmath=True)
+def _inverse_participation_ratio_1d(
+    state: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True
+) -> float:
+    """
+    Compute the inverse participation ratio for a single state vector.
+    """
+    n       = state.shape[0]
+    two_q   = 2.0 * q if square else q
+
+    if new_basis is None:
+        acc = 0.0
+        for i in range(n):
+            c    = state[i]
+            acc += np.abs(c) ** two_q
+        return acc
+
+    acc = 0.0
+    B   = new_basis
+    for i in range(n):
+        re = 0.0
+        im = 0.0
+        for k in range(n):
+            b   = B[k, i]
+            s   = state[k]
+            re += b.real * s.real - b.imag * s.imag
+            im += b.real * s.imag + b.imag * s.real
+        acc += (re * re + im * im) ** q
+    return acc
+
+
+def inverse_participation_ratio(
+    states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True
+) -> Union[float, np.ndarray]:
+    r"""
+    Compute inverse participation ratios for one state vector or for a batch of states.
+
+    The IPR is
+
+    .. math::
+        \mathrm{IPR} = \sum_i |\psi_i|^{2q}
+
+    for a single state, or the same quantity evaluated independently for each
+    column of a 2D array.
+
+    Parameters
+    ----------
+    states : np.ndarray
+        Complex array of shape `(n,)` or `(n, m)`.
+        A 1D input is treated as one state vector.
+        A 2D input is interpreted column-wise as `m` states.
+    q : float
+        Exponent in the IPR definition (default 1.0).
+    new_basis : np.ndarray, optional
+        Change-of-basis matrix of shape `(n, n)`. If provided, each state is
+        transformed as `B^T @ psi` before the IPR is computed.
+    square : bool
+        If True, use exponent `2q`; if False, use exponent `q`.
+
+    Returns
+    -------
+    float or np.ndarray
+        Returns a scalar `float` for 1D input and a length-`m` array for 2D input.
+
+    Notes
+    -----
+    The public wrapper dispatches to separate Numba kernels for 1D and 2D
+    inputs. This avoids Numba type-unification failures when a single compiled
+    function tries to treat the same variable as both rank-1 and rank-2.
+    """
+    states_arr = np.asarray(states)
+    if states_arr.ndim == 1:
+        return float(_inverse_participation_ratio_1d(states_arr, q=q, new_basis=new_basis, square=square))
+    if states_arr.ndim == 2:
+        return _inverse_participation_ratio_2d(states_arr, q=q, new_basis=new_basis, square=square)
+    raise ValueError(f"`states` must be 1D or 2D, got shape {states_arr.shape}.")
 
 
 # -----------------------------------------------------------------------------
@@ -1322,8 +1380,8 @@ class StatisticalModule:
         """
         if state is None:
             self._check_diagonalized()
-            state_idx = state_idx if state_idx is not None else 0
-            state = self._hamil.eig_vec[:, state_idx]
+            state_idx   = state_idx if state_idx is not None else 0
+            state       = self._hamil.eig_vec[:, state_idx]
         probs = np.abs(state) ** 2
         return np.sum(probs**q)
 
