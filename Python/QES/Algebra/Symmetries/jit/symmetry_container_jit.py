@@ -224,8 +224,9 @@ def scan_chunk_find_representatives(
     chi = cg_args[5]
 
     for state in numba.prange(start_state, end_state):
-        if not filter_mask[state - start_state]:
-            continue
+        if filter_mask is not None:
+            if not filter_mask[state - start_state]:
+                continue
 
         if violates_global_syms(state, global_op_codes, global_op_vals, ns):
             continue
