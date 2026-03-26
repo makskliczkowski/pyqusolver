@@ -968,7 +968,8 @@ def load_mes_save(save_path     : str, *,
         
         mes_cuts    = mes_cuts if mes_cuts is not None else ["half_x", "half_y"]
         mes_results = {}
-        data        = np.load(save_path, allow_pickle=True)
+        # SECURITY: allow_pickle=False to prevent arbitrary code execution from untrusted .npz files.
+        data        = np.load(save_path, allow_pickle=False)
         for k in mes_cuts:
             if k not in data.files:
                 if logger:  logger.warning(f"Cut '{k}' not found in saved MES results.", color='yellow', lvl=2)
