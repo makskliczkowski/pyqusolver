@@ -906,11 +906,212 @@ def inverse_participation_ratio(
         return _inverse_participation_ratio_2d(states_arr, q=q, new_basis=new_basis, square=square)
     raise ValueError(f"`states` must be 1D or 2D, got shape {states_arr.shape}.")
 
+# -----------------------------------------------------------------------------
+#! Single-particle orbital statistics averaged over configurations
+# -----------------------------------------------------------------------------
+
+@numba.njit(cache=True, fastmath=True)
+def _mean_selected_values_1d(values: np.ndarray, indices: np.ndarray) -> float:
+    ''' Helper to compute the mean of selected values given by indices. '''
+    acc = 0.0
+    n   = indices.shape[0]
+    for i in range(n):
+        acc += values[indices[i]]
+    return acc / n if n > 0 else 0.0
+
+def configuration_mean_statistic(values: np.ndarray, configurations: np.ndarray) -> np.ndarray:
+    r"""
+    Average a per-orbital statistic over a set of occupied-orbital configurations.
+
+    This helper is intentionally general. Assume a scalar observable
+    :math:`s_\mu` is defined for each single-particle orbital :math:`\mu`, for
+    example:
+
+    - site-basis orbital IPR,
+    - orbital participation entropy,
+    - any other one-body scalar attached to an orbital index.
+
+    A configuration is represented by a row of orbital indices,
+    for example ``[1, 4, 7]`` meaning that orbitals ``1, 4, 7`` are occupied.
+    For a configuration
+
+    .. math::
+        C_\alpha = (\mu_1, \ldots, \mu_N),
+
+    this function returns the simple arithmetic mean
+
+    .. math::
+        \bar s(C_\alpha)
+        = \frac{1}{N} \sum_{\mu \in C_\alpha} s_\mu.
+
+    No assumptions are made about how the configurations were generated. They
+    may be Slater determinants, subsets of orbitals selected from an energy
+    window, momentum-constrained configurations, or any other integer-encoded
+    occupied-orbital lists.
+
+    Parameters
+    ----------
+    values : np.ndarray
+        Per-orbital statistic, shape ``(n_orbitals,)``.
+        Entry ``values[mu]`` is the scalar assigned to orbital index ``mu``.
+    configurations : np.ndarray
+        Integer array of shape ``(n_cfg, filling)``.
+        Each row contains the occupied-orbital indices for one configuration.
+        Example:
+
+        .. code-block:: python
+
+            configurations = np.array([
+                [0, 1, 2],
+                [0, 1, 5],
+                [2, 4, 7],
+            ])
+
+        Here ``filling = 3`` and ``n_cfg = 3``.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(n_cfg,)`` containing the mean statistic for each
+        configuration.
+    """
+    values_arr  = np.asarray(values, dtype=np.float64)
+    cfg_arr     = np.asarray(configurations, dtype=np.int64)
+    
+    # cheap guard against bad input; Numba can't introspect .ndim, so we check here before the call.
+    if cfg_arr.ndim != 2:
+        raise ValueError(f"`configurations` must be 2D, got shape {cfg_arr.shape}.")
+    
+    out = np.empty(cfg_arr.shape[0], dtype=np.float64)
+    for i in range(cfg_arr.shape[0]):
+        out[i]  = _mean_selected_values_1d(values_arr, cfg_arr[i])
+    return out
+
+def weighted_configuration_statistic(configuration_values: np.ndarray,
+    configuration_indices: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    r"""
+    Form a weighted mean of precomputed configuration statistics.
+
+    Suppose each available configuration :math:`C_\alpha` has already been
+    assigned a scalar value :math:`x_\alpha`. A realization is then specified
+    by selecting a subset of configuration labels and attaching weights
+    :math:`w_\alpha`, giving
+
+    .. math::
+        X = \sum_{\alpha \in \mathcal{S}} w_\alpha x_\alpha.
+
+    This helper implements exactly that pattern.
+
+    The routine is generic: the ``x_\alpha`` values can represent averaged
+    orbital IPRs, averaged local observables, configuration energies, or any
+    other scalar defined per configuration.
+
+    Parameters
+    ----------
+    configuration_values : np.ndarray
+        Array of shape ``(n_cfg,)`` containing one scalar per available
+        configuration.
+    configuration_indices : np.ndarray
+        Integer array of shape ``(m,)`` selecting which configurations are used
+        in the current realization. These are indices into
+        ``configuration_values``.
+    weights : np.ndarray
+        Weight array of shape ``(m,)`` associated with the selected
+        configurations. In superposition problems this is typically
+        :math:`|c_\alpha|^2`, so the result is a probabilistic average.
+
+    Returns
+    -------
+    float
+        Weighted average over the selected configuration values.
+    """
+    values  = np.asarray(configuration_values, dtype=np.float64)
+    idx     = np.asarray(configuration_indices, dtype=np.int64)
+    w       = np.asarray(weights, dtype=np.float64)
+    return float(np.dot(w, values[idx]))
+
+def weighted_orbital_ipr(
+    orbital_vectors                 : np.ndarray,
+    available_configurations        : np.ndarray,
+    selected_configuration_indices  : np.ndarray,
+    weights: np.ndarray,
+    *,
+    q: float = 2.0,
+) -> float:
+    r"""
+    Compute a weighted mean site-basis orbital :math:`\mathrm{IPR}_q`.
+
+    The columns of ``orbital_vectors`` are interpreted as single-particle
+    orbitals :math:`\phi_\mu(x)` written in a site basis. For each orbital
+    index :math:`\mu`, this function forms
+
+    .. math::
+        \mathrm{IPR}_q(\mu)
+        = \sum_x |\phi_\mu(x)|^{2q}.
+
+    A configuration
+
+    .. math::
+        C_\alpha = (\mu_1, \ldots, \mu_N)
+
+    is encoded as a row of occupied-orbital indices, and is assigned the mean
+    orbital statistic
+
+    .. math::
+        \overline{\mathrm{IPR}}_q(C_\alpha)
+        = \frac{1}{N} \sum_{\mu \in C_\alpha} \mathrm{IPR}_q(\mu).
+
+    Finally, for a selected subset of configurations with weights
+    :math:`w_\alpha`, the returned scalar is
+
+    .. math::
+        \sum_{\alpha \in \mathcal{S}} w_\alpha\,
+        \overline{\mathrm{IPR}}_q(C_\alpha).
+
+    This is useful whenever a realization is built from multiple occupied
+    orbital configurations, for example a superposition of Slater determinants.
+
+    Parameters
+    ----------
+    orbital_vectors : np.ndarray
+        Array of shape ``(n_sites, n_orbitals)``. Column ``mu`` is the
+        site-basis wavefunction of orbital ``mu``.
+        
+        Example: if the columns are single-particle eigenstates, then
+        ``orbital_vectors[:, mu]`` is the eigenstate wavefunction of orbital ``mu``
+        in the site basis, and the resulting IPR is the standard orbital IPR.
+        
+    available_configurations : np.ndarray
+        Integer array of shape ``(n_cfg, filling)``. Each row is a list of
+        occupied-orbital indices defining one configuration. For example, if
+        ``available_configurations[i] = [1, 4, 7]``, then configuration ``i`` corresponds to the occupation of orbitals
+        ``1, 4, 7``. Then, it can be selected from orbital_vectors
+        as ``orbital_vectors[:, [1, 4, 7]]`` to get the wavefunctions of the occupied orbitals in that configuration.
+    selected_configuration_indices : np.ndarray
+        Integer array selecting which rows of ``available_configurations`` are
+        used in the current realization. These are indices into ``available_configurations`` and ``configuration_values``.
+    weights : np.ndarray
+        Weight array for the selected configurations. Typically
+        :math:`|c_\alpha|^2`.
+    q : float, optional
+        Generalized IPR exponent. ``q=2`` gives the standard
+        :math:`\sum_x |\phi(x)|^4`.
+
+    Returns
+    -------
+    float
+        Weighted mean orbital :math:`\mathrm{IPR}_q` for the realization.
+    """
+    orbital_ipr_q = np.asarray(inverse_participation_ratio(orbital_vectors, q=q), dtype=np.float64)
+    config_values = configuration_mean_statistic(orbital_ipr_q, available_configurations)
+    return weighted_configuration_statistic(config_values, selected_configuration_indices, weights)
+
 
 # -----------------------------------------------------------------------------
 #! K - function
 # -----------------------------------------------------------------------------
-
 
 @numba.njit(fastmath=True)
 def k_function(
