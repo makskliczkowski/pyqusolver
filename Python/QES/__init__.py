@@ -34,10 +34,24 @@ __description__     = (
 )
 
 import  importlib as _importlib
+import  os as _os
 import  warnings as _warnings
 from    contextlib import contextmanager as _contextmanager
 from    typing import TYPE_CHECKING
 import  typing as _t
+
+
+def _apply_master_backend_env_defaults() -> None:
+    """Normalize global backend env flags before importing backend-aware modules."""
+    if _os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True"):
+        _os.environ.setdefault("PY_BACKEND", "np")
+        _os.environ.setdefault("QES_BACKEND", "numpy")
+        _os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+        _os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
+        _os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
+
+_apply_master_backend_env_defaults()
 
 # -----------------------------------------------------------------------------
 # Global singletons
