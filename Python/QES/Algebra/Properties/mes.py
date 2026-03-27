@@ -969,13 +969,13 @@ def load_mes_save(save_path     : str, *,
         mes_cuts    = mes_cuts if mes_cuts is not None else ["half_x", "half_y"]
         mes_results = {}
         # SECURITY: allow_pickle=False to prevent arbitrary code execution from untrusted .npz files.
-        data        = np.load(save_path, allow_pickle=False)
-        for k in mes_cuts:
-            if k not in data.files:
-                if logger:  logger.warning(f"Cut '{k}' not found in saved MES results.", color='yellow', lvl=2)
-            else:
-                if logger:  logger.info(f"Loaded MES states for cut '{k}' from saved results.", color='green', lvl=2)
-                mes_results[k] = {'states': data[k].tolist()}
+        with np.load(save_path, allow_pickle=False) as data:
+            for k in mes_cuts:
+                if k not in data.files:
+                    if logger:  logger.warning(f"Cut '{k}' not found in saved MES results.", color='yellow', lvl=2)
+                else:
+                    if logger:  logger.info(f"Loaded MES states for cut '{k}' from saved results.", color='green', lvl=2)
+                    mes_results[k] = {'states': data[k].tolist()}
                 
         if make_modular:
             if logger:  
