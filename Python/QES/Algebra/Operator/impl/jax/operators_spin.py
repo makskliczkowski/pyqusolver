@@ -1039,14 +1039,10 @@ if not JAX_AVAILABLE:
     sigma_k_jnp = np
     sigma_pm_int_jnp = np
     sigma_mp_int_jnp = np
-    sigma_k_int_jnp = np
-    sigma_k_jnp = np
+    sigma_k_inv_jnp = np
     sigma_x_inv_jnp = np
-    sigma_y_real_jnp = np
     sigma_y_inv_jnp = np
     sigma_z_inv_jnp = np
-    sigma_k_inv_jnp = np
-    sigma_z_total_int_jnp = np
     sigma_z_total_jnp = np
     apply_pauli_sequence_jnp = None
 
