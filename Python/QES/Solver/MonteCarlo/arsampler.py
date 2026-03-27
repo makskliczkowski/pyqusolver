@@ -104,9 +104,10 @@ class ARSampler(Sampler):
         # Pre-compile the sampling kernel
         self._dtype = dtype
         self._mu = kwargs.get("mu", 2.0)  # Scaling factor for log-prob to log-psi
+        self._local_dim = kwargs.get("local_dim", 2)
         self._sample_jit = jax.jit(
             self._static_sample_ar,
-            static_argnames=["net_apply", "shape", "total_count", "statetype", "spin"],
+            static_argnames=["net_apply", "shape", "total_count", "statetype", "spin", "local_dim"],
         )
         self._name = "AR"
 
@@ -121,16 +122,16 @@ class ARSampler(Sampler):
         mu: float = 2.0,
         spin: bool = True,
         mode_repr: float = 0.5,
+        local_dim: int = 2,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         JIT-compiled sequential autoregressive sampling.
         Complexity: O(N_sites) network calls.
 
-        #!TODO: Adjust for general local dimension (now assumes binary 0/1 spins)
         1. Initialize empty configurations and log-prob accumulators.
         2. For each site i in the system:
             a. Evaluate the network on the current partial configurations.
-            b. Sample the new spin s_i from the conditional distribution.
+            b. Sample the new state s_i from the conditional distribution.
             c. Update the configuration and log-prob accumulators.
         """
 
@@ -145,7 +146,7 @@ class ARSampler(Sampler):
 
             # 1. Evaluate Network to get logits for current site
             # The lambda tells Flax to invoke the specific sub-method for logits
-            # NOTE: curr_configs is in binary (0,1) format during sampling
+            # NOTE: curr_configs is in binary (0,1) format during sampling if local_dim=2
             logits = net_apply(
                 variables,
                 curr_configs,
@@ -154,19 +155,34 @@ class ARSampler(Sampler):
             )
 
             # Select logit for the CURRENT site we are filling
-            # Shape: (Total_Samples,)
-            logit_i = jnp.real(logits[:, site_idx])
+            if local_dim == 2 and logits.ndim == 2:
+                # Shape: (Total_Samples,)
+                logit_i = jnp.real(logits[:, site_idx])
 
-            # 2. Sample (Bernoulli)
-            # prob(s_i=1) = sigmoid(logit_i)
-            prob_1 = nn.sigmoid(logit_i)
-            new_degrees = jax.random.bernoulli(subkey, prob_1).astype(statetype)
+                # 2. Sample (Bernoulli)
+                # prob(s_i=1) = sigmoid(logit_i)
+                prob_1 = nn.sigmoid(logit_i)
+                new_degrees = jax.random.bernoulli(subkey, prob_1).astype(statetype)
 
-            # 3. Update Config & Log Prob
-            new_configs = curr_configs.at[:, site_idx].set(new_degrees)
+                # 3. Update Config & Log Prob
+                new_configs = curr_configs.at[:, site_idx].set(new_degrees)
 
-            # log_p(1) = -softplus(-x), log_p(0) = -softplus(x)
-            log_p_i = jnp.where(new_degrees > 0.5, -nn.softplus(-logit_i), -nn.softplus(logit_i))
+                # log_p(1) = -softplus(-x), log_p(0) = -softplus(x)
+                log_p_i = jnp.where(new_degrees > 0.5, -nn.softplus(-logit_i), -nn.softplus(logit_i))
+            else:
+                # General case: logits shape is (Total_Samples, N, local_dim)
+                # Select logits for current site: (Total_Samples, local_dim)
+                logit_i = jnp.real(logits[:, site_idx, :])
+
+                # 2. Sample (Categorical)
+                new_degrees = jax.random.categorical(subkey, logit_i).astype(statetype)
+
+                # 3. Update Config & Log Prob
+                new_configs = curr_configs.at[:, site_idx].set(new_degrees)
+
+                # Compute log probability of selected classes
+                log_probs = nn.log_softmax(logit_i, axis=-1)
+                log_p_i = jnp.take_along_axis(log_probs, new_degrees[:, None].astype(jnp.int32), axis=-1).squeeze(-1)
 
             return (new_configs, curr_log_p + log_p_i, key), None
 
@@ -188,11 +204,15 @@ class ARSampler(Sampler):
         final_log_psi = final_log_psi / mu + 1j * phases
 
         # Convert 0/1 to physical representation for Hamiltonian compatibility
-        # The AR network internally works with (0,1)
-        if spin:
-            final_configs_phys = (final_configs * 2.0 - 1.0) * mode_repr
+        # The AR network internally works with (0,1) for local_dim=2
+        if local_dim == 2:
+            if spin:
+                final_configs_phys = (final_configs * 2.0 - 1.0) * mode_repr
+            else:
+                final_configs_phys = final_configs * mode_repr
         else:
-            final_configs_phys = final_configs * mode_repr
+            # For general dimension, we assume integer format is required.
+            final_configs_phys = final_configs
 
         return final_configs_phys, final_log_psi
 
@@ -222,6 +242,7 @@ class ARSampler(Sampler):
             self._mu,
             self._spin,
             self._mode_repr,
+            self._local_dim,
         )
 
         # Reshape to (Chains, Samples, N)

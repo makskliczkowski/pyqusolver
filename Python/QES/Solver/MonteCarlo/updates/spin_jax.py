@@ -30,6 +30,12 @@ except ImportError:
             # return state.at[idx].set(-val)
             return state.at[idx].multiply(-1)
 
+        @staticmethod
+        def flip_array_jax_nspin(state, idx, spin_value=1.0):
+            # For 0/1 representation, flip is 1 - val
+            val = state[idx]
+            return state.at[idx].set(1.0 - val)
+
 
 # ----------------------------------------------------------------------
 # Local Updates
