@@ -1018,11 +1018,17 @@ if JAX_AVAILABLE:
 
 if not JAX_AVAILABLE:
     sigma_x_int_jnp = np
+    sigma_x_inv_jnp = np
     sigma_x_jnp = np
     sigma_y_int_jnp = np
+    sigma_y_inv_jnp = np
     sigma_y_jnp = np
+    sigma_y_real_jnp = np
     sigma_z_int_jnp = np
+    sigma_z_inv_jnp = np
     sigma_z_jnp = np
+    sigma_z_total_int_jnp = np
+    sigma_z_total_jnp = np
     sigma_plus_int_jnp = np
     sigma_plus_jnp = np
     sigma_minus_int_jnp = np
@@ -1035,6 +1041,8 @@ if not JAX_AVAILABLE:
     sigma_mp_int_jnp = np
     sigma_k_int_jnp = np
     sigma_k_jnp = np
+    apply_pauli_sequence_jnp = None
+    sigma_k_inv_jnp = None
 
 # -----------------------------------------------------------------------------
 #! EOF
