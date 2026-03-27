@@ -1035,6 +1035,8 @@ if not JAX_AVAILABLE:
     sigma_mp_int_jnp = np
     sigma_k_int_jnp = np
     sigma_k_jnp = np
+    apply_pauli_sequence_jnp = None
+    sigma_k_inv_jnp = None
 
 # -----------------------------------------------------------------------------
 #! EOF
