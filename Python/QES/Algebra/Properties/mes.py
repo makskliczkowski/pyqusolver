@@ -409,7 +409,7 @@ class MESFinder:
             
         # Gauge-fix initial vector to improve optimization landscape smoothness.
         c0                  = _gauge_fix_first_component(c0)
-        params              = jnp.concatenate([jnp.asarray(c0.real), jnp.asarray(c0.imag)])
+        params              = jnp.concatenate([jnp.real(c0), jnp.imag(c0)])
         c_constraints_jax   = [jnp.asarray(c_prev) for c_prev in c_constraints] # Convert constraints to JAX arrays for use in the optimization loop.
 
         # When a coefficient-space entropy function is available, skip the Ns-length
