@@ -2062,7 +2062,7 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
     specs = []
 
     # Translation symmetry (can have multiple directions)
-    if sym_name_lower in ["translation", "translations", "trans", "momentum"]:
+    if sym_name_lower in {"translation", "translations", "trans", "momentum"}:
         if isinstance(sym_value, dict):
             # Dict with kx, ky, kz sectors
             if "kx" in sym_value or "k_x" in sym_value:
@@ -2079,7 +2079,7 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
             specs.append((SymmetryGenerators.Translation_x, sym_value))
 
     # Parity symmetry
-    elif sym_name_lower in ["parity", "parityx", "parityy", "parityz", "spin"]:
+    elif sym_name_lower in {"parity", "parityx", "parityy", "parityz", "spin"}:
         if isinstance(sym_value, dict):
             if "x" in sym_value or "px" in sym_value:
                 px = sym_value.get("x", sym_value.get("px"))
@@ -2096,7 +2096,7 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
             specs.append((SymmetryGenerators.ParityZ, sector))
 
     # Reflection symmetry
-    elif sym_name_lower in ["reflection", "reflect", "mirror"]:
+    elif sym_name_lower in {"reflection", "reflect", "mirror"}:
         if isinstance(sym_value, dict):
             sector = sym_value.get("sector", 1)
         else:
@@ -2104,7 +2104,7 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
         specs.append((SymmetryGenerators.Reflection, sector))
 
     # Inversion symmetry (general spatial inversion for any lattice)
-    elif sym_name_lower in ["inversion", "inv", "spatial", "spatialinversion"]:
+    elif sym_name_lower in {"inversion", "inv", "spatial", "spatialinversion"}:
         if isinstance(sym_value, dict):
             sector = sym_value.get("sector", 1)
         else:
@@ -2112,7 +2112,7 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
         specs.append((SymmetryGenerators.Inversion, sector))
 
     # Fermion parity
-    elif sym_name_lower in ["fermionparity", "fermion", "fparity"]:
+    elif sym_name_lower in {"fermionparity", "fermion", "fparity"}:
         if isinstance(sym_value, dict):
             sector = sym_value.get("sector", 1)
         else:
@@ -2120,7 +2120,7 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
         specs.append((SymmetryGenerators.FermionParity, sector))
 
     # Particle-hole symmetry
-    elif sym_name_lower in ["particlehole", "ph", "chargeconjugation"]:
+    elif sym_name_lower in {"particlehole", "ph", "chargeconjugation"}:
         if isinstance(sym_value, dict):
             sector = sym_value.get("sector", 1)
         else:
@@ -2128,7 +2128,7 @@ def parse_symmetry_spec(sym_name: str, sym_value: Union[dict, int, float, comple
         specs.append((SymmetryGenerators.ParticleHole, sector))
 
     # Time reversal
-    elif sym_name_lower in ["timereversal", "tr", "time"]:
+    elif sym_name_lower in {"timereversal", "tr", "time"}:
         if isinstance(sym_value, dict):
             sector = sym_value.get("sector", 1)
         else:
