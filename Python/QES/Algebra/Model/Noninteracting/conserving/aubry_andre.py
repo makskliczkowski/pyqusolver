@@ -146,10 +146,11 @@ class AubryAndre(QuadraticHamiltonian):
         """AA/Harper potential in 1D/2D/3D."""
 
         # For better statistics - if phi=0, we can randomize it to avoid special cases. Otherwise, use the provided phi.
-        if np.isclose(self._phi, 0.0):
-            phi = np.random.uniform(0, self._twopi)
-        else:
-            phi = self._phi
+        # if np.isclose(self._phi, 0.0):
+        #     phi = np.random.uniform(0, self._twopi)
+        # else:
+        #     phi = self._phi
+        phi = self._phi
 
         # 1D
         if self._ly == 1 and self._lz == 1:
