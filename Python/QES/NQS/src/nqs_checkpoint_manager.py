@@ -461,8 +461,8 @@ class NQSCheckpointManager:
     def _load_npz(self, path: Path) -> dict:
         """Load parameters from NPZ file."""
         # SECURITY: allow_pickle=False to prevent arbitrary code execution from untrusted .npz files.
-        data = np.load(path, allow_pickle=False)
-        return dict(data)
+        with np.load(path, allow_pickle=False) as data:
+            return dict(data)
 
     def _flatten_dict(self, d: dict, parent_key: str = "", sep: str = "/") -> dict:
         """Flatten a nested dictionary for NPZ storage."""
