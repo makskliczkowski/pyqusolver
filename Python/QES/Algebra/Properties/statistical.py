@@ -35,6 +35,8 @@ class StatTypes(Enum):
     MEDIAN      = "median"
     VARIANCE    = "variance"
     STD         = "std"
+    MAX         = "max"
+    MIN         = "min"
 
 # -----------------------------------------------------------------------------
 #! LDOS
@@ -906,6 +908,42 @@ def inverse_participation_ratio(
         return _inverse_participation_ratio_2d(states_arr, q=q, new_basis=new_basis, square=square)
     raise ValueError(f"`states` must be 1D or 2D, got shape {states_arr.shape}.")
 
+def fit_ipr(dimensions: np.ndarray, iprs: np.ndarray, q: float = 2.0) -> Tuple[float, float, float]:
+    r"""
+    Fit IPR data to a power law form.
+
+    Given a set of system sizes (dimensions) and corresponding IPR values, this
+    function fits the data to the form:
+
+    .. math::
+        \mathrm{IPR}(N) = A \cdot N^{-\alpha}
+        
+    For the fractal dimension, d_q, the relation is expected to be:
+    
+    .. math::
+        \mathrm{IPR}(N) \sim N^{-d_q (q-1)}
+
+    where \(A\) is a prefactor and \(\alpha\) is the scaling exponent.
+
+    Parameters
+    ----------
+    dimensions : int
+        The system size or dimension \(N\).
+    iprs : np.ndarray
+        Array of IPR values corresponding to the given dimensions.
+    q : float
+        The exponent used in the IPR definition (default 1.0).
+
+    Returns
+    -------
+    Tuple[float, float, float]
+        A tuple containing the fitted parameters \(A\), \(\alpha\), and \(d_2\).
+    """
+    from QES.general_python.maths.math_utils import Fitter
+
+    A, alpha, d_q, _ = Fitter.fit_ipr_scaling(dimensions, iprs, q=q)
+    return A, alpha, d_q
+
 # -----------------------------------------------------------------------------
 #! Single-particle orbital statistics averaged over configurations
 # -----------------------------------------------------------------------------
@@ -1139,11 +1177,9 @@ def k_function(
         log_eps,
     )
 
-
 # -----------------------------------------------------------------------------
 #! Fourier spectrum function - S(omega) = \sum _{n \neq m} |c_n|^2 |c_m|^2 |O_mn|^2 \delta (omega - |E_m - E_n|)
 # -----------------------------------------------------------------------------
-
 
 @numba.njit(fastmath=True)
 def s_function(
@@ -1171,11 +1207,9 @@ def s_function(
         log_eps,
     )
 
-
 # -----------------------------------------------------------------------------
 #! Spectral CDF
 # -----------------------------------------------------------------------------
-
 
 @staticmethod
 def spectral_cdf(x, y, gammaval=0.5, BINVAL=21):
@@ -1202,11 +1236,9 @@ def spectral_cdf(x, y, gammaval=0.5, BINVAL=21):
     gammaf = x[np.argmin(np.abs(cdf - gammaval))]
     return x, y_smoothed, cdf, gammaf
 
-
 # -----------------------------------------------------------------------------
 #! Survival probability
 # -----------------------------------------------------------------------------
-
 
 @numba.njit(fastmath=True, cache=True)
 def survival_prob(
@@ -1269,11 +1301,9 @@ def survival_prob(
     else:
         raise ValueError("axis must be 0 (psi_t shape (H,N)) or 1 (psi_t shape (N,H)).")
 
-
 # -----------------------------------------------------------------------------
 #! Structures
 # -----------------------------------------------------------------------------
-
 
 def spectral_structure(data: np.ndarray, window: int) -> np.ndarray:
     """
@@ -1314,11 +1344,9 @@ def spectral_structure(data: np.ndarray, window: int) -> np.ndarray:
 
     return residual
 
-
 # -----------------------------------------------------------------------------
 #! Statistical properties
 # -----------------------------------------------------------------------------
-
 
 def microcanonical_average(
     energies: np.ndarray,
@@ -1382,11 +1410,9 @@ def microcanonical_average(
         raise ValueError(f"Unknown statistical method: {stat}")
     return np.nan
 
-
 # -----------------------------------------------------------------------------
 #! StatisticalModule - Hamiltonian wrapper
 # -----------------------------------------------------------------------------
-
 
 class StatisticalModule:
     """
@@ -1514,6 +1540,12 @@ class StatisticalModule:
         return microcanonical_average(
             self.energies, observable, e_mean, delta_e=delta_e, stat=stat
         )
+
+    @staticmethod
+    def fitter():
+        """Return the shared fitting/scaling helper class from ``math_utils``."""
+        from QES.general_python.maths.math_utils import Fitter
+        return Fitter
 
     # -------------------------------------------------------------------------
     # Fidelity Susceptibility
@@ -1720,11 +1752,9 @@ class StatisticalModule:
         >>> r_mean  = hamil.statistical.mean_level_spacing_ratio()
         """)
 
-
 def get_statistical_module(hamiltonian) -> StatisticalModule:
     """Factory function to create statistical module."""
     return StatisticalModule(hamiltonian)
-
 
 # -----------------------------------------------------------------------------
 #! EOF
