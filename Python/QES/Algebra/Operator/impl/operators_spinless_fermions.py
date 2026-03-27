@@ -133,7 +133,7 @@ except ImportError:
 
 ################################################################################
 
-from QES.general_python.common.binary import BACKEND_REPR as JAX_AVAILABLE
+from QES.general_python.common.binary import JAX_AVAILABLE
 from QES.general_python.common.binary import check_int, flip_int
 from QES.general_python.lattices.lattice import Lattice
 
