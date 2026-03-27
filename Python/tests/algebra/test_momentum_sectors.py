@@ -1,4 +1,3 @@
-import pytest
 from QES.Algebra.Symmetries.momentum_sectors import MomentumSectorAnalyzer
 from QES.general_python.lattices.lattice import LatticeDirection
 
