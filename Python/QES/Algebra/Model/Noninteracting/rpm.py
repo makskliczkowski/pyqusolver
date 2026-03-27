@@ -1,4 +1,4 @@
-"""
+r"""
 Rosenzweig - Porter model (RPM) Hamiltonian and related utilities.
 
 The model is defined by a Hamiltonian matrix with elements that decay as a power-law
