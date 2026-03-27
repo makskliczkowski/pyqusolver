@@ -1,175 +1,173 @@
 """
 Rosenzweig - Porter model (RPM) Hamiltonian and related utilities.
 
+The model is defined by a Hamiltonian matrix with elements that decay as a power-law
+with distance from the diagonal, controlled by a parameter gamma. The model can be used to study
+localization and delocalization phenomena in disordered systems, as well as the transition between them.
+
+Mathematical definition:
+    H_{ij} = \epsilon_i \delta_{ij} + \lambda V_{ij}
+where \epsilon_i are random energies drawn from a Gaussian distribution, V_{ij} are random couplings drawn from a GOE distribution, and \lambda is a scaling factor that depends on
+the system size and the parameter gamma.
+
 File    : Model/Noninteracting/rpm.py
 Author  : Maksymilian Kliczkowski
 Email   : maksymilian.kliczkowski@pwr.edu.pl
 """
 
-from typing import Optional
+from __future__ import annotations
+
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 
-from QES.Algebra import hamil as hamil_module
+try:
+    from QES.Algebra.hamil                      import Hamiltonian
+    from QES.Algebra.hamil_quadratic            import QuadraticHamiltonian
+    from QES.general_python.algebra.ran_wrapper import RMT, random_matrix, set_global_seed
 
-#! QES package imports
-from QES.Algebra import hilbert as hilbert_module
+    if TYPE_CHECKING:
+        from QES.Algebra.hilbert import HilbertSpace
 
-#! Random matrix wrapper and linear algebra utilities
-from QES.general_python.algebra.ran_wrapper import GOE, set_global_seed
+except ImportError as exc:
+    raise ImportError("Could not import QES module. Ensure that pyqusolver is installed and accessible.") from exc
 
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------
 
+def _sample_rpm_matrix(nh: int, gamma: float, dtype: np.dtype, seed: Optional[int]) -> np.ndarray:
+    if nh <= 0:
+        raise ValueError("RPM: matrix dimension must be positive.")
 
-class RosenzweigPorter(hamil_module.Hamiltonian):
-    """
-    Rosenzweig-Porter model Hamiltonian.
-    """
+    if seed is not None:
+        np.random.seed(int(seed))
 
-    def __init__(
-        self,
-        ns: int,
-        gamma: float,
-        dtype: type = np.float64,
-        backend: str = "default",
-        many_body: bool = True,
-        seed: Optional[int] = None,
+    lam     = nh ** (-0.5 * float(gamma))
+    diag    = np.random.normal(loc=0.0, scale=1.0, size=nh)
+    goe     = random_matrix((nh, nh), typek=RMT.GOE, backend="np", dtype=np.float64)
+    hmat    = np.diag(diag) + lam * np.asarray(goe, dtype=np.float64)
+    return hmat.astype(dtype, copy=False)
+
+# ---------------------------------------------------------------
+
+class RPM_SP(QuadraticHamiltonian):
+    """Single-particle Rosenzweig-Porter model represented by an Ns x Ns matrix."""
+
+    def __init__(self, ns: int, gamma: float,
+        *,
+        hilbert_space   : Optional["HilbertSpace"] = None,
+        dtype           : np.dtype = np.dtype(np.float64),
+        backend         : str = "default",
+        seed            : Optional[int] = None,
         **kwargs,
     ):
-
-        # initialize Hilbert space
-        self._many_body = many_body
-        self._ns = ns if many_body else np.log2(ns)
-        self._nh = 2**self._ns if many_body else ns
-
-        _hilbert_space = hilbert_module.HilbertSpace(ns=ns, backend=backend, dtype=dtype, nhl=2)
-        super().__init__(
-            is_manybody=True,
-            hilbert_space=_hilbert_space,
-            is_sparse=False,
-            seed=seed,
-            dtype=dtype,
-            backend=backend,
-            **kwargs,
+        super().__init__(ns=ns, is_sparse=False, hilbert_space=hilbert_space,
+            dtype=dtype, backend=backend, seed=seed, **kwargs,
         )
-        self._is_sparse = False
-
-        #! couplings
-        self._gamma         = gamma
-        self._gamma_power   = self._nh**self._gamma
-        self._gamma_power_i = self._nh ** (-0.5 * self._gamma)
-
-        # storage for random blocks
-        self._hamil     = None
-        self._diagonal  = None
-        self._std_en    = None
-        self._seed      = seed
+        self._gamma = float(gamma)
+        self._seed = seed
+        self._name = "RPM(SP)"
         set_global_seed(self._seed, backend=self._backend)
-
-        # set the Hamiltonian operators
-        self._max_local_ch_o = 0
-        self._set_local_energy_operators()
-        self._set_local_energy_functions()
-
-    # ---------------------------------------------------------------
-
-    @property
-    def ns(self) -> int:
-        return self._ns
 
     @property
     def gamma(self) -> float:
         return self._gamma
-        return self._many_body
+
+    @property
+    def many_body(self) -> bool:
+        return False
 
     def randomize(self, **kwargs):
-        """
-        Randomize the Hamiltonian.
-        This method is used to generate a new random Hamiltonian
-        with the same parameters as the original one but with different
-        random blocks.
-        """
         if kwargs.get("seed", None) is not None:
-            set_global_seed(kwargs["seed"], backend=self._backend)
-        self._hamiltonian(use_numpy=kwargs.get("use_numpy", True))
+            self._seed = int(kwargs["seed"])
+        set_global_seed(self._seed, backend=self._backend)
+        self._hamiltonian_quadratic(use_numpy=kwargs.get("use_numpy", True))
 
-    # ---------------------------------------------------------------
+    def _hamiltonian_quadratic(self, use_numpy: bool = False):
+        self._log(f"SP: Building RPM Hamiltonian with gamma={self._gamma}, seed={self._seed}", lvl=2, color="green", log="debug")
+        hmat            = _sample_rpm_matrix(self._ns, self._gamma, self._dtype, self._seed)
+        xp              = np if use_numpy else self._backend
+        self._hamil_sp  = hmat if xp is np else xp.asarray(hmat, dtype=self._dtype)
 
     @staticmethod
     def repr(**kwargs) -> str:
-        ns = kwargs.get("ns", "?")
-        g = kwargs.get("gamma", "1.0")
-        return f"RPM(ns={ns},g={g:.3f})"
+        ns  = kwargs.get("ns", "?")
+        g   = kwargs.get("gamma", 1.0)
+        return f"RPM(ns={ns},g={g:.3f},mb=0)"
 
     def __repr__(self):
-        return self.repr(ns=self.ns, gamma=self.gamma)
+        return self.repr(ns=self._ns, gamma=self._gamma)
 
-    def __str__(self):
-        return self.__repr__()
+# ---------------------------------------------------------------------
 
-    # ---------------------------------------------------------------
+class RPM_MB(Hamiltonian):
+    """Many-body Rosenzweig-Porter model represented directly in the full Nh x Nh space."""
+
+    def __init__( self, ns: int, gamma: float, *,
+        hilbert_space   : Optional["HilbertSpace"] = None,
+        dtype           : np.dtype = np.dtype(np.float64),
+        backend         : str = "default",
+        seed            : Optional[int] = None,
+        **kwargs,
+    ):
+        if hilbert_space is None:
+            from QES.Algebra.hilbert import HilbertSpace
+            hilbert_space = HilbertSpace(ns=ns, backend=backend, dtype=dtype, nhl=2)
+
+        super().__init__(is_manybody=True, hilbert_space=hilbert_space,
+            is_sparse=False, seed=seed, dtype=dtype, backend=backend, **kwargs)
+        self._gamma     = float(gamma)
+        self._seed      = seed
+        self._name      = "RPM(MB)"
+        set_global_seed(self._seed, backend=self._backend)
+
+    @property
+    def gamma(self) -> float:
+        return self._gamma
+
+    @property
+    def many_body(self) -> bool:
+        return True
+
+    # --------------------------------------------------------------
+
+    def randomize(self, **kwargs):
+        if kwargs.get("seed", None) is not None:
+            self._seed = int(kwargs["seed"])
+        set_global_seed(self._seed, backend=self._backend)
+        self._hamiltonian(use_numpy=kwargs.get("use_numpy", True))
 
     def _hamiltonian(self, use_numpy: bool = False):
-        r"""
-        Build the Rosenzweig-Porter Hamiltonian.
-
-        H = D + \lambda * V
-
-        where
-            - D is a random diagonal with entries ~ N(0,1)
-            - V is a GOE (or GUE if complex) random matrix
-            - \lambda = N^{-gamma/2}, with N = hilbert space dimension (_nh)
-
-        Parameters
-        ----------
-        use_numpy : bool, optional
-            If True, force NumPy backend regardless of self._backend.
-        """
-        if self._nh == 0:
-            raise ValueError("RPM: Hamiltonian not initialized (nh=0).")
-
-        # select backend
-        xp = np if use_numpy else self._backend
-        N = self._nh
-
-        # scaling
-        lam = N ** (-0.5 * self._gamma)
-
-        # initialize Hamiltonian
-        H = xp.zeros((N, N), dtype=self._dtype)
-
-        # diagonal part ~ N(0,1)
-        diag_vals = np.random.normal(loc=0.0, scale=1.0, size=N).astype(self._dtype)
-
-        if xp is np:
-            np.fill_diagonal(H, diag_vals)
-        else:
-            H = H.at[xp.arange(N), xp.arange(N)].set(diag_vals)
-
-        # off-diagonal part (GOE/GUE)
-        # if self._iscpx:
-        # V = GUE(N)
-        # else:
-        V = GOE((N, N))
-
-        H = H + xp.asarray(V, dtype=self._dtype) * lam
-        self._hamil = H
+        self._log(f"MB: Building RPM Hamiltonian with gamma={self._gamma}, seed={self._seed}", lvl=2, color="green", log="debug")
+        hmat        = _sample_rpm_matrix(self._nh, self._gamma, self._dtype, self._seed)
+        xp          = np if use_numpy else self._backend
+        self._hamil = hmat if xp is np else xp.asarray(hmat, dtype=self._dtype)
         self._hamiltonian_validate()
 
-    # ---------------------------------------------------------------
+    # --------------------------------------------------------------
 
     def _set_local_energy_operators(self):
-        """
-        Is empty for the Ultrametric model.
-        The Hamiltonian is a sum of blocks, and the local energy operators
-        are not defined in the same way as in other models.
-        The local energy operators are not needed for the Ultrametric model.
-        The Hamiltonian is a sum of blocks, and the local energy operators
-        are not defined in the same way as in other models.
-        """
         pass
 
-    # ---------------------------------------------------------------
+    @staticmethod
+    def repr(**kwargs) -> str:
+        ns  = kwargs.get("ns", "?")
+        g   = kwargs.get("gamma", 1.0)
+        return f"RPM(ns={ns},g={g:.3f}, mb=1)"
 
+    def __repr__(self):
+        return self.repr(ns=self._ns, gamma=self._gamma)
+    
+# ---------------------------------------------------------------------
 
-# -------------------------------------------------------------------
+class RosenzweigPorter:
+    """Compatibility wrapper delegating to RPM_SP or RPM_MB."""
+
+    def __new__(cls, *args, many_body: bool = True, **kwargs):
+        impl = RPM_MB if many_body else RPM_SP
+        return impl(*args, **kwargs)
+
+RPM = RosenzweigPorter
+
+# --------------------------------------------------------------
+#! EOF
+# --------------------------------------------------------------

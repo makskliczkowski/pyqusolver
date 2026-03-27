@@ -48,6 +48,8 @@ from QES.general_python.common.binary import JAX_AVAILABLE
 
 # Lazy loading - only import when JAX is available
 if JAX_AVAILABLE:
+    from . import operators_spin as _operators_spin
+
     # Spin-1/2 operators
     from .operators_spin import (
         # Matrices
@@ -57,8 +59,6 @@ if JAX_AVAILABLE:
         _SIG_X_jnp,
         _SIG_Y_jnp,
         _SIG_Z_jnp,
-        # Pauli string operator
-        apply_pauli_sequence_jnp,
         sigma_k_int_jnp,
         sigma_k_inv_jnp,
         sigma_k_jnp,
@@ -85,6 +85,7 @@ if JAX_AVAILABLE:
         sigma_z_total_int_jnp,
         sigma_z_total_jnp,
     )
+    apply_pauli_sequence_jnp = getattr(_operators_spin, "apply_pauli_sequence_jnp", None)
 
     # Spin-1 operators
     from .operators_spin_1 import (
@@ -215,3 +216,7 @@ if JAX_AVAILABLE:
             "n_jax",
         ]
     )
+
+# ---------------------------------------------------------------
+#! EOF
+# ---------------------------------------------------------------

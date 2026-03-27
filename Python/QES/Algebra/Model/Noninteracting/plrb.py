@@ -1,186 +1,267 @@
-"""
+r"""
+Implementation of the Power-Law Random Banded (PLRB) model in both single-particle and many-body forms.
+The PLRB model is defined by a Hamiltonian matrix with elements that decay as a power-law
+with distance from the diagonal, controlled by parameters a and b. The model can be used to study
+localization and delocalization phenomena in disordered systems.
+
+The model has the decay of the off-diagonal elements given by:
+    H_{ij} \sim \frac{1}{\sqrt{1 + (|i-j|/b)^{2a}}}
+where a controls the power-law decay and b sets the scale of the band width. The diagonal elements are random and typically drawn from a Gaussian distribution.
+
+----------------------------------------------------
 file    : Model/Noninteracting/plrb.py
 Author  : Maksymilian Kliczkowski
 Email   : maksymilian.kliczkowski@pwr.edu.pl
+Version : 2.0
+Modified: March 2026
+------------------------------------------------
 """
 
-from typing import List, Optional, Union
+from __future__ import annotations
+
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 
-from QES.Algebra import hamil as hamil_module
+try:
+    from QES.Algebra.hamil                      import Hamiltonian
+    from QES.Algebra.hamil_quadratic            import QuadraticHamiltonian
+    from QES.general_python.algebra.ran_wrapper import set_global_seed
 
-#! QES package imports
-from QES.Algebra import hilbert as hilbert_module
+    if TYPE_CHECKING:
+        from QES.Algebra.hilbert import HilbertSpace
 
-#! Random matrix wrapper and linear algebra utilities
-from QES.general_python.algebra.ran_wrapper import set_global_seed
-from QES.general_python.algebra.utils import Array
+except ImportError as exc:
+    raise ImportError("Could not import QES module. Ensure that pyqusolver is installed and accessible.") from exc
 
+try:
+    import numba
+except ImportError:
+    numba = None
 
-class PowerLawRandomBanded(hamil_module.Hamiltonian):
-    r"""
-    PowerLawRandomBanded is a Hamiltonian model for a system of non-interacting spins
-    with a power-law distribution of random banded blocks.
-    This model is a generalization of the Ultrametric model, where the Hamiltonian
-    is constructed from a central dot Hamiltonian and hierarchical blocks with
-    a power-law decay of the coupling strength.
-    The Hamiltonian is defined as:
-    """
+# --------------------------------------------------------------
+
+if numba is not None:
+    @numba.njit(cache=True)
+    def _fill_plrb_numba(hmat: np.ndarray, a: float, b: float, seed: int) -> None:
+        if seed >= 0:
+            np.random.seed(seed)
+
+        n       = hmat.shape[0]
+        inv_b   = 1.0 / b
+        power   = 2.0 * a
+
+        for i in range(n):
+            for j in range(i, n):
+                rnd = 2.0 * np.random.random() - 1.0
+                if i == j:
+                    val     = rnd
+                else:
+                    dist    = abs(i - j) * inv_b
+                    val     = rnd / np.sqrt(1.0 + dist**power)
+                hmat[i, j]  = val
+                hmat[j, i]  = val
+
+def _sample_plrb_matrix(nh: int, a: float, b: float, dtype: np.dtype, seed: Optional[int], use_numba: bool) -> np.ndarray:
+    if nh <= 0:
+        raise ValueError("PLRB: matrix dimension must be positive.")
+    if b <= 0.0:
+        raise ValueError("PLRB: parameter b must be > 0.")
+
+    hmat        = np.zeros((nh, nh), dtype=np.float64)
+    seed_int    = -1 if seed is None else int(seed)
+
+    if use_numba and numba is not None:
+        _fill_plrb_numba(hmat, float(a), float(b), seed_int)
+    else:
+        rng     = np.random.default_rng(seed)
+        power   = 2.0 * float(a)
+        inv_b   = 1.0 / float(b)
+        for i in range(nh):
+            for j in range(i, nh):
+                rnd = rng.uniform(-1.0, 1.0)
+                if i == j:
+                    val     = rnd
+                else:
+                    dist    = abs(i - j) * inv_b
+                    val     = rnd / np.sqrt(1.0 + dist**power)
+                hmat[i, j]  = val
+                hmat[j, i]  = val
+
+    return hmat.astype(dtype, copy=False)
+
+# --------------------------------------------------------------
+
+class PLRB_SP(QuadraticHamiltonian):
+    """Single-particle PLRB model represented by an Ns x Ns matrix."""
+
+    def __init__(
+        self,
+        ns              : int,
+        a               : float = 1.0,
+        b               : float = 1.0,
+        *,
+        hilbert_space   : Optional["HilbertSpace"] = None,
+        dtype           : np.dtype = np.dtype(np.float64),
+        backend         : str = "default",
+        seed            : Optional[int] = None,
+        use_numba       : bool = True,
+        **kwargs,
+    ):
+        kwargs.pop("many_body", None)
+        super().__init__(
+            ns              = ns,
+            is_sparse       = False,
+            hilbert_space   = hilbert_space,
+            dtype           = dtype,
+            backend         = backend,
+            seed            = seed,
+            **kwargs,
+        )
+        self._a         = float(a)
+        self._b         = float(b)
+        self._seed      = seed
+        self._use_numba = bool(use_numba)
+        self._name      = "PLRB_SP"
+        set_global_seed(self._seed, backend=self._backend)
+
+    @property
+    def a(self) -> float:
+        return self._a
+
+    @property
+    def b(self) -> float:
+        return self._b
+
+    @property
+    def many_body(self) -> bool:
+        return False
+
+    # --------------------------------------------------------------
+
+    def randomize(self, **kwargs):
+        if kwargs.get("seed", None) is not None:
+            self._seed = int(kwargs["seed"])
+        set_global_seed(self._seed, backend=self._backend)
+        self._hamiltonian_quadratic(use_numpy=kwargs.get("use_numpy", True))
+
+    def _hamiltonian_quadratic(self, use_numpy: bool = False):
+        self._log(f"SP: Setting PLRB Hamiltonian with a={self._a}, b={self._b}, seed={self._seed}", lvl=2, color="green", log="debug",)
+        hmat            = _sample_plrb_matrix(self._ns, self._a, self._b, self._dtype, self._seed, self._use_numba)
+        xp              = np if use_numpy else self._backend
+        self._hamil_sp  = hmat if xp is np else xp.asarray(hmat, dtype=self._dtype)
+
+    @staticmethod
+    def repr(**kwargs) -> str:
+        ns  = kwargs.get("ns", "?")
+        a   = kwargs.get("a", 1.0)
+        b   = kwargs.get("b", 1.0)
+        return f"PLRB(ns={ns},a={a:.3f},b={b:.3f},mb=0)"
+
+    def __repr__(self):
+        return self.repr(ns=self._ns, a=self._a, b=self._b)
+
+    def __str__(self):
+        return self.__repr__()
+
+# --------------------------------------------------------------
+
+class PLRB_MB(Hamiltonian):
+    """Many-body PLRB model represented directly in the full Nh x Nh space."""
 
     def __init__(
         self,
         ns: int,
         a: float = 1.0,
         b: float = 1.0,
-        hilbert_space: Optional[hilbert_module.HilbertSpace] = None,
-        dtype: type = np.float64,
+        *,
+        hilbert_space: Optional["HilbertSpace"] = None,
+        dtype: np.dtype = np.dtype(np.float64),
         backend: str = "default",
-        many_body: bool = True,
         seed: Optional[int] = None,
+        use_numba: bool = True,
         **kwargs,
     ):
+        kwargs.pop("many_body", None)
+        if hilbert_space is None:
+            from QES.Algebra.hilbert import HilbertSpace
+            hilbert_space = HilbertSpace(ns=ns, backend=backend, dtype=dtype, nhl=2)
 
-        # initialize Hilbert space
-        self._many_body = many_body
-        self._ns = ns if many_body else np.log2(ns)
-        self._nh = 2**self._ns if many_body else ns
-
-        _hilbert_space = hilbert_module.HilbertSpace(ns=ns, backend=backend, dtype=dtype, nhl=2)
         super().__init__(
-            is_manybody=True,
-            hilbert_space=_hilbert_space,
-            is_sparse=True,
-            seed=seed,
-            dtype=dtype,
-            backend=backend,
-            **kwargs,
+            is_manybody=True, hilbert_space=hilbert_space,
+            is_sparse=False, seed=seed, dtype=dtype, backend=backend, **kwargs,
         )
-
-        self._is_sparse = False
-        self._a         = a
-        self._b         = b
-
-        # storage for random blocks
-        self._hamil     = None
-        self._std_en    = None
+        self._a         = float(a)
+        self._b         = float(b)
         self._seed      = seed
+        self._use_numba = bool(use_numba)
+        self._name      = "PLRB(MB)"
         set_global_seed(self._seed, backend=self._backend)
 
-        # set the Hamiltonian operators
-        self._max_local_ch_o = 0
-        self._set_local_energy_operators()
-        self._set_local_energy_functions()
-
     @property
-    def ns(self) -> int:
-        return self._ns
-
-    @property
-    def a(self) -> Union[List[float], float, None]:
+    def a(self) -> float:
         return self._a
 
     @property
-    def b(self) -> Union[List[float], float, None]:
+    def b(self) -> float:
         return self._b
 
     @property
     def many_body(self) -> bool:
-        return self._many_body
+        return True
 
     def randomize(self, **kwargs):
-        """
-        Randomize the Hamiltonian.
-        This method is used to generate a new random Hamiltonian
-        with the same parameters as the original one but with different
-        random blocks.
-        """
         if kwargs.get("seed", None) is not None:
-            set_global_seed(kwargs["seed"], backend=self._backend)
+            self._seed = int(kwargs["seed"])
+        set_global_seed(self._seed, backend=self._backend)
+        self._hamiltonian(use_numpy=kwargs.get("use_numpy", True))
 
-        # initialize the blocks
-        self._hamil = self._set_Hk(self._hamil, backend=self._backend)
+    # --------------------------------------------------------------
 
-    # ---------------------------------------------------------------
+    def _hamiltonian(self, use_numpy: bool = False):
+        self._log(f"MB: Setting PLRB Hamiltonian with a={self._a}, b={self._b}, seed={self._seed}", lvl=2, color="green", log="debug",)
+        hmat        = _sample_plrb_matrix(self._nh, self._a, self._b, self._dtype, self._seed, self._use_numba)
+        xp          = np if use_numpy else self._backend
+        self._hamil = hmat if xp is np else xp.asarray(hmat, dtype=self._dtype)
+        self._hamiltonian_validate()
 
-    def _set_Hk(
-        self, _hedit: Array, backend=np, rng: Optional[np.random.Generator] = None
-    ) -> Array:
-
-        if self._nh == 0 or rng is None:
-            raise ValueError("PLRB: Hamiltonian not initialized.")
-
-        # Power-law random banded Hamiltonian construction
-        H = backend.zeros((self._nh, self._nh), dtype=backend.float64)
-        power = 2.0 * self._a
-        binv = 1.0 / self._b
-
-        for i in range(self._nh):
-            for j in range(i, self._nh):
-                if i == j:
-                    val = rng.uniform(-1.0, 1.0)
-                else:
-                    dist = abs(i - j) * binv
-                    denom = backend.sqrt(1.0 + dist**power)
-                    val = rng.uniform(-1.0, 1.0) / denom
-                H[i, j] = val
-                H[j, i] = val  # symmetric
-
-        return H
-
-    # ---------------------------------------------------------------
+    def _set_local_energy_operators(self):
+        pass
 
     @staticmethod
     def repr(**kwargs) -> str:
-        ns = kwargs.get("ns", "?")
-        a = kwargs.get("a", 1.0)
-        b = kwargs.get("b", 1.0)
-        return f"PLRB(ns={ns},a={a:.3f},b={b:.3f})"
+        ns  = kwargs.get("ns", "?")
+        a   = kwargs.get("a", 1.0)
+        b   = kwargs.get("b", 1.0)
+        return f"PLRB(ns={ns},a={a:.3f},b={b:.3f},mb=1)"
 
     def __repr__(self):
-        return f"PLRB(ns={self.ns},a={self.a:.3f},b={self.b:.3f})"
+        return self.repr(ns=self._ns, a=self._a, b=self._b)
 
     def __str__(self):
-        return f"PLRB(ns={self.ns},a={self.a:.3f},b={self.b:.3f})"
+        return self.__repr__()
 
-    # ---------------------------------------------------------------
+# --------------------------------------------------------------
 
-    def _hamiltonian(self, use_numpy: bool = False):
-        """
-        Build the full ultrametric Hamiltonian by combining the central dot Hamiltonian H0
-        with the hierarchical blocks Hk.
+class PowerLawRandomBanded:
+    """Compatibility wrapper delegating to PLRB_SP or PLRB_MB."""
 
-        First, the Hamiltonian is initialized. There shall be no operators
-        acting on states apart from the random blocks.
-        The Hamiltonian is constructed as a Kronecker product of the central dot Hamiltonian H0
-        and the identity matrix of size 2^L.
-        """
+    def __new__(cls, *args, many_body: bool = True, **kwargs):
+        ''' 
+        Parameters:
+        -----------
+        many_body (bool): 
+            If True, returns a many-body PLRB model (PLRB_MB).
+            If False, returns a single-particle PLRB model (PLRB_SP).
+        args, kwargs:
+            Parameters for the PLRB model constructor (e.g. ns, a, b, seed, use_numba).
+        
+        '''
+        impl = PLRB_MB if many_body else PLRB_SP
+        return impl(*args, **kwargs)
 
-        if self._nh == 0:
-            raise ValueError("UltrametricModel: Hamiltonian not initialized.")
+PLRB = PowerLawRandomBanded
 
-        # initialize zero Hamiltonian container
-        backend_changed = self._backend if not use_numpy else np
-        self._hamil = backend_changed.zeros((self._nh, self._nh), dtype=self._dtype)
-        self._hamil = self._set_Hk(
-            self._hamil, backend_changed, rng=np.random.default_rng(self._seed)
-        )
-        self._hamiltonian_validate()
-
-    # ---------------------------------------------------------------
-
-    def _set_local_energy_operators(self):
-        """
-        Is empty for the Ultrametric model.
-        The Hamiltonian is a sum of blocks, and the local energy operators
-        are not defined in the same way as in other models.
-        The local energy operators are not needed for the Ultrametric model.
-        The Hamiltonian is a sum of blocks, and the local energy operators
-        are not defined in the same way as in other models.
-        """
-        pass
-
-    # ---------------------------------------------------------------
-
-
-# -------------------------------------------------------------------
+# --------------------------------------------------------------
+#! EOF
+# --------------------------------------------------------------

@@ -62,18 +62,9 @@ except ImportError:
 ################################################################################
 
 if JAX_AVAILABLE:
-    # sigma x
-    # sigma y
-    # sigma z
-    # sigma plus
-    # sigma minus
-    # sigma pm
-    # sigma mp
-    # sigma k
-    # sigma z total
-    # pauli string
+    from QES.Algebra.Operator.impl.jax import operators_spin as _jax_operators_spin
+
     from QES.Algebra.Operator.impl.jax.operators_spin import (
-        apply_pauli_sequence_jnp,
         sigma_k_int_jnp,
         sigma_k_inv_jnp,
         sigma_k_jnp,
@@ -98,6 +89,7 @@ if JAX_AVAILABLE:
         sigma_z_total_int_jnp,
         sigma_z_total_jnp,
     )
+    apply_pauli_sequence_jnp = getattr(_jax_operators_spin, "apply_pauli_sequence_jnp", None)
 else:
     print(
         "JAX is not available. JAX-based implementations of spin operators will not be accessible."

@@ -8,9 +8,9 @@ Description
 Simple SYK model for non-interacting fermions.
 """
 
+from    __future__ import annotations
 from    typing import Any, Optional, Union, TYPE_CHECKING
 import  numpy as np
-
 
 # import the quadratic base
 try:
