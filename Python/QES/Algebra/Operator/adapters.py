@@ -12,19 +12,25 @@ Date        : 2025-12-01
 """
 
 from    __future__  import annotations
+import  os
 import  numpy       as np
 from    abc         import ABC, abstractmethod
 from    typing      import Any, Optional, Union, List
 
 # Try importing JAX
-try:
-    import  jax
-    import  jax.numpy as jnp
-    JAX_AVAILABLE = True
-except ImportError:
+if os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True"):
     jax             = None
     jnp             = None
     JAX_AVAILABLE   = False
+else:
+    try:
+        import  jax
+        import  jax.numpy as jnp
+        JAX_AVAILABLE = True
+    except ImportError:
+        jax             = None
+        jnp             = None
+        JAX_AVAILABLE   = False
 
 class BackendAdapter(ABC):
     """Abstract base class for backend adapters."""
