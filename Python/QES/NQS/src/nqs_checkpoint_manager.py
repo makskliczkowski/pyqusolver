@@ -460,7 +460,7 @@ class NQSCheckpointManager:
 
     def _load_npz(self, path: Path) -> dict:
         """Load parameters from NPZ file."""
-        data = np.load(path, allow_pickle=True)
+        data = np.load(path, allow_pickle=False)
         return dict(data)
 
     def _flatten_dict(self, d: dict, parent_key: str = "", sep: str = "/") -> dict:
