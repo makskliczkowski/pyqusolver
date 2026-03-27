@@ -357,6 +357,7 @@ class VMCSampler(Sampler):
                 elif upd_rule == UpdateRule.MULTI_FLIP and _rule_supported("MULTI_FLIP"):
                     n_flip = kwargs.get("n_flip", 1)
                     return partial(propose_multi_flip_with_info, n_flip=n_flip)
+                # ⚡ Bolt: Using list literal for Enums as Python compiler does not optimize set literals containing Enums.
                 elif (
                     upd_rule in [UpdateRule.GLOBAL, UpdateRule.PLAQUETTE, UpdateRule.WILSON]
                     and _rule_supported("GLOBAL")
