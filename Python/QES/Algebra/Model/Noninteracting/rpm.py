@@ -96,6 +96,9 @@ class RPM_SP(QuadraticHamiltonian):
 
     def __repr__(self):
         return self.repr(ns=self._ns, gamma=self._gamma)
+    
+    def __str__(self):
+        return self.__repr__()
 
 # ---------------------------------------------------------------------
 
@@ -156,6 +159,9 @@ class RPM_MB(Hamiltonian):
 
     def __repr__(self):
         return self.repr(ns=self._ns, gamma=self._gamma)
+    
+    def __str__(self):
+        return self.__repr__()
     
 # ---------------------------------------------------------------------
 
