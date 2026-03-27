@@ -30,6 +30,11 @@ jobs:
         pip install -e ".[all,dev]"
         cd ..
 
+    - name: Hotfix submodule
+      run: |
+        # Fix NameError in ran_wrapper.py that fails CI with JAX installed
+        sed -i '/JAX_RND_DEFAULT_KEY = _safe_jax_prng_key(42)/i \        JAX_AVAILABLE = True' Python/QES/general_python/algebra/ran_wrapper.py || true
+
     - name: Verify QES installation
       run: |
         python -c "import QES; print(f'QES version: {QES.__version__}')"

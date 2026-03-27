@@ -1,13 +1,16 @@
 """
-QES/Algebra/Properties/statistical.py
+This module contains functions for calculating statistical properties of quantum systems.
 
+------------------------------------------------------------------------------
+file    : QES/Algebra/Properties/statistical.py
 author  : Maksymilian Kliczkowski
 email   : maksymilian.kliczkowski@pwr.edu.pl
-This module contains functions for calculating statistical properties of quantum systems.
+version : 1.0
+-------------------------------------------------------------------------------
 """
 
-import math
-from enum import Enum
+import  math
+from    enum import Enum
 from functools import partial
 from typing import List, Optional, Tuple, Union
 
@@ -27,13 +30,11 @@ else:
     jax = None
     jnp = np
 
-
 class StatTypes(Enum):
-    MEAN = "mean"
-    MEDIAN = "median"
-    VARIANCE = "variance"
-    STD = "std"
-
+    MEAN        = "mean"
+    MEDIAN      = "median"
+    VARIANCE    = "variance"
+    STD         = "std"
 
 # -----------------------------------------------------------------------------
 #! LDOS
@@ -784,46 +785,23 @@ else:
 
 
 @numba.njit(parallel=True, fastmath=True)
-def inverse_participation_ratio(
+def _inverse_participation_ratio_2d(
     states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True
 ) -> np.ndarray:
     """
-    Compute IPR_j = ∑_i |\\psi _{i j}|^{2q} for each column j of `states`.
-    If `new_basis` is provided (shape n \times n), then \\psi  -> B^T\\cdot \\psi  is used
-    before raising to the 2q power.  Works on 1D or 2D `states`.
-
-    Parameters
-    ----------
-    states : np.ndarray
-        Complex array, shape (n,) or (n, m).
-    q : float
-        Exponent in the IPR definition (default 1.0).
-    new_basis : np.ndarray, optional
-        Change-of-basis matrix (n \times n).  If not None, each state \\psi _j is
-        transformed via B^T\\cdot \\psi _j before computing |\\cdot |^(2q).
-
-    Returns
-    -------
-    np.ndarray
-        If input was 1D, returns a scalar in a 0-d array; if 2D, returns
-        a length-m array of IPR values.
+    Compute IPR_j = ∑_i |\\psi _{i j}|^{2q} for each column j of a 2D state array.
     """
-
-    # reshape 1D->2D so we can always write m-parallel loops
-    if states.ndim == 1:
-        states = states.reshape(states.shape[0], 1)
-
-    n, m = states.shape
-    out = np.zeros(m, dtype=np.float64)
-    two_q = 2.0 * q if square else q
+    n, m    = states.shape
+    out     = np.zeros(m, dtype=np.float64)
+    two_q   = 2.0 * q if square else q
 
     if new_basis is None:
         # no transform
         for j in numba.prange(m):
             acc = 0.0
             for i in range(n):
-                c = states[i, j]
-                p = np.abs(c) ** two_q
+                c    = states[i, j]
+                p    = np.abs(c) ** two_q
                 acc += p
             out[j] = acc
     else:
@@ -837,22 +815,303 @@ def inverse_participation_ratio(
                 im = 0.0
                 # compute (B^T\cdot \psi )_i = ∑_k B[k,i] * \psi [k,j]
                 for k in range(n):
-                    b = B[k, i]
-                    s = states[k, j]
+                    b   = B[k, i]
+                    s   = states[k, j]
                     # complex multiply: (b_r + i b_i)*(s_r + i s_i)
                     re += b.real * s.real - b.imag * s.imag
                     im += b.real * s.imag + b.imag * s.real
-                p = re * re + im * im
-                acc += p**q
+                    
+                # now re + i im is the transformed coefficient phi_i
+                p       = re * re + im * im
+                acc    += p**q
             out[j] = acc
 
     return out
 
 
+@numba.njit(fastmath=True)
+def _inverse_participation_ratio_1d(
+    state: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True
+) -> float:
+    """
+    Compute the inverse participation ratio for a single state vector.
+    """
+    n       = state.shape[0]
+    two_q   = 2.0 * q if square else q
+
+    if new_basis is None:
+        acc = 0.0
+        for i in range(n):
+            c    = state[i]
+            acc += np.abs(c) ** two_q
+        return acc
+
+    acc = 0.0
+    B   = new_basis
+    for i in range(n):
+        re = 0.0
+        im = 0.0
+        for k in range(n):
+            b   = B[k, i]
+            s   = state[k]
+            re += b.real * s.real - b.imag * s.imag
+            im += b.real * s.imag + b.imag * s.real
+        acc += (re * re + im * im) ** q
+    return acc
+
+
+def inverse_participation_ratio(
+    states: np.ndarray, q: float = 1.0, new_basis: Optional[np.ndarray] = None, square: bool = True
+) -> Union[float, np.ndarray]:
+    r"""
+    Compute inverse participation ratios for one state vector or for a batch of states.
+
+    The IPR is
+
+    .. math::
+        \mathrm{IPR} = \sum_i |\psi_i|^{2q}
+
+    for a single state, or the same quantity evaluated independently for each
+    column of a 2D array.
+
+    Parameters
+    ----------
+    states : np.ndarray
+        Complex array of shape `(n,)` or `(n, m)`.
+        A 1D input is treated as one state vector.
+        A 2D input is interpreted column-wise as `m` states.
+    q : float
+        Exponent in the IPR definition (default 1.0).
+    new_basis : np.ndarray, optional
+        Change-of-basis matrix of shape `(n, n)`. If provided, each state is
+        transformed as `B^T @ psi` before the IPR is computed.
+    square : bool
+        If True, use exponent `2q`; if False, use exponent `q`.
+
+    Returns
+    -------
+    float or np.ndarray
+        Returns a scalar `float` for 1D input and a length-`m` array for 2D input.
+
+    Notes
+    -----
+    The public wrapper dispatches to separate Numba kernels for 1D and 2D
+    inputs. This avoids Numba type-unification failures when a single compiled
+    function tries to treat the same variable as both rank-1 and rank-2.
+    """
+    states_arr = np.asarray(states)
+    if states_arr.ndim == 1:
+        return float(_inverse_participation_ratio_1d(states_arr, q=q, new_basis=new_basis, square=square))
+    if states_arr.ndim == 2:
+        return _inverse_participation_ratio_2d(states_arr, q=q, new_basis=new_basis, square=square)
+    raise ValueError(f"`states` must be 1D or 2D, got shape {states_arr.shape}.")
+
+# -----------------------------------------------------------------------------
+#! Single-particle orbital statistics averaged over configurations
+# -----------------------------------------------------------------------------
+
+@numba.njit(cache=True, fastmath=True)
+def _mean_selected_values_1d(values: np.ndarray, indices: np.ndarray) -> float:
+    ''' Helper to compute the mean of selected values given by indices. '''
+    acc = 0.0
+    n   = indices.shape[0]
+    for i in range(n):
+        acc += values[indices[i]]
+    return acc / n if n > 0 else 0.0
+
+def configuration_mean_statistic(values: np.ndarray, configurations: np.ndarray) -> np.ndarray:
+    r"""
+    Average a per-orbital statistic over a set of occupied-orbital configurations.
+
+    This helper is intentionally general. Assume a scalar observable
+    :math:`s_\mu` is defined for each single-particle orbital :math:`\mu`, for
+    example:
+
+    - site-basis orbital IPR,
+    - orbital participation entropy,
+    - any other one-body scalar attached to an orbital index.
+
+    A configuration is represented by a row of orbital indices,
+    for example ``[1, 4, 7]`` meaning that orbitals ``1, 4, 7`` are occupied.
+    For a configuration
+
+    .. math::
+        C_\alpha = (\mu_1, \ldots, \mu_N),
+
+    this function returns the simple arithmetic mean
+
+    .. math::
+        \bar s(C_\alpha)
+        = \frac{1}{N} \sum_{\mu \in C_\alpha} s_\mu.
+
+    No assumptions are made about how the configurations were generated. They
+    may be Slater determinants, subsets of orbitals selected from an energy
+    window, momentum-constrained configurations, or any other integer-encoded
+    occupied-orbital lists.
+
+    Parameters
+    ----------
+    values : np.ndarray
+        Per-orbital statistic, shape ``(n_orbitals,)``.
+        Entry ``values[mu]`` is the scalar assigned to orbital index ``mu``.
+    configurations : np.ndarray
+        Integer array of shape ``(n_cfg, filling)``.
+        Each row contains the occupied-orbital indices for one configuration.
+        Example:
+
+        .. code-block:: python
+
+            configurations = np.array([
+                [0, 1, 2],
+                [0, 1, 5],
+                [2, 4, 7],
+            ])
+
+        Here ``filling = 3`` and ``n_cfg = 3``.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(n_cfg,)`` containing the mean statistic for each
+        configuration.
+    """
+    values_arr  = np.asarray(values, dtype=np.float64)
+    cfg_arr     = np.asarray(configurations, dtype=np.int64)
+    
+    # cheap guard against bad input; Numba can't introspect .ndim, so we check here before the call.
+    if cfg_arr.ndim != 2:
+        raise ValueError(f"`configurations` must be 2D, got shape {cfg_arr.shape}.")
+    
+    out = np.empty(cfg_arr.shape[0], dtype=np.float64)
+    for i in range(cfg_arr.shape[0]):
+        out[i]  = _mean_selected_values_1d(values_arr, cfg_arr[i])
+    return out
+
+def weighted_configuration_statistic(configuration_values: np.ndarray,
+    configuration_indices: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    r"""
+    Form a weighted mean of precomputed configuration statistics.
+
+    Suppose each available configuration :math:`C_\alpha` has already been
+    assigned a scalar value :math:`x_\alpha`. A realization is then specified
+    by selecting a subset of configuration labels and attaching weights
+    :math:`w_\alpha`, giving
+
+    .. math::
+        X = \sum_{\alpha \in \mathcal{S}} w_\alpha x_\alpha.
+
+    This helper implements exactly that pattern.
+
+    The routine is generic: the ``x_\alpha`` values can represent averaged
+    orbital IPRs, averaged local observables, configuration energies, or any
+    other scalar defined per configuration.
+
+    Parameters
+    ----------
+    configuration_values : np.ndarray
+        Array of shape ``(n_cfg,)`` containing one scalar per available
+        configuration.
+    configuration_indices : np.ndarray
+        Integer array of shape ``(m,)`` selecting which configurations are used
+        in the current realization. These are indices into
+        ``configuration_values``.
+    weights : np.ndarray
+        Weight array of shape ``(m,)`` associated with the selected
+        configurations. In superposition problems this is typically
+        :math:`|c_\alpha|^2`, so the result is a probabilistic average.
+
+    Returns
+    -------
+    float
+        Weighted average over the selected configuration values.
+    """
+    values  = np.asarray(configuration_values, dtype=np.float64)
+    idx     = np.asarray(configuration_indices, dtype=np.int64)
+    w       = np.asarray(weights, dtype=np.float64)
+    return float(np.dot(w, values[idx]))
+
+def weighted_orbital_ipr(
+    orbital_vectors                 : np.ndarray,
+    available_configurations        : np.ndarray,
+    selected_configuration_indices  : np.ndarray,
+    weights: np.ndarray,
+    *,
+    q: float = 2.0,
+) -> float:
+    r"""
+    Compute a weighted mean site-basis orbital :math:`\mathrm{IPR}_q`.
+
+    The columns of ``orbital_vectors`` are interpreted as single-particle
+    orbitals :math:`\phi_\mu(x)` written in a site basis. For each orbital
+    index :math:`\mu`, this function forms
+
+    .. math::
+        \mathrm{IPR}_q(\mu)
+        = \sum_x |\phi_\mu(x)|^{2q}.
+
+    A configuration
+
+    .. math::
+        C_\alpha = (\mu_1, \ldots, \mu_N)
+
+    is encoded as a row of occupied-orbital indices, and is assigned the mean
+    orbital statistic
+
+    .. math::
+        \overline{\mathrm{IPR}}_q(C_\alpha)
+        = \frac{1}{N} \sum_{\mu \in C_\alpha} \mathrm{IPR}_q(\mu).
+
+    Finally, for a selected subset of configurations with weights
+    :math:`w_\alpha`, the returned scalar is
+
+    .. math::
+        \sum_{\alpha \in \mathcal{S}} w_\alpha\,
+        \overline{\mathrm{IPR}}_q(C_\alpha).
+
+    This is useful whenever a realization is built from multiple occupied
+    orbital configurations, for example a superposition of Slater determinants.
+
+    Parameters
+    ----------
+    orbital_vectors : np.ndarray
+        Array of shape ``(n_sites, n_orbitals)``. Column ``mu`` is the
+        site-basis wavefunction of orbital ``mu``.
+        
+        Example: if the columns are single-particle eigenstates, then
+        ``orbital_vectors[:, mu]`` is the eigenstate wavefunction of orbital ``mu``
+        in the site basis, and the resulting IPR is the standard orbital IPR.
+        
+    available_configurations : np.ndarray
+        Integer array of shape ``(n_cfg, filling)``. Each row is a list of
+        occupied-orbital indices defining one configuration. For example, if
+        ``available_configurations[i] = [1, 4, 7]``, then configuration ``i`` corresponds to the occupation of orbitals
+        ``1, 4, 7``. Then, it can be selected from orbital_vectors
+        as ``orbital_vectors[:, [1, 4, 7]]`` to get the wavefunctions of the occupied orbitals in that configuration.
+    selected_configuration_indices : np.ndarray
+        Integer array selecting which rows of ``available_configurations`` are
+        used in the current realization. These are indices into ``available_configurations`` and ``configuration_values``.
+    weights : np.ndarray
+        Weight array for the selected configurations. Typically
+        :math:`|c_\alpha|^2`.
+    q : float, optional
+        Generalized IPR exponent. ``q=2`` gives the standard
+        :math:`\sum_x |\phi(x)|^4`.
+
+    Returns
+    -------
+    float
+        Weighted mean orbital :math:`\mathrm{IPR}_q` for the realization.
+    """
+    orbital_ipr_q = np.asarray(inverse_participation_ratio(orbital_vectors, q=q), dtype=np.float64)
+    config_values = configuration_mean_statistic(orbital_ipr_q, available_configurations)
+    return weighted_configuration_statistic(config_values, selected_configuration_indices, weights)
+
+
 # -----------------------------------------------------------------------------
 #! K - function
 # -----------------------------------------------------------------------------
-
 
 @numba.njit(fastmath=True)
 def k_function(
@@ -1322,8 +1581,8 @@ class StatisticalModule:
         """
         if state is None:
             self._check_diagonalized()
-            state_idx = state_idx if state_idx is not None else 0
-            state = self._hamil.eig_vec[:, state_idx]
+            state_idx   = state_idx if state_idx is not None else 0
+            state       = self._hamil.eig_vec[:, state_idx]
         probs = np.abs(state) ** 2
         return np.sum(probs**q)
 

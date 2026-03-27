@@ -18,6 +18,7 @@ Date        : December 2025
 
 from    __future__ import annotations
 
+import  os
 import  time
 from    abc import ABC
 from    typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, TypeAlias
@@ -25,11 +26,16 @@ from    typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple,
 import numba
 import numpy as np
 
-try:
-    import jax
-    JAX_AVAILABLE = True
-except ImportError:
-    JAX_AVAILABLE = False
+if os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True"):
+    jax             = None
+    JAX_AVAILABLE   = False
+else:
+    try:
+        import jax
+        JAX_AVAILABLE   = True
+    except ImportError:
+        jax             = None
+        JAX_AVAILABLE   = False
 
 Array : TypeAlias = Union[np.ndarray, "jax.Array"]
 

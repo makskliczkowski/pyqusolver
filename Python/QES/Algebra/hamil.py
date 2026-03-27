@@ -6,13 +6,17 @@ many-body and quadratic models. The class supports matrix materialization,
 matrix-free operator application, basis-aware operator composition, and exact
 diagonalization workflows.
 
+-----------------------------------------------------------------------------
 File    : Algebra/hamil.py
 Author  : Maksymilian Kliczkowski
 Email   : maksymilian.kliczkowski@pwr.edu.pl
 Date    : 2025-02-01
+Version : 2.0
+-----------------------------------------------------------------------------
 """
 
 import time
+import os
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -45,13 +49,23 @@ except ImportError as exc:
 
 ###################################################################################################
 
-try:
-    import jax.numpy                    as jnp
-    from jax.experimental.sparse        import BCOO
-    from QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
+_DISABLE_JAX = os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True")
 
-    JAX_AVAILABLE                       = True
-except ImportError:
+if not _DISABLE_JAX:
+    try:
+        import jax.numpy                    as jnp
+        from jax.experimental.sparse        import BCOO
+        from QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
+
+        JAX_AVAILABLE                       = True
+    except ImportError:
+        jax                                 = None
+        jnp                                 = None
+        lax                                 = None
+        BCOO                                = None
+        local_energy_jax_wrap               = None
+        JAX_AVAILABLE                       = False
+else:
     jax                                 = None
     jnp                                 = None
     lax                                 = None

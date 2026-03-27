@@ -21,6 +21,7 @@ Version : 2.0.0
 """
 
 from    __future__ import annotations
+import  os
 from    typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
 
 import  numba
@@ -110,12 +111,16 @@ def _get_hafnian():
 # -----------------------------------------------------------------------------
 # JAX optional support
 
-try:
-    from QES.Algebra.Hilbert import hilbert_jit_states_jax as _jax_module
-    JAX_AVAILABLE       = True
-except Exception:
+if os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True"):
     _jax_module         = None
     JAX_AVAILABLE       = False
+else:
+    try:
+        from QES.Algebra.Hilbert import hilbert_jit_states_jax as _jax_module
+        JAX_AVAILABLE       = True
+    except Exception:
+        _jax_module         = None
+        JAX_AVAILABLE       = False
 
 # -----------------------------------------------------------------------------
 # Core bit operations

@@ -182,25 +182,18 @@ class MomentumSectorAnalyzer:
             # Generate orbit
             orbit = []
             current = state
-            seen = set()
 
-            while current not in seen:
+            while current not in visited:
                 orbit.append(current)
-                seen.add(current)
+                visited.add(current)
                 # Use callable translator which dispatches to apply_int
                 current, _ = translator(current)
 
             period = len(orbit)
             representative = min(orbit)
-            visited.update(orbit)
 
             # Allowed momenta: k where k\cdot period ≡ 0 (mod extent)
-            allowed_k = []
-
-            # Find allowed momentum indices
-            for q in range(extent):
-                if (q * period) % extent == 0:
-                    allowed_k.append(q)
+            allowed_k = [q for q in range(extent) if (q * period) % extent == 0]
 
             representatives[representative] = {
                 "orbit": orbit,  # Full orbit states
@@ -266,11 +259,10 @@ class MomentumSectorAnalyzer:
             # Generate orbit under first direction
             orbit_x = []
             current = state
-            seen_x = set()
 
-            while current not in seen_x:
+            while current not in visited:
                 orbit_x.append(current)
-                seen_x.add(current)
+                visited.add(current)
                 current, _ = translator_x(current)
 
             period_x = len(orbit_x)
@@ -288,29 +280,25 @@ class MomentumSectorAnalyzer:
             period_y = len(orbit_y)
 
             # Generate full 2D orbit
-            orbit_2d = set()
+            orbit_2d = []
             for state_x in orbit_x:
                 current = state_x
                 for _ in range(period_y):
-                    orbit_2d.add(current)
-                    current, _ = translator_y.apply(current)
+                    if current not in visited:
+                        orbit_2d.append(current)
+                        visited.add(current)
+                    current, _ = translator_y(current)
 
-            orbit_2d = sorted(orbit_2d)
-            visited.update(orbit_2d)
+            orbit_2d.extend(orbit_x)
+            orbit_2d.sort()
 
             # Representative is minimum in 2D orbit
             representative = min(orbit_2d)
 
             # Allowed momenta in each direction
-            allowed_kx = []
-            for q in range(extent_x):
-                if (q * period_x) % extent_x == 0:
-                    allowed_kx.append(q)
+            allowed_kx = [q for q in range(extent_x) if (q * period_x) % extent_x == 0]
 
-            allowed_ky = []
-            for q in range(extent_y):
-                if (q * period_y) % extent_y == 0:
-                    allowed_ky.append(q)
+            allowed_ky = [q for q in range(extent_y) if (q * period_y) % extent_y == 0]
 
             representatives[representative] = {
                 "orbit_x": orbit_x,

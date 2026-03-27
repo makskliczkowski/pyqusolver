@@ -1308,13 +1308,19 @@ class QuadraticHamiltonian(Hamiltonian):
         else:
             self._hamil = self.build_bdg_matrix(copy=False)
 
-    def build(self, verbose: bool = False, use_numpy: bool = True, force: bool = True):
+    def build(self, verbose: bool = False, use_numpy: bool = True, force: bool = False):
         """Build the quadratic Hamiltonian matrix."""
         
         self._log("Building quadratic Hamiltonian matrix...", lvl=2, log="info", verbose=verbose)
             
         if force or self._hamil is None:
             self._hamiltonian_quadratic(use_numpy=use_numpy)
+            if self._hamil is None:
+                if self._particle_conserving:
+                    self._hamil = self._hamil_sp
+                else:
+                    self._hamil = self.build_bdg_matrix(copy=False)
+            self._is_built = True
             
         else:
             self._log("Using cached Hamiltonian matrix.", lvl=2, log="debug", verbose=verbose)
