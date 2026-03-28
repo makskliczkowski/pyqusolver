@@ -24,11 +24,11 @@ from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import numpy as np
 
 if TYPE_CHECKING:
-    from QES.Algebra.globals                        import GlobalSymmetry
-    from QES.Algebra.Hilbert.hilbert_local          import LocalSpace
-    from QES.Algebra.Symmetries.symmetry_container  import CompactSymmetryData, SymmetryContainer
-    from QES.general_python.common.flog             import Logger
-    from QES.general_python.lattices.lattice        import Lattice
+    from QES.Algebra.globals import GlobalSymmetry
+    from QES.Algebra.Hilbert.hilbert_local import LocalSpace
+    from QES.Algebra.Symmetries.symmetry_container import CompactSymmetryData, SymmetryContainer
+    from QES.general_python.common.flog import Logger
+    from QES.general_python.lattices.lattice import Lattice
 
 # -----------------------------------------------------------------------------
 # Base Hilbert-space class
@@ -303,7 +303,7 @@ class BaseHilbertSpace(ABC):
             basis,
             sym_info,
             self._boundary_flux,
-            id(self._state_filter) if self._state_filter else None
+            id(self._state_filter) if self._state_filter else None,
         )
 
     # --------------------------------------------------------------------------------------------------
@@ -417,16 +417,22 @@ class BaseHilbertSpace(ABC):
 
     def get_sym_info(self) -> str:
         """Create information string about symmetries."""
-        tmp = ""
+        parts = []
         if self._sym_container is not None and self._sym_container.generators:
-            for op, (gen_type, sector) in self._sym_container.generators:
-                tmp += f"{gen_type}={sector},"
+            parts.extend(
+                [f"{gen_type}={sector}" for _, (gen_type, sector) in self._sym_container.generators]
+            )
 
         if self.check_global_symmetry:
-            for g in self._global_syms:
-                tmp += f"{g.get_name_str() if hasattr(g, 'get_name_str') else g.name}={g.get_val() if hasattr(g, 'get_val') else ''},"
+            parts.extend(
+                [
+                    f"{g.get_name_str() if hasattr(g, 'get_name_str') else g.name}"
+                    f"={g.get_val() if hasattr(g, 'get_val') else ''}"
+                    for g in self._global_syms
+                ]
+            )
 
-        return tmp[:-1] if tmp else ""
+        return ",".join(parts)
 
     # --------------------------------------------------------------------------------------------------
     #! Directory Naming
@@ -475,18 +481,18 @@ class BaseHilbertSpace(ABC):
     # --------------------------------------------------------------------------------------------------
 
     def __str__(self):
-        info = f"HilbertSpace: Ns={self._ns}, Nh={self._nh}"
+        parts = [f"HilbertSpace: Ns={self._ns}, Nh={self._nh}"]
         if self._local_space:
-            info += f", Local={self._local_space}"
+            parts.append(f"Local={self._local_space}")
             try:
                 conv_name = self.state_convention.get("name", "unknown")
-                info += f", StateConvention={conv_name}"
+                parts.append(f"StateConvention={conv_name}")
             except Exception:
                 pass
         sym_info = self.get_sym_info()
         if sym_info:
-            info += f", Symmetries=[{sym_info}]"
-        return info
+            parts.append(f"Symmetries=[{sym_info}]")
+        return ", ".join(parts)
 
     def __repr__(self):
         return self.__str__()
