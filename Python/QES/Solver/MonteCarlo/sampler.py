@@ -729,8 +729,6 @@ def get_sampler(typek: Union[str, SamplerType, Sampler], *args, **kwargs) -> Sam
         typek_str = typek.strip().lower()
 
         # Manually map common strings if they aren't in Enum yet
-        # ⚡ Bolt: Used set literals instead of list literals for static membership checks
-        #   Impact: Allows Python compiler to optimize to frozenset constants, avoiding dynamic allocation
         if typek_str in {"ar", "arsampler", "exact"}:
             typek = SamplerType.ARSampler
         elif typek_str in {"vmc", "mc", "mcsampler", "default"}:
@@ -779,8 +777,6 @@ class UpdateRule(Enum):
             return UpdateRule[s.upper()]
         except KeyError:
             # Try some common aliases
-            # ⚡ Bolt: Used set literals instead of list literals for static membership checks
-            #   Impact: Allows Python compiler to optimize to frozenset constants, accelerating membership checks
             s = s.lower()
             if s in {"local", "spin_flip", "flip"}:  # extra aliases for local
                 return UpdateRule.LOCAL
