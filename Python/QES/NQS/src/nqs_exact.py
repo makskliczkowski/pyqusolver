@@ -123,7 +123,13 @@ def load_exact_impl(nqs_instance: "NQS", filepath: str, *, key: str = "energy_va
                 raise KeyError(f"Key '{key}' not found in HDF5 file '{filepath}'.")
 
     elif extension == ".npy":
-        exact_values = np.load(filepath)
+        exact_values = np.load(filepath, allow_pickle=False)
+        # Explicitly refuse object-dtype arrays, even if loading succeeds without pickle.
+        if isinstance(exact_values, np.ndarray) and exact_values.dtype == np.dtype("O"):
+            raise TypeError(
+                f"Refusing to load object-dtype array from '{filepath}'. "
+                "Only numeric arrays are supported for exact values."
+            )
 
     elif extension == ".txt" or extension == ".dat" or extension == ".csv":
         exact_values = np.loadtxt(filepath)
