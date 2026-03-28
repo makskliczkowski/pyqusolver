@@ -729,9 +729,9 @@ def get_sampler(typek: Union[str, SamplerType, Sampler], *args, **kwargs) -> Sam
         typek_str = typek.strip().lower()
 
         # Manually map common strings if they aren't in Enum yet
-        if typek_str in ["ar", "arsampler", "exact"]:
+        if typek_str in {"ar", "arsampler", "exact"}:
             typek = SamplerType.ARSampler
-        elif typek_str in ["vmc", "mc", "mcsampler", "default"]:
+        elif typek_str in {"vmc", "mc", "mcsampler", "default"}:
             typek = SamplerType.MCSampler
         else:
             try:
@@ -778,23 +778,23 @@ class UpdateRule(Enum):
         except KeyError:
             # Try some common aliases
             s = s.lower()
-            if s in ["local", "spin_flip", "flip"]:  # extra aliases for local
+            if s in {"local", "spin_flip", "flip"}:  # extra aliases for local
                 return UpdateRule.LOCAL
-            elif s in ["exchange", "swap", "particle_hop"]:  # extra aliases for exchange
+            elif s in {"exchange", "swap", "particle_hop"}:  # extra aliases for exchange
                 return UpdateRule.EXCHANGE
-            elif s in ["global", "plaquette", "pattern"]:  # extra aliases for global
+            elif s in {"global", "plaquette", "pattern"}:  # extra aliases for global
                 return UpdateRule.GLOBAL
-            elif s in ["multi_flip", "multi", "n_flip"]:  # extra aliases for multi flips
+            elif s in {"multi_flip", "multi", "n_flip"}:  # extra aliases for multi flips
                 return UpdateRule.MULTI_FLIP
-            elif s in ["bond_flip", "neighbor_flip", "bond"]:  # extra aliases for bond flips
+            elif s in {"bond_flip", "neighbor_flip", "bond"}:  # extra aliases for bond flips
                 return UpdateRule.BOND_FLIP
-            elif s in ["plaquette", "plaquette_flip"]:  # extra alias for plaquette flips
+            elif s in {"plaquette", "plaquette_flip"}:  # extra alias for plaquette flips
                 return UpdateRule.PLAQUETTE
-            elif s in ["subplaquette", "sub_plaquette"]:  # extra alias for subplaquette flips
+            elif s in {"subplaquette", "sub_plaquette"}:  # extra alias for subplaquette flips
                 return UpdateRule.SUBPLAQUETTE
-            elif s in ["wilson", "wilson_loop"]:  # extra alias for wilson loops
+            elif s in {"wilson", "wilson_loop"}:  # extra alias for wilson loops
                 return UpdateRule.WILSON
-            elif s in ["worm", "snake", "string"]:  # extra alias for worm/string updates
+            elif s in {"worm", "snake", "string"}:  # extra alias for worm/string updates
                 return UpdateRule.WORM
             raise ValueError(f"Invalid UpdateRule: {s}") from None
 
