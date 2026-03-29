@@ -240,13 +240,14 @@ class J1J2Model(HamiltonianSpin):
                     add_local_axis("z", vz, i)
 
         # Nearest-neighbor J1 exchange
-        nn_count = (
-            [lattice.get_nn_forward_num(i) for i in range(self.ns)]
-            if self._use_forward
-            else [lattice.get_nn_num(i) for i in range(self.ns)]
-        )
+        # ⚡ Bolt: Calculate nearest-neighbor count on-the-fly to avoid redundant O(N) list allocation
         for i in range(self.ns):
-            for nidx in range(nn_count[i]):
+            nn_count = (
+                lattice.get_nn_forward_num(i)
+                if self._use_forward
+                else lattice.get_nn_num(i)
+            )
+            for nidx in range(nn_count):
                 j = (
                     lattice.get_nn_forward(i, num=nidx)
                     if self._use_forward
@@ -269,13 +270,14 @@ class J1J2Model(HamiltonianSpin):
             for fn in ("get_nnn_forward_num", "get_nnn_forward", "get_nnn_num", "get_nnn")
         )
         if has_nnn:
-            nnn_count = (
-                [lattice.get_nnn_forward_num(i) for i in range(self.ns)]
-                if self._use_forward
-                else [lattice.get_nnn_num(i) for i in range(self.ns)]
-            )
+            # ⚡ Bolt: Calculate next-nearest-neighbor count on-the-fly to avoid redundant O(N) list allocation
             for i in range(self.ns):
-                for nidx in range(nnn_count[i]):
+                nnn_count = (
+                    lattice.get_nnn_forward_num(i)
+                    if self._use_forward
+                    else lattice.get_nnn_num(i)
+                )
+                for nidx in range(nnn_count):
                     j = (
                         lattice.get_nnn_forward(i, num=nidx)
                         if self._use_forward

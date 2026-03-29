@@ -452,9 +452,6 @@ class HeisenbergKitaev(HamiltonianSpin):
                 return
             self.add_local_spin_component(site, axis, multiplier, op_x=op_sx_l, op_y=op_sy_l, op_z=op_sz_l, op_p=op_sp_l, op_m=op_sm_l)
         
-        # Save nn info
-        nn_nums = ([lattice.get_nn_forward_num(i) for i in range(self.ns)] if self._use_forward else [lattice.get_nn_num(i) for i in range(self.ns)])
-        
         # Adding the Hermitian projection for forward flux if needed to ensure the Hamiltonian remains Hermitian when using complex boundary phases with forward-only neighbor listing.
         hermitize_forward_flux          = bool(self._use_forward and getattr(lattice, "has_flux", False))
         warned_complex_forward_phase    = False
@@ -515,7 +512,8 @@ class HeisenbergKitaev(HamiltonianSpin):
                         self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log)
 
             # ? now check the correlation operators
-            nn_num = nn_nums[i]
+            # ⚡ Bolt: Calculate nearest-neighbor count on-the-fly to avoid redundant O(N) list allocation
+            nn_num = lattice.get_nn_forward_num(i) if self._use_forward else lattice.get_nn_num(i)
 
             for nn in range(nn_num):
                 # get the neighbor index
