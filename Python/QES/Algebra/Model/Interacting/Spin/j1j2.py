@@ -240,7 +240,6 @@ class J1J2Model(HamiltonianSpin):
                     add_local_axis("z", vz, i)
 
         # Nearest-neighbor J1 exchange
-        # ⚡ Bolt: Calculate nearest-neighbor count on-the-fly to avoid redundant O(N) list allocation
         for i in range(self.ns):
             nn_count = (
                 lattice.get_nn_forward_num(i)
@@ -270,7 +269,6 @@ class J1J2Model(HamiltonianSpin):
             for fn in ("get_nnn_forward_num", "get_nnn_forward", "get_nnn_num", "get_nnn")
         )
         if has_nnn:
-            # ⚡ Bolt: Calculate next-nearest-neighbor count on-the-fly to avoid redundant O(N) list allocation
             for i in range(self.ns):
                 nnn_count = (
                     lattice.get_nnn_forward_num(i)

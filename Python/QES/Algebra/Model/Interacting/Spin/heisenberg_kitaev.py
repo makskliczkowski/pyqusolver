@@ -512,7 +512,6 @@ class HeisenbergKitaev(HamiltonianSpin):
                         self._log(f"Adding impurity Sy at {i} with value {imp_y:.4f}", lvl=2, log=log)
 
             # ? now check the correlation operators
-            # ⚡ Bolt: Calculate nearest-neighbor count on-the-fly to avoid redundant O(N) list allocation
             nn_num = lattice.get_nn_forward_num(i) if self._use_forward else lattice.get_nn_num(i)
 
             for nn in range(nn_num):
