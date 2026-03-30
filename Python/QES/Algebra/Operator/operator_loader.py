@@ -584,7 +584,7 @@ class OperatorModule:
         # Prepare single-site operators for magnetization
         # Also cached for performance
         single_ops = {}
-        for comp in {"x", "y", "z"}:
+        for comp in ("x", "y", "z"):
             cache_key = (comp, ns, "local")
             if cache_key in self._correlation_ops_cache:
                 single_ops[comp] = self._correlation_ops_cache[cache_key]
