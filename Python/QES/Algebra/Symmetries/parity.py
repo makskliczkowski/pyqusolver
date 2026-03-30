@@ -299,7 +299,7 @@ class ParitySymmetry(SymmetryOperator):
         if self.lattice:
             ns = ns or getattr(self.lattice, "Ns", None) or getattr(self.lattice, "ns", None)
 
-        if self.axis in ["x", "y"]:
+        if self.axis in {"x", "y"}:
             # Parity X/Y require half-filling with U(1)
             if u1_sector is None or ns is None:
                 return True, "Compatible (cannot determine filling)"

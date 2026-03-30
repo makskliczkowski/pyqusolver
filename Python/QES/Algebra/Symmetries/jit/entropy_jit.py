@@ -134,7 +134,7 @@ def topological_entropy(
         )
 
     # Levin-Wen: γ = S_inner + S_outer - S_inner_outer
-    elif all(k in entropies for k in ["inner", "outer", "inner_outer"]):
+    elif all(k in entropies for k in {"inner", "outer", "inner_outer"}):
         gamma = entropies["inner"] + entropies["outer"] - entropies["inner_outer"]
 
     return {"gamma": gamma, "entropies": entropies, "regions": regions}

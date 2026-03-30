@@ -63,7 +63,7 @@ def choose_model(model_name: str, **kwargs):
         pass
     
     # Try dummy
-    if model_name.lower() in ["dummy", "dummy_hamiltonian"]:
+    if model_name.lower() in {"dummy", "dummy_hamiltonian"}:
         from    .dummy import DummyHamiltonian
         return  DummyHamiltonian(**kwargs)
     
