@@ -447,7 +447,7 @@ class GeneralMatrix(spla.LinearOperator):
         if isinstance(backend, str):
             target = (
                 "np"
-                if backend.lower() in ["default", "np", "numpy"] or not JAX_AVAILABLE
+                if backend.lower() in {"default", "np", "numpy"} or not JAX_AVAILABLE
                 else "jax"
             )
         else:

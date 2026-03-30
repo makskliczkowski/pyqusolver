@@ -152,7 +152,7 @@ class BackendRegistry:
 
         Delegates to the global BackendManager.
         """
-        if name not in ["numpy", "jax"]:
+        if name not in {"numpy", "jax"}:
             available = ["numpy"]
             if JAX_AVAILABLE:
                 available.append("jax")
