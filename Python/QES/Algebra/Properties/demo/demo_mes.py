@@ -324,7 +324,7 @@ def run_demo():
     
     if lw_res:
         reg_lw      = lw_res[-1]['regions']
-        lw_abc      = {k: v for k, v in reg_lw.items() if k in ['A', 'B', 'C']}
+        lw_abc      = {k: v for k, v in reg_lw.items() if k in {'A', 'B', 'C'}}
         lat.plot.regions(
             lw_abc, ax=axes1[1], title="Levin-Wen Partition",
             fill=True, fill_alpha=0.15, show_bonds=True

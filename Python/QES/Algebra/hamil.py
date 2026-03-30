@@ -2008,7 +2008,7 @@ class Hamiltonian(BasisAwareOperator):
             key: val
             for key, val in kwargs.items()
             if key
-            not in [
+            not in {
                 "method",
                 "backend",
                 "use_scipy",
@@ -2016,8 +2016,7 @@ class Hamiltonian(BasisAwareOperator):
                 "store_basis",
                 "hermitian",
                 "k",
-                "which",
-            ]
+                "which",}
         }
 
         matrix_to_diag = self._hamil
