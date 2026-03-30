@@ -126,7 +126,7 @@ def make_hybrid_proposer(local_prop: Callable, global_prop: Callable, p_global: 
         Function(state, key) -> new_state
     p_global:
         Probability of choosing global_prop. The local_prop is chosen with probability (1 - p_global).
-        Values should be in {0, 1}.
+        Values should be in the interval [0, 1] (inclusive).
 
     Returns:
         Function(state, key) -> new_state
