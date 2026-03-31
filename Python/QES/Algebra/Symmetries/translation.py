@@ -639,10 +639,52 @@ class TranslationSymmetry(SymmetryOperator):
 
         if not isinstance(state, np.ndarray):
             state = np.array(state)
-        # TODO: Handle multi-dimensional numpy arrays if needed
-        # For numpy arrays, delegate to integer operations
-        new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
-        return np.array(new_state), phase
+
+        # 1. Handle vector-encoded states (last dimension == ns)
+        if state.ndim >= 1 and state.shape[-1] == self.ns:
+            # Spatial translation: site i maps to site self.perm[i]
+            # To get value at site j in new_state, we need value from site i where self.perm[i] = j
+            # i = inverse_perm[j].
+            inverse_perm = np.argsort(self.perm)
+            new_state = np.take(state, inverse_perm, axis=-1)
+
+            # Calculate number of crossings for each state in batch
+            # state * self.crossing_mask picks occupations of sites that cross boundary
+            occ_cross = np.sum(state * self.crossing_mask, axis=-1).astype(np.int32)
+
+            # Get direction index (0, 1, 2)
+            dir_idx = getattr(self.direction, "value", self.direction)
+            if isinstance(dir_idx, str):
+                dir_map = {"x": 0, "y": 1, "z": 2}
+                dir_idx = dir_map.get(dir_idx.lower(), 0)
+
+            # Map crossing counts to phases using precomputed table
+            # shape (3, ns + 1)
+            boundary_phases = self.lattice.boundary_phases()[dir_idx]
+            phase = boundary_phases[occ_cross]
+
+            return new_state, phase
+
+        # 2. Handle integer-encoded states (scalar or batched)
+        else:
+            # If scalar, use apply_int
+            if state.ndim == 0:
+                new_state, phase = self.apply_int(int(state), self.ns, **kwargs)
+                return np.array(new_state, dtype=state.dtype), phase
+
+            # If batched integers, we apply translation to each
+            orig_shape = state.shape
+            flat_state = state.ravel()
+            new_states = np.empty_like(flat_state)
+            phases = np.empty(flat_state.shape, dtype=np.complex128)
+
+            # Apply translation to each state in the batch
+            for i, s in enumerate(flat_state):
+                ns_val, ph = self.apply_int(int(s), self.ns, **kwargs)
+                new_states[i] = ns_val
+                phases[i] = ph
+
+            return new_states.reshape(orig_shape), phases.reshape(orig_shape)
 
     def apply_jax(self, state, **kwargs):
         """
