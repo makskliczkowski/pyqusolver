@@ -455,12 +455,8 @@ class Hamiltonian(BasisAwareOperator):
     def _resolve_sites_input(self, sites: Optional[Iterable[int]]) -> List[int]:
         if sites is None:
             return list(range(int(self.ns)))
-        out = []
-        for s in sites:
-            si = int(s)
-            if 0 <= si < int(self.ns):
-                out.append(si)
-        return out
+        ns = int(self.ns)
+        return [si for si in map(int, sites) if 0 <= si < ns]
 
     def iter_bonds(self, *, bonds: Optional[Iterable[Sequence[int]]] = None, order: int = 1, unique: bool = True) -> List[Tuple[int, int]]:
         """
