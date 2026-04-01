@@ -6,24 +6,36 @@ This module contains various quantum spin models with interactions.
 
 Modules:
 --------
+
+1. General Spin Models:
 - heisenberg_kitaev:
     Heisenberg-Kitaev model implementations
-- qsm:
-    Quantum Spin Models
 - transverse_ising:
     Transverse Field Ising Model
-- ultrametric:
-    Ultrametric spin models
 - xxz:
     XXZ Spin Model
+- j1j2:
+    J1-J2 Spin Model
+2. Spin Random Models:
+- qsm:
+    Quantum Spin Models
+- ultrametric:
+    Ultrametric spin models
+3. General Hamiltonian:
+- hamiltonian_spin:
+    General Hamiltonian for spin systems
 
 ------------------------------------------------------------------------
 File        : Algebra/Model/Interacting/Spin/__init__.py
 Author      : Maksymilian Kliczkowski
-Email       : maksymilian.kliczkowski@pwr.edu.pl
+Email       : maxgrom97@gmail.com
 License     : MIT
+Version     : 1.0
 ------------------------------------------------------------------------
 """
+
+from __future__ import annotations
+from typing     import TYPE_CHECKING
 
 __all__ = [
     "heisenberg_kitaev", "qsm", "transverse_ising", "ultrametric", "j1j2", "xxz",
@@ -45,6 +57,17 @@ _MAPPINGS = {
     "J1J2Model"             : ".j1j2",
     "XXZ"                   : ".xxz",
 }
+
+if TYPE_CHECKING:
+    # Spin models
+    from .hamiltonian_spin  import HamiltonianSpin
+    from .heisenberg_kitaev import HeisenbergKitaev
+    from .transverse_ising  import TransverseFieldIsing
+    from .j1j2              import J1J2Model
+    from .xxz               import XXZ
+    # Spin Random models
+    from .qsm               import QSM
+    from .ultrametric       import UltrametricModel
 
 def __getattr__(name):
     if name in _MAPPINGS:
@@ -100,7 +123,6 @@ def choose_model(model_name: str, **kwargs):
 
     cls = __getattr__(cls_name)
     return cls(**kwargs)
-
 
 # ----------------------------------------------------------------------
 #! End of File

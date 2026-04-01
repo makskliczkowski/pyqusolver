@@ -7,11 +7,13 @@ This module contains non-interacting quantum models with particle number conserv
 Modules:
 --------
 - free_fermions: Free fermionic models
+- Majorana: Majorana fermion models (Kitaev, Kitaev-Gamma, etc.)
 
 Author: Maksymilian Kliczkowski
 Email: maksymilian.kliczkowski@pwr.edu.pl
 """
 
 from . import free_fermions
+from . import Majorana
 
-__all__ = ["free_fermions"]
+__all__ = ["free_fermions", "Majorana"]
