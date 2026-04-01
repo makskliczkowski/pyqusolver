@@ -135,7 +135,7 @@ class Hamiltonian(BasisAwareOperator):
 
             # Fast numeric path (avoids isinstance against abstract base classes for speed)
             if isinstance(value, (int, float, complex, np.number)):
-                return not np.isclose(value, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
+                return abs(value) > Hamiltonian._ADD_TOLERANCE
 
             # Mapping path.
             if isinstance(value, Mapping):
@@ -156,7 +156,7 @@ class Hamiltonian(BasisAwareOperator):
                     if hasattr(scalar, "val"):
                         scalar = scalar.val
                     if isinstance(scalar, (int, float, complex, np.number)):
-                        return not np.isclose(scalar, 0.0, rtol=Hamiltonian._ADD_TOLERANCE)
+                        return abs(scalar) > Hamiltonian._ADD_TOLERANCE
                     try:
                         return bool(scalar)
                     except Exception:
@@ -164,7 +164,7 @@ class Hamiltonian(BasisAwareOperator):
 
                 # Fast numpy vectorized check
                 try:
-                    return not np.all(np.isclose(arr, 0.0, rtol=Hamiltonian._ADD_TOLERANCE))
+                    return np.any(np.abs(arr) > Hamiltonian._ADD_TOLERANCE)
                 except Exception:
                     # Object arrays or unsupported dtypes: recurse element-wise.
                     return any(_is_nonzero_like(v) for v in np.ravel(arr))
