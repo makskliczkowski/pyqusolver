@@ -43,12 +43,24 @@ import  typing as _t
 
 def _apply_master_backend_env_defaults() -> None:
     """Normalize global backend env flags before importing backend-aware modules."""
-    if _os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True"):
-        _os.environ.setdefault("PY_BACKEND", "np")
-        _os.environ.setdefault("QES_BACKEND", "numpy")
-        _os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-        _os.environ.setdefault("JAX_PLATFORM_NAME", "cpu")
-        _os.environ.setdefault("JAX_PLATFORMS", "cpu")
+    jax_dont_use    = _os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True")
+    force_cpu       = (
+                        _os.environ.get("CUDA_VISIBLE_DEVICES")     == ""
+                        or _os.environ.get("PY_JAX_CPU_ONLY", "0")  in ("1", "true", "True")
+                        or _os.environ.get("PY_FORCE_CPU", "0")     in ("1", "true", "True")
+                    )
+
+    if jax_dont_use:
+        _os.environ.setdefault("PY_BACKEND",            "np")
+        _os.environ.setdefault("QES_BACKEND",           "numpy")
+        _os.environ.setdefault("CUDA_VISIBLE_DEVICES",  "")
+        _os.environ.setdefault("JAX_PLATFORM_NAME",     "cpu")
+        _os.environ.setdefault("JAX_PLATFORMS",         "cpu")
+    elif force_cpu:
+        # If user explicitly requested no GPUs or if CPU-only is requested,
+        # we force JAX to CPU to avoid CUDA initialization errors.
+        _os.environ.setdefault("JAX_PLATFORMS",         "cpu")
+        _os.environ.setdefault("JAX_PLATFORM_NAME",     "cpu")
 
 
 _apply_master_backend_env_defaults()

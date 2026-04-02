@@ -67,14 +67,17 @@ except ImportError as e:
 # -----------------------------------------------------------------------------
 
 try:
-    import jax
-    import jax.numpy as jnp
-
-    JAX_AVAILABLE = True
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
 except ImportError:
-    JAX_AVAILABLE = False
-    jax = None
-    jnp = np
+    try:
+        import jax
+        import jax.numpy as jnp
+
+        JAX_AVAILABLE   = True
+    except ImportError:
+        JAX_AVAILABLE   = False
+        jax             = None
+        jnp             = np
 
 ####################################################################################################
 
