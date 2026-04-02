@@ -118,6 +118,7 @@ class Hamiltonian(BasisAwareOperator):
     _ADD_TOLERANCE = 1e-10
 
     def _ADD_CONDITION(x, *args):
+        from collections.abc import Mapping, Iterable
         def _is_nonzero_like(value):
             """
             Robust scalar/array-like non-zero check.
@@ -146,18 +147,42 @@ class Hamiltonian(BasisAwareOperator):
             # Numpy/JAX arrays
             if hasattr(value, "ndim"):
                 if value.ndim == 0:
-                    scalar = value.item()
+                    try:
+                        scalar = value.item()
+                    except Exception:
+                        scalar = value
                     if hasattr(scalar, "val"):
                         scalar = scalar.val
                     if isinstance(scalar, (int, float, complex, np.number)):
                         return abs(scalar) > Hamiltonian._ADD_TOLERANCE
-                    return bool(scalar)
+                    try:
+                        return bool(scalar)
+                    except Exception:
+                        return False
                 else:
-                    if hasattr(np, "any") and hasattr(np, "abs"):
+                    if hasattr(value, "dtype") and value.dtype == object:
+                        return any(_is_nonzero_like(v) for v in np.ravel(value))
+                    try:
                         return bool(np.any(np.abs(value) > Hamiltonian._ADD_TOLERANCE))
+                    except Exception:
+                        return any(_is_nonzero_like(v) for v in np.ravel(value))
+
+            # Mapping path fallback
+            if isinstance(value, Mapping):
+                return any(_is_nonzero_like(v) for v in value.values())
+
+            # Generic iterable fallback
+            if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+                try:
+                    return any(_is_nonzero_like(v) for v in value)
+                except Exception:
+                    return False
 
             # Last-resort truthiness
-            return bool(value)
+            try:
+                return bool(value)
+            except Exception:
+                return False
 
         if x is None:
             return False
@@ -506,6 +531,11 @@ class Hamiltonian(BasisAwareOperator):
             if coefficient.size == int(self.ns):
                 return coefficient[int(site)]
             raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={coefficient.shape}.")
+        from collections.abc import Mapping
+        if isinstance(coefficient, Mapping):
+            if site in coefficient:
+                return coefficient[site]
+            return coefficient.get(int(site), 0.0)
         return coefficient
 
     def _coefficient_for_bond(self, coefficient: Any, i: int, j: int, idx: int):
@@ -527,6 +557,13 @@ class Hamiltonian(BasisAwareOperator):
             if idx < coefficient.size:
                 return coefficient[idx]
             raise ValueError(f"Bond coefficient array sequence too short: need index {idx}, size={coefficient.size}.")
+        from collections.abc import Mapping
+        if isinstance(coefficient, Mapping):
+            if (i, j) in coefficient:
+                return coefficient[(i, j)]
+            if (j, i) in coefficient:
+                return coefficient[(j, i)]
+            return 0.0
         return coefficient
 
     def add_local_term(
