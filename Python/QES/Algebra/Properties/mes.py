@@ -521,39 +521,39 @@ class MESFinder:
         optimizer = optax.adam(learning_rate=lr, b1=beta1, b2=beta2, eps=adam_eps)
         opt_state = optimizer.init(params)
         
-        @jax.jit
+        # Define step and scan_body functions
+        # Note: These will be compiled inside the scan, but the compilation will be
+        # reused as long as the shapes don't change
         def step(params, opt_state):
-            loss, grads         = jax.value_and_grad(_loss)(params)
-            updates, new_state  = optimizer.update(grads, opt_state, params)
+            loss, grads = jax.value_and_grad(_loss)(params)
+            updates, new_state = optimizer.update(grads, opt_state, params)
             return optax.apply_updates(params, updates), new_state, loss
         
-        # Use jax.lax.scan for ZERO Python overhead in optimization loop
-        # This eliminates all host-device transfers until the end
         def scan_body(carry, _):
-            params, opt_state, best_params, best_loss   = carry
-            new_params, new_opt_state, loss             = step(params, opt_state)
-            # Track best parameters
-            is_better   = loss < best_loss
+            params, opt_state, best_params, best_loss = carry
+            new_params, new_opt_state, loss = step(params, opt_state)
+            is_better = loss < best_loss
             best_params = jnp.where(is_better, new_params, best_params)
-            best_loss   = jnp.where(is_better, loss, best_loss)
+            best_loss = jnp.where(is_better, loss, best_loss)
             return (new_params, new_opt_state, best_params, best_loss), loss
         
         # Warm up compilation
         try:
-            params, opt_state, val  = step(params, opt_state)
+            params, opt_state, val = step(params, opt_state)
             init_carry = (params, opt_state, params, val)
         except Exception as exc:
             raise RuntimeError("method='jax-grad' requires S_func to be JAX-traceable") from exc
         
         # Run optimization with scan (no Python overhead)
+        # This will compile once per unique (param shape, n_constraints) combination
         (final_params, final_opt_state, best_params, best_loss), all_losses = jax.lax.scan(
             scan_body, init_carry, None, length=max_iter - 1
         )
         
-        # Check convergence on host (only one sync at the end)
-        all_losses_np   = np.asarray(all_losses)
-        best_val        = float(best_loss)
-        nfev            = max_iter
+        # Convert to host (only one sync at the end)
+        all_losses_np = np.asarray(all_losses)
+        best_val = float(best_loss)
+        nfev = max_iter
         
         # Optional: report progress if verbose
         if verbose:
