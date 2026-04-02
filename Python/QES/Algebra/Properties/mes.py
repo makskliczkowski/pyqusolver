@@ -254,53 +254,113 @@ def _loss_full(theta, C_stack, V, S_func: Callable, m: int):
     return jnp.real(jnp.asarray(S_func(psi)))
 
 # ------------------------
-# Optimization steps and scan bodies
+# Optimization steps and early-stopping loop
 # ------------------------
 
 @partial(jax.jit, static_argnums=(3, 4, 5))
 def _step_fast(params, opt_state, C_stack, optimizer, S_func_c: Callable, m: int):
-    loss, grads = jax.value_and_grad(_loss_fast)(params, C_stack, S_func_c, m)
-    updates, new_state = optimizer.update(grads, opt_state, params)
-    new_params = optax.apply_updates(params, updates)
+    loss, grads                     = jax.value_and_grad(_loss_fast)(params, C_stack, S_func_c, m)
+    updates, new_state              = optimizer.update(grads, opt_state, params)
+    new_params                      = optax.apply_updates(params, updates)
     return new_params, new_state, loss
 
 @partial(jax.jit, static_argnums=(4, 5, 6))
 def _step_full(params, opt_state, C_stack, V, optimizer, S_func: Callable, m: int):
-    loss, grads = jax.value_and_grad(_loss_full)(params, C_stack, V, S_func, m)
-    updates, new_state = optimizer.update(grads, opt_state, params)
-    new_params = optax.apply_updates(params, updates)
+    loss, grads                     = jax.value_and_grad(_loss_full)(params, C_stack, V, S_func, m)
+    updates, new_state              = optimizer.update(grads, opt_state, params)
+    new_params                      = optax.apply_updates(params, updates)
     return new_params, new_state, loss
 
-def _scan_body_fast(carry, _, *, C_stack, optimizer, S_func_c: Callable, m: int):
-    params, opt_state, best_params, best_loss = carry
+def _while_cond(state, *, max_iter: int, patience: int, min_iter: int):
+    step_idx, _, _, _, _, stall_count, _, _ = state
+    under_max = step_idx < max_iter
+    before_min = step_idx < min_iter
+    patience_left = stall_count < patience
+    return jnp.logical_and(under_max, jnp.logical_or(before_min, patience_left))
+
+
+def _while_body_fast(state, *, C_stack, optimizer, S_func_c: Callable, m: int, tol, min_iter: int):
+    step_idx, params, opt_state, best_params, best_loss, stall_count, prev_best_loss, losses = state
     new_params, new_opt_state, loss = _step_fast(params, opt_state, C_stack, optimizer, S_func_c, m)
     is_better = loss < best_loss
-    best_params = jnp.where(is_better, new_params, best_params)
-    best_loss = jnp.where(is_better, loss, best_loss)
-    return (new_params, new_opt_state, best_params, best_loss), loss
+    new_best_params = jnp.where(is_better, new_params, best_params)
+    new_best_loss = jnp.where(is_better, loss, best_loss)
+    improved = (prev_best_loss - new_best_loss) > tol
+    next_step_idx = step_idx + 1
+    stall_candidate = jnp.where(improved, 0, stall_count + 1)
+    new_stall_count = jnp.where(next_step_idx < min_iter, 0, stall_candidate)
+    losses = losses.at[step_idx].set(loss)
+    return (
+        next_step_idx,
+        new_params,
+        new_opt_state,
+        new_best_params,
+        new_best_loss,
+        new_stall_count,
+        new_best_loss,
+        losses,
+    )
 
-def _scan_body_full(carry, _, *, C_stack, V, optimizer, S_func: Callable, m: int):
-    params, opt_state, best_params, best_loss = carry
+def _while_body_full(state, *, C_stack, V, optimizer, S_func: Callable, m: int, tol, min_iter: int):
+    step_idx, params, opt_state, best_params, best_loss, stall_count, prev_best_loss, losses = state
     new_params, new_opt_state, loss = _step_full(params, opt_state, C_stack, V, optimizer, S_func, m)
     is_better = loss < best_loss
-    best_params = jnp.where(is_better, new_params, best_params)
-    best_loss = jnp.where(is_better, loss, best_loss)
-    return (new_params, new_opt_state, best_params, best_loss), loss
+    new_best_params = jnp.where(is_better, new_params, best_params)
+    new_best_loss = jnp.where(is_better, loss, best_loss)
+    improved = (prev_best_loss - new_best_loss) > tol
+    next_step_idx = step_idx + 1
+    stall_candidate = jnp.where(improved, 0, stall_count + 1)
+    new_stall_count = jnp.where(next_step_idx < min_iter, 0, stall_candidate)
+    losses = losses.at[step_idx].set(loss)
+    return (
+        next_step_idx,
+        new_params,
+        new_opt_state,
+        new_best_params,
+        new_best_loss,
+        new_stall_count,
+        new_best_loss,
+        losses,
+    )
 
 # -------------------------
-# Scan runners
+# Early-stopping runners
 # -------------------------
 
-@partial(jax.jit, static_argnums=(2, 3, 4, 5))
-def _run_scan_fast(init_carry, C_stack, n_steps: int, optimizer, S_func_c: Callable, m: int):
-    body = partial(_scan_body_fast, C_stack=C_stack, optimizer=optimizer, S_func_c=S_func_c, m=m)
-    return jax.lax.scan(body, init_carry, xs=None, length=n_steps)
+@partial(jax.jit, static_argnums=(3, 4, 5, 8, 9))
+def _run_while_fast(params, opt_state, C_stack, max_iter: int, optimizer, S_func_c: Callable, m: int, tol, patience: int, min_iter: int):
+    loss_dtype      = params.dtype
+    initial_state   = (
+        jnp.asarray(0, dtype=jnp.int32),
+        params,
+        opt_state,
+        params,
+        jnp.asarray(jnp.inf, dtype=loss_dtype),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(jnp.inf, dtype=loss_dtype),
+        jnp.full((max_iter,), jnp.inf, dtype=loss_dtype),
+    )
+    cond = partial(_while_cond, max_iter=max_iter, patience=patience, min_iter=min_iter)
+    body = partial(_while_body_fast, C_stack=C_stack, optimizer=optimizer, S_func_c=S_func_c, m=m, tol=tol, min_iter=min_iter)
+    return jax.lax.while_loop(cond, body, initial_state)
 
 
-@partial(jax.jit, static_argnums=(3, 4, 5, 6))
-def _run_scan_full(init_carry, C_stack, V, n_steps: int, optimizer, S_func: Callable, m: int):
-    body = partial(_scan_body_full, C_stack=C_stack, V=V, optimizer=optimizer, S_func=S_func, m=m)
-    return jax.lax.scan(body, init_carry, xs=None, length=n_steps)
+@partial(jax.jit, static_argnums=(4, 5, 6, 9, 10))
+def _run_while_full(params, opt_state, C_stack, V, max_iter: int, optimizer, S_func: Callable, m: int, tol, patience: int, min_iter: int):
+    loss_dtype = params.dtype
+    initial_state = (
+        jnp.asarray(0, dtype=jnp.int32),
+        params,
+        opt_state,
+        params,
+        jnp.asarray(jnp.inf, dtype=loss_dtype),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(jnp.inf, dtype=loss_dtype),
+        jnp.full((max_iter,), jnp.inf, dtype=loss_dtype),
+    )
+    cond = partial(_while_cond, max_iter=max_iter, patience=patience, min_iter=min_iter)
+    body = partial(_while_body_full, C_stack=C_stack, V=V, optimizer=optimizer, S_func=S_func, m=m, tol=tol, min_iter=min_iter)
+    return jax.lax.while_loop(cond, body, initial_state)
 
 # ---------------------------------------
 #! Topological Results Dataclass
@@ -502,6 +562,7 @@ class MESFinder:
         beta2               : float = 0.999,
         adam_eps            : float = 1e-8,
         patience            : int = 30,
+        min_iter            : int = 20,
         c_constraints       : Optional[List[np.ndarray]] = None,
         verbose             : bool = False,
         **kwargs,
@@ -527,7 +588,9 @@ class MESFinder:
         adam_eps : float
             Epsilon parameter for Adam optimizer to prevent division by zero.
         patience : int
-            Number of consecutive steps with small improvement before stopping.
+            Number of consecutive steps with best-loss improvement <= tol before stopping.
+        min_iter : int
+            Minimum number of optimization steps before early stopping may trigger.
         c_constraints : Optional[List[np.ndarray]]
             List of coefficient vectors to be orthogonalized against (for finding multiple MES).
         verbose : bool
@@ -558,42 +621,32 @@ class MESFinder:
 
         try:
             if use_fast_path:
-                params, opt_state, val = _step_fast(params, opt_state, C_stack, optimizer, self._S_func_c, m)
+                final_state = _run_while_fast(
+                    params, opt_state, C_stack, max_iter, optimizer, self._S_func_c, m, tol, patience, min_iter
+                )
             else:
-                params, opt_state, val = _step_full(params, opt_state, C_stack, Vj, optimizer, self.S_func, m)
-            init_carry = (params, opt_state, params, val)
+                final_state = _run_while_full(
+                    params, opt_state, C_stack, Vj, max_iter, optimizer, self.S_func, m, tol, patience, min_iter
+                )
         except Exception as exc:
             raise RuntimeError("method='jax-grad' requires S_func to be JAX-traceable") from exc
 
-        n_scan_steps = max(max_iter - 1, 0)
-        if n_scan_steps > 0:
-            if use_fast_path:
-                (_, _, best_params, best_loss), all_losses = _run_scan_fast(
-                    init_carry, C_stack, n_scan_steps, optimizer, self._S_func_c, m
-                )
-            else:
-                (_, _, best_params, best_loss), all_losses = _run_scan_full(
-                    init_carry, C_stack, Vj, n_scan_steps, optimizer, self.S_func, m
-                )
-        else:
-            _, _, best_params, best_loss = init_carry
-            all_losses = jnp.empty((0,), dtype=best_loss.dtype)
+        step_count, _, _, best_params, best_loss, _, _, losses = final_state
         
         # Convert to host (only one sync at the end)
-        all_losses_np   = np.asarray(all_losses)
+        nfev            = int(step_count)
+        all_losses_np   = np.asarray(losses)[:nfev]
         best_val        = float(best_loss)
-        nfev            = max_iter
         
         # Optional: report progress if verbose
         if verbose:
             every = int(kwargs.get('every', 10))
             for i in range(0, len(all_losses_np), every):
-                step_idx = i + 2  # +1 for warmup, +1 for 1-indexing
-                if step_idx <= max_iter:
-                    self._log(
-                        f"JAX-GRAD step {step_idx}/{max_iter}: val={all_losses_np[i]:.8f}, best={best_val:.8f}", 
-                        verbose=verbose, lvl=2
-                    )
+                step_idx = i + 1
+                self._log(
+                    f"JAX-GRAD step {step_idx}/{max_iter}: val={all_losses_np[i]:.8f}, best={best_val:.8f}",
+                    verbose=verbose, lvl=2
+                )
         
         best_c = np.asarray(_params_to_c(best_params, C_stack, m))
         return self.normalize(best_c), float(best_val), nfev
@@ -636,7 +689,7 @@ class MESFinder:
             Optimization method to use. Currently only 'jax-grad' is supported.
         options : Optional[Dict[str, Any]]
             Additional options for the optimization method (e.g. learning rate, Adam parameters).
-            Expected keys for method='jax-grad': 'lr', 'beta1', 'beta2', 'adam_eps', 'patience'.
+            Expected keys for method='jax-grad': 'lr', 'beta1', 'beta2', 'adam_eps', 'patience', 'min_iter'.
         verbose : bool
             If True, print optimization progress and results.
         kwargs : dict
@@ -670,6 +723,7 @@ class MESFinder:
                                 beta2           =   options.get("beta2", 0.999),
                                 adam_eps        =   options.get("adam_eps", 1e-8),
                                 patience        =   options.get("patience", 30),
+                                min_iter        =   options.get("min_iter", 20),
                                 c_constraints   =   c_constraints,
                                 verbose         =   verbose,
                                 **kwargs
