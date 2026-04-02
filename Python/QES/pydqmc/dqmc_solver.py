@@ -200,5 +200,9 @@ class DQMCSolver(MonteCarloSolver):
     def load_weights(self, directory=None, name="configs"):
         if directory:
             path = f"{directory}/{name}.npy"
+<<<<<<< sentinel-fix-allow-pickle-6517379890859389044
+            # SECURITY: Explicitly disable allow_pickle to prevent arbitrary code execution
+=======
+>>>>>>> main
             self.sampler.configs = jnp.array(np.load(path, allow_pickle=False))
             self.sampler.recompute_everything()
