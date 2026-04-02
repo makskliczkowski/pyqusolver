@@ -139,7 +139,7 @@ Optimization backend:
 - Uses optax.adam optimizer (SOTA implementation from DeepMind)
 - JAX JIT compilation for maximum performance
 - Module-level compiled kernels to avoid recompilation
-- jax.lax.scan for zero-overhead optimization loops
+- jax.lax.while_loop for zero-overhead optimization loops with early stopping
 - Direct autodiff on coefficient space (no numerical gradients)
 
 --------------------------------
@@ -327,7 +327,7 @@ def _while_body_full(state, *, C_stack, V, optimizer, S_func: Callable, m: int, 
 # Early-stopping runners
 # -------------------------
 
-@partial(jax.jit, static_argnums=(3, 4, 5, 8, 9))
+@partial(jax.jit, static_argnums=(3, 4, 5, 6, 8, 9))
 def _run_while_fast(params, opt_state, C_stack, max_iter: int, optimizer, S_func_c: Callable, m: int, tol, patience: int, min_iter: int):
     loss_dtype      = params.dtype
     initial_state   = (
@@ -345,7 +345,7 @@ def _run_while_fast(params, opt_state, C_stack, max_iter: int, optimizer, S_func
     return jax.lax.while_loop(cond, body, initial_state)
 
 
-@partial(jax.jit, static_argnums=(4, 5, 6, 9, 10))
+@partial(jax.jit, static_argnums=(4, 5, 6, 7, 9, 10))
 def _run_while_full(params, opt_state, C_stack, V, max_iter: int, optimizer, S_func: Callable, m: int, tol, patience: int, min_iter: int):
     loss_dtype = params.dtype
     initial_state = (
@@ -804,7 +804,7 @@ class MESFinder:
         method : str
             Optimization method to use. Only `method='jax-grad'` is supported.
         options : Optional[Dict[str, Any]]
-            Additional options for JAX-Adam (`lr`, `beta1`, `beta2`, `adam_eps`, `patience`).
+            Additional options for JAX-Adam (`lr`, `beta1`, `beta2`, `adam_eps`, `patience`, `min_iter`).
         verbose : bool
             If True, print detailed information about the optimization process. 
         kwargs : dict
@@ -1036,7 +1036,7 @@ def find_mes_save(lattice       : 'Lattice',
                         max_iter        =   kwargs.get('max_iter', 100),
                         state_max       =   n_gs,
                         overlap_tol     =   kwargs.get('overlap_tol', 1e-5),
-                        options         =   kwargs.get('options', {'lr': 0.05, 'patience': 25}),
+                        options         =   kwargs.get('options', {'lr': 0.05, 'patience': 25, 'min_iter': 20}),
                         verbose         =   kwargs.get('verbose', True),
                         logger          =   logger,
                         every           =   kwargs.get('every', 10),
