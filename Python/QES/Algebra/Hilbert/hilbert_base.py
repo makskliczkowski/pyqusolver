@@ -417,16 +417,18 @@ class BaseHilbertSpace(ABC):
 
     def get_sym_info(self) -> str:
         """Create information string about symmetries."""
-        tmp = ""
+        parts = []
         if self._sym_container is not None and self._sym_container.generators:
             for op, (gen_type, sector) in self._sym_container.generators:
-                tmp += f"{gen_type}={sector},"
+                parts.append(f"{gen_type}={sector}")
 
         if self.check_global_symmetry:
             for g in self._global_syms:
-                tmp += f"{g.get_name_str() if hasattr(g, 'get_name_str') else g.name}={g.get_val() if hasattr(g, 'get_val') else ''},"
+                name = g.get_name_str() if hasattr(g, 'get_name_str') else g.name
+                val = g.get_val() if hasattr(g, 'get_val') else ''
+                parts.append(f"{name}={val}")
 
-        return tmp[:-1] if tmp else ""
+        return ",".join(parts)
 
     # --------------------------------------------------------------------------------------------------
     #! Directory Naming
