@@ -31,14 +31,15 @@ def without_set():
         orbits.append(orbit)
     return orbits
 
-t0 = time.time()
-for _ in range(100):
-    with_set()
-t1 = time.time()
-print(f"With set: {t1 - t0:.4f}s")
+if __name__ == "__main__":
+    t0 = time.time()
+    for _ in range(100):
+        with_set()
+    t1 = time.time()
+    print(f"With set: {t1 - t0:.4f}s")
 
-t0 = time.time()
-for _ in range(100):
-    without_set()
-t1 = time.time()
-print(f"Without set: {t1 - t0:.4f}s")
+    t0 = time.time()
+    for _ in range(100):
+        without_set()
+    t1 = time.time()
+    print(f"Without set: {t1 - t0:.4f}s")
