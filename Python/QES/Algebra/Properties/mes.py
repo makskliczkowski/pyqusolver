@@ -193,13 +193,14 @@ if TYPE_CHECKING:
 if not JAX_AVAILABLE:
     raise RuntimeError("JAX is required for MES. Install with: pip install jax jaxlib")
 
-# Global cache for compiled step functions to avoid recompilation across multiple MES searches
-# Key: (m, n_constraints, use_fast_path) -> compiled step function
-_STEP_CACHE = {}
-
 # ---------------------------------------
 #! JAX kernels (compiled once at module level)
 # ---------------------------------------
+
+@lru_cache(maxsize=32)
+def _get_adam_optimizer(learning_rate: float, b1: float, b2: float, eps: float):
+    """Reuse identical Adam transforms so JIT static-arg identity stays stable across restarts."""
+    return optax.adam(learning_rate=learning_rate, b1=b1, b2=b2, eps=eps)
 
 @jax.jit
 def _normalize_jax(c):
@@ -214,24 +215,88 @@ def _gauge_fix_jax(c):
     c       = jnp.where(jnp.real(c[0]) < 0, -c, c)
     return c.at[0].set(jnp.real(c[0]) + 0j)
 
-@partial(jax.jit, static_argnums=(2,))
-def _project_jax(c, C_stack, n_constraints: int):
-    """Project onto orthogonal complement of constraints."""
-    def _do(x):
-        C = jax.lax.dynamic_slice(C_stack, (0, 0), (n_constraints, c.shape[0]))
-        return _normalize_jax(c - C.T.conj() @ (C @ c))
-    return jax.lax.cond(n_constraints > 0, _do, lambda _: c, None)
+@jax.jit
+def _project_jax(c, C_stack):
+    """Project onto the orthogonal complement of a fixed-size constraint stack."""
+    return _normalize_jax(c - C_stack.T.conj() @ (C_stack @ c))
 
-@partial(jax.jit, static_argnums=(2, 3))
-def _params_to_c(theta, C_stack, m: int, n_constraints: int):
-    """Real params -> normalized, projected, gauge-fixed complex coefficients.
-    
-    Static args (m, n_constraints) prevent recompilation when these don't change.
-    """
+@partial(jax.jit, static_argnums=(2,))
+def _params_to_c(theta, C_stack, m: int):
+    """Real params -> normalized, projected, gauge-fixed complex coefficients."""
     c = theta[:m] + 1j * theta[m:]
     c = _normalize_jax(c)
-    c = _project_jax(c, C_stack, n_constraints)
+    c = _project_jax(c, C_stack)
     return _gauge_fix_jax(c)
+
+
+def _build_constraint_stack(c_constraints: List["jnp.ndarray"], m: int, dtype):
+    """Pack active constraints into a fixed `(m, m)` stack to keep JAX shapes stable."""
+    C_stack = jnp.zeros((m, m), dtype=dtype)
+    if not c_constraints:
+        return C_stack
+    if len(c_constraints) > m:
+        raise ValueError(f"Too many MES constraints: got {len(c_constraints)}, expected at most {m}.")
+    constraints = jnp.stack(c_constraints, axis=0).astype(dtype)
+    return C_stack.at[:constraints.shape[0], :].set(constraints)
+
+
+@partial(jax.jit, static_argnums=(2, 3))
+def _loss_fast(theta, C_stack, S_func_c: Callable, m: int):
+    c = _params_to_c(theta, C_stack, m)
+    return jnp.real(jnp.asarray(S_func_c(c)))
+
+
+@partial(jax.jit, static_argnums=(3, 4))
+def _loss_full(theta, C_stack, V, S_func: Callable, m: int):
+    c = _params_to_c(theta, C_stack, m)
+    psi = V @ c
+    return jnp.real(jnp.asarray(S_func(psi)))
+
+
+@partial(jax.jit, static_argnums=(3, 4, 5))
+def _step_fast(params, opt_state, C_stack, optimizer, S_func_c: Callable, m: int):
+    loss, grads = jax.value_and_grad(_loss_fast)(params, C_stack, S_func_c, m)
+    updates, new_state = optimizer.update(grads, opt_state, params)
+    new_params = optax.apply_updates(params, updates)
+    return new_params, new_state, loss
+
+
+@partial(jax.jit, static_argnums=(4, 5, 6))
+def _step_full(params, opt_state, C_stack, V, optimizer, S_func: Callable, m: int):
+    loss, grads = jax.value_and_grad(_loss_full)(params, C_stack, V, S_func, m)
+    updates, new_state = optimizer.update(grads, opt_state, params)
+    new_params = optax.apply_updates(params, updates)
+    return new_params, new_state, loss
+
+
+def _scan_body_fast(carry, _, *, C_stack, optimizer, S_func_c: Callable, m: int):
+    params, opt_state, best_params, best_loss = carry
+    new_params, new_opt_state, loss = _step_fast(params, opt_state, C_stack, optimizer, S_func_c, m)
+    is_better = loss < best_loss
+    best_params = jnp.where(is_better, new_params, best_params)
+    best_loss = jnp.where(is_better, loss, best_loss)
+    return (new_params, new_opt_state, best_params, best_loss), loss
+
+
+def _scan_body_full(carry, _, *, C_stack, V, optimizer, S_func: Callable, m: int):
+    params, opt_state, best_params, best_loss = carry
+    new_params, new_opt_state, loss = _step_full(params, opt_state, C_stack, V, optimizer, S_func, m)
+    is_better = loss < best_loss
+    best_params = jnp.where(is_better, new_params, best_params)
+    best_loss = jnp.where(is_better, loss, best_loss)
+    return (new_params, new_opt_state, best_params, best_loss), loss
+
+
+@partial(jax.jit, static_argnums=(2, 3, 4, 5))
+def _run_scan_fast(init_carry, C_stack, n_steps: int, optimizer, S_func_c: Callable, m: int):
+    body = partial(_scan_body_fast, C_stack=C_stack, optimizer=optimizer, S_func_c=S_func_c, m=m)
+    return jax.lax.scan(body, init_carry, xs=None, length=n_steps)
+
+
+@partial(jax.jit, static_argnums=(3, 4, 5, 6))
+def _run_scan_full(init_carry, C_stack, V, n_steps: int, optimizer, S_func: Callable, m: int):
+    body = partial(_scan_body_full, C_stack=C_stack, V=V, optimizer=optimizer, S_func=S_func, m=m)
+    return jax.lax.scan(body, init_carry, xs=None, length=n_steps)
 
 
 # ---------------------------------------
@@ -484,71 +549,32 @@ class MESFinder:
         if not use_fast_path:
             Vj = jnp.asarray(self.V)
 
-        # Prepare constraint stack for module-level _params_to_c (avoids recompilation)
-        n_constraints = len(c_constraints_jax)
-        if n_constraints > 0:
-            C_stack = jnp.stack(c_constraints_jax, axis=0)
-            # Pad to fixed size to avoid shape-dependent recompilation
-            max_constraints = max(10, n_constraints)  # reasonable upper bound
-            if n_constraints < max_constraints:
-                pad_rows    = max_constraints - n_constraints
-                C_stack     = jnp.concatenate([C_stack, jnp.zeros((pad_rows, m), dtype=C_stack.dtype)], axis=0)
-        else:
-            # Create dummy stack with zeros (won't be used due to n_constraints=0)
-            C_stack = jnp.zeros((10, m), dtype=jnp.complex128)
-        # Loss function: use module-level _params_to_c to avoid shape-dependent recompilation.
-        # Note: The step function will still recompile per MESFinder instance because
-        # the loss closure captures instance-specific entropy functions. However, the expensive
-        # _params_to_c (with projections and gauge-fixing) uses module-level JIT with
-        # static_argnums, so it's compiled once per (m, n_constraints) pair and reused.
-        # For typical workflows (sweeping parameters with same lattice size), this means
-        # _params_to_c compiles once and is reused across all parameter points.
-        if use_fast_path:
-            S_func_c_local = self._S_func_c
-            def _loss(theta: "jnp.ndarray") -> "jnp.ndarray":
-                c   = _params_to_c(theta, C_stack, m, n_constraints)
-                val = S_func_c_local(c)
-                return jnp.real(jnp.asarray(val))
-        else:
-            S_func_local = self.S_func
-            def _loss(theta: "jnp.ndarray") -> "jnp.ndarray":
-                c   = _params_to_c(theta, C_stack, m, n_constraints)
-                psi = Vj @ c
-                val = S_func_local(psi)
-                return jnp.real(jnp.asarray(val))
-
-        # Use optax Adam optimizer - clean and optimized
-        optimizer = optax.adam(learning_rate=lr, b1=beta1, b2=beta2, eps=adam_eps)
+        C_stack = _build_constraint_stack(c_constraints_jax, m, dtype=jnp.complex128)
+        optimizer = _get_adam_optimizer(float(lr), float(beta1), float(beta2), float(adam_eps))
         opt_state = optimizer.init(params)
-        
-        # Define step and scan_body functions
-        # Note: These will be compiled inside the scan, but the compilation will be
-        # reused as long as the shapes don't change
-        def step(params, opt_state):
-            loss, grads = jax.value_and_grad(_loss)(params)
-            updates, new_state = optimizer.update(grads, opt_state, params)
-            return optax.apply_updates(params, updates), new_state, loss
-        
-        def scan_body(carry, _):
-            params, opt_state, best_params, best_loss = carry
-            new_params, new_opt_state, loss = step(params, opt_state)
-            is_better = loss < best_loss
-            best_params = jnp.where(is_better, new_params, best_params)
-            best_loss = jnp.where(is_better, loss, best_loss)
-            return (new_params, new_opt_state, best_params, best_loss), loss
-        
-        # Warm up compilation
+
         try:
-            params, opt_state, val = step(params, opt_state)
+            if use_fast_path:
+                params, opt_state, val = _step_fast(params, opt_state, C_stack, optimizer, self._S_func_c, m)
+            else:
+                params, opt_state, val = _step_full(params, opt_state, C_stack, Vj, optimizer, self.S_func, m)
             init_carry = (params, opt_state, params, val)
         except Exception as exc:
             raise RuntimeError("method='jax-grad' requires S_func to be JAX-traceable") from exc
-        
-        # Run optimization with scan (no Python overhead)
-        # This will compile once per unique (param shape, n_constraints) combination
-        (final_params, final_opt_state, best_params, best_loss), all_losses = jax.lax.scan(
-            scan_body, init_carry, None, length=max_iter - 1
-        )
+
+        n_scan_steps = max(max_iter - 1, 0)
+        if n_scan_steps > 0:
+            if use_fast_path:
+                (_, _, best_params, best_loss), all_losses = _run_scan_fast(
+                    init_carry, C_stack, n_scan_steps, optimizer, self._S_func_c, m
+                )
+            else:
+                (_, _, best_params, best_loss), all_losses = _run_scan_full(
+                    init_carry, C_stack, Vj, n_scan_steps, optimizer, self.S_func, m
+                )
+        else:
+            _, _, best_params, best_loss = init_carry
+            all_losses = jnp.empty((0,), dtype=best_loss.dtype)
         
         # Convert to host (only one sync at the end)
         all_losses_np = np.asarray(all_losses)
@@ -566,7 +592,7 @@ class MESFinder:
                         verbose=verbose, lvl=2
                     )
         
-        best_c = np.asarray(_params_to_c(best_params, C_stack, m, n_constraints))
+        best_c = np.asarray(_params_to_c(best_params, C_stack, m))
         return self.normalize(best_c), float(best_val), nfev
 
     # --------------------------------
