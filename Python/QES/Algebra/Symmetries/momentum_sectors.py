@@ -428,12 +428,10 @@ def build_momentum_basis(
 
             for state, amp in superposition.items():
                 # Build orbit under translation using the translator callable
-                orbit = []
-                seen = set()
-                cur = state
-                while cur not in seen:
+                orbit = [state]
+                cur, _ = translator(state)
+                while cur != state:
                     orbit.append(cur)
-                    seen.add(cur)
                     cur, _ = translator(cur)
                 period = len(orbit)
 

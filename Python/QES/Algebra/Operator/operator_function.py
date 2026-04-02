@@ -102,7 +102,7 @@ if JAX_AVAILABLE:
 
         return jax.jit(compiled_op)
 
-except ImportError:
+else:
     JAX_AVAILABLE = False
     jax = None
     jnp = np
