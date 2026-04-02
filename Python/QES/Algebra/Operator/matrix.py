@@ -36,19 +36,29 @@ except ImportError as exc:
 # --------------------------------------------------------------------------------
 
 try:
-    import jax
-    import jax.lax as lax
-    import jax.numpy as jnp
-    from jax.experimental.sparse import BCOO, CSR
-
-    JAX_AVAILABLE = True
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+    if JAX_AVAILABLE:
+        import jax.lax as lax
+        from jax.experimental.sparse import BCOO, CSR
+    else:
+        lax     = None
+        BCOO    = None
+        CSR     = None
 except ImportError:
-    jax = None
-    jnp = None
-    lax = None
-    BCOO = None
-    CSR = None
-    JAX_AVAILABLE = False
+    try:
+        import jax
+        import jax.lax as lax
+        import jax.numpy as jnp
+        from jax.experimental.sparse import BCOO, CSR
+
+        JAX_AVAILABLE   = True
+    except ImportError:
+        jax             = None
+        jnp             = None
+        lax             = None
+        BCOO            = None
+        CSR             = None
+        JAX_AVAILABLE   = False
 
 # --------------------------------------------------------------------------------
 

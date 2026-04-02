@@ -18,17 +18,13 @@ import numba
 import numpy as np
 
 try:
-
-    from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, Array, jax, jnp
 except ImportError:
     print("Error importing modules in statistical.py")
-
-if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-else:
-    jax = None
-    jnp = np
+    JAX_AVAILABLE   = False
+    Array           = np.ndarray
+    jax             = None
+    jnp             = np
 
 class StatTypes(Enum):
     MEAN        = "mean"

@@ -101,17 +101,13 @@ if JAX_AVAILABLE:
             return op_func_jax(state, static_sites, *static_args, *kwarg_vals)
 
         return jax.jit(compiled_op)
+else:
+    make_jax_operator_closure = None  # JAX not available, so this function is not defined
 
-except ImportError:
-    JAX_AVAILABLE = False
-    jax = None
-    jnp = np
-    make_jax_operator_closure = lambda op_func, sites, *args, **kwargs: op_func
 
 ####################################################################################################
 #! Distinguish type of function
 ####################################################################################################
-
 
 def op_func_wrapper(op_func: Callable, *args: Any) -> Callable:
     """
@@ -127,20 +123,15 @@ def op_func_wrapper(op_func: Callable, *args: Any) -> Callable:
     else:
         return lambda k: op_func(k, *args)
 
-
 ####################################################################################################
 #! Constants
 ####################################################################################################
 
-_PYTHON_SCALARS = (int, float, complex, np.number)
-_FUN_NUMPY: TypeAlias = Optional[
-    Callable[[np.ndarray, Any], List[Tuple[Optional[np.ndarray], Union[float, complex]]]]
-]
-_FUN_INT: TypeAlias = Callable[[int, Any], List[Tuple[Optional[int], Union[float, complex]]]]
+_PYTHON_SCALARS         = (int, float, complex, np.number)
+_FUN_NUMPY: TypeAlias   = Optional[Callable[[np.ndarray, Any], List[Tuple[Optional[np.ndarray], Union[float, complex]]]]]
+_FUN_INT: TypeAlias     = Callable[[int, Any], List[Tuple[Optional[int], Union[float, complex]]]]
 if JAX_AVAILABLE:
-    _FUN_JAX: TypeAlias = Optional[
-        Callable[[jnp.ndarray, Any], List[Tuple[Optional[jnp.ndarray], Union[float, complex]]]]
-    ]
+    _FUN_JAX: TypeAlias = Optional[Callable[[jnp.ndarray, Any], List[Tuple[Optional[jnp.ndarray], Union[float, complex]]]]]
 else:
     _FUN_JAX: TypeAlias = None
 
@@ -303,37 +294,44 @@ class OperatorFunction:
         Gets or sets the number of necessary arguments for the operator function.
     """
 
-    _ERR_INVALID_ARG_NUMBER = (
-        "Invalid number of arguments for the operator function. Expected {}, got {}."
-    )
-    _ERR_WRONG_MULTIPLICATION = "Invalid multiplication with type {}."
+    _ERR_INVALID_ARG_NUMBER     = "Invalid number of arguments for the operator function. Expected {}, got {}."
+    _ERR_WRONG_MULTIPLICATION   = "Invalid multiplication with type {}."
 
     # -----------
 
     def __init__(
         self,
-        fun_int: _FUN_INT,
-        fun_np: Optional[_FUN_NUMPY] = None,
-        fun_jax: Optional[_FUN_JAX] = None,
-        modifies_state: bool = True,
-        necessary_args: int = 0,
+        fun_int         : _FUN_INT,
+        fun_np          : Optional[_FUN_NUMPY] = None,
+        fun_jax         : Optional[_FUN_JAX] = None,
+        modifies_state  : bool = True,
+        necessary_args  : int = 0,
     ):
         """
         Initialize the OperatorFunction object.
 
-        Params:
-        - fun (callable)    : The function that defines the operator - it shall take a state
+        Parameters
+        ----------
+        fun_int (callable): 
+            The function that defines the operator - it shall take a state
             (or a list of states) and return the transformed state (or a list of states). States can be
             represented as integers or numpy arrays or JAX arrays. This enables the user to define
             any operator that can be applied to the state. The function shall return a list of pairs (state, value).
+        fun_np (callable, optional):
+            The function that defines the operator for NumPy array states. It should have the same behavior as fun_int but optimized for NumPy arrays. If None, fun_int will be used for NumPy arrays.
+        fun_jax (callable, optional):
+            The function that defines the operator for JAX array states. It should have the same behavior as fun_int but optimized for JAX arrays. If None, fun_int will be used for JAX arrays.
+        modifies_state (bool, optional):
+            A flag indicating whether the operator modifies the state. This can be used for optimization purposes, as some operators may only modify the value without changing the state.
+        necessary_args (int, optional):
+            The number of necessary arguments for the operator function. This can be used to distinguish between different types of operators (e.g., global, local, correlation) and to ensure that the correct number of arguments is provided when applying the operator.
+            
         """
-        self._fun_int = fun_int
-        self._fun_np = fun_np
-        self._fun_jax = fun_jax  # JAX function for the operator
-        self._modifies_state = modifies_state  # flag for the operator that modifies the state
-        self._necessary_args = int(
-            necessary_args
-        )  # number of necessary arguments for the operator function
+        self._fun_int           = fun_int
+        self._fun_np            = fun_np
+        self._fun_jax           = fun_jax               # JAX function for the operator
+        self._modifies_state    = modifies_state        # flag for the operator that modifies the state
+        self._necessary_args    = int(necessary_args)   # number of necessary arguments for the operator function
         self._acting_type = (
             OperatorTypeActing.Global
             if self._necessary_args == 0

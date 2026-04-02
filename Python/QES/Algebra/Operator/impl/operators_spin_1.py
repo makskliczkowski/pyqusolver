@@ -60,14 +60,17 @@ except ImportError as e:
 ################################################################################
 
 try:
-    import jax
-    import jax.numpy as jnp
-
-    JAX_AVAILABLE = True
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
 except ImportError:
-    jnp = None
-    jax = None
-    JAX_AVAILABLE = False
+    try:
+        import jax
+        import jax.numpy as jnp
+
+        JAX_AVAILABLE = True
+    except ImportError:
+        jnp = None
+        jax = None
+        JAX_AVAILABLE = False
 
 ################################################################################
 #! JAX-accelerated operators (imported from jax/operators_spin_1)

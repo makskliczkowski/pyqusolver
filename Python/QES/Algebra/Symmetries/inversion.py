@@ -456,11 +456,8 @@ class InversionSymmetry(SymmetryOperator):
         Apply inversion operator using JAX.
         """
         try:
-            from QES.general_python.algebra.utils import JAX_AVAILABLE
-
-            if JAX_AVAILABLE:
-                import jax.numpy as jnp
-            else:
+            from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+            if not JAX_AVAILABLE:
                 raise ImportError("JAX not available")
         except ImportError:
             raise ImportError("JAX not available for apply_jax()")

@@ -19,16 +19,10 @@ from typing import Optional
 import numpy as np
 
 try:
-    from QES.general_python.algebra.utils import JAX_AVAILABLE, Array
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, Array, jax, jnp
 except ImportError:
     JAX_AVAILABLE = False
     Array = np.ndarray
-
-if JAX_AVAILABLE:
-
-    import jax
-    import jax.numpy as jnp
-else:
     jax = None
     jnp = np
 

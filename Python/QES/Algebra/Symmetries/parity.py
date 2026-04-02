@@ -239,7 +239,9 @@ class ParitySymmetry(SymmetryOperator):
             Phase factor
         """
         try:
-            import jax.numpy as jnp
+            from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+            if not JAX_AVAILABLE:
+                raise ImportError("JAX not available")
         except ImportError:
             raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
 

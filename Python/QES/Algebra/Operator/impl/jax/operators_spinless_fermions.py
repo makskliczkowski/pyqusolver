@@ -71,18 +71,27 @@ except ImportError:
 #! JAX operators for spinless fermions (Jordan-Wigner)
 # ============================================================================
 
-if JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-    from jax import jit, lax
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+    if JAX_AVAILABLE:
+        from jax import jit, lax
+        from QES.general_python.algebra.utils import (
+            DEFAULT_JP_CPX_TYPE,
+            DEFAULT_JP_FLOAT_TYPE,
+            DEFAULT_JP_INT_TYPE,
+        )
+        _DEFAULT_INT    = DEFAULT_JP_INT_TYPE
+        _DEFAULT_FLOAT  = DEFAULT_JP_FLOAT_TYPE
+        _DEFAULT_CPX    = DEFAULT_JP_CPX_TYPE
+        _flip_jnp       = _binary.jaxpy.flip_int_traced_jax
+        _bit_jnp        = _binary.jaxpy.check_int_traced_jax
+    else:
+        jit = lambda x: x
+        lax = None
+except ImportError:
+    JAX_AVAILABLE = False
+    jax = jnp = lax = jit = None
 
-    _DEFAULT_INT = DEFAULT_JP_INT_TYPE
-    _DEFAULT_FLOAT = DEFAULT_JP_FLOAT_TYPE
-    _DEFAULT_CPX = DEFAULT_JP_CPX_TYPE
-    _flip_jnp = _binary.jaxpy.flip_int_traced_jax
-    _bit_jnp = _binary.jaxpy.check_int_traced_jax
-
-    @jit
     def _popcount_mask_jnp(x: jnp.int64, mask_bits: jnp.int64) -> jnp.int64:
         """Number of set bits in x & mask_bits (JIT-safe)."""
         return jnp.bit_count(x & mask_bits)

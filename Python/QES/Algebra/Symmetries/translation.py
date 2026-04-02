@@ -38,10 +38,14 @@ try:
 except ImportError:
     raise ImportError("Could not import base symmetry classes from QES.Algebra.Symmetries.base")
 
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+except ImportError:
+    raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
+
 ####################################################################################################
 # JIT-compiled translation application
 ####################################################################################################
-
 
 @njit(cache=True, fastmath=True)
 def _apply_translation_prim(
@@ -703,39 +707,34 @@ class TranslationSymmetry(SymmetryOperator):
             Phase factor (currently 1.0 for spins)
         """
 
-        try:
-            import jax.numpy as jnp
-        except ImportError:
-            raise ImportError("JAX is required for apply_jax. Install with: pip install jax")
-
         # Check if state is vector-encoded (last dim == ns)
         if state.ndim >= 1 and state.shape[-1] == self.ns:
             # Use precomputed permutation
             # We assume self.perm is available (numpy array)
             # JAX will capture this as a constant in JIT
-            perm_jax = jnp.array(self.perm)
+            perm_jax            = jnp.array(self.perm)
 
             # Apply permutation along last axis
             # Note: perm_jax means site i maps to site perm_jax[i]
             # When taking from state array, we need the inverse permutation
             # to ensure the new state at index perm_jax[i] gets the value from index i
-            inverse_perm = jnp.argsort(perm_jax)
-            new_state = jnp.take(state, inverse_perm, axis=-1)
+            inverse_perm        = jnp.argsort(perm_jax)
+            new_state           = jnp.take(state, inverse_perm, axis=-1)
 
             # Calculate phase using crossing mask
-            crossing_mask_jax = jnp.array(self.crossing_mask)
+            crossing_mask_jax   = jnp.array(self.crossing_mask)
             # sum boolean mask with occupations, cast to int to safely index phase array
-            occ_cross = jnp.sum(state * crossing_mask_jax, axis=-1).astype(jnp.int32)
+            occ_cross           = jnp.sum(state * crossing_mask_jax, axis=-1).astype(jnp.int32)
 
             # Fetch the boundary phases table from lattice
-            dir_idx = getattr(self.direction, "value", self.direction)
+            dir_idx             = getattr(self.direction, "value", self.direction)
             if isinstance(dir_idx, str):
                 dir_map = {'x': 0, 'y': 1, 'z': 2}
                 dir_idx = dir_map.get(dir_idx.lower(), 0)
 
             # boundary_phases has shape (3, ns+1) -> (direction, winding_number)
             boundary_phases = jnp.array(self.lattice.boundary_phases()[dir_idx])
-            phase = boundary_phases[occ_cross]
+            phase           = boundary_phases[occ_cross]
 
             return new_state, phase
 
@@ -798,7 +797,7 @@ class TranslationSymmetry(SymmetryOperator):
         """
         rotated = defaultdict(complex)
         for basis_state, amplitude in amplitudes.items():
-            new_state, phase = self.apply(int(basis_state))
+            new_state, phase         = self.apply(int(basis_state))
             rotated[int(new_state)] += amplitude * phase
         return dict(rotated)
 

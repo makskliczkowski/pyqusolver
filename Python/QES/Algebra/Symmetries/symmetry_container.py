@@ -214,12 +214,11 @@ try:
         from QES.general_python.common.flog import Logger
 
     try:
-        import jax.numpy as jnp
-
-        JAX_AVAILABLE = True
+        from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
     except ImportError:
         jnp = np
         JAX_AVAILABLE = False
+        jax = None
 
 except ImportError as e:
     raise ImportError(f"Failed to import required modules: {e}")

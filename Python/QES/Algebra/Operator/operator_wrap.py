@@ -9,15 +9,18 @@ import numba.typed
 import numpy as np
 
 try:
-    from QES.general_python.algebra.utils import JAX_AVAILABLE
-
-    if JAX_AVAILABLE:
-        import jax
-        import jax.numpy as jnp
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
 except ImportError:
-    JAX_AVAILABLE = False
-    jax = None
-    jnp = None
+    try:
+        from QES.general_python.algebra.utils import JAX_AVAILABLE
+
+        if JAX_AVAILABLE:
+            import jax
+            import jax.numpy as jnp
+    except ImportError:
+        JAX_AVAILABLE = False
+        jax = None
+        jnp = None
 
 
 def _make_add_int_njit(f1, f2):

@@ -47,27 +47,39 @@ except ImportError as exc:
 
 ###################################################################################################
 
-###################################################################################################
-
-_DISABLE_JAX = os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True")
-
-if not _DISABLE_JAX:
-    try:
-        import jax.numpy                    as jnp
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+    if JAX_AVAILABLE:
         from jax.experimental.sparse        import BCOO
         from QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
+    else:
+        BCOO = None
+        local_energy_jax_wrap = None
+except ImportError:
+    _DISABLE_JAX = os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True")
 
-        JAX_AVAILABLE                       = True
-    except ImportError:
+    if not _DISABLE_JAX:
+        try:
+            import jax
+            import jax.numpy                    as jnp
+            from jax.experimental.sparse        import BCOO
+            from QES.Algebra.Hamil.hamil_energy import local_energy_jax_wrap
+
+            JAX_AVAILABLE                       = True
+        except ImportError:
+            jax                                 = None
+            jnp                                 = None
+            lax                                 = None
+            BCOO                                = None
+            local_energy_jax_wrap               = None
+            JAX_AVAILABLE                       = False
+    else:
         jax                                 = None
         jnp                                 = None
         lax                                 = None
         BCOO                                = None
         local_energy_jax_wrap               = None
         JAX_AVAILABLE                       = False
-else:
-    jax                                 = None
-    jnp                                 = None
     lax                                 = None
     BCOO                                = None
     local_energy_jax_wrap               = None

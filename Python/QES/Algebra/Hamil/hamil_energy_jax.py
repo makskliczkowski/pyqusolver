@@ -52,11 +52,15 @@ ensuring optimal performance and differentiability using the JAX ecosystem.
 ################################################################################
 
 try:
-    import  numpy as np
-    import  jax
-    import  jax.numpy as jnp
-except ImportError as e:
-    raise ImportError("JAX is required for this module. Please install JAX to proceed.") from e
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+    import numpy as np
+except ImportError:
+    try:
+        import numpy as np
+        import jax
+        import jax.numpy as jnp
+    except ImportError as e:
+        raise ImportError("JAX is required for this module. Please install JAX to proceed.") from e
 
 from        functools import partial
 from        typing import Callable, List, Optional, Tuple

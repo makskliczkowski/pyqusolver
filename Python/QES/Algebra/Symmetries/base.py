@@ -26,19 +26,16 @@ import numpy as np
 ###################################################################################################
 
 try:
-    import jax.numpy as jnp
-
-    JAX_AVAILABLE = True
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
 except ImportError:
     jnp = np
     JAX_AVAILABLE = False
+    jax = None
 
 try:
     from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
 except ImportError:
-    raise ImportError(
-        "LocalSpaceTypes could not be imported from QES.Algebra.Hilbert.hilbert_local. Make sure general_python is installed correctly."
-    )
+    raise ImportError("LocalSpaceTypes could not be imported from QES.Algebra.Hilbert.hilbert_local. Make sure general_python is installed correctly.")
 
 ####################################################################################################
 #! Symmetry compatibility enumerations

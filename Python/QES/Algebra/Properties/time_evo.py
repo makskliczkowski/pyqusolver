@@ -26,24 +26,39 @@ try:
 except ImportError as e:
     raise ImportError("Error importing modules in time_evo.py: " + str(e))
 
-_JAX_AVAILABLE = os.environ.get("PY_JAX_AVAILABLE", 0) == "1"
-if _JAX_AVAILABLE:
-    import jax
-    import jax.numpy as jnp
-    from jax import lax
-else:
-    jax = None
-    jnp = np
-    lax = None
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+    if JAX_AVAILABLE:
+        from jax import lax
+    else:
+        lax = None
+except ImportError:
+    _JAX_AVAILABLE = os.environ.get("PY_JAX_AVAILABLE", 0) == "1"
+    if _JAX_AVAILABLE:
+        try:
+            import jax
+            import jax.numpy as jnp
+            from jax import lax
+            JAX_AVAILABLE = True
+        except ImportError:
+            jax = None
+            jnp = np
+            lax = None
+            JAX_AVAILABLE = False
+    else:
+        jax = None
+        jnp = np
+        lax = None
+        JAX_AVAILABLE = False
 
 # -----------------------------------------------------------------------------
 #! Constants
 # -----------------------------------------------------------------------------
 
-SYSTEM_PROPERTIES_MIN_SPACING = 1e-15
-SYSTEM_PROPERTIES_THROW_DEGENERATE = 1
-SYSTEM_PROPERTIES_COEFF_THRESHOLD = 1e-11
-SYSTEM_PROPERTIES_USE_OPENMP = 0
+SYSTEM_PROPERTIES_MIN_SPACING       = 1e-15
+SYSTEM_PROPERTIES_THROW_DEGENERATE  = 1
+SYSTEM_PROPERTIES_COEFF_THRESHOLD   = 1e-11
+SYSTEM_PROPERTIES_USE_OPENMP        = 0
 
 # -----------------------------------------------------------------------------
 #! Time Evolution Functions
