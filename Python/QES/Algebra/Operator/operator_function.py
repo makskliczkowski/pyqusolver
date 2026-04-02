@@ -102,10 +102,7 @@ if JAX_AVAILABLE:
 
         return jax.jit(compiled_op)
 
-except ImportError:
-    JAX_AVAILABLE = False
-    jax = None
-    jnp = np
+else:
     make_jax_operator_closure = lambda op_func, sites, *args, **kwargs: op_func
 
 ####################################################################################################

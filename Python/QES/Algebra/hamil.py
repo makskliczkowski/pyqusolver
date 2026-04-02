@@ -118,8 +118,6 @@ class Hamiltonian(BasisAwareOperator):
     _ADD_TOLERANCE = 1e-10
 
     def _ADD_CONDITION(x, *args):
-        import numbers
-
         def _is_nonzero_like(value):
             """
             Robust scalar/array-like non-zero check.
@@ -133,65 +131,42 @@ class Hamiltonian(BasisAwareOperator):
             if hasattr(value, "val"):
                 value = value.val
 
-            # Fast numeric path (avoids isinstance against abstract base classes for speed)
+            # Fast numeric path
             if isinstance(value, (int, float, complex, np.number)):
                 return abs(value) > Hamiltonian._ADD_TOLERANCE
 
-            # Mapping path.
-            if isinstance(value, Mapping):
+            # Dictionary path
+            if isinstance(value, dict):
                 return any(_is_nonzero_like(v) for v in value.values())
 
-            # Try generic array conversion first (covers NumPy/JAX arrays).
-            try:
-                arr = np.asarray(value)
-            except Exception:
-                arr = None
+            # Built-in collections
+            if isinstance(value, (list, tuple, set)):
+                return any(_is_nonzero_like(v) for v in value)
 
-            if arr is not None:
-                if arr.ndim == 0:
-                    try:
-                        scalar = arr.item()
-                    except Exception:
-                        scalar = value
+            # Numpy/JAX arrays
+            if hasattr(value, "ndim"):
+                if value.ndim == 0:
+                    scalar = value.item()
                     if hasattr(scalar, "val"):
                         scalar = scalar.val
                     if isinstance(scalar, (int, float, complex, np.number)):
                         return abs(scalar) > Hamiltonian._ADD_TOLERANCE
-                    try:
-                        return bool(scalar)
-                    except Exception:
-                        return False
+                    return bool(scalar)
+                else:
+                    if hasattr(np, "any") and hasattr(np, "abs"):
+                        return bool(np.any(np.abs(value) > Hamiltonian._ADD_TOLERANCE))
 
-                # Fast numpy vectorized check
-                try:
-                    return np.any(np.abs(arr) > Hamiltonian._ADD_TOLERANCE)
-                except Exception:
-                    # Object arrays or unsupported dtypes: recurse element-wise.
-                    return any(_is_nonzero_like(v) for v in np.ravel(arr))
-
-            # Generic iterable fallback.
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
-                try:
-                    return any(_is_nonzero_like(v) for v in value)
-                except Exception:
-                    return False
-
-            # Last-resort truthiness.
-            try:
-                return bool(value)
-            except Exception:
-                return False
+            # Last-resort truthiness
+            return bool(value)
 
         if x is None:
             return False
 
-        # Safe indexed access (supports scalars / 0-d arrays / wrappers).
         y = x
         if args:
             try:
                 y = x[args[0]] if len(args) == 1 else x[args]
             except Exception:
-                # Fallback to unwrapped scalar-like value when indexing is invalid.
                 y = getattr(x, "val", x)
 
         return _is_nonzero_like(y)
@@ -517,35 +492,41 @@ class Hamiltonian(BasisAwareOperator):
     def _coefficient_for_site(self, coefficient: Any, site: int):
         if callable(coefficient):
             return coefficient(int(site))
-        if isinstance(coefficient, Mapping):
+        if isinstance(coefficient, dict):
             if site in coefficient:
                 return coefficient[site]
             return coefficient.get(int(site), 0.0)
-        if isinstance(coefficient, (list, tuple, np.ndarray)):
-            arr = np.asarray(coefficient)
-            if arr.ndim == 0:
-                return arr.item()
-            if arr.size == int(self.ns):
-                return arr[int(site)]
-            raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={arr.shape}.")
+        if isinstance(coefficient, (list, tuple)):
+            if len(coefficient) == int(self.ns):
+                return coefficient[int(site)]
+            raise ValueError(f"Site coefficient sequence must have size Ns={self.ns}, got size={len(coefficient)}.")
+        if hasattr(coefficient, "ndim"):
+            if coefficient.ndim == 0:
+                return coefficient.item()
+            if coefficient.size == int(self.ns):
+                return coefficient[int(site)]
+            raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={coefficient.shape}.")
         return coefficient
 
     def _coefficient_for_bond(self, coefficient: Any, i: int, j: int, idx: int):
         if callable(coefficient):
             return coefficient(int(i), int(j), int(idx))
-        if isinstance(coefficient, Mapping):
+        if isinstance(coefficient, dict):
             if (i, j) in coefficient:
                 return coefficient[(i, j)]
             if (j, i) in coefficient:
                 return coefficient[(j, i)]
             return 0.0
-        if isinstance(coefficient, (list, tuple, np.ndarray)):
-            arr = np.asarray(coefficient)
-            if arr.ndim == 0:
-                return arr.item()
-            if idx < arr.size:
-                return arr[idx]
-            raise ValueError(f"Bond coefficient sequence too short: need index {idx}, size={arr.size}.")
+        if isinstance(coefficient, (list, tuple)):
+            if idx < len(coefficient):
+                return coefficient[idx]
+            raise ValueError(f"Bond coefficient sequence too short: need index {idx}, size={len(coefficient)}.")
+        if hasattr(coefficient, "ndim"):
+            if coefficient.ndim == 0:
+                return coefficient.item()
+            if idx < coefficient.size:
+                return coefficient[idx]
+            raise ValueError(f"Bond coefficient array sequence too short: need index {idx}, size={coefficient.size}.")
         return coefficient
 
     def add_local_term(
