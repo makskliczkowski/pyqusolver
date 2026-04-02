@@ -112,13 +112,13 @@ class HubbardModel(Hamiltonian):
                 if Hamiltonian._ADD_CONDITION(self._mu, i):
                     self.add(op_n_local, multiplier=-self._mu[i], modifies=False, sites=[i])
 
-        nn_count = (
-            [lattice.get_nn_forward_num(i) for i in range(self.ns)]
-            if self._use_forward
-            else [lattice.get_nn_num(i) for i in range(self.ns)]
-        )
         for i in range(self.ns):
-            for nidx in range(nn_count[i]):
+            nn_count = (
+                lattice.get_nn_forward_num(i)
+                if self._use_forward
+                else lattice.get_nn_num(i)
+            )
+            for nidx in range(nn_count):
                 j = (
                     lattice.get_nn_forward(i, num=nidx)
                     if self._use_forward

@@ -102,8 +102,7 @@ if JAX_AVAILABLE:
 
         return jax.jit(compiled_op)
 else:
-    make_jax_operator_closure = None  # JAX not available, so this function is not defined
-
+    make_jax_operator_closure = lambda op_func, sites, *args, **kwargs: op_func
 
 ####################################################################################################
 #! Distinguish type of function
