@@ -228,7 +228,6 @@ def _params_to_c(theta, C_stack, m: int):
     c = _project_jax(c, C_stack)
     return _gauge_fix_jax(c)
 
-
 def _build_constraint_stack(c_constraints: List["jnp.ndarray"], m: int, dtype):
     """Pack active constraints into a fixed `(m, m)` stack to keep JAX shapes stable."""
     C_stack = jnp.zeros((m, m), dtype=dtype)
@@ -239,12 +238,14 @@ def _build_constraint_stack(c_constraints: List["jnp.ndarray"], m: int, dtype):
     constraints = jnp.stack(c_constraints, axis=0).astype(dtype)
     return C_stack.at[:constraints.shape[0], :].set(constraints)
 
+# ------------------------
+# Losses
+# ------------------------
 
 @partial(jax.jit, static_argnums=(2, 3))
 def _loss_fast(theta, C_stack, S_func_c: Callable, m: int):
     c = _params_to_c(theta, C_stack, m)
     return jnp.real(jnp.asarray(S_func_c(c)))
-
 
 @partial(jax.jit, static_argnums=(3, 4))
 def _loss_full(theta, C_stack, V, S_func: Callable, m: int):
@@ -252,6 +253,9 @@ def _loss_full(theta, C_stack, V, S_func: Callable, m: int):
     psi = V @ c
     return jnp.real(jnp.asarray(S_func(psi)))
 
+# ------------------------
+# Optimization steps and scan bodies
+# ------------------------
 
 @partial(jax.jit, static_argnums=(3, 4, 5))
 def _step_fast(params, opt_state, C_stack, optimizer, S_func_c: Callable, m: int):
@@ -260,14 +264,12 @@ def _step_fast(params, opt_state, C_stack, optimizer, S_func_c: Callable, m: int
     new_params = optax.apply_updates(params, updates)
     return new_params, new_state, loss
 
-
 @partial(jax.jit, static_argnums=(4, 5, 6))
 def _step_full(params, opt_state, C_stack, V, optimizer, S_func: Callable, m: int):
     loss, grads = jax.value_and_grad(_loss_full)(params, C_stack, V, S_func, m)
     updates, new_state = optimizer.update(grads, opt_state, params)
     new_params = optax.apply_updates(params, updates)
     return new_params, new_state, loss
-
 
 def _scan_body_fast(carry, _, *, C_stack, optimizer, S_func_c: Callable, m: int):
     params, opt_state, best_params, best_loss = carry
@@ -277,7 +279,6 @@ def _scan_body_fast(carry, _, *, C_stack, optimizer, S_func_c: Callable, m: int)
     best_loss = jnp.where(is_better, loss, best_loss)
     return (new_params, new_opt_state, best_params, best_loss), loss
 
-
 def _scan_body_full(carry, _, *, C_stack, V, optimizer, S_func: Callable, m: int):
     params, opt_state, best_params, best_loss = carry
     new_params, new_opt_state, loss = _step_full(params, opt_state, C_stack, V, optimizer, S_func, m)
@@ -286,6 +287,9 @@ def _scan_body_full(carry, _, *, C_stack, V, optimizer, S_func: Callable, m: int
     best_loss = jnp.where(is_better, loss, best_loss)
     return (new_params, new_opt_state, best_params, best_loss), loss
 
+# -------------------------
+# Scan runners
+# -------------------------
 
 @partial(jax.jit, static_argnums=(2, 3, 4, 5))
 def _run_scan_fast(init_carry, C_stack, n_steps: int, optimizer, S_func_c: Callable, m: int):
@@ -297,7 +301,6 @@ def _run_scan_fast(init_carry, C_stack, n_steps: int, optimizer, S_func_c: Calla
 def _run_scan_full(init_carry, C_stack, V, n_steps: int, optimizer, S_func: Callable, m: int):
     body = partial(_scan_body_full, C_stack=C_stack, V=V, optimizer=optimizer, S_func=S_func, m=m)
     return jax.lax.scan(body, init_carry, xs=None, length=n_steps)
-
 
 # ---------------------------------------
 #! Topological Results Dataclass
@@ -549,9 +552,9 @@ class MESFinder:
         if not use_fast_path:
             Vj = jnp.asarray(self.V)
 
-        C_stack = _build_constraint_stack(c_constraints_jax, m, dtype=jnp.complex128)
-        optimizer = _get_adam_optimizer(float(lr), float(beta1), float(beta2), float(adam_eps))
-        opt_state = optimizer.init(params)
+        C_stack     = _build_constraint_stack(c_constraints_jax, m, dtype=jnp.complex128)
+        optimizer   = _get_adam_optimizer(float(lr), float(beta1), float(beta2), float(adam_eps))
+        opt_state   = optimizer.init(params)
 
         try:
             if use_fast_path:
@@ -577,9 +580,9 @@ class MESFinder:
             all_losses = jnp.empty((0,), dtype=best_loss.dtype)
         
         # Convert to host (only one sync at the end)
-        all_losses_np = np.asarray(all_losses)
-        best_val = float(best_loss)
-        nfev = max_iter
+        all_losses_np   = np.asarray(all_losses)
+        best_val        = float(best_loss)
+        nfev            = max_iter
         
         # Optional: report progress if verbose
         if verbose:
