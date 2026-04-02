@@ -33,10 +33,17 @@ except ImportError as e:
 ################################################################################
 
 # JAX imports
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+    if JAX_AVAILABLE:
+        from jax import lax
+    else:
+        lax = None
+except ImportError:
+    JAX_AVAILABLE = False
+    jax = jnp = lax = None
+
 if JAX_AVAILABLE:
-    import jax
-    from jax import lax
-    from jax import numpy as jnp
 
     # transform the matrices to JAX arrays
     _SIG_0_jnp = jnp.array([[1, 0], [0, 1]], dtype=float)
