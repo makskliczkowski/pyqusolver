@@ -221,10 +221,8 @@ class NQSDataset(CommonDataset):
                     values[name][(j, i, 0)] = {'mean': np.conj(stats['mean']), 'err': stats['err']}
         
         # Magnetization
-        # Use a tuple ('x', 'y', 'z') instead of a set {'x', 'y', 'z'} for deterministic iteration order
-        # and to avoid CPython hash randomization overhead during iteration.
-        magnetization = {c: {'mean': np.zeros(N, dtype=complex), 'err': np.zeros(N)} for c in ('x', 'y', 'z')}
-        for comp in ('x', 'y', 'z'):
+        magnetization = {c: {'mean': np.zeros(N, dtype=complex), 'err': np.zeros(N)} for c in {'x', 'y', 'z'}}
+        for comp in {'x', 'y', 'z'}:
             op_jax = getattr(nqs.model.operators, f'sig_{comp}')(lattice=lattice, type_act='local').jax
             for i in range(N):
                 res = nqs.compute_observable(states=states, ansatze=log_psi, functions=op_jax, probabilities=probs, return_stats=True, args=(i,))
