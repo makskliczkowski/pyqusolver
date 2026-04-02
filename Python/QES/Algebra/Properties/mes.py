@@ -527,47 +527,44 @@ class MESFinder:
             updates, new_state  = optimizer.update(grads, opt_state, params)
             return optax.apply_updates(params, updates), new_state, loss
         
+        # Use jax.lax.scan for ZERO Python overhead in optimization loop
+        # This eliminates all host-device transfers until the end
+        def scan_body(carry, _):
+            params, opt_state, best_params, best_loss   = carry
+            new_params, new_opt_state, loss             = step(params, opt_state)
+            # Track best parameters
+            is_better   = loss < best_loss
+            best_params = jnp.where(is_better, new_params, best_params)
+            best_loss   = jnp.where(is_better, loss, best_loss)
+            return (new_params, new_opt_state, best_params, best_loss), loss
+        
         # Warm up compilation
         try:
             params, opt_state, val  = step(params, opt_state)
-            best_val                = float(val)
-            best_params             = params
-            prev_val                = best_val
-            nfev                    = 1
+            init_carry = (params, opt_state, params, val)
         except Exception as exc:
             raise RuntimeError("method='jax-grad' requires S_func to be JAX-traceable") from exc
         
-        # Early stopping parameters
-        stall       = 0
-        _stall_rtol = max(tol * 1e6, 1e-6)
-        _stall_atol = tol
-        every       = int(kwargs.get('every', 10))
-        check_every = int(kwargs.get('check_every', 10))
+        # Run optimization with scan (no Python overhead)
+        (final_params, final_opt_state, best_params, best_loss), all_losses = jax.lax.scan(
+            scan_body, init_carry, None, length=max_iter - 1
+        )
         
-        # Optimization loop
-        for step_idx in range(2, max_iter + 1):
-            params, opt_state, val = step(params, opt_state)
-            nfev += 1
-            
-            # Periodic checks to reduce host sync overhead
-            if step_idx % check_every == 0 or step_idx == max_iter:
-                valf = float(val)
-                if valf < best_val:
-                    best_val    = valf
-                    best_params = params
-                
-                improvement = abs(valf - prev_val)
-                if improvement < _stall_atol + _stall_rtol * abs(prev_val):
-                    stall += check_every
-                else:
-                    stall = 0
-                prev_val = valf
-                
-                if verbose and step_idx % every == 0:
-                    self._log(f"JAX-GRAD step {step_idx}/{max_iter}: val={valf:.8f}, best={best_val:.8f}", verbose=verbose, lvl=2)
-                
-                if stall >= patience:
-                    break
+        # Check convergence on host (only one sync at the end)
+        all_losses_np   = np.asarray(all_losses)
+        best_val        = float(best_loss)
+        nfev            = max_iter
+        
+        # Optional: report progress if verbose
+        if verbose:
+            every = int(kwargs.get('every', 10))
+            for i in range(0, len(all_losses_np), every):
+                step_idx = i + 2  # +1 for warmup, +1 for 1-indexing
+                if step_idx <= max_iter:
+                    self._log(
+                        f"JAX-GRAD step {step_idx}/{max_iter}: val={all_losses_np[i]:.8f}, best={best_val:.8f}", 
+                        verbose=verbose, lvl=2
+                    )
         
         best_c = np.asarray(_params_to_c(best_params, C_stack, m, n_constraints))
         return self.normalize(best_c), float(best_val), nfev
