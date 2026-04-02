@@ -38,7 +38,7 @@ def get_exact_impl(nqs_instance: "NQS", **kwargs) -> Optional["NQSTrainStats"]:
 
     logfun = nqs_instance.log if nqs_instance._logger else lambda x, **kw: print(x)
 
-    if nqs_instance._nqsproblem.typ in ["wavefunction", "density_matrix"]:
+    if nqs_instance._nqsproblem.typ in {"wavefunction", "density_matrix"}:
         from .nqs_train import NQSTrainStats
 
         stats = nqs_instance.trainer.stats if nqs_instance.trainer is not None else NQSTrainStats()
@@ -123,8 +123,18 @@ def load_exact_impl(nqs_instance: "NQS", filepath: str, *, key: str = "energy_va
                 raise KeyError(f"Key '{key}' not found in HDF5 file '{filepath}'.")
 
     elif extension == ".npy":
+<<<<<<< sentinel-fix-allow-pickle-6517379890859389044
         # SECURITY: Explicitly disable allow_pickle to prevent arbitrary code execution
         exact_values = np.load(filepath, allow_pickle=False)
+=======
+        exact_values = np.load(filepath, allow_pickle=False)
+        # Explicitly refuse object-dtype arrays, even if loading succeeds without pickle.
+        if isinstance(exact_values, np.ndarray) and exact_values.dtype == np.dtype("O"):
+            raise TypeError(
+                f"Refusing to load object-dtype array from '{filepath}'. "
+                "Only numeric arrays are supported for exact values."
+            )
+>>>>>>> main
 
     elif extension == ".txt" or extension == ".dat" or extension == ".csv":
         exact_values = np.loadtxt(filepath)

@@ -17,20 +17,23 @@ import  numpy       as np
 from    abc         import ABC, abstractmethod
 from    typing      import Any, Optional, Union, List
 
-# Try importing JAX
-if os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True"):
-    jax             = None
-    jnp             = None
-    JAX_AVAILABLE   = False
-else:
-    try:
-        import  jax
-        import  jax.numpy as jnp
-        JAX_AVAILABLE = True
-    except ImportError:
+try:
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+except ImportError:
+    # Fallback if utils not available
+    if os.environ.get("PY_JAX_DONT_USE", "0") in ("1", "true", "True"):
         jax             = None
         jnp             = None
         JAX_AVAILABLE   = False
+    else:
+        try:
+            import jax
+            import jax.numpy as jnp
+            JAX_AVAILABLE = True
+        except ImportError:
+            jax             = None
+            jnp             = None
+            JAX_AVAILABLE   = False
 
 class BackendAdapter(ABC):
     """Abstract base class for backend adapters."""

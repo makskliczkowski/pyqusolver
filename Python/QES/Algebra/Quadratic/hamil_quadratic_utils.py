@@ -867,6 +867,43 @@ class QuadraticSelection:
     # ------------------------------------------------------------------------
 
     @staticmethod
+    def sample_cfgs_fast(ns: int, filling: int, rng: np.random.Generator, batch: int, sort: bool = True) -> np.ndarray:
+        '''
+        Fast vectorized sampler for fixed-filling orbital configurations.
+
+        Each row contains `filling` distinct orbitals (no replacement within a row).
+        Rows may repeat, which is intentional for high-throughput sampling.
+        
+        Parameters
+        ----------
+        ns : int
+            Total number of orbitals.
+        filling : int
+            Number of occupied orbitals per configuration (must satisfy 0 <= filling <= ns).
+        rng : numpy.random.Generator
+            Random number generator to use for sampling.
+        batch : int
+            Number of configurations to generate.
+        sort : bool
+            If True, sort each configuration's orbital indices in ascending order (default: True).
+        '''
+        if filling < 0 or filling > ns:
+            raise ValueError("`filling` must satisfy 0 <= filling <= ns.")
+        if batch <= 0:
+            return np.empty((0, filling), dtype=np.int32)
+
+        idx_dtype = np.uint16 if ns <= 65535 else np.int32
+        if filling == 0:
+            return np.empty((batch, 0), dtype=idx_dtype)
+
+        # Partition-based selection avoids full row-wise argsort.
+        keys = rng.random((batch, ns))
+        cfgs = np.argpartition(keys, kth=filling - 1, axis=1)[:, :filling]
+        if sort:
+            cfgs = np.sort(cfgs, axis=1)
+        return cfgs.astype(idx_dtype, copy=False)
+
+    @staticmethod
     def sample_cfgs(ns: int, filling: int, rng: np.random.Generator, batch: int, sort: bool = True) -> np.ndarray:
         ''' 
         Take random samples of configurations with given filling. The samples
@@ -884,29 +921,7 @@ class QuadraticSelection:
         Returns:
             np.ndarray: Array of shape (batch, filling) with orbital indices (dtype=int32).
         '''
-        # Use uint16 for indices if ns <= 65535 (saves memory for large batches)
-        idx_dtype   = np.uint16 if ns <= 65535 else np.int32
-        
-        # Vectorized approach: generate permutations and take first `filling` elements
-        # This is faster than per-row rng.choice for large batches
-        s           = np.empty((batch, filling), dtype=idx_dtype)
-        
-        # For small ns, can do fully vectorized with argsort trick
-        if ns <= 256 and batch > 100:
-            # Generate random keys for all positions, argsort gives permutation
-            keys    = rng.random((batch, ns))
-            perms   = np.argsort(keys, axis=1)[:, :filling]
-            if sort:
-                perms = np.sort(perms, axis=1)
-            s[:] = perms.astype(idx_dtype, copy=False)
-        else:
-            # Fallback to per-row sampling
-            for b in range(batch):
-                x = rng.choice(ns, size=filling, replace=False)
-                if sort:
-                    x = np.sort(x)
-                s[b] = x.astype(idx_dtype, copy=False)
-        return s
+        return QuadraticSelection.sample_cfgs_fast(ns=ns, filling=filling, rng=rng, batch=batch, sort=sort)
 
     @staticmethod
     def pack_masks(samples: np.ndarray, *, ns: int = 64) -> np.ndarray:

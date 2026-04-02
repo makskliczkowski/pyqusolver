@@ -48,10 +48,19 @@ except ImportError as e:
 ####################################################################################################
 
 try:
-    import jax
-    import jax.numpy as jnp
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
+except ImportError:
+    try:
+        import jax
+        import jax.numpy as jnp
 
-    JAX_AVAILABLE = True
+        JAX_AVAILABLE = True
+    except ImportError:
+        JAX_AVAILABLE = False
+        jax = None
+        jnp = np
+
+if JAX_AVAILABLE:
 
     def make_jax_operator_closure(
         op_func: Callable, sites: Sequence[int], *static_args: Any, **static_kwargs: Any
@@ -93,10 +102,7 @@ try:
 
         return jax.jit(compiled_op)
 
-except ImportError:
-    JAX_AVAILABLE = False
-    jax = None
-    jnp = np
+else:
     make_jax_operator_closure = lambda op_func, sites, *args, **kwargs: op_func
 
 ####################################################################################################

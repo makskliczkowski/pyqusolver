@@ -230,7 +230,7 @@ def validate_diagonalization_params(method: str, k: Optional[int], n: int) -> No
     -------
         ValueError : If parameters are invalid
     """
-    if method in ["lanczos", "arnoldi", "block_lanczos", "shift-invert"]:
+    if method in {"lanczos", "arnoldi", "block_lanczos", "shift-invert"}:
         if k is None:
             raise ValueError(f"Method '{method}' requires specifying k (number of eigenvalues)")
         if k >= n:

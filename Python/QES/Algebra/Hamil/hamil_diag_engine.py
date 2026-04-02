@@ -282,7 +282,7 @@ class DiagonalizationEngine:
             raise RuntimeError(f"Diagonalization failed with method '{method}': {e}") from e
 
         # Store Krylov basis if requested and applicable
-        if store_basis and method in ["lanczos", "block_lanczos", "arnoldi"]:
+        if store_basis and method in {"lanczos", "block_lanczos", "arnoldi"}:
             self._extract_krylov_basis(A, matvec)
 
         if self.verbose:

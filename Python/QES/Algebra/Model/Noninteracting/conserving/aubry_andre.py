@@ -145,23 +145,30 @@ class AubryAndre(QuadraticHamiltonian):
     def _onsite_potential(self, x: int, y: int, z: int) -> float:
         """AA/Harper potential in 1D/2D/3D."""
 
+        # For better statistics - if phi=0, we can randomize it to avoid special cases. Otherwise, use the provided phi.
+        # if np.isclose(self._phi, 0.0):
+        #     phi = np.random.uniform(0, self._twopi)
+        # else:
+        #     phi = self._phi
+        phi = self._phi
+
         # 1D
         if self._ly == 1 and self._lz == 1:
-            return -self._J * self._lmbd * np.cos(self._twopi * self._beta * x + self._phi)
+            return -self._J * self._lmbd * np.cos(self._twopi * self._beta * x + phi)
         
         # 2D - diagonal Harper form, matches C++ (with diag()/=4)
         elif self._lz == 1:
-            v = np.cos(self._twopi * self._beta * (x + y) + self._phi) + np.cos(
-                self._twopi * self._beta * (x - y) + self._phi
+            v = np.cos(self._twopi * self._beta * (x + y) + phi) + np.cos(
+                self._twopi * self._beta * (x - y) + phi
             )
             return -(self._lmbd * v) / 4.0 * self._J
         
         # 3D - separable sum over axes, normalized by 3 to keep scale comparable
         else:
             v = (
-                np.cos(self._twopi * self._beta * x + self._phi)
-                + np.cos(self._twopi * self._beta * y + self._phi)
-                + np.cos(self._twopi * self._beta * z + self._phi)
+                np.cos(self._twopi * self._beta * x + phi)
+                + np.cos(self._twopi * self._beta * y + phi)
+                + np.cos(self._twopi * self._beta * z + phi)
             )
             return -(self._lmbd * v) / 3.0 * self._J
 

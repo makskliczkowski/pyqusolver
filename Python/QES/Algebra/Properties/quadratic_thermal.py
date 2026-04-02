@@ -340,7 +340,7 @@ def quadratic_thermal_scan(
     temperatures = np.asarray(temperatures)
     n_temps = len(temperatures)
 
-    if particle_type.lower() not in ["fermion", "boson"]:
+    if particle_type.lower() not in {"fermion", "boson"}:
         raise ValueError("particle_type must be 'fermion' or 'boson'")
 
     is_fermion = particle_type.lower() == "fermion"

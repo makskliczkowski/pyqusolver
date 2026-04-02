@@ -15,11 +15,14 @@ from    typing import Callable, Union
 import  numpy as np
 
 try:
-    import jax
-    import jax.numpy as jnp
-    JAX_AVAILABLE   = True
+    from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
 except ImportError:
-    JAX_AVAILABLE   = False
+    try:
+        import jax
+        import jax.numpy as jnp
+        JAX_AVAILABLE   = True
+    except ImportError:
+        JAX_AVAILABLE   = False
 
 #######################################################################
 
@@ -48,9 +51,9 @@ if JAX_AVAILABLE:
 
     @partial(jax.jit)
     def calculate_slater_det_jax(
-        sp_eigvecs: jnp.ndarray,  # U matrix (Ns x Norb)
-        occupied_orbitals: jnp.ndarray,  # Indices {\alpha_k}
-        org_basis_state: Union[int, jnp.ndarray],
+        sp_eigvecs              : jnp.ndarray,  # U matrix (Ns x Norb)
+        occupied_orbitals       : jnp.ndarray,  # Indices {\alpha_k}
+        org_basis_state         : Union[int, jnp.ndarray],
         ns: int,
     ) -> jnp.ndarray:  # Returns JAX array (scalar)
         r"""
