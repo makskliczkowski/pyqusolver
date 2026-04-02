@@ -92,6 +92,8 @@ except ImportError:
     JAX_AVAILABLE = False
     jax = jnp = lax = jit = None
 
+if JAX_AVAILABLE:
+
     def _popcount_mask_jnp(x: jnp.int64, mask_bits: jnp.int64) -> jnp.int64:
         """Number of set bits in x & mask_bits (JIT-safe)."""
         return jnp.bit_count(x & mask_bits)
@@ -376,9 +378,9 @@ except ImportError:
 
 else:
     jax = jnp = lax = jit = None
-    c_jnp = c_dag_jnp = c_k_jnp = c_k_dag_jnp = np
+    c_jnp = c_dag_jnp = c_k_jnp = c_k_dag_jnp = None
     f_parity_int_jnp = f_parity_np_jnp = f_parity_int_vec = f_parity_np_vec = None
-    c_int_jnp = c_dag_int_jnp = np
+    c_int_jnp = c_dag_int_jnp = c_k_int_jnp = c_k_dag_int_jnp = None
     n_jax = n_int_jax = None
 
 # ============================================================================

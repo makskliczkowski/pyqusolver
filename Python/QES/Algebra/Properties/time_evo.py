@@ -33,13 +33,12 @@ try:
     else:
         lax = None
 except ImportError:
-    _JAX_AVAILABLE = os.environ.get("PY_JAX_AVAILABLE", 0) == "1"
-    if _JAX_AVAILABLE:
+    JAX_AVAILABLE = os.environ.get("PYJAX_AVAILABLE", "0") == "1"
+    if JAX_AVAILABLE:
         try:
             import jax
             import jax.numpy as jnp
             from jax import lax
-            JAX_AVAILABLE = True
         except ImportError:
             jax = None
             jnp = np
@@ -49,7 +48,6 @@ except ImportError:
         jax = None
         jnp = np
         lax = None
-        JAX_AVAILABLE = False
 
 # -----------------------------------------------------------------------------
 #! Constants
@@ -64,7 +62,7 @@ SYSTEM_PROPERTIES_USE_OPENMP        = 0
 #! Time Evolution Functions
 # -----------------------------------------------------------------------------
 
-if _JAX_AVAILABLE:
+if JAX_AVAILABLE:
 
     @jax.jit
     def time_evo_jax(eigenstates: Array, eigvals: Array, overlaps: Array, time: float) -> Array:
@@ -97,7 +95,8 @@ if _JAX_AVAILABLE:
     ) -> Array:
         """
         Evolves a quantum state in time using a block of eigenstates, eigenvalues, and overlaps.
-        Args:
+        Parameters
+        -----------
             eigenstates (Array):
                 Array of eigenstates, shape (M, N), where M is the Hilbert space dimension and N is the number of eigenstates.
             eigvals (Array):
@@ -316,7 +315,8 @@ def time_evo_evaluate(quenched_states_t: Array, quench_operator_m: Array) -> Arr
 def diagonal_ensemble_jax(soverlaps: Array, diag_mat: Array) -> Array:
     """
     Computes the diagonal ensemble of a given matrix using the overlaps.
-    Args:
+    Parameters
+-----------
         overlaps (Array): A 1D array of overlaps (projections) of the initial state onto each eigenstate.
         matrix (Array): A 2D array representing the matrix for which to compute the diagonal ensemble.
     Returns:
@@ -361,7 +361,6 @@ class QuenchTypes(Enum):
 
 # -----------------------------------------------------------------------------
 
-
 def create_initial_quench_state(
     quench_type: QuenchTypes,
     Nh: int,
@@ -375,7 +374,8 @@ def create_initial_quench_state(
     """
     Creates the initial state vector after a quench.
 
-    Args:
+    Parameters
+    -----------
         quench_type: A member of the QuenchTypes enum.
         Nh: Dimension of the Hilbert space (length of the state vector).
         Ns: Number of spins.
@@ -409,14 +409,14 @@ def create_initial_quench_state(
                 if b:
                     idx |= 1 << i
         # Update state: for JAX, use functional update; for NumPy, in-place.
-        if _JAX_AVAILABLE:
-            state = state.at[idx].set(1.0)
+        if is_jax:
+            state       = state.at[idx].set(1.0)
         else:
-            state[idx] = 1.0
+            state[idx]  = 1.0
 
     elif quench_type == QuenchTypes.RANDN:
         # Create a normally distributed state, then normalize.
-        if _JAX_AVAILABLE:
+        if is_jax:
             if key is None:
                 raise ValueError("A PRNG key must be provided for JAX random generation.")
             state = jax.random.normal(key, (Nh,))
@@ -427,7 +427,7 @@ def create_initial_quench_state(
 
     elif quench_type == QuenchTypes.RANDU:
         # Create a uniformly distributed state, then normalize.
-        if _JAX_AVAILABLE:
+        if is_jax:
             if key is None:
                 raise ValueError("A PRNG key must be provided for JAX random generation.")
             state = jax.random.uniform(key, (Nh,), minval=0.0, maxval=1.0)
@@ -438,7 +438,7 @@ def create_initial_quench_state(
 
     elif quench_type == QuenchTypes.AF_UP:
         idx = int(Nh / 3) if (Ns % 2 == 0) else int((Nh + 1) / 3)
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
@@ -446,28 +446,28 @@ def create_initial_quench_state(
     elif quench_type == QuenchTypes.AF_DN:
         idx = int(Nh / 3) if (Ns % 2 == 0) else int((Nh + 1) / 3)
         idx = flip_all(idx, Ns)
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
 
     elif quench_type == QuenchTypes.F_UP:
         idx = Nh - 1
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
 
     elif quench_type == QuenchTypes.F_DN:
         idx = 0
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[0] = 1.0
 
     elif quench_type == QuenchTypes.DW_HALF_UP:
         idx = ULLPOW(max(int(Ns / 2) - 1, 0))
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
@@ -475,14 +475,14 @@ def create_initial_quench_state(
     elif quench_type == QuenchTypes.DW_HALF_DN:
         idx = ULLPOW(max(int(Ns / 2) - 1, 0))
         idx = flip_all(idx, Ns)
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
 
     elif quench_type == QuenchTypes.DW_THIRD_UP:
         idx = BinaryMod.ULLPOW(max(int(Ns / 3) - 1, 0))
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
@@ -490,7 +490,7 @@ def create_initial_quench_state(
     elif quench_type == QuenchTypes.DW_THIRD_DN:
         idx = BinaryMod.ULLPOW(max(int(Ns / 3) - 1, 0))
         idx = BinaryMod.flip_all(idx, Ns)
-        if _JAX_AVAILABLE:
+        if is_jax:
             state = state.at[idx].set(1.0)
         else:
             state[idx] = 1.0
@@ -534,7 +534,8 @@ def calc_mean_energy_quench(H, state, backend="default"):
     """
     Calculates the mean energy after the quench, defined as <state| H |state>.
 
-    Args:
+    Parameters
+-----------
         H: The Hamiltonian matrix (dense or sparse) as a 2D array.
         state: The state vector.
         backend: jnp if JAX is available, otherwise np.
@@ -745,13 +746,11 @@ class TimeEvolutionModule:
         if Nh is None:
             Nh = self._hamil.nh
         if use_jax is None:
-            use_jax = _JAX_AVAILABLE
+            use_jax = JAX_AVAILABLE
         if energies is None and quench_type in (QuenchTypes.MEAN, QuenchTypes.SEEK):
             energies = self.eigenvalues
 
-        return create_initial_quench_state(
-            quench_type, Ns, Nh, use_jax=use_jax, energies=energies, Eseek=Eseek
-        )
+        return create_initial_quench_state(quench_type, Ns, Nh, use_jax=use_jax, energies=energies, Eseek=Eseek)
 
     def diagonal_ensemble(self, state: Array) -> Array:
         """
@@ -785,7 +784,7 @@ class TimeEvolutionModule:
             Mean energy <ψ|H|ψ>.
         """
         matrix = self._hamil.matrix
-        backend = jnp if _JAX_AVAILABLE else np
+        backend = jnp if JAX_AVAILABLE else np
         return calc_mean_energy_quench(matrix, state, backend)
 
 

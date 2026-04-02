@@ -205,7 +205,8 @@ class QuadraticHamiltonian(Hamiltonian):
         """
         Initialize a Quadratic Hamiltonian.
 
-        Args:
+        Parameters
+        -----------
             ns (int):
                 Number of single-particle modes/sites.
             particle_conserving (bool):
@@ -225,6 +226,7 @@ class QuadraticHamiltonian(Hamiltonian):
             constant_offset (float):
                 A constant energy offset added *after* diagonalization.
             **kwargs:
+-----------
                 Passed to base class (e.g., logger, lattice).
         """
 
@@ -1799,7 +1801,8 @@ class QuadraticHamiltonian(Hamiltonian):
         Calculates the total energy of a many-body state defined by occupying
         single-particle orbitals (or quasiparticle orbitals for BdG).
 
-        Args:
+        Parameters
+        -----------
             occupied_orbitals (list/array):
                 Indices of the occupied single-particle
                 eigenstates (orbitals alpha or quasiparticles gamma).
@@ -3081,11 +3084,10 @@ def _build_quadratic_hamiltonian(config: HamiltonianConfig, params: Dict[str, An
     params.setdefault("particles", "fermions")
     return QuadraticHamiltonian(**params)
 
-register_hamiltonian(
-    "quadratic",
-    builder=_build_quadratic_hamiltonian,
-    description="Quadratic (free) Hamiltonian supporting onsite, hopping, and pairing terms.",
-    tags=("quadratic", "noninteracting", "fermion", "boson"),
+register_hamiltonian("quadratic",
+    builder     = _build_quadratic_hamiltonian,
+    description = "Quadratic (free) Hamiltonian supporting onsite, hopping, and pairing terms.",
+    tags        = ("quadratic", "noninteracting", "fermion", "boson"),
 )
 
 # ---------------------------------------------------------------------------

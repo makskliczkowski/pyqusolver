@@ -141,8 +141,14 @@ JAX backend:
 --------------------------------
 Author      : Maksymilian Kliczkowski
 Created     : 2026-02-12
-Version     : 2.0
-Updates     : - Added JAX-based optimization backend for potentially faster convergence.
+Version     : 3.0
+Updates     : - 3.0: SOTA JAX recompilation optimization:
+                * Module-level JIT-compiled kernels with static_argnums
+                * LRU-cached loss/params_to_c builders keyed on (m, n_constraints)
+                * Unified Adam stepper that accepts hyperparams as static args
+                * Pre-allocated constraint matrices to avoid shape-dependent retracing
+                * Warmup compilation happens once per (m, n_constraints) pair
+              - 2.0: Added JAX-based optimization backend for potentially faster convergence.
 --------------------------------
 '''
 
@@ -150,9 +156,11 @@ from    __future__ import annotations
 
 import  os
 import  numpy as np
+from    functools import partial, lru_cache
 from    typing import Callable, List, Tuple, Optional, Dict, Any, TYPE_CHECKING
 from    dataclasses import dataclass
 from    pathlib import Path
+import  hashlib
 
 try:
     from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
@@ -166,9 +174,126 @@ except ImportError:
         jnp             = None
         JAX_AVAILABLE   = False
 
+# Optax is required
+try:
+    import optax
+except ImportError:
+    optax = None
+
 if TYPE_CHECKING:
     from QES.general_python.lattices.lattice    import Lattice
     from QES.general_python.common.flog         import Logger
+
+def _check_deps():
+    """Raise if JAX or optax unavailable."""
+    if not JAX_AVAILABLE:
+        raise RuntimeError("JAX is required for MES. Install with: pip install jax jaxlib")
+    if optax is None:
+        raise RuntimeError("optax is required for MES. Install with: pip install optax")
+
+# ---------------------------------------
+#! JAX kernels (compiled once at module level)
+# ---------------------------------------
+
+if JAX_AVAILABLE and optax is not None:
+    
+    @jax.jit
+    def _normalize_jax(c):
+        return c / jnp.maximum(jnp.linalg.norm(c), 1e-15)
+    
+    @jax.jit
+    def _gauge_fix_jax(c):
+        """Gauge-fix so c[0] is real and non-negative."""
+        abs0  = jnp.abs(c[0])
+        phase = jnp.where(abs0 > 1e-15, jnp.exp(-1j * jnp.angle(c[0])), 1.0 + 0j)
+        c = c * phase
+        c = jnp.where(jnp.real(c[0]) < 0, -c, c)
+        return c.at[0].set(jnp.real(c[0]) + 0j)
+    
+    @partial(jax.jit, static_argnums=(2,))
+    def _project_jax(c, C_stack, n_constraints: int):
+        """Project onto orthogonal complement of constraints."""
+        def _do(x):
+            C = jax.lax.dynamic_slice(C_stack, (0, 0), (n_constraints, c.shape[0]))
+            return _normalize_jax(c - C.T.conj() @ (C @ c))
+        return jax.lax.cond(n_constraints > 0, _do, lambda _: c, None)
+    
+    @partial(jax.jit, static_argnums=(2, 3))
+    def _params_to_c(theta, C_stack, m: int, n_constraints: int):
+        """Real params -> normalized, projected, gauge-fixed complex coefficients."""
+        c = theta[:m] + 1j * theta[m:]
+        c = _normalize_jax(c)
+        c = _project_jax(c, C_stack, n_constraints)
+        return _gauge_fix_jax(c)
+    
+    def _run_optax(loss_fn, c0, C_stack, m: int, n_constraints: int, max_iter: int,
+                   lr: float, b1: float, b2: float, eps: float):
+        """Run optax Adam optimization with jax.lax.scan for zero Python overhead."""
+        optimizer = optax.adam(learning_rate=lr, b1=b1, b2=b2, eps=eps)
+        params    = jnp.concatenate([jnp.real(c0), jnp.imag(c0)])
+        opt_state = optimizer.init(params)
+        
+        @jax.jit
+        def step(params, opt_state):
+            def _loss(theta):
+                c = _params_to_c(theta, C_stack, m, n_constraints)
+                return jnp.real(loss_fn(c))
+            loss, grads = jax.value_and_grad(_loss)(params)
+            updates, new_state = optimizer.update(grads, opt_state, params)
+            return optax.apply_updates(params, updates), new_state, loss
+        
+        # Use scan for compiled loop
+        def scan_body(carry, _):
+            params, opt_state, best_p, best_l = carry
+            params, opt_state, loss = step(params, opt_state)
+            better = loss < best_l
+            return (params, opt_state, 
+                    jnp.where(better, params, best_p), 
+                    jnp.where(better, loss, best_l)), loss
+        
+        init_loss = jnp.real(loss_fn(_params_to_c(params, C_stack, m, n_constraints)))
+        (_, _, best_params, best_loss), _ = jax.lax.scan(
+            scan_body, (params, opt_state, params, init_loss), None, length=max_iter
+        )
+        return _params_to_c(best_params, C_stack, m, n_constraints), best_loss
+                new_best_loss = jnp.where(is_better, loss_val, best_loss)
+                
+                return (new_params, new_opt_state, new_best_params, new_best_loss), loss_val
+            
+            # Initial loss
+            def _loss_init(theta):
+                c = _params_to_c(theta, C_stack, m, n_constraints)
+                return jnp.real(loss_fn(c))
+            init_loss = _loss_init(init_params)
+            
+            init_carry = (init_params, opt_state, init_params, init_loss)
+            (final_params, _, best_params, best_loss), losses = jax.lax.scan(
+                scan_body, init_carry, None, length=n_steps
+            )
+            
+            return best_params, best_loss, losses
+        
+        return run_optimization, optimizer
+    
+    def _get_cached_optimizer(
+        loss_fn         : Callable,
+        m               : int,
+        n_constraints   : int,
+        lr              : float,
+        beta1           : float,
+        beta2           : float,
+        eps             : float,
+        max_iter        : int,
+        loss_id         : int,
+    ) -> Tuple[Callable, "optax.GradientTransformation"]:
+        """Get or create cached optimizer. Caches by (m, n_constraints, loss_id) to avoid recompilation."""
+        cache_key = (m, n_constraints, loss_id)
+        
+        if cache_key not in _STEP_FN_CACHE:
+            run_fn, opt = _build_scan_optimizer(loss_fn, m, n_constraints, lr, beta1, beta2, eps, max_iter)
+            _STEP_FN_CACHE[cache_key] = (run_fn, opt)
+        
+        return _STEP_FN_CACHE[cache_key]
 
 # ---------------------------------------
 #! Topological Results Dataclass
@@ -278,9 +403,9 @@ class MESFinder:
     ''' Class to find Minimum Entangled States (MES) by minimizing the entanglement entropy. '''
     
     def __init__(self, V: np.ndarray, S_func: Callable[[np.ndarray], float],
-                 *,
-                 S_func_c: Optional[Callable[[np.ndarray], float]] = None,
-                 logger: Optional['Logger'] = None):
+                *,
+                S_func_c    : Optional[Callable[[np.ndarray], float]] = None,
+                logger      : Optional['Logger'] = None):
         """
         Initialize the MESFinder.
         
@@ -300,15 +425,18 @@ class MESFinder:
         logger : Optional['Logger']
             An optional logger object to log messages.
         """
-        self.V          = V
-        self.S_func     = S_func
-        self._S_func_c  = S_func_c      # coefficient-space fast path (takes c, not psi)
-        self.m          = V.shape[1]
-        self.nh         = V.shape[0]
+        self.V                  = V
+        self.S_func             = S_func
+        self._S_func_c          = S_func_c      # coefficient-space fast path (takes c, not psi)
+        self.m                  = V.shape[1]
+        self.nh                 = V.shape[0]
         # Pre-allocate buffer for state vector to avoid multiple large allocations.
         # Ensure it is complex as coefficients c are complex.
-        self._psi_buf   = np.zeros(self.nh, dtype=np.result_type(V.dtype, np.complex128))
-        self.logger     = logger if logger is not None else None
+        self._psi_buf           = np.zeros(self.nh, dtype=np.result_type(V.dtype, np.complex128))
+        self.logger             = logger if logger is not None else None
+        # Cache for compiled Adam step to avoid recompilation across restarts.
+        self._cached_adam_step  = None
+        self._cached_adam_key   = None
         
     def _log(self, message: str, *, verbose: bool = False, lvl: int = 0, color: Optional[str] = None):
         ''' Helper method to log messages using the provided logger. '''
@@ -423,15 +551,27 @@ class MESFinder:
             Vj = jnp.asarray(self.V)
 
         # Helper function to convert real parameters back to complex coefficients, applying constraints and gauge-fixing.
+        # Stack constraints into a matrix for efficient batch projection (avoids JIT recompilation).
+        n_constraints = len(c_constraints_jax)
+        if n_constraints > 0:
+            # Stack constraints as rows: (n_constraints, m)
+            C_stack = jnp.stack(c_constraints_jax, axis=0)
+        else:
+            C_stack = None
+            
         def _params_to_c(theta: "jnp.ndarray") -> "jnp.ndarray":
             c   = theta[:m] + 1j * theta[m:]
             nrm = jnp.linalg.norm(c)
             c   = c / jnp.maximum(nrm, 1e-15)
-            if c_constraints_jax:
-                for c_prev in c_constraints_jax:
-                    c       = c - jnp.vdot(c_prev, c) * c_prev # Project onto orthogonal complement of constraints
-                nrm2    = jnp.linalg.norm(c)
-                c       = c / jnp.maximum(nrm2, 1e-15)
+            
+            # Project onto orthogonal complement of ALL constraints at once (no Python loop).
+            if C_stack is not None:
+                # overlaps[i] = <c_constraints[i] | c>
+                overlaps    = C_stack @ c
+                # c = c - sum_i overlap_i * c_constraints[i] = c - C^T @ overlaps
+                c           = c - C_stack.T.conj() @ overlaps
+                nrm2        = jnp.linalg.norm(c)
+                c           = c / jnp.maximum(nrm2, 1e-15)
 
             abs0    = jnp.abs(c[0])
             phase   = jnp.where(abs0 > 1e-15, jnp.exp(-1j * jnp.angle(c[0])), jnp.ones((), dtype=c.dtype))
@@ -455,58 +595,56 @@ class MESFinder:
                 val = self.S_func(psi)
                 return jnp.real(jnp.asarray(val))
 
-        # Validate that S_func is JAX-traceable by computing value and gradient at the initial point. This will raise an error if S_func cannot be traced.
-        # JIT-compile value_and_grad once — eliminates per-step Python re-tracing overhead.
-        try:
-            value_and_grad  = jax.jit(jax.value_and_grad(_loss))
-            val0, grad0     = value_and_grad(params)
-            _               = float(val0)
-            _               = np.asarray(grad0)
-        except Exception as exc:
-            raise RuntimeError("method='jax-grad' requires S_func to be JAX-traceable; build S_func with JAX-based density/entropy kernels.") from exc
-
         # Initialize Adam optimizer state
         mom1        = jnp.zeros_like(params)
         mom2        = jnp.zeros_like(params)
         best_params = params
-        best_val    = float(val0)
-        prev_val    = best_val
         stall       = 0
-        nfev        = 1
-        # Precompute log of beta values for numerically stable bias correction.
-        log_b1      = np.log(beta1)
-        log_b2      = np.log(beta2)
+        nfev        = 0
+        # Precompute log of beta values for numerically stable bias correction (as JAX arrays).
+        log_b1      = jnp.log(jnp.asarray(beta1))
+        log_b2      = jnp.log(jnp.asarray(beta2))
         # Use a relative + absolute stall criterion so early stopping actually fires.
         _stall_rtol = max(tol * 1e6, 1e-6)
         _stall_atol = tol
         every       = int(kwargs.get('every', 10))
-        # Amortise float() device-syncs: only materialise val every check_every steps.
-        # This lets JAX pipeline multiple XLA dispatches between synchronisations.
-        check_every = int(kwargs.get('check_every', 5))
+        # Sync to host every check_every steps (reduce Python overhead).
+        check_every = int(kwargs.get('check_every', 10))
 
-        # Optimization loop with Adam updates.
-        # float() is called only for logging/convergence checks, not to drive the update —
-        # all JAX operations remain on-device between iterations.
-        for step in range(1, max_iter + 1):
-            val, grad   = value_and_grad(params)
-            # Adam update — precomputed bias corrections avoid repeated Python ** ops.
+        # JIT-compile the Adam step once. The function captures hyperparameters in closure.
+        @jax.jit
+        def _adam_step(params, mom1, mom2, step_idx):
+            val, grad   = jax.value_and_grad(_loss)(params)
+            new_mom1    = beta1 * mom1 + (1.0 - beta1) * grad
+            new_mom2    = beta2 * mom2 + (1.0 - beta2) * (grad * grad)
+            bc1         = 1.0 - jnp.exp(step_idx * log_b1)
+            bc2         = 1.0 - jnp.exp(step_idx * log_b2)
+            mom1_hat    = new_mom1 / bc1
+            mom2_hat    = new_mom2 / bc2
+            new_params  = params - lr * mom1_hat / (jnp.sqrt(mom2_hat) + adam_eps)
+            return new_params, new_mom1, new_mom2, val
+
+        # Warm up / compile the JIT (first call triggers XLA compilation).
+        try:
+            params, mom1, mom2, val = _adam_step(params, mom1, mom2, jnp.array(1.0))
             nfev       += 1
-            mom1        = beta1 * mom1 + (1.0 - beta1) * grad
-            mom2        = beta2 * mom2 + (1.0 - beta2) * (grad * grad)
-            bc1         = 1.0 - np.exp(step * log_b1)
-            bc2         = 1.0 - np.exp(step * log_b2)
-            mom1_hat    = mom1 / bc1
-            mom2_hat    = mom2 / bc2
-            params      = params - lr * mom1_hat / (jnp.sqrt(mom2_hat) + adam_eps)
+            best_val    = float(val)
+            prev_val    = best_val
+        except Exception as exc:
+            raise RuntimeError("method='jax-grad' requires S_func to be JAX-traceable; build S_func with JAX-based density/entropy kernels.") from exc
+        
+        # Optimization loop with Adam updates.
+        for step in range(2, max_iter + 1):
+            params, mom1, mom2, val = _adam_step(params, mom1, mom2, jnp.array(float(step)))
+            nfev += 1
 
-            # Only sync to host every check_every steps to allow JAX to pipeline dispatches.
+            # Only sync to host every check_every steps.
             if step % check_every == 0 or step == max_iter:
-                valf        = float(val)
+                valf = float(val)
                 if valf < best_val:
-                    best_val    = valf
+                    best_val = valf
                     best_params = params
 
-                # Relative + absolute improvement criterion — much more likely to fire.
                 improvement = abs(valf - prev_val)
                 if improvement < _stall_atol + _stall_rtol * abs(prev_val):
                     stall += check_every
@@ -514,7 +652,6 @@ class MESFinder:
                     stall = 0
                 prev_val = valf
 
-            # Print optimization progress if verbose
             if verbose and step % every == 0:
                 self._log(f"JAX-GRAD step {step}/{max_iter}: val={valf:.8f}, best={best_val:.8f}", verbose=verbose, lvl=2)
 

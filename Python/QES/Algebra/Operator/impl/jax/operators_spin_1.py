@@ -65,38 +65,39 @@ except ImportError:
     jnp = np
     jax = None
     lax = None
-    if JAX_AVAILABLE:
+    JAX_AVAILABLE = False
 
-        # Spin-1 constants
-        _SQRT2_INV_jnp      = jnp.sqrt(0.5)
-        _SQRT2_jnp          = jnp.sqrt(2.0)
+if JAX_AVAILABLE:
+    # Spin-1 constants
+    _SQRT2_INV_jnp      = jnp.sqrt(0.5)
+    _SQRT2_jnp          = jnp.sqrt(2.0)
 
-        # Spin-1 matrices as JAX arrays (3x3) in |+1⟩, |0⟩, |-1⟩ basis
-        _S1_IDENTITY_jnp    = jnp.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
-        _S1_X_jnp           = jnp.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float) * _SQRT2_INV_jnp
-        _S1_Y_jnp           = jnp.array([[0, -1j, 0], [1j, 0, -1j], [0, 1j, 0]], dtype=complex) * _SQRT2_INV_jnp
-        _S1_Z_jnp           = jnp.array([[1, 0, 0], [0, 0, 0], [0, 0, -1]], dtype=float)
-        _S1_PLUS_jnp        = jnp.array([[0, 1, 0], [0, 0, 1], [0, 0, 0]], dtype=float) * _SQRT2_jnp
-        _S1_MINUS_jnp       = jnp.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=float) * _SQRT2_jnp
-        _S1_Z2_jnp          = jnp.array([[1, 0, 0], [0, 0, 0], [0, 0, 1]], dtype=float)
+    # Spin-1 matrices as JAX arrays (3x3) in |+1⟩, |0⟩, |-1⟩ basis
+    _S1_IDENTITY_jnp    = jnp.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+    _S1_X_jnp           = jnp.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=float) * _SQRT2_INV_jnp
+    _S1_Y_jnp           = jnp.array([[0, -1j, 0], [1j, 0, -1j], [0, 1j, 0]], dtype=complex) * _SQRT2_INV_jnp
+    _S1_Z_jnp           = jnp.array([[1, 0, 0], [0, 0, 0], [0, 0, -1]], dtype=float)
+    _S1_PLUS_jnp        = jnp.array([[0, 1, 0], [0, 0, 1], [0, 0, 0]], dtype=float) * _SQRT2_jnp
+    _S1_MINUS_jnp       = jnp.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=float) * _SQRT2_jnp
+    _S1_Z2_jnp          = jnp.array([[1, 0, 0], [0, 0, 0], [0, 0, 1]], dtype=float)
 
-    else:
-        jnp             = np
-        jax             = None
-        lax             = None
-        _SQRT2_INV_jnp      = np.sqrt(0.5)
-        _SQRT2_jnp          = np.sqrt(2.0)
-        _S1_IDENTITY_jnp    = np
-        _S1_X_jnp           = np
-        _S1_Y_jnp           = np
-        _S1_Z_jnp           = np
-        _S1_PLUS_jnp        = np
-        _S1_MINUS_jnp       = np
-        _S1_Z2_jnp          = np
+else:
+    jnp             = np
+    jax             = None
+    lax             = None
+    _SQRT2_INV_jnp      = np.sqrt(0.5)
+    _SQRT2_jnp          = np.sqrt(2.0)
+    _S1_IDENTITY_jnp    = None
+    _S1_X_jnp           = None
+    _S1_Y_jnp           = None
+    _S1_Z_jnp           = None
+    _S1_PLUS_jnp        = None
+    _S1_MINUS_jnp       = None
+    _S1_Z2_jnp          = None
 
-    ################################################################################
-    #! Constants
-    ################################################################################
+################################################################################
+#! Constants
+################################################################################
 
 
 _SPIN_1 = 1.0
