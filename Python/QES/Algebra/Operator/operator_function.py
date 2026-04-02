@@ -103,9 +103,6 @@ if JAX_AVAILABLE:
         return jax.jit(compiled_op)
 
 else:
-    JAX_AVAILABLE = False
-    jax = None
-    jnp = np
     make_jax_operator_closure = lambda op_func, sites, *args, **kwargs: op_func
 
 ####################################################################################################
