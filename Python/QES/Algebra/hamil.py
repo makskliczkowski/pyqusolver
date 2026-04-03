@@ -130,7 +130,6 @@ class Hamiltonian(BasisAwareOperator):
     _ADD_TOLERANCE = 1e-10
 
     def _ADD_CONDITION(x, *args):
-        from collections.abc import Mapping, Iterable
         def _is_nonzero_like(value):
             """
             Robust scalar/array-like non-zero check.
@@ -180,11 +179,11 @@ class Hamiltonian(BasisAwareOperator):
                         return any(_is_nonzero_like(v) for v in np.ravel(value))
 
             # Mapping path fallback
-            if isinstance(value, Mapping):
+            if hasattr(value, "keys") and hasattr(value, "values") and callable(value.values):
                 return any(_is_nonzero_like(v) for v in value.values())
 
             # Generic iterable fallback
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
                 try:
                     return any(_is_nonzero_like(v) for v in value)
                 except Exception:

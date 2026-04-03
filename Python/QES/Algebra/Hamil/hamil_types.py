@@ -79,6 +79,14 @@ def check_noninteracting(model: Hamiltonians) -> bool:
     return model.value >= Hamiltonians.FREE_FERMIONS_M.value
 
 
+_DENSE_MODELS = frozenset([
+    Hamiltonians.POWER_LAW_RANDOM_BANDED_M,
+    Hamiltonians.ULTRAMETRIC_M,
+    Hamiltonians.RP_M,
+    Hamiltonians.SYK2_M,
+    Hamiltonians.NONE,
+])
+
 def check_dense(model: Hamiltonians) -> bool:
     """
     Check if a model is dense.
@@ -93,13 +101,7 @@ def check_dense(model: Hamiltonians) -> bool:
     bool
         True when the model is treated as dense by the legacy API.
     """
-    return model in (
-        Hamiltonians.POWER_LAW_RANDOM_BANDED_M,
-        Hamiltonians.ULTRAMETRIC_M,
-        Hamiltonians.RP_M,
-        Hamiltonians.SYK2_M,
-        Hamiltonians.NONE,
-    )
+    return model in _DENSE_MODELS
 
 ##################################################################################
 #! END OF FILE
