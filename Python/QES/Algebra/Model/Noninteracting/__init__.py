@@ -18,6 +18,11 @@ from    __future__ import annotations
 import  importlib
 from    typing import TYPE_CHECKING
 
+try:
+    from .._registry import create_model as _create_model, get_model_export_names as _get_model_export_names, resolve_model_export as _resolve_model_export
+except ImportError:
+    raise ImportError("Failed to import model registry utilities. Ensure the general_python package is correctly installed.")
+
 __all__: list[str] = [
     'conserving',
     'aubry_andre',
@@ -81,10 +86,14 @@ def __getattr__(name: str):
         module                  = importlib.import_module(_LAZY_MODULES[name], __name__)
         globals()[name]         = module
         return module
+    try:
+        return _resolve_model_export(name, family="noninteracting")
+    except ValueError:
+        pass
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | _LAZY_MODULES.keys() | _CLASS_MAP.keys())
+    return sorted(set(globals()) | _LAZY_MODULES.keys() | _CLASS_MAP.keys() | set(_get_model_export_names(family="noninteracting")))
 
 def choose_model(model_name: str, **kwargs):
     """
@@ -99,35 +108,7 @@ def choose_model(model_name: str, **kwargs):
     Returns:
         Hamiltonian: An instance of the desired quantum non-interacting model.
     """
-    model_name_map = {
-        "aubry_andre"           : "AubryAndre",
-        "free_fermions"         : "FreeFermions",
-        "syk2"                  : "SYK2",
-        "syk"                   : "SYK2",
-        "plrb"                  : "PowerLawRandomBanded",
-        "plrb_sp"               : "PLRB_SP",
-        "plrb_mb"               : "PLRB_MB",
-        "power_law_random_banded" : "PowerLawRandomBanded",
-        "rpm"                   : "RosenzweigPorter",
-        "rpm_sp"                : "RPM_SP",
-        "rpm_mb"                : "RPM_MB",
-        "rosenzweig_porter"     : "RosenzweigPorter",
-    }
-
-    # Normalize model name
-    lookup = model_name.lower().replace(" ", "_").replace("-", "_")
-
-    cls_name = None
-    if lookup in model_name_map:
-        cls_name = model_name_map[lookup]
-    elif model_name in _CLASS_MAP:
-        cls_name = model_name
-
-    if cls_name is None:
-        raise ValueError(f"Unknown non-interacting model '{model_name}'. Available: {list(model_name_map.keys())}")
-
-    cls = __getattr__(cls_name)
-    return cls(**kwargs)
+    return _create_model(model_name, family="noninteracting", **kwargs)
 
 # ----------------------------------------------------------------------------
 #! EOF

@@ -650,6 +650,52 @@ class Hamiltonian(BasisAwareOperator):
         self._log("Hamiltonian cleared...", lvl=2, color="blue")
 
     # ----------------------------------------------------------------------------------------------
+    #! Impurity handling helpers
+    # ----------------------------------------------------------------------------------------------
+    
+    @staticmethod
+    def normalize_impurity(impurity: Tuple, default_amplitude: float = 1.0) -> Tuple[int, float, float, float]:
+        """
+        Normalize one impurity specification to ``(site, phi, theta, amplitude)``.
+
+        Supported forms are:
+            - ``(site, amplitude)``
+            - ``(site, phi, theta)``
+            - ``(site, phi, theta, amplitude)``
+        """
+        if not isinstance(impurity, tuple):
+            raise ValueError(f"Each impurity must be a tuple, got {type(impurity)}: {impurity}")
+
+        if len(impurity) == 2:
+            site, amplitude = impurity
+            return int(site), 0.0, 0.0, float(amplitude)
+
+        if len(impurity) == 3:
+            site, phi, theta = impurity
+            return int(site), float(phi), float(theta), float(default_amplitude)
+
+        if len(impurity) == 4:
+            site, phi, theta, amplitude = impurity
+            return int(site), float(phi), float(theta), float(amplitude)
+
+        raise ValueError(f"Impurity tuple must have 2, 3, or 4 elements, got {len(impurity)}: {impurity}")
+
+    @classmethod
+    def normalize_impurities(cls, impurities: Optional[List[Tuple]], default_amplitude: float = 1.0) -> List[Tuple[int, float, float, float]]:
+        """
+        Normalize impurity specifications to a list of ``(site, phi, theta, amplitude)`` tuples.
+        """
+        if impurities is None:
+            return []
+        return [cls.normalize_impurity(imp, default_amplitude=default_amplitude) for imp in impurities]
+
+    @staticmethod
+    def impurity_site_amplitude(impurity: Tuple) -> Tuple[int, float]:
+        """
+        Return the site index and scalar amplitude for one impurity specification.
+        """
+        site, _phi, _theta, amplitude = Hamiltonian.normalize_impurity(impurity)
+        return int(site), float(amplitude)
 
     def _setup_impurities(self, impurities: List[Tuple]):
         """
@@ -658,30 +704,7 @@ class Hamiltonian(BasisAwareOperator):
             1. Z-polarized (2-tuple): (site_index, amplitude)
             2. Full spherical coordinates (4-tuple): (site_index, phi, theta, amplitude)
         """
-        if impurities is None:
-            self._impurities = []
-        else:
-            self._impurities = []
-            for imp in impurities:
-                if isinstance(imp, tuple):
-                    if len(imp) == 2:
-                        # Z-polarized: (site, amplitude) -> convert to (site, 0, 0, amplitude) for z-direction
-                        site, ampl = imp
-                        self._impurities.append((site, 0.0, 0.0, ampl))  # theta=0 means z-polarized
-                    elif len(imp) >= 3:
-                        # Full spherical: (site, phi, theta, amplitude)
-                        if len(imp) == 4:
-                            self._impurities.append(imp)
-                        else:
-                            self._impurities.append(
-                                (imp[0], imp[1], imp[2], 1.0)
-                            )  # default amplitude=1.0
-                    else:
-                        raise ValueError(
-                            f"Impurity tuple must have 2 or 4 elements, got {len(imp)}: {imp}"
-                        )
-                else:
-                    raise ValueError(f"Each impurity must be a tuple, got {type(imp)}: {imp}")
+        self._impurities = self.normalize_impurities(impurities)
 
     def repr_impurities(self, parts: List[str]):
         ''' 

@@ -59,12 +59,44 @@ except ImportError as e:
 HEI_KIT_X_BOND_NEI  = X_BOND_NEI
 HEI_KIT_Y_BOND_NEI  = Y_BOND_NEI
 HEI_KIT_Z_BOND_NEI  = Z_BOND_NEI
+HEISENBERG_KITAEV_ALIASES = (
+    "heisenberg_kitaev",
+    "kitaev",
+    "heisenberg",
+    "kh",
+    "kitaev_heisenberg",
+    "gamma_kitaev",
+    "kitaev_gamma",
+)
 
 # Pauli matrix scaling factors for HeisenbergKitaev (Pauli σ convention)
 # SINGLE_TERM_MULT    = 1.0   # Single-spin terms (σ has eigenvalues ±1)
 SINGLE_TERM_MULT    = 2.0  # Single-spin terms (σ has eigenvalues ±1)
 # CORR_TERM_MULT      = 1.0   # Two-spin correlation terms (σ_i σ_j has eigenvalues ±1)
 CORR_TERM_MULT      = 4.0  # Two-spin correlation terms (σ_i σ_j has eigenvalues ±1)
+
+def normalize_kitaev_model_kwargs(kwargs: dict) -> dict:
+    """
+    Normalize user-facing Kitaev/Gamma coupling aliases to the constructor kwargs.
+    """
+    out = dict(kwargs)
+
+    if out.get("K", None) is None and any(key in out for key in ("kxy", "kx", "ky", "kz")):
+        kx              = out.get("kx", out.get("kxy", 0.0))
+        ky              = out.get("ky", out.get("kxy", kx))
+        kz              = out.get("kz", 1.0)
+        out["K"]        = (kx, ky, kz)
+
+    if out.get("Gamma", None) is None and any(key in out for key in ("gamma_xy", "gamma_x", "gamma_y", "gamma_z")):
+        gx              = out.get("gamma_x", out.get("gamma_xy", 0.0))
+        gy              = out.get("gamma_y", out.get("gamma_xy", gx))
+        gz              = out.get("gamma_z", 0.0)
+        out["Gamma"]    = (gx, gy, gz)
+
+    for key in ("kxy", "kx", "ky", "kz", "gamma_xy", "gamma_x", "gamma_y", "gamma_z"):
+        out.pop(key, None)
+
+    return out
 
 ##########################################################################################
 #! HAMILTONIAN CLASS

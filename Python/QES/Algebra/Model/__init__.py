@@ -1,10 +1,8 @@
 """
-QES Model Module
-================
+QES model registry and factory helpers.
 
-This module provides implementations of various quantum many-body models.
-
-Submodules:
+This module is the single source of truth for model discovery, aliases,
+constructor kwargs introspection, and shared impurity utilities.Submodules:
 -----------
 - Interacting: 
     Models with particle interactions
@@ -19,56 +17,111 @@ Various quantum model implementations including:
 - Bosonic models
 
 -------------------------------
-Author: Maksymilian Kliczkowski
-Email: maksymilian.kliczkowski@pwr.edu.pl
+Author      : Maksymilian Kliczkowski
+Email       : maksymilian.kliczkowski@pwr.edu.pl
 -------------------------------
+
 """
 
-from . import Interacting as intr
-from . import Noninteracting as nintr
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from . import Interacting       as intr
+from . import Noninteracting    as nintr
+
+# ----------------------------------------------------------------------
+from ._impurity import (
+        SiteGeometry,
+        compute_impurity_distances,
+        compute_site_geometries,
+        group_site_geometries,
+        impurity_site_amplitude,
+        make_impurity,
+        pick_site_geometries_by_angle,
+    )
+
+# ------------------------------------------------------------------------
+from ._registry import (
+    create_model            as _create_model,
+    get_model_aliases       as _get_model_aliases,
+    get_model_export_names  as _get_model_export_names,
+    model_kwargs            as _model_kwargs,
+    resolve_model_export    as _resolve_model_export,
+)
 
 
-__all__ = ["intr", "nintr", "choose_model"]
+__all__ = [
+    "intr",
+    "nintr",
+    "choose_model",
+    "qes_model_aliases",
+    "qes_models_kwargs",
+    "SiteGeometry",
+    "make_impurity",
+    "impurity_site_amplitude",
+    "compute_impurity_distances",
+    "compute_site_geometries",
+    "group_site_geometries",
+    "pick_site_geometries_by_angle",
+] + list(_get_model_export_names())
+
+if TYPE_CHECKING:
+    # Fermionic
+    from .Interacting.Fermionic.free_fermion_manybody               import ManyBodyFreeFermions
+    from .Interacting.Fermionic.hubbard                             import HubbardModel
+    from .Interacting.Fermionic.spinful_hubbard                     import SpinfulHubbardModel
+    # Spin-1/2
+    from .Interacting.Spin.heisenberg_kitaev                        import HeisenbergKitaev
+    from .Interacting.Spin.j1j2                                     import J1J2Model
+    from .Interacting.Spin.qsm                                      import QSM
+    from .Interacting.Spin.transverse_ising                         import TransverseFieldIsing
+    from .Interacting.Spin.ultrametric                              import UltrametricModel
+    from .Interacting.Spin.xxz                                      import XXZ
+    # Non-interacting
+    from .Noninteracting.conserving.Majorana.kitaev_gamma_majorana  import KitaevGammaMajorana
+    from .Noninteracting.conserving.aubry_andre                     import AubryAndre
+    from .Noninteracting.conserving.free_fermions                   import FreeFermions
+    from .Noninteracting.plrb                                       import PLRB, PLRB_MB, PLRB_SP, PowerLawRandomBanded
+    from .Noninteracting.rpm                                        import RPM, RPM_MB, RPM_SP, RosenzweigPorter
+    from .Noninteracting.syk                                        import SYK2
+    # Dummy
+    from .dummy                                                     import DummyHamiltonian
+
+
+def qes_model_aliases() -> dict[str, str]:
+    """
+    Return ``alias -> class_name`` model mappings for the public model registry.
+    """
+    return _get_model_aliases()
+
+
+def qes_models_kwargs(model_name: str | None = None) -> dict[str, Any]:
+    """
+    Return constructor kwargs metadata for one model or for the whole registry.
+    """
+    return _model_kwargs(model_name)
+
 
 def choose_model(model_name: str, **kwargs):
-
     """
-    Factory function to choose a quantum model by name.
-    
-    Args:
-        model_name (str):
-            Type of model (e.g. "heisenberg_kitaev", "syk2", "aubry_andre", "xxz")
-        **kwargs:
-            Parameters for the model constructor (lattice, ns, etc.).
-    Returns:
-        Hamiltonian: An instance of the desired quantum model.
+    Construct a model instance from its canonical name, class name, or alias.
     """
+    return _create_model(model_name, **kwargs)
 
-    # Try interacting/spin models
+
+def __getattr__(name: str):
+    if name in {"intr", "nintr"}:
+        return globals()[name]
     try:
-        return intr.choose_model(model_name, **kwargs)
+        return _resolve_model_export(name)
     except ValueError as exc:
-        if "Unknown interacting model" not in str(exc):
-            raise
-    except AttributeError:
-        pass
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
 
-    # Try non-interacting models
-    try:
-        return nintr.choose_model(model_name, **kwargs)
-    except ValueError as exc:
-        if "Unknown non-interacting model" not in str(exc):
-            raise
-    except AttributeError:
-        pass
-    
-    # Try dummy
-    if model_name.lower() in {"dummy", "dummy_hamiltonian"}:
-        from    .dummy import DummyHamiltonian
-        return  DummyHamiltonian(**kwargs)
-    
-    raise ValueError(f"Unknown model '{model_name}'.")
 
-# ═══════════════════════════════════════════════════════════════════════════
+def __dir__():
+    return sorted(set(globals()) | set(__all__) | set(_get_model_export_names()))
+
+# ----------------------------------------------------------------------
 #! EOF
-# ═══════════════════════════════════════════════════════════════════════════
+# ----------------------------------------------------------------------

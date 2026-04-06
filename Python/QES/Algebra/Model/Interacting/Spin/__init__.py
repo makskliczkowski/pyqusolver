@@ -48,6 +48,11 @@ __all__ = [
 # Lazy import machinery (PEP 562 style)
 import importlib
 
+try:
+    from ..._registry import create_model as _create_model, get_model_export_names as _get_model_export_names, resolve_model_export as _resolve_model_export
+except ImportError:
+    raise ImportError("Failed to import model registry utilities. Ensure the general_python package is correctly installed.")
+
 _MAPPINGS = {
     "HamiltonianSpin"      : ".hamiltonian_spin",
     "HeisenbergKitaev"      : ".heisenberg_kitaev",
@@ -75,10 +80,14 @@ def __getattr__(name):
         return getattr(module, name)
     if name in __all__:
         return importlib.import_module(f".{name}", __name__)
+    try:
+        return _resolve_model_export(name, family="interacting_spin")
+    except ValueError:
+        pass
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def __dir__():
-    return sorted(list(globals().keys()) + __all__)
+    return sorted(set(globals()) | set(__all__) | set(_get_model_export_names(family="interacting_spin")))
 
 def choose_model(model_name: str, **kwargs):
     """
@@ -94,35 +103,7 @@ def choose_model(model_name: str, **kwargs):
     Returns:
         Hamiltonian: An instance of the desired quantum spin model.
     """
-    model_name_map = {
-        "heisenberg_kitaev" : "HeisenbergKitaev",
-        "kitaev"            : "HeisenbergKitaev",
-        "heisenberg"        : "HeisenbergKitaev",
-        "qsm"               : "QSM",
-        "transverse_ising"  : "TransverseFieldIsing",
-        "transverse_field_ising": "TransverseFieldIsing",
-        "tfim"              : "TransverseFieldIsing",
-        "tfi"               : "TransverseFieldIsing",
-        "ultrametric"       : "UltrametricModel",
-        "j1j2"              : "J1J2Model",
-        "j1_j2"             : "J1J2Model",
-        "xxz"               : "XXZ",
-    }
-
-    # Normalize model name
-    lookup = model_name.lower().replace(" ", "_").replace("-", "_")
-
-    cls_name = None
-    if lookup in model_name_map:
-        cls_name = model_name_map[lookup]
-    elif model_name in _MAPPINGS:
-        cls_name = model_name
-
-    if cls_name is None:
-        raise ValueError(f"Unknown spin model '{model_name}'. Available: {list(model_name_map.keys())}")
-
-    cls = __getattr__(cls_name)
-    return cls(**kwargs)
+    return _create_model(model_name, family="interacting_spin", **kwargs)
 
 # ----------------------------------------------------------------------
 #! End of File
