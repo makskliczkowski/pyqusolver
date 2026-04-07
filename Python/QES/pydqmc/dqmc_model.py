@@ -1,196 +1,251 @@
 """
-DQMC Model Module.
-Defines the mapping between a Hamiltonian and the DQMC framework.
+DQMC model wrappers.
+
+This module keeps the historical `DQMCModel` API but delegates the actual
+model-to-DQMC translation to adapter objects.  The goal is to keep the solver
+generic while preserving the current import surface.
 """
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple, Union
-import numpy as np
-import jax.numpy as jnp
+
+from typing import Any, Dict, Optional
+
 from QES.Algebra.hamil import Hamiltonian
 
-def _extract_scalar(value: Any, default: Any) -> Any:
-    """Return a scalar from Python/JAX/NumPy containers, fallback to default."""
-    if value is None:
-        return default
-    try:
-        arr = np.asarray(value)
-        if arr.ndim == 0:
-            return arr.item()
-        if arr.size == 0:
-            return default
-        return arr.reshape(-1)[0].item()
-    except Exception:
-        return value
+from .dqmc_adapter import (
+    DQMCModelAdapter,
+    HubbardAdapter,
+    SpinlessDensityDensityAdapter,
+    choose_dqmc_adapter,
+)
+
 
 class DQMCModel:
     """
-    Base class for models that can be solved via DQMC.
-    Handles extraction of the kinetic matrix K and interaction terms V.
+    Thin wrapper around a DQMC adapter.
+
+    The model stores simulation-wide metadata (`beta`, `M`, `dtau`) and exposes
+    the adapter contract through the historical `DQMCModel` interface used by
+    the sampler and solver.
     """
-    def __init__(self, hamiltonian: Hamiltonian, beta: float, M: int):
+
+    def __init__(
+        self,
+        hamiltonian: Hamiltonian,
+        beta: float,
+        M: int,
+        adapter: Optional[DQMCModelAdapter] = None,
+    ):
+        """
+        Wrap a QES Hamiltonian together with a DQMC adapter.
+
+        Parameters
+        ----------
+        hamiltonian : Hamiltonian
+            Physical model supplying lattice and coupling metadata.
+        beta : float
+            Inverse temperature ``beta``.
+        M : int
+            Number of Trotter slices, so ``dtau = beta / M``.
+        adapter : DQMCModelAdapter, optional
+            Explicit adapter implementing the DQMC representation.  When
+            omitted, a suitable adapter is chosen automatically.
+        """
         self.hamiltonian = hamiltonian
-        self._beta = beta
         self.M = M
-        self.dtau = beta / M
-        self.n_sites = hamiltonian.ns
-        self._kinetic_matrix = None
-        
-        # Metadata for the sampler
-        self.n_channels = 2  # Default spin-up/dn
-        self.field_type = "discrete" # "discrete" or "continuous"
+        self._beta = beta
+        self.adapter = adapter if adapter is not None else choose_dqmc_adapter(hamiltonian, beta, M)
+        self._sync_from_adapter()
+
+    def _sync_from_adapter(self):
+        """Copy adapter dimensions and HS metadata onto the historical model surface."""
+        self.dtau = self._beta / self.M
+        self.n_sites = self.adapter.n_sites
+        self.n_channels = self.adapter.n_channels
+        self.field_type = self.adapter.field_type
+        self.n_hs_fields = self.adapter.n_hs_fields
+        self.max_update_size = self.adapter.max_update_size
+        self.term_sites = self.adapter.term_sites
 
     @property
     def beta(self):
+        """Inverse temperature ``beta`` used to define ``dtau = beta / M``."""
         return self._beta
 
     @beta.setter
     def beta(self, value):
+        """
+        Update ``beta`` and rebuild the HS representation if needed.
+
+        This is not a metadata-only change: the HS coupling constants and the
+        slice propagators both depend explicitly on ``dtau = beta / M``.
+        """
         self._beta = value
-        self.dtau = value / self.M
+        # Rebuild the adapter because ``dtau = beta / M`` enters the HS
+        # coupling itself, not only the kinetic exponentials.
+        if isinstance(self.adapter, HubbardAdapter):
+            hs_params = self.adapter.get_hs_parameters()
+            hs_kwargs = {}
+            if "p" in hs_params:
+                hs_kwargs["p"] = hs_params["p"]
+            if "proposal_sigma" in hs_params:
+                hs_kwargs["proposal_sigma"] = hs_params["proposal_sigma"]
+            self.adapter = HubbardAdapter(
+                hamiltonian=self.hamiltonian,
+                beta=value,
+                M=self.M,
+                U=self.adapter.U,
+                hs_kind=hs_params.get("name", "magnetic"),
+                **hs_kwargs,
+            )
+        elif isinstance(self.adapter, SpinlessDensityDensityAdapter):
+            self.adapter = SpinlessDensityDensityAdapter(
+                hamiltonian=self.hamiltonian,
+                beta=value,
+                M=self.M,
+            )
+        else:
+            self.adapter = choose_dqmc_adapter(self.hamiltonian, value, self.M, **self.get_hs_parameters())
+        self._sync_from_adapter()
 
     @property
     def kinetic_matrix(self):
-        """Returns the single-particle kinetic matrix K."""
-        if self._kinetic_matrix is None:
-            self._kinetic_matrix = self._extract_kinetic_matrix()
-        return self._kinetic_matrix
-
-    def _extract_kinetic_matrix(self):
-        """Extract K from the Hamiltonian."""
-        if hasattr(self.hamiltonian, 'hamil_sp') and self.hamiltonian.hamil_sp is not None:
-            return np.array(self.hamiltonian.hamil_sp)
-        return np.zeros((self.n_sites, self.n_sites))
+        """Return the one-body matrix ``K`` entering ``exp(-dtau K)``."""
+        return self.adapter.kinetic_matrix
 
     def get_hs_parameters(self) -> Dict[str, Any]:
-        """Returns parameters needed for the HS transformation."""
-        raise NotImplementedError()
+        """Return public HS metadata for diagnostics and reproducibility."""
+        return self.adapter.get_hs_parameters()
+
+    def get_sign_metadata(self) -> Dict[str, Any]:
+        """Return explicit fermion sign-handling metadata for this model."""
+        if hasattr(self.adapter, "get_sign_metadata"):
+            return self.adapter.get_sign_metadata()
+        return {
+            "sign_tracking": "measured_on_abs_weight_ensemble",
+            "reweighting": True,
+            "weight_sampling": "absolute_determinant_ratio",
+            "supports_complex_phase": False,
+        }
+
+    def validate_sign_policy(self, policy: str = "strict"):
+        """Validate the requested public sign policy against the adapter metadata."""
+        if hasattr(self.adapter, "validate_sign_policy"):
+            self.adapter.validate_sign_policy(policy=policy)
+
+    def get_sampling_metadata(self) -> Dict[str, Any]:
+        """Return metadata describing the current local-update sampling path."""
+        if hasattr(self.adapter, "get_sampling_metadata"):
+            return self.adapter.get_sampling_metadata()
+        return {
+            "field_type": str(self.field_type),
+            "proposal_kind": "unspecified",
+            "provides_measure_gradient": False,
+            "max_update_size": int(self.max_update_size),
+            "update_mode": "immediate_local",
+            "supports_delayed_updates": False,
+        }
+
+    def copy(self) -> "DQMCModel":
+        """
+        Return an independent DQMC model with the same Hamiltonian and HS setup.
+
+        The Hamiltonian object itself is reused, but the DQMC adapter/model
+        state is rebuilt so later metadata updates such as `beta` changes do not
+        leak between solver clones.
+        """
+        hs_params = self.get_hs_parameters()
+        kwargs: Dict[str, Any] = {}
+        if "name" in hs_params:
+            kwargs["hs"] = hs_params["name"]
+        if "p" in hs_params:
+            kwargs["p"] = hs_params["p"]
+        if "proposal_sigma" in hs_params:
+            kwargs["proposal_sigma"] = hs_params["proposal_sigma"]
+        return choose_dqmc_model(self.hamiltonian, self.beta, self.M, **kwargs)
 
     def get_propagators(self, config_tau, exp_K, exp_invK):
-        """
-        Build B and iB matrices for a given time slice configuration.
-        Returns: (n_channels, N, N), (n_channels, N, N)
-        """
-        raise NotImplementedError()
+        """Return one-slice propagators ``B_tau`` and inverses for a field slice."""
+        return self.adapter.get_propagators(config_tau, exp_K, exp_invK)
 
     def calculate_update_deltas(self, s_old, s_new, site_idx):
-        """
-        Calculate the diagonal update factors (delta) for each channel.
-        Returns: tuple of length n_channels
-        """
-        raise NotImplementedError()
+        """Return localized diagonal update factors ``exp(V' - V) - 1``."""
+        return self.adapter.calculate_update_deltas(s_old, s_new, site_idx)
+
+    def initial_fields(self, key, shape):
+        """Draw an initial auxiliary-field configuration."""
+        return self.adapter.initial_fields(key, shape)
+
+    def propose_field_value(self, s_old, key, term_idx):
+        """Propose a local auxiliary-field move."""
+        return self.adapter.propose_field_value(s_old, key, term_idx)
+
+    def field_weight_ratio(self, s_old, s_new, term_idx):
+        """Return the HS-measure factor ``b(s_new) / b(s_old)``."""
+        return self.adapter.field_weight_ratio(s_old, s_new, term_idx)
+
+    def proposal_ratio(self, s_old, s_new, term_idx):
+        """Return the Hastings correction for the local proposal rule."""
+        return self.adapter.proposal_ratio(s_old, s_new, term_idx)
+
+    def log_field_weight(self, s, term_idx):
+        """Return the local HS log-measure up to a normalization constant."""
+        if hasattr(self.adapter, "log_field_weight"):
+            return self.adapter.log_field_weight(s, term_idx)
+        return 0.0
+
+    def grad_log_field_weight(self, s, term_idx):
+        """Return the local HS log-measure gradient when available."""
+        if hasattr(self.adapter, "grad_log_field_weight"):
+            return self.adapter.grad_log_field_weight(s, term_idx)
+        return 0.0
+
+    def measure_equal_time(self, greens, kinetic_matrix):
+        """Delegate equal-time measurements to the adapter."""
+        return self.adapter.measure_equal_time(greens, kinetic_matrix)
+
+    def measure_equal_time_by_chain(self, greens, kinetic_matrix):
+        """Delegate per-chain equal-time measurements to the adapter."""
+        if hasattr(self.adapter, "measure_equal_time_by_chain"):
+            return self.adapter.measure_equal_time_by_chain(greens, kinetic_matrix)
+        return self.adapter.measure_equal_time(greens, kinetic_matrix)
+
+    @property
+    def supports_checkerboard(self) -> bool:
+        """Whether the adapter exposes a checkerboard bond grouping."""
+        return self.adapter.supports_checkerboard
+
 
 class HubbardDQMCModel(DQMCModel):
     """
-    Specific implementation for the Hubbard model (spinful).
-    Standard SU(2) invariant HS transformation in the magnetic channel.
+    Historical Hubbard-specific entrypoint preserved for compatibility.
     """
+
     def __init__(self, hamiltonian: Hamiltonian, beta: float, M: int, U: float):
-        super().__init__(hamiltonian, beta, M)
-        self.U = U
-        self.n_channels = 2
-        self.lmbd = np.arccosh(np.exp(np.abs(self.U) * self.dtau / 2.0))
+        """Construct the compatibility Hubbard wrapper around `HubbardAdapter`."""
+        super().__init__(
+            hamiltonian=hamiltonian,
+            beta=beta,
+            M=M,
+            adapter=HubbardAdapter(hamiltonian=hamiltonian, beta=beta, M=M, U=U),
+        )
 
-    def get_hs_parameters(self):
-        return {"lambda": self.lmbd}
+    def get_checkerboard_decomposition(self):
+        """Return checkerboard bond groups when the underlying adapter supports them."""
+        if hasattr(self.adapter, "get_checkerboard_decomposition"):
+            return self.adapter.get_checkerboard_decomposition()
+        return []
 
-    def get_propagators(self, config_tau, exp_K, exp_invK):
-        # v_up = exp(lambda * s), v_dn = exp(-lambda * s)
-        v_up = jnp.exp(self.lmbd * config_tau)
-        v_dn = jnp.exp(-self.lmbd * config_tau)
-        
-        B_up = exp_K * v_up[None, :]
-        B_dn = exp_K * v_dn[None, :]
-        
-        iB_up = (1.0 / v_up)[:, None] * exp_invK
-        iB_dn = (1.0 / v_dn)[:, None] * exp_invK
-        
-        return jnp.stack([B_up, B_dn]), jnp.stack([iB_up, iB_dn])
-
-    def calculate_update_deltas(self, s_old, s_new, site_idx):
-        ds = s_new - s_old
-        d_up = jnp.exp(self.lmbd * ds) - 1.0
-        d_dn = jnp.exp(-self.lmbd * ds) - 1.0
-        return (d_up, d_dn)
-
-    def get_checkerboard_decomposition(self) -> List[List[Tuple[int, int]]]:
-        """
-        Groups bonds into disjoint sets for checkerboard decomposition.
-        Currently implemented for 2D square lattices.
-        """
-        ns = self.n_sites
-        lat = self.hamiltonian.lattice
-        if not lat or lat._type.name != "SQUARE":
-            # Fallback: single group if not square (not optimized)
-            return []
-            
-        groups = [[] for _ in range(4)]
-        for i in range(ns):
-            coords = lat.get_coordinates(i)
-            x, y = int(coords[0]), int(coords[1])
-            
-            for nidx in range(lat.get_nn_num(i)):
-                j = lat.get_nn(i, num=nidx)
-                if lat.wrong_nei(j):
-                    continue
-                j = int(j)
-                if j <= i:
-                    continue
-                    
-                coords_j = lat.get_coordinates(j)
-                xj, yj = int(coords_j[0]), int(coords_j[1])
-                
-                # Check horizontal bond
-                if yj == y:
-                    if x % 2 == 0:
-                        groups[0].append((i, j))
-                    else:
-                        groups[1].append((i, j))
-                # Check vertical bond
-                elif xj == x:
-                    if y % 2 == 0:
-                        groups[2].append((i, j))
-                    else:
-                        groups[3].append((i, j))
-        
-        return [g for g in groups if len(g) > 0]
-
-    def _extract_kinetic_matrix(self):
-        # Specific extraction for Hubbard-like models in QES
-        # Often these models have a '_t' attribute for hopping
-        ns = self.n_sites
-        K = np.zeros((ns, ns))
-        lat = self.hamiltonian.lattice
-        
-        t_raw = _extract_scalar(getattr(self.hamiltonian, "_t", 1.0), 1.0)
-        try:
-            t_val = complex(t_raw).real
-        except (TypeError, ValueError):
-            t_val = 1.0
-
-        if lat:
-            for i in range(ns):
-                for nidx in range(lat.get_nn_num(i)):
-                    j = lat.get_nn(i, num=nidx)
-                    if not lat.wrong_nei(j):
-                        K[int(i), int(j)] = -t_val
-        return K
 
 def choose_dqmc_model(hamiltonian: Hamiltonian, beta: float, M: int, **kwargs) -> DQMCModel:
     """
-    Factory function to select the appropriate DQMC wrapper for a given Hamiltonian.
-    """
-    model_name = str(getattr(hamiltonian, "_name", type(hamiltonian).__name__))
-    name = model_name.lower()
-    
-    if "hubbard" in name:
-        u_raw = _extract_scalar(kwargs.get("U", getattr(hamiltonian, "_u", 0.0)), 0.0)
-        try:
-            u_val = float(complex(u_raw).real)
-        except (TypeError, ValueError):
-            u_val = float(u_raw)
+    Build the historical `DQMCModel` wrapper from a QES Hamiltonian.
 
-        return HubbardDQMCModel(hamiltonian, beta, M, u_val)
-    
-    # Add more models here (Heisenberg, Multiorbital, etc.)
-    raise ValueError(f"No DQMC wrapper implemented for Hamiltonian type: {model_name}")
+    The returned object stores the simulation-wide Trotter metadata and
+    delegates the actual DQMC representation to an adapter chosen from the
+    Hamiltonian type and the requested HS options.
+    """
+    adapter = choose_dqmc_adapter(hamiltonian, beta, M, **kwargs)
+    if isinstance(adapter, HubbardAdapter) and adapter.get_hs_parameters().get("name") == "magnetic":
+        return HubbardDQMCModel(hamiltonian=hamiltonian, beta=beta, M=M, U=adapter.U)
+    return DQMCModel(hamiltonian=hamiltonian, beta=beta, M=M, adapter=adapter)

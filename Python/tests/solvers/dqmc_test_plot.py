@@ -8,6 +8,7 @@ from QES.pydqmc.dqmc_solver import DQMCSolver
 from QES.Solver.MonteCarlo.montecarlo import McsTrain
 
 def test_and_plot_gs():
+    """Run a small DQMC simulation and visualize equal-time and unequal-time Green's functions."""
     # 1. Setup small 4x4 Lattice
     L = 4
     lat = SquareLattice(lx=L, ly=L, dim=2, bc="pbc")

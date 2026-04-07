@@ -71,6 +71,7 @@ def _build_single_spin_rabi_nqs(seed: int = 0):
         symmetrize=False,
         verbose=False,
         seed=seed,
+        state_representation="spin_pm",
         s_numsamples=64,
         s_numchains=8,
         s_therm_steps=1,
@@ -125,6 +126,25 @@ def _exact_ed_observable(model, times, operator) -> np.ndarray:
     return np.einsum("it,ij,jt->t", np.conj(psi_t), op_matrix, psi_t)
 
 
+def _exact_two_sided_probe_correlator(model, times, probe) -> np.ndarray:
+    model.diagonalize()
+    eig_vec = np.asarray(model._eig_vec)
+    eig_val = np.asarray(model._eig_val)
+    psi0 = np.ones(eig_vec.shape[0], dtype=np.complex128)
+    psi0 /= np.linalg.norm(psi0)
+    probe_matrix = probe.compute_matrix(
+        hilbert_1=model.hilbert,
+        matrix_type="dense",
+        use_numpy=True,
+    )
+    phi0 = probe_matrix @ psi0
+    overlaps = eig_vec.conj().T @ phi0
+    half_times = 0.5 * np.asarray(times, dtype=np.float64)
+    phi_plus = time_evo_block(eig_vec, eig_val, overlaps, half_times)
+    phi_minus = time_evo_block(eig_vec, eig_val, overlaps, -half_times)
+    return np.einsum("it,it->t", np.conj(phi_minus), phi_plus)
+
+
 def test_single_spin_rabi_oscillation_matches_ed():
     r"""
     The default NQS real-time TDVP path should reproduce the one-spin ED qubit.
@@ -156,3 +176,30 @@ def test_single_spin_rabi_oscillation_matches_ed():
     assert np.max(np.abs(nqs_values - ed_values)) < 1e-3
     assert abs(nqs_values[0] - 0.5) < 1e-10
     assert abs(nqs_values[-1] - 0.5) < 2e-3
+
+
+def test_single_spin_two_sided_probe_correlator_matches_ed():
+    model, nqs = _build_single_spin_rabi_nqs(seed=7)
+    times = np.linspace(0.0, 0.5 * np.pi, 5)
+    probe = sig_x(ns=model.hilbert.ns, sites=[0])
+
+    corr_nqs = nqs.compute_dynamical_correlator(
+        times,
+        ket_probe_operator=probe,
+        bra_probe_operator=probe,
+        exact_sum=True,
+        evolution_protocol="two_sided",
+        num_samples=64,
+        num_chains=8,
+        n_batch=16,
+        diag_shift=1e-8,
+        sr_maxiter=64,
+        ode_solver="RK4",
+        n_substeps=8,
+        restore=True,
+    )
+    corr_exact = _exact_two_sided_probe_correlator(model, times, probe)
+
+    assert np.allclose(corr_nqs.times, times)
+    assert np.max(np.abs(corr_nqs.correlator - corr_exact)) < 2e-2
+    assert abs(corr_nqs.correlator[0] - corr_exact[0]) < 1e-10

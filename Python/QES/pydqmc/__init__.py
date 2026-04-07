@@ -16,7 +16,15 @@ import importlib
 __all__ = [
     # High-level solver path
     "DQMCSolver",
+    "DQMCConfig",
+    "DQMCResult",
+    "load_dqmc_result",
     "run_dqmc",
+    "trim_warmup",
+    "rebin_series",
+    "summarize_series",
+    "derive_observables",
+    "summarize_result",
     # Models and adapters
     "DQMCModel",
     "HubbardDQMCModel",
@@ -54,7 +62,15 @@ __all__ = [
 
 _EXPORT_MAP = {
     "DQMCSolver"                     : (".dqmc_solver", "DQMCSolver"),
+    "DQMCConfig"                     : (".dqmc_solver", "DQMCConfig"),
+    "DQMCResult"                     : (".dqmc_solver", "DQMCResult"),
+    "load_dqmc_result"               : (".dqmc_solver", "load_dqmc_result"),
     "run_dqmc"                       : (".dqmc_solver", "run_dqmc"),
+    "trim_warmup"                    : (".postprocessing", "trim_warmup"),
+    "rebin_series"                   : (".postprocessing", "rebin_series"),
+    "summarize_series"               : (".postprocessing", "summarize_series"),
+    "derive_observables"             : (".postprocessing", "derive_observables"),
+    "summarize_result"               : (".postprocessing", "summarize_result"),
     "DQMCModel"                      : (".dqmc_model", "DQMCModel"),
     "HubbardDQMCModel"               : (".dqmc_model", "HubbardDQMCModel"),
     "choose_dqmc_model"              : (".dqmc_model", "choose_dqmc_model"),
@@ -88,6 +104,7 @@ _EXPORT_MAP = {
 
 
 def __getattr__(name: str):
+    """Lazily load public `pydqmc` symbols on first access."""
     if name in _EXPORT_MAP:
         module_name, attr_name = _EXPORT_MAP[name]
         module = importlib.import_module(module_name, __name__)
@@ -96,6 +113,7 @@ def __getattr__(name: str):
 
 
 def __dir__():
+    """Return the module directory including lazily exported public names."""
     return sorted(set(globals()) | set(__all__))
 
 # ----------------------------------------------------------------------------

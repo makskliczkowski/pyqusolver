@@ -33,10 +33,12 @@ def _build_exact_cat_state_nqs():
         param_dtype=jnp.complex128,
         seed=0,
     )
+    # Binary-visible RBM with amplitudes proportional to [2, 0, 0, -1].
+    t = np.arcsinh(1.0 / np.sqrt(2.0))
     params = net.get_params()
     params["visible_bias"] = jnp.array([0.0 + 0.0j, 0.0 + 0.0j], dtype=jnp.complex128)
     params["VisibleToHidden"]["kernel"] = jnp.array(
-        [[1j * np.pi / 2, 1j * np.pi], [1j * np.pi, 1j * np.pi / 2]],
+        [[t, 1j * np.pi / 2], [1j * np.pi / 2, t]],
         dtype=jnp.complex128,
     )
     params["VisibleToHidden"]["bias"] = jnp.zeros((2,), dtype=jnp.complex128)
@@ -53,13 +55,14 @@ def _build_exact_cat_state_nqs():
         symmetrize=False,
         verbose=False,
         seed=0,
+        state_representation="binary_01",
         s_numsamples=256,
         s_numchains=8,
         s_therm_steps=4,
         s_sweep_steps=1,
     )
     nqs.set_params(params)
-    psi = np.array([2.0, 0.0, 0.0, 1.0], dtype=np.complex128) / np.sqrt(5.0)
+    psi = np.array([2.0, 0.0, 0.0, -1.0], dtype=np.complex128) / np.sqrt(5.0)
     return hilbert, nqs, psi
 
 
