@@ -531,6 +531,8 @@ class NQSTrainer:
         self.n_batch                    = n_batch
         self.background                 = background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0"))
         self.background_log_interval    = kwargs.pop("background_log_interval", 20)  # Log every Nth epoch in background mode
+        default_pbar_interval          = 5 if "notebook" not in getattr(trange, "__module__", "") else 1
+        self.pbar_update_interval      = max(1, int(kwargs.pop("pbar_update_interval", default_pbar_interval)))
         self.verbose                    = nqs.verbose and not self.background
         self.dtype                      = dtype if dtype is not None else nqs.dtype
         if dtype is None and hasattr(nqs, "_precision_policy"):
@@ -1217,6 +1219,14 @@ class NQSTrainer:
         acc_ratio = self.nqs.sampler.accepted_ratio
 
         if pbar is not None:
+            should_refresh = (
+                epoch == 0
+                or (epoch + 1) == n_epochs
+                or ((epoch + 1) % self.pbar_update_interval) == 0
+            )
+            if not should_refresh:
+                return
+
             postfix = {
                 "epoch": f"G:{global_epoch},L:{epoch}",
                 "loss": f"{mean_loss:.4f}",
