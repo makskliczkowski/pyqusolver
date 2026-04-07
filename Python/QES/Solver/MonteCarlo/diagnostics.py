@@ -14,6 +14,9 @@ except ImportError:
     JAX_AVAILABLE = False
     jnp = np
 
+# ------------------------------------------------------------------------------
+# Internal utilities for handling samples and estimators
+# ------------------------------------------------------------------------------
 
 def _ensure_numpy(x):
     """Convert JAX array to NumPy array if needed."""
@@ -21,6 +24,25 @@ def _ensure_numpy(x):
         return np.array(x)
     return x
 
+
+def _move_sample_axis_first(samples, sample_axis):
+    """Return samples with the sample axis moved to the leading position."""
+    arr = _ensure_numpy(samples)
+    arr = np.asarray(arr)
+    if arr.ndim == 0:
+        raise ValueError("samples must have at least one sample axis.")
+    axis = int(sample_axis)
+    return np.moveaxis(arr, axis, 0)
+
+
+def _apply_estimator(estimator, samples):
+    """Apply an estimator and return a NumPy array."""
+    return np.asarray(_ensure_numpy(estimator(samples)))
+
+
+# ------------------------------------------------------------------------------
+# Main diagnostic functions
+# ------------------------------------------------------------------------------
 
 def autocorr_func_1d(x, norm=True):
     """
@@ -160,3 +182,115 @@ def compute_rhat(chains):
 
     rhat = np.sqrt(var_plus / W)
     return rhat
+
+
+def jackknife_estimate(samples, estimator=np.mean, sample_axis=0, return_replicates=False):
+    """
+    Compute a generic delete-one jackknife estimate.
+
+    Parameters:
+        samples (array-like): Input samples with one distinguished sample axis.
+        estimator (callable): Function applied to the sample array with the
+            sample axis moved to axis 0.
+        sample_axis (int): Axis indexing independent samples.
+        return_replicates (bool): Whether to include the jackknife replicates.
+
+    Returns:
+        dict: Contains `estimate`, `stderr`, `bias`, and `replicates` when requested.
+    """
+    data    = _move_sample_axis_first(samples, sample_axis)
+    n       = data.shape[0]
+    if n < 2:
+        raise ValueError("jackknife_estimate requires at least two samples.")
+
+    full_estimate   = _apply_estimator(estimator, data)
+    replicates      = []
+    for idx in range(n):
+        reduced = np.concatenate((data[:idx], data[idx + 1 :]), axis=0)
+        replicates.append(_apply_estimator(estimator, reduced))
+    replicates = np.stack(replicates, axis=0)
+
+    mean_replicate  = np.mean(replicates, axis=0)
+    bias            = (n - 1) * (mean_replicate - full_estimate)
+    variance        = (n - 1) * np.mean((replicates - mean_replicate) ** 2, axis=0)
+    stderr          = np.sqrt(variance)
+
+    result          = {
+                        "estimate"  : full_estimate.item() if full_estimate.ndim == 0 else full_estimate,
+                        "stderr"    : stderr.item() if np.ndim(stderr) == 0 else stderr,
+                        "bias"      : bias.item() if np.ndim(bias) == 0 else bias,
+                    }
+    if return_replicates:
+        result["replicates"] = replicates
+    return result
+
+
+def bootstrap_estimate(
+    samples,
+    estimator=np.mean,
+    *,
+    n_resamples=1000,
+    sample_axis=0,
+    confidence_level=0.95,
+    rng=None,
+    return_replicates=False,
+):
+    """
+    Compute a generic nonparametric bootstrap estimate.
+
+    Parameters:
+        samples (array-like): Input samples with one distinguished sample axis.
+        estimator (callable): Function applied to the resampled array with the
+            sample axis moved to axis 0.
+        n_resamples (int): Number of bootstrap resamples.
+        sample_axis (int): Axis indexing independent samples.
+        confidence_level (float): Central percentile interval level.
+        rng (None|int|np.random.Generator): RNG control for reproducibility.
+        return_replicates (bool): Whether to include bootstrap replicates.
+
+    Returns:
+        dict: Contains `estimate`, `stderr`, `bias`, `confidence_interval`,
+        and `replicates` when requested.
+    """
+    data = _move_sample_axis_first(samples, sample_axis)
+    n = data.shape[0]
+    if n < 1:
+        raise ValueError("bootstrap_estimate requires at least one sample.")
+    if int(n_resamples) < 1:
+        raise ValueError("n_resamples must be at least 1.")
+    if not (0.0 < confidence_level < 1.0):
+        raise ValueError("confidence_level must lie in (0, 1).")
+
+    if isinstance(rng, np.random.Generator):
+        generator = rng
+    else:
+        generator = np.random.default_rng(rng)
+
+    full_estimate = _apply_estimator(estimator, data)
+    replicates = []
+    for _ in range(int(n_resamples)):
+        indices = generator.integers(0, n, size=n)
+        replicates.append(_apply_estimator(estimator, data[indices]))
+    replicates = np.stack(replicates, axis=0)
+
+    mean_replicate  = np.mean(replicates, axis=0)
+    stderr          = np.std(replicates, axis=0, ddof=1 if replicates.shape[0] > 1 else 0)
+    bias            = mean_replicate - full_estimate
+    alpha           = 0.5 * (1.0 - confidence_level)
+    ci_low          = np.quantile(replicates, alpha, axis=0)
+    ci_high         = np.quantile(replicates, 1.0 - alpha, axis=0)
+
+    result          = {
+                        "estimate"  : full_estimate.item() if full_estimate.ndim == 0 else full_estimate,
+                        "stderr"    : stderr.item() if np.ndim(stderr) == 0 else stderr,
+                        "bias"      : bias.item() if np.ndim(bias) == 0 else bias,
+                        "confidence_interval" : (
+                            ci_low.item() if np.ndim(ci_low) == 0 else ci_low,
+                            ci_high.item() if np.ndim(ci_high) == 0 else ci_high,
+                        ),
+                        "confidence_level"    : float(confidence_level),
+        "n_resamples": int(n_resamples),
+    }
+    if return_replicates:
+        result["replicates"] = replicates
+    return result

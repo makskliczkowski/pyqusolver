@@ -7,11 +7,15 @@ Date            : December 2025
 Description     : This module provides functions to propose various types of updates
                 (local flips, exchanges, multi-flips, global pattern flips) for
                 spin-1/2 systems using JAX for efficient computation.
+Version         : 2.0
+License         : MIT
+Changelog       : 
+- v2.0 (2025-12-01): Refactored to use JAX for all computations, added support for both spin and binary representations, and included "with_info" variants that return flipped indices.
 ----------------------------------------------------------------------
 """
 
-from functools import partial
-from typing import Tuple
+from functools  import partial
+from typing     import Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -35,41 +39,55 @@ except ImportError:
 # Local Updates
 # ----------------------------------------------------------------------
 
+def _resolve_effective_spin(spin: Optional[bool]) -> bool:
+    return BACKEND_DEF_SPIN if spin is None else bool(spin)
 
-@jax.jit
+def _resolve_spin_value(state: jnp.ndarray, spin_value: Optional[float]) -> jnp.ndarray:
+    value = BACKEND_REPR if spin_value is None else spin_value
+    return jnp.asarray(value, dtype=state.dtype)
+
+# -----------------------------------------------------------------------
+
+@partial(jax.jit, static_argnames=("spin",))
 def _propose_local_flip_kernel(
-    state: jnp.ndarray, key: jax.Array
+    state: jnp.ndarray, key: jax.Array, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Kernel for local flip. Returns new state and indices of flipped sites.
     """
     idx = jr.randint(key, shape=(), minval=0, maxval=state.size)
-    if BACKEND_DEF_SPIN:
-        new_state = jaxpy.flip_array_jax_spin(state, idx)
+    if _resolve_effective_spin(spin):
+        new_state   = state.at[idx].set((-state[idx]).astype(state.dtype))
     else:
-        new_state = jaxpy.flip_array_jax_nspin(state, idx, spin_value=BACKEND_REPR)
+        flip_value  = _resolve_spin_value(state, spin_value)
+        new_value   = flip_value - state[idx]
+        new_state   = state.at[idx].set(new_value.astype(state.dtype))
     return new_state, idx
 
 
-@jax.jit
-def propose_local_flip(state: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
+@partial(jax.jit, static_argnames=("spin",))
+def propose_local_flip(
+    state: jnp.ndarray, key: jax.Array, spin: Optional[bool] = None, spin_value: Optional[float] = None
+) -> jnp.ndarray:
     """
     Propose a single random spin flip.
     Returns:
         New state with one spin flipped.
     """
-    new_state, _ = _propose_local_flip_kernel(state, key)
+    new_state, _ = _propose_local_flip_kernel(state, key, spin=spin, spin_value=spin_value)
     return new_state
 
 
-@jax.jit
-def propose_local_flip_with_info(state: jnp.ndarray, key: jax.Array) -> Tuple[jnp.ndarray, jnp.ndarray]:
+@partial(jax.jit, static_argnames=("spin",))
+def propose_local_flip_with_info(
+    state: jnp.ndarray, key: jax.Array, spin: Optional[bool] = None, spin_value: Optional[float] = None
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Propose a single random spin flip.
     Returns:
         (new_state, flipped_index) where flipped_index has shape (1,)
     """
-    new_state, idx = _propose_local_flip_kernel(state, key)
+    new_state, idx = _propose_local_flip_kernel(state, key, spin=spin, spin_value=spin_value)
     return new_state, jnp.expand_dims(idx, 0)
 
 # ----------------------------------------------------------------------
@@ -143,9 +161,9 @@ def propose_exchange_with_info(
 # Bond Flip Updates (Flip site + random neighbor)
 # ----------------------------------------------------------------------
 
-@jax.jit
+@partial(jax.jit, static_argnames=("spin",))
 def _propose_bond_flip_kernel(
-    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray
+    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     key_site, key_neigh = jr.split(key)
     ns = state.shape[0]
@@ -163,13 +181,13 @@ def _propose_bond_flip_kernel(
     j_safe = jnp.where(is_valid, j, i)  # if invalid, flip i twice (no-op)
 
     # Perform Flip
-    if BACKEND_DEF_SPIN:
+    if _resolve_effective_spin(spin):
         # Spin +/- 1: Flip sign
         val_i = -state[i]
         val_j = -state[j_safe]
     else:
         # Binary 0/v representation
-        flip_value  = jnp.asarray(BACKEND_REPR, dtype=state.dtype)
+        flip_value  = _resolve_spin_value(state, spin_value)
         val_i       = flip_value - state[i]
         val_j       = flip_value - state[j_safe]
 
@@ -185,19 +203,21 @@ def _propose_bond_flip_kernel(
     return new_state, idx_pair
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=("spin",))
 def propose_bond_flip(
-    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray
+    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> jnp.ndarray:
-    new_state, _ = _propose_bond_flip_kernel(state, key, neighbor_table)
+    new_state, _ = _propose_bond_flip_kernel(
+        state, key, neighbor_table, spin=spin, spin_value=spin_value
+    )
     return new_state
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=("spin",))
 def propose_bond_flip_with_info(
-    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray
+    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_bond_flip_kernel(state, key, neighbor_table)
+    return _propose_bond_flip_kernel(state, key, neighbor_table, spin=spin, spin_value=spin_value)
 
 
 # ----------------------------------------------------------------------
@@ -205,40 +225,42 @@ def propose_bond_flip_with_info(
 # ----------------------------------------------------------------------
 
 
-@partial(jax.jit, static_argnames=("n_flip",))
+@partial(jax.jit, static_argnames=("n_flip", "spin"))
 def _propose_multi_flip_kernel(
-    state: jnp.ndarray, key: jax.Array, n_flip: int = 1
+    state: jnp.ndarray, key: jax.Array, n_flip: int = 1, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     if n_flip == 1:
         # Re-use local flip kernel logic to avoid choice overhead
-        new_state, idx = _propose_local_flip_kernel(state, key)
+        new_state, idx = _propose_local_flip_kernel(state, key, spin=spin, spin_value=spin_value)
         return new_state, jnp.expand_dims(idx, 0)
 
     # Choose n_flip distinct indices
     indices = jr.choice(key, state.size, shape=(n_flip,), replace=False)
 
-    if BACKEND_DEF_SPIN:
+    if _resolve_effective_spin(spin):
         new_state = state.at[indices].multiply(-1)
     else:
         # 0 -> v, v -> 0 => v - x
         val         = state[indices]
-        flip_value  = jnp.asarray(BACKEND_REPR, dtype=state.dtype)
+        flip_value  = _resolve_spin_value(state, spin_value)
         new_state   = state.at[indices].set(flip_value - val)
 
     return new_state, indices
 
 
-@partial(jax.jit, static_argnames=("n_flip",))
-def propose_multi_flip(state: jnp.ndarray, key: jax.Array, n_flip: int = 1) -> jnp.ndarray:
-    new_state, _ = _propose_multi_flip_kernel(state, key, n_flip)
+@partial(jax.jit, static_argnames=("n_flip", "spin"))
+def propose_multi_flip(
+    state: jnp.ndarray, key: jax.Array, n_flip: int = 1, spin: Optional[bool] = None, spin_value: Optional[float] = None
+) -> jnp.ndarray:
+    new_state, _ = _propose_multi_flip_kernel(state, key, n_flip, spin=spin, spin_value=spin_value)
     return new_state
 
 
-@partial(jax.jit, static_argnames=("n_flip",))
+@partial(jax.jit, static_argnames=("n_flip", "spin"))
 def propose_multi_flip_with_info(
-    state: jnp.ndarray, key: jax.Array, n_flip: int = 1
+    state: jnp.ndarray, key: jax.Array, n_flip: int = 1, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_multi_flip_kernel(state, key, n_flip)
+    return _propose_multi_flip_kernel(state, key, n_flip, spin=spin, spin_value=spin_value)
 
 
 # ----------------------------------------------------------------------
@@ -246,9 +268,9 @@ def propose_multi_flip_with_info(
 # ----------------------------------------------------------------------
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=("spin",))
 def _propose_global_flip_kernel(
-    state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray
+    state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Kernel for global flip.
@@ -268,7 +290,7 @@ def _propose_global_flip_kernel(
     safe_indices    = jnp.where(mask, target_indices, 0)
 
     # 4. Apply Updates
-    if BACKEND_DEF_SPIN:
+    if _resolve_effective_spin(spin):
         # Optimized: Scatter Multiply
         multipliers = jnp.where(mask, -1, 1)
         # Apply multipliers. Index 0 might be hit multiple times if it's padding,
@@ -280,23 +302,25 @@ def _propose_global_flip_kernel(
         adders      = jnp.where(mask, jnp.int32(1), jnp.int32(0))
         flip_counts = flip_counts.at[safe_indices].add(adders)
         should_flip = (flip_counts % 2) == 1
-        flip_value  = jnp.asarray(BACKEND_REPR, dtype=state.dtype)
+        flip_value  = _resolve_spin_value(state, spin_value)
         new_state   = jnp.where(should_flip, flip_value - state, state)
 
     return new_state, safe_indices
 
 
-@jax.jit
-def propose_global_flip(state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray) -> jnp.ndarray:
-    new_state, _ = _propose_global_flip_kernel(state, key, patterns)
+@partial(jax.jit, static_argnames=("spin",))
+def propose_global_flip(
+    state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray, spin: Optional[bool] = None, spin_value: Optional[float] = None
+) -> jnp.ndarray:
+    new_state, _ = _propose_global_flip_kernel(state, key, patterns, spin=spin, spin_value=spin_value)
     return new_state
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=("spin",))
 def propose_global_flip_with_info(
-    state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray
+    state: jnp.ndarray, key: jax.Array, patterns: jnp.ndarray, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_global_flip_kernel(state, key, patterns)
+    return _propose_global_flip_kernel(state, key, patterns, spin=spin, spin_value=spin_value)
 
 
 # ----------------------------------------------------------------------
@@ -304,9 +328,9 @@ def propose_global_flip_with_info(
 # ----------------------------------------------------------------------
 
 
-@partial(jax.jit, static_argnames=("length",))
+@partial(jax.jit, static_argnames=("length", "spin"))
 def _propose_worm_flip_kernel(
-    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4
+    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     ns = state.shape[0]
     max_degree = neighbor_table.shape[1]
@@ -350,29 +374,33 @@ def _propose_worm_flip_kernel(
 
     should_flip     = (flip_counts % 2) == 1
 
-    if BACKEND_DEF_SPIN:
+    if _resolve_effective_spin(spin):
         mult        = jnp.where(should_flip, -1, 1)
         new_state   = state * mult
     else:
-        flip_value  = jnp.asarray(BACKEND_REPR, dtype=state.dtype)
+        flip_value  = _resolve_spin_value(state, spin_value)
         new_state   = jnp.where(should_flip, flip_value - state, state)
 
     return new_state, final_indices
 
 
-@partial(jax.jit, static_argnames=("length",))
+@partial(jax.jit, static_argnames=("length", "spin"))
 def propose_worm_flip(
-    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4
+    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> jnp.ndarray:
-    new_state, _ = _propose_worm_flip_kernel(state, key, neighbor_table, length)
+    new_state, _ = _propose_worm_flip_kernel(
+        state, key, neighbor_table, length, spin=spin, spin_value=spin_value
+    )
     return new_state
 
 
-@partial(jax.jit, static_argnames=("length",))
+@partial(jax.jit, static_argnames=("length", "spin"))
 def propose_worm_flip_with_info(
-    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4
+    state: jnp.ndarray, key: jax.Array, neighbor_table: jnp.ndarray, length: int = 4, spin: Optional[bool] = None, spin_value: Optional[float] = None
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    return _propose_worm_flip_kernel(state, key, neighbor_table, length)
+    return _propose_worm_flip_kernel(
+        state, key, neighbor_table, length, spin=spin, spin_value=spin_value
+    )
 
 
 # ----------------------------------------

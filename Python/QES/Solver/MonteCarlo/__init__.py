@@ -18,18 +18,19 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 _LAZY_IMPORTS = {
-    "MonteCarloSolver": (".montecarlo", "MonteCarloSolver"),
-    "McsTrain": (".montecarlo", "McsTrain"),
-    "McsReturn": (".montecarlo", "McsReturn"),
-    "Sampler": (".sampler", "Sampler"),
-    "SolverInitState": (".sampler", "SolverInitState"),
-    "get_sampler": (".sampler", "get_sampler"),
-    "parallel": (".parallel", None),
-    "montecarlo": (".montecarlo", None),
-    "sampler": (".sampler", None),
-    "vmc": (".vmc", None),
-    "diagnostics": (".diagnostics", None),
-    "updates": (".updates", None),
+    "MonteCarloSolver"      : (".montecarlo", "MonteCarloSolver"),
+    "McsTrain"              : (".montecarlo", "McsTrain"),
+    "McsReturn"             : (".montecarlo", "McsReturn"),
+    "Sampler"               : (".sampler", "Sampler"),
+    "SolverInitState"       : (".sampler", "SolverInitState"),
+    "get_sampler"           : (".sampler", "get_sampler"),
+    # Diagnostics
+    "autocorr_func_1d"      : (".diagnostics", "autocorr_func_1d"),
+    "compute_autocorr_time" : (".diagnostics", "compute_autocorr_time"),
+    "compute_ess"           : (".diagnostics", "compute_ess"),
+    "compute_rhat"          : (".diagnostics", "compute_rhat"),
+    "jackknife_estimate"    : (".diagnostics", "jackknife_estimate"),
+    "bootstrap_estimate"    : (".diagnostics", "bootstrap_estimate"),
 }
 
 if TYPE_CHECKING:
@@ -44,6 +45,12 @@ __all__ = [
     "Sampler",
     "SolverInitState",
     "get_sampler",
+    "autocorr_func_1d",
+    "compute_autocorr_time",
+    "compute_ess",
+    "compute_rhat",
+    "jackknife_estimate",
+    "bootstrap_estimate",
     "parallel",
     "montecarlo",
     "sampler",

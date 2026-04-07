@@ -260,24 +260,22 @@ class Sampler(ABC):
             # obtain_backend returns (_backend, _backend_sp, (_rng, _rng_k), backend_str)
             self._backend, _, (self._rng, self._rng_k), _ = self.obtain_backend(backend, seed)
 
-        is_valid_rng_k = (
-            self._rng_k is not None
-            and isinstance(self._rng_k, jax.Array)
-            and self._rng_k.shape == (2,)
-            and self._rng_k.dtype == jnp.uint32
-        )
-
-        #! check the RNG key, whether it is a valid JAX PRNGKey
-        if not is_valid_rng_k:
-            key_info = f"Value: {self._rng_k}, Type: {type(self._rng_k)}"
-            if isinstance(self._rng_k, jax.Array):
-                key_info += f", Shape: {self._rng_k.shape}, dtype: {self._rng_k.dtype}"
-            raise TypeError(
-                f"Sampler's RNG key (self._rng_k) is not a valid JAX PRNGKey. {key_info}"
-            )
-
         # check JAX
         self._isjax = not self._backend == np
+        if self._isjax:
+            is_valid_rng_k = (
+                self._rng_k is not None
+                and isinstance(self._rng_k, jax.Array)
+                and self._rng_k.shape == (2,)
+                and self._rng_k.dtype == jnp.uint32
+            )
+            if not is_valid_rng_k:
+                key_info = f"Value: {self._rng_k}, Type: {type(self._rng_k)}"
+                if isinstance(self._rng_k, jax.Array):
+                    key_info += f", Shape: {self._rng_k.shape}, dtype: {self._rng_k.dtype}"
+                raise TypeError(
+                    f"Sampler's RNG key (self._rng_k) is not a valid JAX PRNGKey. {key_info}"
+                )
         if self._isjax and self._rng_k is None:
             raise SamplerErrors(SamplerErrors.NOT_HAVING_RNG + " (JAX requires rng_k)")
         if not self._isjax and self._rng is None:

@@ -25,13 +25,18 @@ except ImportError:
 
 
 @numba.njit(parallel=True)
-def propose_local_flip_np(state: np.ndarray, rng: np.random.Generator):
+def propose_local_flip_np(
+    state: np.ndarray,
+    rng: np.random.Generator,
+    spin: bool = Binary.BACKEND_DEF_SPIN,
+    spin_value: float = Binary.BACKEND_REPR,
+):
     """
     Propose a random flip of a state using numpy.
     """
     if state.ndim == 1:
         idx = randint_np(low=0, high=state.size, size=1)[0]
-        return Binary.flip_array_np(state, idx)
+        return Binary.flip_array_np(state, idx, spin=spin, spin_value=spin_value)
 
     n_chains, state_size = state.shape[0], state.shape[1]
     for i in prange(n_chains):
@@ -39,7 +44,7 @@ def propose_local_flip_np(state: np.ndarray, rng: np.random.Generator):
         # allow randint_np to handle it. Assuming implicit handling as per original code.
         idx = randint_np(low=0, high=state_size, size=1)[0]
         state[i] = Binary.flip_array_np(
-            state[i], idx, spin=Binary.BACKEND_DEF_SPIN, spin_value=Binary.BACKEND_REPR
+            state[i], idx, spin=spin, spin_value=spin_value
         )
     return state
 
@@ -50,20 +55,26 @@ def propose_local_flip_np(state: np.ndarray, rng: np.random.Generator):
 
 
 @numba.njit
-def propose_multi_flip_np(state: np.ndarray, rng, num=1):
+def propose_multi_flip_np(
+    state: np.ndarray,
+    rng,
+    num=1,
+    spin: bool = Binary.BACKEND_DEF_SPIN,
+    spin_value: float = Binary.BACKEND_REPR,
+):
     """
     Propose a random flip of a state using numpy.
     """
     if state.ndim == 1:
         idx = randint_np(low=0, high=state.size, size=num)
         return Binary.flip_array_np_multi(
-            state, idx, spin=Binary.BACKEND_DEF_SPIN, spin_value=Binary.BACKEND_REPR
+            state, idx, spin=spin, spin_value=spin_value
         )
     n_chains, state_size = state.shape[0], state.shape[1]
     for i in range(n_chains):
         idx = randint_np(low=0, high=state_size, size=num)
         state[i] = Binary.flip_array_np_multi(
-            state[i], idx, spin=Binary.BACKEND_DEF_SPIN, spin_value=Binary.BACKEND_REPR
+            state[i], idx, spin=spin, spin_value=spin_value
         )
     return state
 

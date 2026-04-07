@@ -99,6 +99,7 @@ def _set_state_rand(
     hilbert: Optional["HilbertSpace"] = None,
     shape: Union[int, Tuple[int, ...]] = (1,),
     mode_repr: float = 0.5,
+    spin: Optional[bool] = None,
     backend: str = "default",
     rng=None,
     rng_k=None,
@@ -114,9 +115,10 @@ def _set_state_rand(
     size = shape if isinstance(shape, int) else int(np.prod(shape))
     ran_state = None
 
-    # Original logic: if hilbert is None or True (always True)
+    use_spin = Binary.BACKEND_DEF_SPIN if spin is None else bool(spin)
+
     if modes == 2:
-        if Binary.BACKEND_DEF_SPIN:
+        if use_spin:
             ran_state = choice([-1, 1], shape, rng=rng, rng_k=rng_k, backend=backend)
         else:
             ran_state = choice([0, 1], shape, rng=rng, rng_k=rng_k, backend=backend)
@@ -134,6 +136,7 @@ def _set_state_up(
     hilbert: Optional["HilbertSpace"] = None,
     shape: Union[int, Tuple[int, ...]] = (1,),
     mode_repr: float = 0.5,
+    spin: Optional[bool] = None,
     backend: str = "default",
     **kwargs,
 ):
@@ -163,6 +166,7 @@ def _set_state_down(
     hilbert: Optional["HilbertSpace"] = None,
     shape: Union[int, Tuple[int, ...]] = (1,),
     mode_repr: float = 0.5,
+    spin: Optional[bool] = None,
     backend: str = "default",
     **kwargs,
 ):
@@ -175,8 +179,10 @@ def _set_state_down(
     size = shape if isinstance(shape, int) else int(np.prod(shape))
     xp = get_backend(backend)
 
+    use_spin = Binary.BACKEND_DEF_SPIN if spin is None else bool(spin)
+
     if modes == 2:
-        if Binary.BACKEND_DEF_SPIN:
+        if use_spin:
             return xp.ones(size, dtype=DEFAULT_NP_FLOAT_TYPE).reshape(shape) * (-mode_repr)
         else:
             return xp.zeros(size, dtype=DEFAULT_NP_FLOAT_TYPE).reshape(shape)
@@ -195,6 +201,7 @@ def _set_state_af(
     hilbert: Optional["HilbertSpace"] = None,
     shape: Union[int, Tuple[int, ...]] = (1,),
     mode_repr: float = 0.5,
+    spin: Optional[bool] = None,
     backend: str = "default",
     **kwargs,
 ):
@@ -207,8 +214,10 @@ def _set_state_af(
     size = shape if isinstance(shape, int) else int(np.prod(shape))
     xp = get_backend(backend)
 
+    use_spin = Binary.BACKEND_DEF_SPIN if spin is None else bool(spin)
+
     if modes == 2:
-        if Binary.BACKEND_DEF_SPIN:
+        if use_spin:
             af_state = np.array(
                 [1 if i % 2 == 0 else -1 for i in range(size)], dtype=DEFAULT_NP_FLOAT_TYPE
             )
@@ -236,6 +245,7 @@ def _set_state_rand_fixed(
     hilbert: Optional["HilbertSpace"] = None,
     shape: Union[int, Tuple[int, ...]] = (1,),
     mode_repr: float = 0.5,
+    spin: Optional[bool] = None,
     backend: str = "default",
     rng=None,
     rng_k=None,
@@ -259,8 +269,10 @@ def _set_state_rand_fixed(
 
     n_down = size - n_up
 
+    use_spin = Binary.BACKEND_DEF_SPIN if spin is None else bool(spin)
+
     # Create base array
-    if Binary.BACKEND_DEF_SPIN:
+    if use_spin:
         # Spin representation: up = mode_repr, down = -mode_repr
         arr = np.concatenate(
             [np.full(n_up, mode_repr, dtype=float), np.full(n_down, -mode_repr, dtype=float)]
@@ -291,6 +303,7 @@ def _set_state_int(
     hilbert: Optional["HilbertSpace"] = None,
     shape: Union[int, Tuple[int, ...]] = (1,),
     mode_repr: float = 0.5,
+    spin: Optional[bool] = None,
     backend: str = "default",
 ):
     """Set state from integer representation."""
@@ -305,11 +318,13 @@ def _set_state_int(
     size = shape if isinstance(shape, int) else int(np.prod(shape))
     out = None
 
+    use_spin = Binary.BACKEND_DEF_SPIN if spin is None else bool(spin)
+
     if hilbert is None:
         if modes == 2:
             # set the state from tensor
             out = Binary.int2base(
-                state, size, backend, spin_value=mode_repr, spin=Binary.BACKEND_DEF_SPIN
+                state, size, backend, spin_value=mode_repr, spin=use_spin
             ).reshape(shape)
         elif modes == 4:
             # For fermions we construct using numpy then convert if needed?
@@ -346,7 +361,8 @@ def initialize_state(
     modes: int,
     hilbert: Optional["HilbertSpace"],
     shape: Union[int, Tuple[int, ...]],
-    mode_repr: float = 0.5,  # Binary.BACKEND_REPR usually 0.5
+    mode_repr: float = 0.5,
+    spin: Optional[bool] = None,
     rng=None,
     rng_k=None,
     backend: str = "default",
@@ -360,7 +376,7 @@ def initialize_state(
         modes: Number of local states (2 for spin-1/2)
         hilbert: HilbertSpace object
         shape: System shape
-        mode_repr: Value representation (e.g. 0.5 for +/- 0.5 spins)
+        mode_repr: Value used for occupied or spin-up entries
         rng: Numpy RNG
         rng_k: JAX RNG Key
         backend: 'numpy' or 'jax'
@@ -376,8 +392,8 @@ def initialize_state(
     # 2. Integer
     if isinstance(statetype, (int, np.integer)):
         if JAX_AVAILABLE and isinstance(statetype, jnp.integer):
-            return _set_state_int(int(statetype), modes, hilbert, shape, mode_repr, backend)
-        return _set_state_int(statetype, modes, hilbert, shape, mode_repr, backend)
+            return _set_state_int(int(statetype), modes, hilbert, shape, mode_repr, spin, backend)
+        return _set_state_int(statetype, modes, hilbert, shape, mode_repr, spin, backend)
 
     # 3. String / Enum via Registry
     # Normalize string to upper case if it's a string, or check Enum
@@ -405,6 +421,7 @@ def initialize_state(
             hilbert=hilbert,
             shape=shape,
             mode_repr=mode_repr,
+            spin=spin,
             backend=backend,
             rng=rng,
             rng_k=rng_k,

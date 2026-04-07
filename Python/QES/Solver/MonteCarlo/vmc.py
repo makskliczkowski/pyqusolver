@@ -39,13 +39,13 @@ import numpy as np
 #! Update proposers
 #######################################################################
 try:
-    from .sampler import Sampler, SamplerErrors, SolverInitState
+    from .sampler import Sampler, SamplerErrors, SolverInitState, _bind_named_partial, resolve_state_defaults
     from .updates import (
-        make_hybrid_proposer,
-        propose_local_flip,
-        propose_local_flip_np,
-        propose_multi_flip,
-    )
+                        make_hybrid_proposer,
+                        propose_local_flip,
+                        propose_local_flip_np,
+                        propose_multi_flip,
+                    )
 
     # Import _with_info variants if available (they should be in spin_jax.py now)
     try:
@@ -183,20 +183,12 @@ class VMCSampler(Sampler):
             raise ValueError("A network (or callable) must be provided for evaluation.")
 
         self._donate_buffers                    = donate_buffers
-        self._net_callable, self._parameters    = self._set_net_callable(net)
-
-        # Check for fast updates support
-        self._log_psi_delta_fun = None
-        if hasattr(net, "log_psi_delta"):
-            self._log_psi_delta_fun = net.log_psi_delta
-        elif hasattr(net, "get_log_psi_delta"):
-            self._log_psi_delta_fun = net.get_log_psi_delta()
-
-        self._log_psi_delta_cache_init_fun = None
-        if hasattr(net, "init_log_psi_delta_cache"):
-            self._log_psi_delta_cache_init_fun = net.init_log_psi_delta_cache
-        elif hasattr(net, "get_log_psi_delta_cache_init"):
-            self._log_psi_delta_cache_init_fun = net.get_log_psi_delta_cache_init()
+        self._network_adapter                  = kwargs.get("network_adapter", None)
+        hooks                                  = self._resolve_network_hooks(net, self._network_adapter)
+        self._net_callable                     = hooks["apply_fun"]
+        self._parameters                       = hooks["parameters"]
+        self._log_psi_delta_fun                = hooks["log_psi_delta"]
+        self._log_psi_delta_cache_init_fun     = hooks["log_psi_delta_cache_init"]
 
         # User override for delta function
         if "log_psi_delta" in kwargs:
@@ -204,7 +196,9 @@ class VMCSampler(Sampler):
         if "log_psi_delta_cache_init" in kwargs:
             self._log_psi_delta_cache_init_fun = kwargs["log_psi_delta_cache_init"]
 
-        self._log_psi_delta_supports_cache = self._log_psi_delta_cache_init_fun is not None
+        self._log_psi_delta_supports_cache = bool(
+            hooks.get("log_psi_delta_supports_cache", False) or self._log_psi_delta_cache_init_fun is not None
+        )
 
         # set the parameters - this for modification of the distribution
         self._mu = mu
@@ -329,6 +323,13 @@ class VMCSampler(Sampler):
 
     def _resolve_fast_update_fun(self, current_fun, upd_rule, **kwargs):
         """Attempts to replace the update function with a version that returns update info."""
+        spin, spin_value = resolve_state_defaults(
+            getattr(self, "_state_representation", None),
+            spin=kwargs.get("spin", None),
+            mode_repr=kwargs.get("mode_repr", None),
+            fallback_mode_repr=getattr(self, "_mode_repr", 1.0),
+        )
+
         def _rule_supported(name: str) -> bool:
             supported = getattr(self._net, "fast_update_supported_rules", None)
             if supported is None:
@@ -346,7 +347,7 @@ class VMCSampler(Sampler):
                     upd_rule = UpdateRule.from_str(upd_rule)
 
                 if upd_rule == UpdateRule.LOCAL and _rule_supported("LOCAL"):
-                    return propose_local_flip_with_info
+                    return _bind_named_partial(propose_local_flip_with_info, spin=spin, spin_value=spin_value)
                 elif upd_rule == UpdateRule.EXCHANGE and _rule_supported("EXCHANGE"):
                     from .updates import get_neighbor_table
 
@@ -356,7 +357,7 @@ class VMCSampler(Sampler):
                     return partial(propose_exchange_with_info, neighbor_table=neighbor_table)
                 elif upd_rule == UpdateRule.MULTI_FLIP and _rule_supported("MULTI_FLIP"):
                     n_flip = kwargs.get("n_flip", 1)
-                    return partial(propose_multi_flip_with_info, n_flip=n_flip)
+                    return _bind_named_partial(propose_multi_flip_with_info, n_flip=n_flip, spin=spin, spin_value=spin_value)
                 elif (
                     upd_rule in [UpdateRule.GLOBAL, UpdateRule.PLAQUETTE, UpdateRule.WILSON]
                     and _rule_supported("GLOBAL")
@@ -365,7 +366,7 @@ class VMCSampler(Sampler):
                         isinstance(current_fun, partial)
                         and current_fun.func.__name__ == "propose_global_flip"
                     ):
-                        return partial(propose_global_flip_with_info, **current_fun.keywords)
+                        return _bind_named_partial(propose_global_flip_with_info, **current_fun.keywords)
                     pass
                 elif upd_rule == UpdateRule.BOND_FLIP and _rule_supported("BOND_FLIP"):
                     from .updates import get_neighbor_table
@@ -373,7 +374,12 @@ class VMCSampler(Sampler):
                     hilbert = kwargs.get("hilbert")
                     order = kwargs.get("bond_order", 1)
                     neighbor_table = get_neighbor_table(hilbert.lattice, order=order)
-                    return partial(propose_bond_flip_with_info, neighbor_table=neighbor_table)
+                    return _bind_named_partial(
+                        propose_bond_flip_with_info,
+                        neighbor_table=neighbor_table,
+                        spin=spin,
+                        spin_value=spin_value,
+                    )
                 elif upd_rule == UpdateRule.WORM and _rule_supported("WORM"):
                     from .updates import get_neighbor_table
 
@@ -381,13 +387,20 @@ class VMCSampler(Sampler):
                     order = kwargs.get("bond_order", 1)
                     neighbor_table = get_neighbor_table(hilbert.lattice, order=order)
                     length = kwargs.get("length", 4)
-                    return partial(
-                        propose_worm_flip_with_info, neighbor_table=neighbor_table, length=length
+                    return _bind_named_partial(
+                        propose_worm_flip_with_info,
+                        neighbor_table=neighbor_table,
+                        length=length,
+                        spin=spin,
+                        spin_value=spin_value,
                     )
 
             # If default was used
-            if current_fun == propose_local_flip and _rule_supported("LOCAL"):
-                return propose_local_flip_with_info
+            if (
+                current_fun == propose_local_flip
+                or (isinstance(current_fun, partial) and current_fun.func == propose_local_flip)
+            ) and _rule_supported("LOCAL"):
+                return _bind_named_partial(propose_local_flip_with_info, spin=spin, spin_value=spin_value)
 
         except ImportError:
             pass
@@ -520,6 +533,37 @@ class VMCSampler(Sampler):
         elif callable(net):
             return net, None
         raise ValueError("Invalid network object provided. Needs to be callable or have an 'apply' method.")
+
+    def _resolve_network_hooks(self, net, adapter=None):
+        """
+        Resolve the sampler-facing network hooks once during setup.
+        """
+        self._net = net
+        if adapter is not None and hasattr(adapter, "resolve_sampling_hooks"):
+            hooks = adapter.resolve_sampling_hooks()
+            if hooks is not None:
+                return hooks
+
+        net_callable, parameters = self._set_net_callable(net)
+        log_psi_delta_fun = None
+        if hasattr(net, "log_psi_delta"):
+            log_psi_delta_fun = net.log_psi_delta
+        elif hasattr(net, "get_log_psi_delta"):
+            log_psi_delta_fun = net.get_log_psi_delta()
+
+        log_psi_delta_cache_init_fun = None
+        if hasattr(net, "init_log_psi_delta_cache"):
+            log_psi_delta_cache_init_fun = net.init_log_psi_delta_cache
+        elif hasattr(net, "get_log_psi_delta_cache_init"):
+            log_psi_delta_cache_init_fun = net.get_log_psi_delta_cache_init()
+
+        return {
+            "apply_fun": net_callable,
+            "parameters": parameters,
+            "log_psi_delta": log_psi_delta_fun,
+            "log_psi_delta_cache_init": log_psi_delta_cache_init_fun,
+            "log_psi_delta_supports_cache": log_psi_delta_cache_init_fun is not None,
+        }
 
     def _set_replicas(self, betas: np.ndarray):
         self._pt_betas = betas
@@ -692,9 +736,19 @@ class VMCSampler(Sampler):
                     except ImportError as e:
                         raise ImportError("Local updater returns update-info but propose_global_flip_with_info is unavailable.") from e
                     
-                    global_flip_fn = partial(_global_with_info, patterns=patterns_jax)
+                    global_flip_fn = partial(
+                        _global_with_info,
+                        patterns=patterns_jax,
+                        spin=bool(self._spin_repr),
+                        spin_value=float(self._mode_repr),
+                    )
                 else:
-                    global_flip_fn = partial(propose_global_flip, patterns=patterns_jax)
+                    global_flip_fn = partial(
+                        propose_global_flip,
+                        patterns=patterns_jax,
+                        spin=bool(self._spin_repr),
+                        spin_value=float(self._mode_repr),
+                    )
                 
                 glob_type_str = f"Patterns (N={n_patterns})"
 
@@ -706,9 +760,19 @@ class VMCSampler(Sampler):
                     except ImportError as e:
                         raise ImportError("Local updater returns update-info but propose_multi_flip_with_info is unavailable.") from e
                     
-                    global_flip_fn = partial(_multi_with_info, n_flip=n_flip_global)
+                    global_flip_fn = partial(
+                        _multi_with_info,
+                        n_flip=n_flip_global,
+                        spin=bool(self._spin_repr),
+                        spin_value=float(self._mode_repr),
+                    )
                 else:
-                    global_flip_fn = partial(propose_multi_flip, n_flip=n_flip_global)
+                    global_flip_fn = partial(
+                        propose_multi_flip,
+                        n_flip=n_flip_global,
+                        spin=bool(self._spin_repr),
+                        spin_value=float(self._mode_repr),
+                    )
                 glob_type_str       = f"Multi-Flip (frac={fraction:.2f})"
                 self._global_name   = "multi-flip"
 
