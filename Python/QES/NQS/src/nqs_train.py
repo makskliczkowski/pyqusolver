@@ -13,6 +13,7 @@ File                : NQS/nqs_train.py
 Author              : Maksymilian Kliczkowski
 Email               : maksymilian.kliczkowski@pwr.edu.pl
 Copyright           : (c) 2024-2026 Maksymilian Kliczkowski
+Version             : 2.0
 ------------------------------------------------------------------------
 """
 
@@ -41,48 +42,39 @@ except ImportError:
 
 # QES General Imports
 try:
-    from QES.general_python.common.flog import Logger
-    from QES.general_python.common.hdf5man import HDF5Manager
-    from QES.general_python.common.timer import timeit
-    from QES.qes_globals import get_logger as get_global_logger
+    from QES.general_python.common.flog     import Logger
+    from QES.general_python.common.hdf5man  import HDF5Manager
+    from QES.general_python.common.timer    import timeit
 except ImportError:
     raise ImportError("QES general modules missing.")
 
 #! NQS Imports
 try:
     # solvers
-    from QES.general_python.algebra.ode import IVP, choose_ode
-    from QES.general_python.algebra.solvers import (
-        SolverForm,
-        SolverType,
-        choose_precond,
-        choose_solver,
-    )
+    from QES.general_python.algebra.ode     import IVP, choose_ode
+    from QES.general_python.algebra.solvers import SolverForm, SolverType, choose_precond, choose_solver
 
     # training phases
-    from QES.general_python.ml.schedulers       import EarlyStopping, choose_scheduler
+    from QES.general_python.ml.schedulers       import EarlyStopping
     from QES.general_python.ml.training_phases  import PhaseScheduler, create_phase_schedulers
-    from QES.NQS.nqs                            import NQS, VMCSampler
-    from QES.NQS.src.auto_tuner                 import AutoTunerConfig, TDVPAutoTuner
+    from QES.NQS.nqs                            import NQS
+    from QES.NQS.src.auto_tuner                 import TDVPAutoTuner
     from QES.NQS.src.tdvp                       import TDVP, TDVPLowerPenalty
 except ImportError as e:
     raise ImportError("QES core modules missing.") from e
 
 # ------------------------------------------------------
 
-
 class NQSTimeModes(Enum):
     """Timing modes for profiling."""
 
-    OFF = 0  # No timing
-    BASIC = 1  # Basic timing (total time per epoch)
-    FIRST = 2  # Time only the first epoch
-    LAST = 4  # Time only the last epoch
-    DETAILED = 8  # Detailed timing (per phase: sampling, step, update)
-
+    OFF         = 0  # No timing
+    BASIC       = 1  # Basic timing (total time per epoch)
+    FIRST       = 2  # Time only the first epoch
+    LAST        = 4  # Time only the last epoch
+    DETAILED    = 8  # Detailed timing (per phase: sampling, step, update)
 
 # ------------------------------------------------------
-
 
 @dataclass
 class NQSTrainTime:
@@ -108,7 +100,6 @@ class NQSTrainTime:
 
 
 # ------------------------------------------------------
-
 
 @dataclass
 class NQSTrainStats:
@@ -138,18 +129,18 @@ class NQSTrainStats:
         Method used to compute exact predictions (e.g., 'lanczos', 'full_diag', 'dmrg').
     """
 
-    history             : List[float] = field(default_factory=list)
-    history_std         : List[float] = field(default_factory=list)
-    lr_history          : List[float] = field(default_factory=list)
-    diag_history        : List[float] = field(default_factory=list)
-    sigma2_history      : List[float] = field(default_factory=list)
-    rhat_history        : List[float] = field(default_factory=list)
-    reg_history         : List[float] = field(default_factory=list)
+    history             : List[float]   = field(default_factory=list)
+    history_std         : List[float]   = field(default_factory=list)
+    lr_history          : List[float]   = field(default_factory=list)
+    diag_history        : List[float]   = field(default_factory=list)
+    sigma2_history      : List[float]   = field(default_factory=list)
+    rhat_history        : List[float]   = field(default_factory=list)
+    reg_history         : List[float]   = field(default_factory=list)
     global_phase        : List[complex] = field(default_factory=list)
-    timings             : NQSTrainTime = field(default_factory=NQSTrainTime)
+    timings             : NQSTrainTime  = field(default_factory=NQSTrainTime)
     seed                : Optional[int] = None
-    exact_predictions   : Optional[np.ndarray] = None  # e.g., ED eigenvalues
     exact_method        : Optional[str] = None  # e.g., 'lanczos', 'full_diag'
+    exact_predictions   : Optional[np.ndarray] = None  # e.g., ED eigenvalues
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert stats to dictionary for HDF5 serialization."""
@@ -535,15 +526,13 @@ class NQSTrainer:
 
         if nqs is None:
             raise ValueError(self._ERR_NO_NQS)
-        self.nqs = nqs  # Most important component
-        self.logger = logger
-        self.n_batch = n_batch
-        self.background = background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0"))
-        self.background_log_interval = kwargs.pop(
-            "background_log_interval", 20
-        )  # Log every Nth epoch in background mode
-        self.verbose = nqs.verbose and not self.background
-        self.dtype = dtype if dtype is not None else nqs.dtype
+        self.nqs                        = nqs  # Most important component
+        self.logger                     = logger
+        self.n_batch                    = n_batch
+        self.background                 = background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0"))
+        self.background_log_interval    = kwargs.pop("background_log_interval", 20)  # Log every Nth epoch in background mode
+        self.verbose                    = nqs.verbose and not self.background
+        self.dtype                      = dtype if dtype is not None else nqs.dtype
         if dtype is None and hasattr(nqs, "_precision_policy"):
             if getattr(nqs, "_iscpx", False):
                 self.dtype = nqs._precision_policy.accum_complex_dtype
@@ -552,16 +541,14 @@ class NQSTrainer:
 
         # Validate lower states
         if lower_states is not None:
-            if not isinstance(lower_states, list) or not all(
-                isinstance(s, NQS) for s in lower_states
-            ):
+            if not isinstance(lower_states, list) or not all(isinstance(s, NQS) for s in lower_states):
                 raise ValueError(self._ERR_INVALID_LOWER_STATES)
 
         # Utilities
-        self.lower_states = lower_states
+        self.lower_states   = lower_states
         
         # Setup Early Stopping
-        self.early_stopper = early_stopper
+        self.early_stopper  = early_stopper
         if self.early_stopper is None:
             # Build explicit early-stopping kwargs to avoid colliding with
             # scheduler keys such as lr_patience/reg_patience/diag_patience.
@@ -601,9 +588,7 @@ class NQSTrainer:
                 self._log(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color="green")
             except KeyError:
                 raise ValueError(self._ERR_INVALID_TIMING_MODE)
-        self.timing_mode = (
-            timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
-        )
+        self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
 
         # Setup Schedulers (The Integrated Part)
         self._init_reg, self._init_lr, self._init_diag = reg, lr, diag_shift
@@ -652,25 +637,25 @@ class NQSTrainer:
                 "No TDVP engine provided. Creating default TDVP instance.", lvl=0, color="yellow"
             )
             self.tdvp = TDVP(
-                use_sr=use_sr,
-                use_minsr=use_minsr,
-                rhs_prefactor=rhs_prefactor,
+                use_sr                  =use_sr,
+                use_minsr               =use_minsr,
+                rhs_prefactor           =rhs_prefactor,
                 # SR Solver
-                sr_diag_shift=diag_shift,
-                sr_lin_solver=self.lin_solver,
-                sr_lin_solver_t=lin_type,
-                sr_precond=self.pre_solver,
-                sr_form_matrix=lin_force_mat,
-                sr_snr_tol=kwargs.get("sr_snr_tol", 1e-12),
-                sr_lin_x0=kwargs.get("sr_lin_x0", None),
-                sr_maxiter=kwargs.get("sr_maxiter", 1000),
-                sr_pinv_cutoff=kwargs.get("sr_pinv_cutoff", 1e-8),
+                sr_diag_shift           =diag_shift,
+                sr_lin_solver           =self.lin_solver,
+                sr_lin_solver_t         =lin_type,
+                sr_precond              =self.pre_solver,
+                sr_form_matrix          =lin_force_mat,
+                sr_snr_tol              =kwargs.get("sr_snr_tol", 1e-12),
+                sr_lin_x0               =kwargs.get("sr_lin_x0", None),
+                sr_maxiter              =kwargs.get("sr_maxiter", 1000),
+                sr_pinv_cutoff          =kwargs.get("sr_pinv_cutoff", 1e-8),
                 # other
-                backend=nqs.backend,
-                logger=logger,
-                use_timing=kwargs.get("use_timing", False),
-                verbose=nqs.verbose,
-                dtype=self.dtype,
+                backend                 =nqs.backend,
+                logger                  =logger,
+                use_timing              =kwargs.get("use_timing", False),
+                verbose                 =nqs.verbose,
+                dtype                   =self.dtype,
             )
             self._log(
                 f"Created default TDVP engine {self.tdvp}",
@@ -682,12 +667,7 @@ class NQSTrainer:
         # Set gradient clipping on TDVP
         if grad_clip is not None:
             self.tdvp.set_grad_clip(grad_clip)
-            self._log(
-                f"Gradient clipping enabled: max_norm={grad_clip:.2e}",
-                lvl=1,
-                color="cyan",
-                verbose=self.verbose,
-            )
+            self._log(f"Gradient clipping enabled: max_norm={grad_clip:.2e}", lvl=1, color="cyan", verbose=self.verbose)
 
         # Setup ODE Solver
         try:
@@ -704,14 +684,9 @@ class NQSTrainer:
         self._single_step_jit = nqs.wrap_single_step_jax(batch_size=n_batch)
 
         # Define a function that runs the WHOLE step (ODE + TDVP + Energy)
-        def train_step_logic(
-            f, est_fn, y, t, configs, configs_ansatze, probabilities, lower_states, num_chains=1
-        ):
+        def train_step_logic(f, est_fn, y, t, configs, configs_ansatze, probabilities, lower_states, num_chains=1):
             # We pass them down to the solver's **rhs_args
-            new_params, step_dt, (info, meta) = self.ode_solver.step(
-                f=f,
-                t=t,
-                y=y,
+            new_params, step_dt, (info, meta) = self.ode_solver.step(f=f, t=t, y=y,
                 # These pass into **rhs_args of the solver:
                 est_fn=est_fn,
                 configs=configs,
@@ -739,12 +714,12 @@ class NQSTrainer:
             )
 
         # State
-        self.stats = NQSTrainStats()
-        self.best_energy = float("inf")
+        self.stats          = NQSTrainStats()
+        self.best_energy    = float("inf")
 
         # Setup Optimizer (Experimental)
-        self.optimizer = optimizer
-        self.opt_state = None
+        self.optimizer      = optimizer
+        self.opt_state      = None
         if self.optimizer is not None and nqs._isjax:
             try:
                 import optax
@@ -851,8 +826,8 @@ class NQSTrainer:
             return out
 
         diag_kwargs = {k: v for k, v in kwargs.items() if k.startswith("diag_")}
-        reg_kwargs = {k: v for k, v in kwargs.items() if k.startswith("reg_")}
-        lr_kwargs = {k: v for k, v in kwargs.items() if k.startswith("lr_")}
+        reg_kwargs  = {k: v for k, v in kwargs.items() if k.startswith("reg_")}
+        lr_kwargs   = {k: v for k, v in kwargs.items() if k.startswith("lr_")}
         # transform keys to be accepted by scheduler factory
 
         diag_kwargs = {k.replace("diag_", "lr_"): v for k, v in diag_kwargs.items()}
@@ -860,31 +835,27 @@ class NQSTrainer:
             diag_kwargs["lr_initial"] = self._init_diag
         diag_kwargs = _normalize_scheduler_aliases(diag_kwargs)
 
-        reg_kwargs = {k.replace("reg_", "lr_"): v for k, v in reg_kwargs.items()}
+        reg_kwargs  = {k.replace("reg_", "lr_"): v for k, v in reg_kwargs.items()}
         if self._init_reg is not None:
             reg_kwargs["lr_initial"] = self._init_reg
-        reg_kwargs = _normalize_scheduler_aliases(reg_kwargs)
+        reg_kwargs  = _normalize_scheduler_aliases(reg_kwargs)
 
-        lr_kwargs = {k.replace("lr_", "lr_"): v for k, v in lr_kwargs.items()}
+        lr_kwargs   = {k.replace("lr_", "lr_"): v for k, v in lr_kwargs.items()}
         if self._init_lr is not None:
             lr_kwargs["lr_initial"] = self._init_lr
-        lr_kwargs = _normalize_scheduler_aliases(lr_kwargs)
+        lr_kwargs   = _normalize_scheduler_aliases(lr_kwargs)
 
         # Helper to create scheduler from string or passthrough
         def _resolve_scheduler(sched, init_val, param_name, max_epochs, **kwargs):
             if sched is None:
                 if init_val is not None:  # Constant scheduler from float value
-                    return choose_scheduler(
-                        "constant", initial_lr=init_val, max_epochs=max_epochs, logger=self.logger
-                    )
+                    return choose_scheduler("constant", initial_lr=init_val, max_epochs=max_epochs, logger=self.logger)
                 return None
 
             elif isinstance(sched, str):
                 # String scheduler type -> create via factory
                 init = init_val if init_val is not None else (1e-2 if param_name == "lr" else 1e-3)
-                return choose_scheduler(
-                    sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs
-                )
+                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs)
 
             elif callable(sched) or isinstance(sched, PhaseScheduler):
                 return sched
@@ -902,13 +873,9 @@ class NQSTrainer:
 
         # User provided lr_scheduler/reg_scheduler or lr/reg directly -> use them
         if user_provided_scheduler and (phases == "default" or phases is None):
-            self.lr_scheduler = _resolve_scheduler(lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
-            self.reg_scheduler = _resolve_scheduler(
-                reg_scheduler, reg, "reg", n_epochs, **reg_kwargs
-            )
-            self.diag_scheduler = _resolve_scheduler(
-                diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs
-            )
+            self.lr_scheduler   = _resolve_scheduler(lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
+            self.reg_scheduler  = _resolve_scheduler(reg_scheduler, reg, "reg", n_epochs, **reg_kwargs)
+            self.diag_scheduler = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
         # Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
         elif isinstance(phases, str):
@@ -1033,6 +1000,7 @@ class NQSTrainer:
         tdvp_timings = getattr(tdvp_info, "timings", None)
         tdvp_enabled = bool(getattr(self.tdvp, "use_timing", False))
 
+        # Record each TDVP phase timing if available, otherwise store NaN
         for stats_name, tdvp_name in phase_map:
             value = np.nan
             if tdvp_enabled and tdvp_timings is not None:
@@ -1056,6 +1024,7 @@ class NQSTrainer:
             return float("nan")
         return float(np.mean(arr))
 
+    # Helper to get the last N values for timing breakdowns, handling edge cases
     def _timing_window(self, values: List[float], last_n: int) -> List[float]:
         if values is None or len(values) == 0:
             return []
@@ -1063,6 +1032,7 @@ class NQSTrainer:
             return values
         return values[-int(last_n):]
 
+    # Log timing breakdown for recent epochs, showing absolute times and percentages
     def _log_timing_breakdown(self, *, last_n: int = 20):
         """
         Log compact timing breakdown for the recent timed epochs.
@@ -1121,31 +1091,31 @@ class NQSTrainer:
 
         # 1. Learning Rate -> ODE Time Step
         if self.lr_scheduler:
-            new_lr = self.lr_scheduler(epoch, last_loss)
+            new_lr          = self.lr_scheduler(epoch, last_loss)
             self.ode_solver.set_dt(float(new_lr))
             self.stats.lr_history.append(new_lr)
-            current_dt = new_lr
+            current_dt      = new_lr
         else:
-            raw_dt = getattr(self.ode_solver, "dt", 1e-3)
-            current_dt = raw_dt() if callable(raw_dt) else raw_dt
+            raw_dt          = getattr(self.ode_solver, "dt", 1e-3)
+            current_dt      = raw_dt() if callable(raw_dt) else raw_dt
 
         # 2. Diagonal Shift (SR regularization) -> TDVP
         if self.diag_scheduler:
-            new_diag = self.diag_scheduler(epoch, last_loss)
+            new_diag        = self.diag_scheduler(epoch, last_loss)
             self.tdvp.set_diag_shift(float(new_diag))
             self.stats.diag_history.append(new_diag)
-            current_diag = new_diag
+            current_diag    = new_diag
         else:
-            current_diag = self.tdvp.sr_diag_shift
+            current_diag    = self.tdvp.sr_diag_shift
 
         # 3. Other Regularization
         if self.reg_scheduler:
-            new_reg = self.reg_scheduler(epoch, last_loss)
+            new_reg         = self.reg_scheduler(epoch, last_loss)
             self.tdvp.set_regularization(float(new_reg))
             self.stats.reg_history.append(new_reg)
-            current_reg = new_reg
+            current_reg     = new_reg
         else:
-            current_reg = self.tdvp.regularization
+            current_reg     = self.tdvp.regularization
 
         return current_dt, current_reg, current_diag
 
@@ -1167,15 +1137,15 @@ class NQSTrainer:
             # Calculate cross-ratios
             # Note: This requires O(N_samples) network evaluations
             penalty = TDVPLowerPenalty(
-                excited_on_lower=self.nqs.ansatz(cfgs_lower),
-                lower_on_excited=nqs_lower.ansatz(cfgs_current),
-                excited_on_excited=excited_on_excited,  #! check if correct
-                lower_on_lower=cfgs_psi_lower.flatten(),
-                params_j=nqs_lower.get_params(),
-                configs_j=cfgs_lower,
-                beta_j=nqs_lower.beta_penalty,
-                backend_np=self.nqs.backend,
-                dtype=self.tdvp.dtype,
+                excited_on_lower        =   self.nqs.ansatz(cfgs_lower),
+                lower_on_excited        =   nqs_lower.ansatz(cfgs_current),
+                excited_on_excited      =   excited_on_excited,  #! check if correct
+                lower_on_lower          =   cfgs_psi_lower.flatten(),
+                params_j                =   nqs_lower.get_params(),
+                configs_j               =   cfgs_lower,
+                beta_j                  =   nqs_lower.beta_penalty,
+                backend_np              =   self.nqs.backend,
+                dtype                   =   self.tdvp.dtype,
             )
             lower_contr.append(penalty)
         return lower_contr
@@ -1190,10 +1160,10 @@ class NQSTrainer:
         """Sets exact prediction info on the NQS object."""
         if exact_predictions is not None:
             self.nqs.exact = {
-                "exact_predictions": exact_predictions,
-                "exact_method": exact_method,
+                "exact_predictions" : exact_predictions,
+                "exact_method"      : exact_method,
                 # Choose appropriate exact energy for this state
-                "exact_energy": (
+                "exact_energy"      : (
                     float(exact_predictions)
                     if np.ndim(exact_predictions) == 0
                     else (
@@ -1500,7 +1470,6 @@ class NQSTrainer:
                         # Direction from TDVP (dot_theta)
                         # ODE solver returns new parameters dparams. 
                         # direction = (new - old) / dt
-                        params_flat = self.nqs.get_params(unravel=True)
                         dt_step     = float(lr)
                         direction   = (dparams - params_flat) / dt_step if dt_step > 1e-12 else (dparams - params_flat)
                         
@@ -1872,7 +1841,6 @@ class NQSTrainer:
                     raise e
 
         return self.stats
-
 
 # ------------------------------------------------------
 #! EOF

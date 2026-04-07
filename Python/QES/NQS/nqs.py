@@ -80,12 +80,10 @@ try:
     from QES.general_python.common.flog         import Logger
     from QES.general_python.ml.networks         import GeneralNet
 
-    #! Choose network
-    from QES.general_python.ml.networks         import choose_network as nqs_choose_network
     from QES.Solver.MonteCarlo.montecarlo       import MonteCarloSolver
 
     #! Monte Carlo
-    from QES.Solver.MonteCarlo.sampler          import Sampler, get_sampler
+    from QES.Solver.MonteCarlo.sampler          import Sampler, get_sampler, resolve_state_defaults
     from QES.Solver.MonteCarlo.vmc              import VMCSampler
 
 except ImportError as e:
@@ -227,8 +225,8 @@ class NQS(MonteCarloSolver):
     def __init__(
         self,
         # information on the NQS
-        logansatz       : Union[Callable, str, GeneralNet],
-        model           : Hamiltonian,
+        logansatz       : Optional[Union[Callable, str, GeneralNet]] = None,
+        model           : Optional[Hamiltonian] = None,
         # information on the Monte Carlo solver
         sampler         : Optional[Union[Callable, str, VMCSampler]] = None,
         batch_size      : Optional[int] = 1,
@@ -365,6 +363,14 @@ class NQS(MonteCarloSolver):
                     - global_update     : Custom global update function (optional).
         """
 
+        ansatz_alias = kwargs.pop("ansatz", None)
+        if logansatz is None:
+            logansatz = ansatz_alias
+        elif ansatz_alias is not None and ansatz_alias != logansatz:
+            raise ValueError("Provide either `logansatz` or `ansatz`, not conflicting values for both.")
+        if model is None:
+            raise ValueError(self._ERROR_NO_HAMILTONIAN)
+
         if shape is None and hilbert is None:
             raise ValueError(self._ERROR_SHAPE_HILBERT)
 
@@ -374,7 +380,7 @@ class NQS(MonteCarloSolver):
             mu          =   mu,
             replica     =   replica,
             shape       =   shape or ((model.lattice.ns,) if hasattr(model, "lattice") else None),
-            hilbert     =   model.hilbert if hasattr(model, "hilbert") else None,
+            hilbert     =   hilbert if hilbert is not None else (model.hilbert if hasattr(model, "hilbert") else None),
             modes       =   modes,
             directory   =   directory,
             backend     =   backend,
@@ -426,14 +432,17 @@ class NQS(MonteCarloSolver):
                 raise ValueError(self._ERROR_INVALID_NETWORK)
 
             self.log(f"Initializing NQS network backend: {self._nqsbackend.name.upper()}", lvl=1, color="blue")
-            net_param_dtype     = kwargs.pop("param_dtype", None)
+            net_param_dtype             = kwargs.pop("param_dtype", None)
+            self._model                 = model
+            self._representation_info   = resolve_model_representation(self._model, hilbert=self._hilbert)
 
-            self._net = nqs_choose_network(
-                logansatz,
+            self._net = NetworkFactory.create(
+                network_type    =   logansatz,
                 input_shape     =   self._shape,
                 backend         =    self._backend_str,
                 dtype           =   dtype,
                 param_dtype     =   net_param_dtype,
+                representation_info = self._representation_info,
                 seed            =   seed,
                 **kwargs,
             )
@@ -447,6 +456,15 @@ class NQS(MonteCarloSolver):
 
         if not self._initialized:
             self.init_network()
+
+        self._network_adapter           = choose_nqs_network_adapter(self._net, self._representation_info, backend=self._backend_str)
+        self._state_representation      = None
+        self._spin_repr                 = None
+        self._mode_repr                 = None
+        self._local_dim                 = getattr(getattr(self._hilbert, "local_space", None), "local_dim", 2)
+        self._state_convention_sig      = None
+        self._resolved_operator_cache   = {}
+        self._set_state_convention(**kwargs)
 
         self._isjax                 = getattr(self._net, "is_jax", (self._nqsbackend.name == "jax"))
         self._iscpx                 = self._net.is_complex
@@ -464,7 +482,6 @@ class NQS(MonteCarloSolver):
         #! Sampler
         # --------------------------------------------------
 
-        self._model                 = model
         self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)
 
         # --------------------------------------------------
@@ -845,7 +862,7 @@ class NQS(MonteCarloSolver):
         self._ansatz_base_func  = self._ansatz_func
         self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         if self._isjax and JAX_AVAILABLE:
-            self._apply_uniform_func = jax.jit(NQS._apply_fun_jax_uniform, static_argnums=(0, 4, 6),)
+            self._apply_uniform_func = self.nqsbackend._get_cached_jit(NQS._apply_fun_jax_uniform, (0, 4, 6))
         else:
             self._apply_uniform_func = None
 
@@ -857,6 +874,28 @@ class NQS(MonteCarloSolver):
             return False
         return bool(getattr(self._sampler, "has_uniform_weights", False))
 
+    def _validate_sampler_request(self, sampler: Any) -> None:
+        """
+        Validate explicit sampler requests against the active ansatz family.
+        """
+        preferred       = getattr(self._network_adapter, "sampler_kind", "MCSampler")
+        preferred_key   = str(preferred).strip().lower()
+
+        if isinstance(sampler, str):
+            sampler_key = sampler.strip().lower()
+        else:
+            sampler_key = type(sampler).__name__.strip().lower()
+
+        if "arsampler" in sampler_key or sampler_key in {"ar", "autoregressive"}:
+            if "arsampler" not in preferred_key:
+                raise ValueError("ARSampler requires an autoregressive ansatz with exact conditional sampling support.")
+            return
+
+        if "mcsampler" in sampler_key or sampler_key in {"vmc", "mcmc"}:
+            if "arsampler" in preferred_key:
+                self.log("Using MCSampler with an autoregressive ansatz. This is supported but not the preferred exact-sampling path.", lvl=2, color="yellow")
+            return
+
     def set_sampler(
         self,
         sampler     : Union[VMCSampler, str],
@@ -867,6 +906,7 @@ class NQS(MonteCarloSolver):
         """Set a new sampler for the NQS solver."""
 
         if isinstance(sampler, Sampler):
+            self._validate_sampler_request(sampler)
             self._sampler = sampler
             return self._sampler
 
@@ -874,40 +914,45 @@ class NQS(MonteCarloSolver):
 
             # DEFAULT FALLBACK
             if sampler is None:
-                sampler_type = "MCSampler"  # Default to MCMC
+                sampler_type = getattr(self._network_adapter, "sampler_kind", "MCSampler")
             else:
                 sampler_type = sampler  # Could be 'vmc', 'mcmc', etc.
+            if sampler_type is not None:
+                self._validate_sampler_request(sampler_type)
 
             if self._isjax:
                 import jax.numpy as jnp
 
-            sampler_kwargs                  = kwargs.copy()
-            sampler_kwargs["net"]           = self._net
-            sampler_kwargs["shape"]         = self._shape
-            sampler_kwargs["rng"]           = self._rng
-            sampler_kwargs["rng_k"]         = self._rng_k
-            sampler_kwargs["dtype"]         = self._dtype
-            sampler_kwargs["beta"]          = self._beta
-            sampler_kwargs["mu"]            = self._mu
-            sampler_kwargs["hilbert"]       = self._hilbert
-            sampler_kwargs["backend"]       = self._backend_str
+            sampler_kwargs                          = kwargs.copy()
+            sampler_kwargs["net"]                   = self._net
+            sampler_kwargs["shape"]                 = self._shape
+            sampler_kwargs["rng"]                   = self._rng
+            sampler_kwargs["rng_k"]                 = self._rng_k
+            sampler_kwargs["dtype"]                 = self._dtype
+            sampler_kwargs["beta"]                  = self._beta
+            sampler_kwargs["mu"]                    = self._mu
+            sampler_kwargs["hilbert"]               = self._hilbert
+            sampler_kwargs["backend"]               = self._backend_str
+            sampler_kwargs["representation_info"]   = self._representation_info
+            sampler_kwargs["network_adapter"]       = self._network_adapter
+            self._set_state_convention(**sampler_kwargs)
+            sampler_kwargs.setdefault("state_representation", self._state_representation)
+            if self._network_adapter is not None:
+                setattr(self._network_adapter, "sampler_representation_override", self._state_representation)
 
             auto_cfg = {}
-            if any(
-                key not in kwargs
-                for key in ("s_numchains", "s_numsamples", "s_sweep_steps", "s_therm_steps")
-            ):
+            if any(key not in kwargs for key in ("s_numchains", "s_numsamples", "s_sweep_steps", "s_therm_steps")):
                 try:
-                    net_depth_est = getattr(self._net, "_param_num", 64)
-                    auto_cfg = NQS.get_auto_config(
-                        system_size=self._size,
-                        target_total_samples=kwargs.get("s_target_total_samples", 6144),
-                        dtype=self._dtype,
-                        logger=None,
-                        net_depth_estimate=net_depth_est,
-                        model_hint=(str(self._model).lower() if self._model is not None else None),
-                        ansatz_hint=(str(getattr(self._net, "name", type(self._net).__name__)).lower()),
-                    )
+                    net_depth_est   = getattr(self._net, "_param_num", 64)
+                    auto_cfg        = NQS.get_auto_config(
+                                        system_size=self._size,
+                                        target_total_samples=kwargs.get("s_target_total_samples", 6144),
+                                        dtype=self._dtype,
+                                        logger=None,
+                                        net_depth_estimate=net_depth_est,
+                                        model_hint=(str(self._model).lower() if self._model is not None else None),
+                                        ansatz_hint=(str(getattr(self._net, "name", type(self._net).__name__)).lower()),
+                                    )
                 except Exception:
                     auto_cfg = {}
 
@@ -968,6 +1013,10 @@ class NQS(MonteCarloSolver):
             sampler_kwargs["n_particles"]   = self._nparticles
             sampler_kwargs.pop("s_n_particles", None)
 
+            sampler_kwargs["spin"]          = self._spin_repr
+            sampler_kwargs["mode_repr"]     = self._mode_repr
+            sampler_kwargs["local_dim"]     = self._local_dim
+
             # -----------------------------------------------------------------
             #! Parallel Tempering Setup
             # -----------------------------------------------------------------
@@ -983,6 +1032,7 @@ class NQS(MonteCarloSolver):
             self._sampler = get_sampler(sampler_type, upd_fun=upd_fun, **sampler_kwargs)
             self._logger.warning(f"Using {self._sampler}", lvl=0, color="blue")
         else:
+            self._validate_sampler_request(sampler)
             self._sampler = get_sampler(
                 sampler,
                 self._net,
@@ -994,6 +1044,13 @@ class NQS(MonteCarloSolver):
                 **kwargs,
             )
 
+        if self._sampler is not None:
+            self._set_state_convention(
+                state_representation=getattr(self._sampler, "state_representation", self._state_representation),
+                spin=getattr(self._sampler, "spin_representation", self._spin_repr),
+                mode_repr=getattr(self._sampler, "mode_representation", self._mode_repr),
+                local_dim=getattr(self._sampler, "local_dim", self._local_dim),
+            )
         return self._sampler
 
     #####################################
@@ -1249,8 +1306,12 @@ class NQS(MonteCarloSolver):
                 if hasattr(self, "_precision_policy")
                 else getattr(probabilities, "dtype", ansatze.dtype)
             )
-            if not np.issubdtype(np.dtype(prob_dtype), np.complexfloating) and np.iscomplexobj(np.asarray(probabilities)):
-                probabilities = self._nqsbackend.real(probabilities)
+            if self._nqsbackend.is_jax_array(probabilities):
+                probabilities_are_complex = bool(jnp.issubdtype(probabilities.dtype, jnp.complexfloating))
+            else:
+                probabilities_are_complex = bool(np.iscomplexobj(probabilities))
+            if not np.issubdtype(np.dtype(prob_dtype), np.complexfloating) and probabilities_are_complex:
+                probabilities = jnp.real(probabilities) if self._nqsbackend.is_jax_array(probabilities) else np.real(probabilities)
             probabilities = self._nqsbackend.asarray(probabilities, dtype=prob_dtype)
 
         # reshape for apply_callable_jax expectations (N, 1)
@@ -1285,11 +1346,7 @@ class NQS(MonteCarloSolver):
                             )
 
             if log_progress:
-                self._logger.info(
-                    f"Function ({i+1}/{len(functions)}) applied in {(time.time() - t0)*1000:.2f} ms",
-                    lvl=3,
-                    color="green",
-                )
+                self._logger.info(f"Function ({i+1}/{len(functions)}) applied in {(time.time() - t0)*1000:.2f} ms", lvl=3, color="green")
 
             output.append(result)
 
@@ -1471,6 +1528,69 @@ class NQS(MonteCarloSolver):
             ansatze=ansatze,
             functions=functions,
             names=names,
+            params=params,
+            probabilities=probabilities,
+            batch_size=batch_size,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            return_stats=return_stats,
+            return_values=return_values,
+            args=args,
+            **kwargs,
+        )
+
+    def measure(
+        self,
+        observables,
+        *,
+        states=None,
+        ansatze=None,
+        params=None,
+        probabilities=None,
+        batch_size=None,
+        num_samples=None,
+        num_chains=None,
+        return_stats=True,
+        return_values=False,
+        args=None,
+        **kwargs,
+    ):
+        """
+        User-facing measurement helper built on top of ``compute_observable``.
+
+        Parameters
+        ----------
+        observables
+            One callable, a list/tuple of callables, or a mapping from names to
+            callables. When a mapping is provided, the result is returned as a
+            dictionary keyed by the supplied names.
+        """
+        if isinstance(observables, dict):
+            names = list(observables.keys())
+            functions = list(observables.values())
+            results = self.compute_observable(
+                states=states,
+                ansatze=ansatze,
+                functions=functions,
+                names=names,
+                params=params,
+                probabilities=probabilities,
+                batch_size=batch_size,
+                num_samples=num_samples,
+                num_chains=num_chains,
+                return_stats=return_stats,
+                return_values=return_values,
+                args=args,
+                **kwargs,
+            )
+            if return_values:
+                return {name: value for name, value in zip(names, results)}
+            return {name: value for name, value in zip(names, results)}
+
+        return self.compute_observable(
+            states=states,
+            ansatze=ansatze,
+            functions=observables,
             params=params,
             probabilities=probabilities,
             batch_size=batch_size,
@@ -1767,6 +1887,99 @@ class NQS(MonteCarloSolver):
 
     def samples(self, *args, **kwargs):
         return self.sample(*args, **kwargs)
+    
+    # --------------------------------
+    #! STATE CONVENTION RESOLUTION AND OPERATOR BINDING
+    # --------------------------------
+
+    def _preferred_state_convention(self) -> Tuple[Optional[str], Optional[float]]:
+        sampler_representation  = getattr(self._representation_info, "sampler_representation", None)
+        mode_repr               = None
+        if self._network_adapter is not None:
+            if hasattr(self._network_adapter, "preferred_sampler_representation"):
+                sampler_representation = self._network_adapter.preferred_sampler_representation()
+            if hasattr(self._network_adapter, "preferred_sampler_mode_repr"):
+                mode_repr = self._network_adapter.preferred_sampler_mode_repr()
+        return sampler_representation, mode_repr
+
+    def _set_state_convention(self, **kwargs) -> Dict[str, Any]:
+        preferred_representation, preferred_mode_repr = self._preferred_state_convention()
+        state_representation = kwargs.get("state_representation", self._state_representation)
+        if state_representation is None:
+            state_representation = preferred_representation
+
+        spin_repr, mode_repr = resolve_state_defaults(
+            state_representation,
+            spin=kwargs.get("spin", self._spin_repr),
+            mode_repr=kwargs.get("mode_repr", self._mode_repr),
+            fallback_mode_repr=(preferred_mode_repr if preferred_mode_repr is not None else 0.5),
+        )
+
+        local_dim = kwargs.get(
+            "local_dim",
+            getattr(getattr(self._hilbert, "local_space", None), "local_dim", self._local_dim),
+        )
+
+        self._state_representation  = state_representation
+        self._spin_repr             = bool(spin_repr)
+        self._mode_repr             = float(mode_repr)
+        self._local_dim             = int(local_dim)
+        self._state_convention_sig  = (
+            self._state_representation,
+            self._spin_repr,
+            self._mode_repr,
+            self._local_dim,
+        )
+        self._resolved_operator_cache.clear()
+        return self.state_convention
+
+    @property
+    def state_representation(self) -> Optional[str]:
+        return self._state_representation
+
+    @property
+    def spin_representation(self) -> bool:
+        return bool(self._spin_repr)
+
+    @property
+    def mode_representation(self) -> float:
+        return float(self._mode_repr)
+
+    @property
+    def representation_info(self):
+        return self._representation_info
+
+    @property
+    def state_convention(self) -> Dict[str, Any]:
+        return {
+            "representation": self._state_representation,
+            "spin": bool(self._spin_repr),
+            "mode_repr": float(self._mode_repr),
+            "local_dim": int(self._local_dim),
+            "representation_info": self._representation_info,
+        }
+
+    def resolve_operator(self, operator):
+        if operator is None:
+            return None
+        cache_key = (id(operator), self._state_convention_sig)
+        if cache_key in self._resolved_operator_cache:
+            return self._resolved_operator_cache[cache_key]
+        bind_fun = getattr(operator, "bind_state_convention", None)
+        if callable(bind_fun):
+            resolved = bind_fun(self.state_convention)
+            self._resolved_operator_cache[cache_key] = resolved
+            return resolved
+        bind_fun = getattr(operator, "with_state_convention", None)
+        if callable(bind_fun):
+            resolved = bind_fun(self.state_convention)
+            self._resolved_operator_cache[cache_key] = resolved
+            return resolved
+        self._resolved_operator_cache[cache_key] = operator
+        return operator
+
+    def bind_operator(self, operator):
+        return self.resolve_operator(operator)
 
     @property
     def sampler(self):
@@ -2098,26 +2311,12 @@ class NQS(MonteCarloSolver):
                                 else self._analytic_grad_func
                             )
 
-        # ! Infer shapes safely
-        shapes, sizes, iscpx = self._sample_for_shapes(
-                                ansatz_fn,
-                                apply_fn,
-                                local_loss_fn,
-                                flat_grad_fn,
-                                compute_grad_f,
-                                batch_size=batch_size,
-                                t=0,
-                            )
-        
-        # Use pre-computed shapes from initialization
-        # shapes, sizes, iscpx = self._params_shapes, self._params_sizes, self._params_iscpx
+        # Parameter structure does not depend on the sampled states, so use the
+        # initialization-time metadata instead of sampling again while wrapping.
+        shapes, sizes, iscpx        = self._params_shapes, self._params_sizes, self._params_iscpx
 
         # Pre-compute tree definition for flattening/unflattening parameters
-        tree_def, flat_size, slices = (
-            self._params_tree_def,
-            self._params_total_size,
-            net_utils.jaxpy.prepare_slice_info(shapes, sizes, iscpx),
-        )
+        tree_def, flat_size, slices = (self._params_tree_def, self._params_total_size, net_utils.jaxpy.prepare_slice_info(shapes, sizes, iscpx))
 
         # ! Bind the static arguments via partial
         # This helps JAX identify them as non-differentiable configuration
@@ -2439,7 +2638,10 @@ class NQS(MonteCarloSolver):
         """Returns the current parameters from the network object."""
         params = self._net.get_params()
         if unravel:
-            return jnp.concatenate([p.ravel() for p in tree_flatten(params)[0]])
+            flat_leaves = tree_flatten(params)[0]
+            if len(flat_leaves) == 1:
+                return flat_leaves[0].ravel()
+            return jnp.concatenate([p.ravel() for p in flat_leaves])
         return params
 
     def set_params(
@@ -2669,6 +2871,8 @@ class NQS(MonteCarloSolver):
         return self._beta_penalty
 
     #####################################
+    #! SPAWN LIKE-FOR-LIKE COPY
+    #####################################
 
     def _spawn_network_like(self, *, seed: Optional[int] = None):
         """
@@ -2704,16 +2908,20 @@ class NQS(MonteCarloSolver):
         Capture the current sampler configuration using NQS constructor keys.
         """
         sampler = self._sampler
-        kwargs = {
-            "s_numchains": sampler.numchains,
-            "s_numsamples": sampler.numsamples,
-            "s_numupd": getattr(sampler, "_numupd", 1),
-            "s_sweep_steps": getattr(sampler, "sweep_steps", getattr(sampler, "_sweep_steps", 1)),
-            "s_therm_steps": getattr(sampler, "therm_steps", getattr(sampler, "_therm_steps", 1)),
-            "s_statetype": getattr(sampler, "_statetype", None),
-            "s_logprob_fact": getattr(sampler, "_logprob_fact", 0.5),
-            "s_makediffer": getattr(sampler, "_makediffer", True),
-            "s_global_p": getattr(sampler, "_global_p", 0.0),
+        kwargs  = {
+            "s_numchains"           : sampler.numchains,
+            "s_numsamples"          : sampler.numsamples,
+            "s_numupd"              : getattr(sampler, "_numupd", 1),
+            "s_sweep_steps"         : getattr(sampler, "sweep_steps", getattr(sampler, "_sweep_steps", 1)),
+            "s_therm_steps"         : getattr(sampler, "therm_steps", getattr(sampler, "_therm_steps", 1)),
+            "s_statetype"           : getattr(sampler, "_statetype", None),
+            "s_logprob_fact"        : getattr(sampler, "_logprob_fact", 0.5),
+            "s_makediffer"          : getattr(sampler, "_makediffer", True),
+            "s_global_p"            : getattr(sampler, "_global_p", 0.0),
+            "state_representation"  : self._state_representation,
+            "mode_repr"             : self._mode_repr,
+            "spin"                  : self._spin_repr,
+            "local_dim"             : self._local_dim,
         }
         upd_fun = getattr(sampler, "_org_upd_fun", None)
         if upd_fun is None:
@@ -3218,10 +3426,10 @@ class NQS(MonteCarloSolver):
         Notes
         -----
         For the present complex-parameter TDVP convention, the real-time
-        Schrödinger evolution uses the effective RHS prefactor ``-2j`` under the
-        hood. This is the convention validated by the exact single-spin Rabi /
-        Larmor benchmark, where the NQS trajectory must reproduce the same
-        physical oscillation frequency as ED on the identical time grid.
+        Schrödinger evolution uses the effective RHS prefactor ``-1j`` under the
+        hood. This matches the physical single-spin Rabi / Larmor benchmark on
+        the same observation grid once the sampler keeps the model's physical
+        spin magnitude.
         """
         from .src.nqs_spectral import time_evolve_impl
         
@@ -3267,7 +3475,11 @@ class NQS(MonteCarloSolver):
 
         Pass ``reference_energy=E_0`` to obtain the Heisenberg-picture
         correlator ``\langle \psi_0|A^\dagger(t) B(0)|\psi_0\rangle`` for a
-        reference state of energy ``E_0``.
+        reference state of energy ``E_0``. 
+        
+        For momentum-space spectral work,
+        ``evolution_protocol='two_sided'`` evaluates the overlap
+        ``\langle \phi_A(-t/2) | \phi_B(+t/2)\rangle``.
         """
         from .src.nqs_spectral import dynamical_correlator_impl
 
@@ -3341,7 +3553,9 @@ class NQS(MonteCarloSolver):
         pass ``exact_sum=True`` to remove Monte Carlo noise from the correlator
         estimator and probe-norm restoration. Pass ``reference_energy=E_0`` for
         a ground-state response so the returned spectrum is built from the
-        Heisenberg-picture correlator.
+        Heisenberg-picture correlator. ``evolution_protocol='two_sided'``
+        enables the symmetric ``\pm t/2`` overlap protocol used in the
+        momentum-space NQS spectral literature.
         """
         from .src.nqs_spectral import dynamic_structure_factor_impl
 
@@ -3809,13 +4023,13 @@ class NQS(MonteCarloSolver):
         if is_spin_liquid_profile:
             config.update(
                 {
-                    "as_chi_channels": (1, 2, 4),
-                    "as_omega_channels": (4, 4, 4),
-                    "as_chi_kernel_size": 3,
-                    "as_omega_kernel_size": 15 if backend == "gpu" else 9,
-                    "as_nib_act": "c_sigmoid",
-                    "as_ib_act": "c_elu",
-                    "as_ib_init_std": 0.02,
+                    "as_chi_channels"       : (1, 2, 4),
+                    "as_omega_channels"     : (4, 4, 4),
+                    "as_chi_kernel_size"    : 3,
+                    "as_omega_kernel_size"  : 15 if backend == "gpu" else 9,
+                    "as_nib_act"            : "c_sigmoid",
+                    "as_ib_act"             : "c_elu",
+                    "as_ib_init_std"        : 0.02,
                 }
             )
 

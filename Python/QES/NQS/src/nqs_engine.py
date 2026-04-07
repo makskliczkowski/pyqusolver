@@ -1,5 +1,5 @@
 """
-ComputeLocalEnergy: High-level interface for NQS energy and observable computations
+High-level interface for NQS energy and observable computations
 
 This module provides the ComputeLocalEnergy class, which wraps UnifiedEvaluationEngine
 and provides NQS-specific functionality like local energy computation, observable
@@ -9,14 +9,20 @@ This consolidates high-level evaluation logic while delegating to UnifiedEvaluat
 for low-level backend dispatch.
 
 Architecture:
-- NQSEvalEngine     : High-level interface for NQS computations
-- EvaluationResult  : Data structure for evaluation results and statistics
+- NQSEvalEngine             : High-level interface for NQS computations
+- EvaluationResult          : Data structure for evaluation results and statistics
+- NQSLoss                   : Specialized EvaluationResult for local energy computations
+- NQSObservable             : Specialized EvaluationResult for observable evaluations
+- BackendInterface          : Abstract interface for backend implementations (JAX, NumPy, etc.)
+- BackendFactory            : Factory for creating backend instances based on configuration
+- UnifiedEvaluationEngine   : Core engine that performs computations using the backend
 
 ------------------------------------------------
 File            : QES/NQS/src/nqs_engine.py
 Author          : Maksymilian Kliczkowski
 Date            : 2025-11-01
 License         : MIT
+Version         : 1.0
 ------------------------------------------------
 """
 
@@ -28,11 +34,9 @@ import numpy as np
 # -------------------
 try:
     if TYPE_CHECKING:
-        from ..nqs import NQS, AnsatzFunctionType, CallableFunctionType, EvalFunctionType
+        from ..nqs import NQS, AnsatzFunctionType, CallableFunctionType
 except ImportError:
-    raise ImportError(
-        "NQS module not found. Ensure that the QES/NQS package is properly installed."
-    )
+    raise ImportError("NQS module not found. Ensure that the QES/NQS package is properly installed.")
 
 # -------------------
 
@@ -55,13 +59,13 @@ __all__ = [
 
 #! Type Aliases
 if JAX_AVAILABLE and jnp:
-    Array: TypeAlias = Union[np.ndarray, jnp.ndarray]
-    PRNGKey: TypeAlias = Any  # jax.random.PRNGKeyArray
-    JaxDevice: TypeAlias = Any  # Placeholder for jax device type
+    Array: TypeAlias        = Union[np.ndarray, jnp.ndarray]
+    PRNGKey: TypeAlias      = Any  # jax.random.PRNGKeyArray
+    JaxDevice: TypeAlias    = Any  # Placeholder for jax device type
 else:
-    Array: TypeAlias = np.ndarray
-    PRNGKey: TypeAlias = None
-    JaxDevice: TypeAlias = None
+    Array: TypeAlias        = np.ndarray
+    PRNGKey: TypeAlias      = None
+    JaxDevice: TypeAlias    = None
 
 #####################################################################################################
 #! CONFIGURATION AND RESULT DATACLASSES
@@ -72,16 +76,16 @@ else:
 class EvaluationResult:
     """Result of an evaluation operation."""
 
-    values: Array  # Computed values array
-    has_stats: bool = field(init=True)  # Whether statistics are computed
-    mean: Optional[float] = None  # Mean of values
-    std: Optional[float] = None  # Standard deviation of values
-    min_val: Optional[float] = None  # Minimum value
-    max_val: Optional[float] = None  # Maximum value
-    n_samples: int = 0  # Number of samples evaluated
+    values          : Array  # Computed values array
+    has_stats       : bool              = field(init=True) # Whether statistics are computed
+    mean            : Optional[float]   = None  # Mean of values
+    std             : Optional[float]   = None  # Standard deviation of values
+    min_val         : Optional[float]   = None  # Minimum value
+    max_val         : Optional[float]   = None  # Maximum value
+    n_samples       : int               = 0     # Number of samples evaluated
 
-    variance: Optional[float] = None  # Variance of values
-    error_of_mean: Optional[float] = None  # Error of the mean
+    variance        : Optional[float]   = None  # Variance of values
+    error_of_mean   : Optional[float]   = None  # Error of the mean
 
     backend_used: str = "unknown"  # Backend used for evaluation
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -113,30 +117,30 @@ class EvaluationResult:
         """Get a summary of the evaluation results."""
         if self.has_stats:
             return {
-                "values_shape": self.values.shape,
-                "n_samples": self.n_samples,
-                "mean": self.mean,
-                "std": self.std,
-                "min": self.min_val,
-                "max": self.max_val,
-                "backend": self.backend_used,
+                "values_shape"  : self.values.shape,
+                "n_samples"     : self.n_samples,
+                "mean"          : self.mean,
+                "std"           : self.std,
+                "min"           : self.min_val,
+                "max"           : self.max_val,
+                "backend"       : self.backend_used,
             }
         return {
-            "values_shape": self.values.shape,
-            "n_samples": self.n_samples,
-            "backend": self.backend_used,
+            "values_shape"      : self.values.shape,
+            "n_samples"         : self.n_samples,
+            "backend"           : self.backend_used,
         }
 
     def stats(self):
         """Calculate statistics if not already present"""
         if not self.has_stats:
-            self.mean = np.mean(self.values)
-            self.std = np.std(self.values)
-            self.min_val = np.min(self.values)
-            self.max_val = np.max(self.values)
-            self.variance = self.std**2
-            self.error_of_mean = self.std / np.sqrt(max(self.n_samples - 1, 1))
-            self.has_stats = True
+            self.mean           = np.mean(self.values)
+            self.std            = np.std(self.values)
+            self.min_val        = np.min(self.values)
+            self.max_val        = np.max(self.values)
+            self.variance       = self.std**2
+            self.error_of_mean  = self.std / np.sqrt(max(self.n_samples - 1, 1))
+            self.has_stats      = True
         return (self.mean, self.std, self.min_val, self.max_val)
 
     def __str__(self) -> str:
@@ -146,11 +150,9 @@ class EvaluationResult:
     def __repr__(self) -> str:
         return self.__str__()
 
-
 #####################################################################################################
 #! DATA STRUCTURES
 #####################################################################################################
-
 
 @dataclass
 class NQSLoss(EvaluationResult):
@@ -427,7 +429,7 @@ class NQSEvalEngine:
             ansatz_func = self.nqs.__call__
 
         # Set batch size if override provided
-        if batch_size is not None or self.batch_size != batch_size:
+        if batch_size is not None and self.batch_size != batch_size:
             self.set_batch_size(batch_size)
 
         if states is None or len(states) == 0:
@@ -498,7 +500,7 @@ class NQSEvalEngine:
             action_func = self.nqs.loss_function
 
         # Set batch size if override provided
-        if batch_size is not None or self.batch_size != batch_size:
+        if batch_size is not None and self.batch_size != batch_size:
             self.set_batch_size(batch_size)
 
         try:
@@ -514,10 +516,10 @@ class NQSEvalEngine:
             )
 
             # Convert to EnergyStatistics
-            local_losses = np.array(output)
-            self._cached_results["losses/val"] = local_losses
+            local_losses                        = output
+            self._cached_results["losses/val"]  = local_losses
             self._cached_results["losses/mean"] = m
-            self._cached_results["losses/std"] = std
+            self._cached_results["losses/std"]  = std
 
             if return_values:
                 return local_losses
@@ -586,7 +588,7 @@ class NQSEvalEngine:
             raise ValueError("At least one observable function must be provided")
 
         # Set batch size if override provided
-        if batch_size is not None or self.batch_size != batch_size:
+        if batch_size is not None and self.batch_size != batch_size:
             self.set_batch_size(batch_size)
 
         single_function = False
@@ -613,11 +615,11 @@ class NQSEvalEngine:
                 if len(functions) == 1:
                     output = [output]
 
-                values  = [np.array(v[0]) for v in output]  # Extract values from output
+                values  = [v[0] for v in output]
                 means   = [v[1] for v in output]
                 stds    = [v[2] for v in output]
             else:
-                values  = [np.array(output[0])]
+                values  = [output[0]]
                 means   = [output[1]]
                 stds    = [output[2]]
 
@@ -630,7 +632,7 @@ class NQSEvalEngine:
                     else (names if isinstance(names, str) else f"O_{idx}")
                 )
                 obs_result = NQSObservable(
-                    values=np.array(vals),
+                    values=vals,
                     has_stats=return_stats,
                     backend_used=self.nqs.backend_str,
                     observable_name=name,
@@ -682,9 +684,9 @@ class NQSEvalEngine:
     def get_summary(self) -> Dict[str, Any]:
         """Get a summary of the compute engine configuration."""
         return {
-            "backend": self.nqs.backend_str,
-            "batch_size": self.batch_size,
-            "cached_results": len(self._cached_results),
+            "backend"           : self.nqs.backend_str,
+            "batch_size"        : self.batch_size,
+            "cached_results"    : len(self._cached_results),
         }
 
 

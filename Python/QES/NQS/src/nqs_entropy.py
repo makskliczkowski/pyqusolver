@@ -88,6 +88,7 @@ References
 File        : NQS/src/nqs_entropy.py
 Author      : Maksymilian Kliczkowski
 Date        : 2025-02-12
+Version     : 0.1 (Experimental)
 -------------------------------------------------------------------------------
 """
 
@@ -139,16 +140,9 @@ def bipartition_cuts(lattice: "Lattice", cut_type: str = "half_x",) -> Dict[str,
     elif hasattr(lattice, "regions") and hasattr(lattice.regions, "get_entropy_cuts"):
         raw_cuts = lattice.regions.get_entropy_cuts(cut_type=cut_type)
     else:
-        raise ValueError(
-            "Lattice does not expose entropy cut helpers. "
-            "Expected `lattice.get_entropy_cuts` or `lattice.regions.get_entropy_cuts`."
-        )
+        raise ValueError("Lattice does not expose entropy cut helpers. Expected `lattice.get_entropy_cuts` or `lattice.regions.get_entropy_cuts`.")
 
     return {label: np.asarray(region, dtype=np.int32) for label, region in raw_cuts.items()}
-
-def _default_bipartition(Ns: int) -> "jnp.ndarray":
-    """Default half-system bipartition."""
-    return jnp.arange(Ns // 2, dtype=jnp.int32)
 
 def _enumerate_basis_states_nqs(nqs: "NQS") -> np.ndarray:
     """
@@ -158,31 +152,19 @@ def _enumerate_basis_states_nqs(nqs: "NQS") -> np.ndarray:
     validate the Rényi machinery without Monte Carlo bias when the Hilbert space
     is tiny.
     """
-    from QES.general_python.common.binary import BACKEND_DEF_SPIN, BACKEND_REPR, int2base
+    from QES.general_python.common.binary   import int2base
+    from .nqs_network_integration           import resolve_nqs_state_defaults
 
     hilbert = getattr(nqs, "hilbert", None)
     if hilbert is None:
         raise ValueError("Exact NQS entropy requires an attached Hilbert space.")
 
-    sampler         = getattr(nqs, "sampler", None)
-    sampler_states  = getattr(sampler, "_states", None)
-    spin            = bool(BACKEND_DEF_SPIN)
-    spin_value      = float(BACKEND_REPR)
-    if sampler_states is not None:
-        sampler_states = np.asarray(sampler_states)
-        if sampler_states.size:
-            flat        = sampler_states.reshape(-1)
-            spin        = bool(np.any(flat < 0.0))
-            max_abs     = float(np.max(np.abs(flat)))
-            if max_abs > 0.0:
-                spin_value = max_abs
+    spin, spin_value = resolve_nqs_state_defaults(nqs, fallback_mode_repr=0.5)
 
-    basis_int   = np.asarray(list(hilbert), dtype=np.int64).reshape(-1)
-    ns          = int(getattr(hilbert, "ns", nqs.nvisible))
-    return np.stack(
-        [int2base(int(state), ns, spin=spin, spin_value=spin_value, backend="np") for state in basis_int],
-        axis=0,
-    ).astype(np.float32, copy=False)
+    basis_int       = np.asarray(list(hilbert), dtype=np.int64).reshape(-1)
+    ns              = int(getattr(hilbert, "ns", nqs.nvisible))
+    # Convert integer basis states to spin configurations in the expected representation
+    return np.stack([int2base(int(state), ns, spin=spin, spin_value=spin_value, backend="np") for state in basis_int], axis=0,).astype(np.float32, copy=False)
 
 def _exact_nqs_wavefunction(nqs: "NQS") -> np.ndarray:
     """
@@ -301,7 +283,7 @@ def compute_renyi_entropy(
     Ns = nqs.nvisible
     
     if region is None:
-        region = _default_bipartition(Ns)
+        region = jnp.arange(Ns // 2, dtype=jnp.int32)
     else:
         region = jnp.asarray(region, dtype=jnp.int32)
     
@@ -313,12 +295,7 @@ def compute_renyi_entropy(
     if sampler is not None:
         mu = getattr(sampler, "mu", getattr(sampler, "_mu", None))
         if mu is not None and not np.isclose(float(mu), 2.0, atol=1e-8):
-            warnings.warn(
-                f"compute_renyi_entropy assumes Born sampling (mu=2), got mu={mu}. "
-                "Results may be biased unless reweighting is applied.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            warnings.warn(f"compute_renyi_entropy assumes Born sampling (mu=2), got mu={mu}. Results may be biased unless reweighting is applied.", RuntimeWarning, stacklevel=2)
     
     # Sample q independent replicas 
     replicas_s      = []  # configurations
@@ -330,6 +307,7 @@ def compute_renyi_entropy(
         except TypeError:
             raise RuntimeError("NQS sampler error: expected sample() to return ((s, log_psi), ...), got different format.")
         
+        # Ensure s_r and log_r are numpy arrays on CPU for stable processing and error estimation
         s_r = jnp.asarray(s_r)
         if s_r.ndim == 1:
             s_r     = s_r.reshape(1, -1)

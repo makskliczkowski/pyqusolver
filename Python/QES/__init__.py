@@ -149,6 +149,16 @@ def qes_seed_scope(
     ) as suite:
         yield suite
 
+def qes_model_aliases():
+    """Return the shared public model alias registry."""
+    from .Algebra.Model import qes_model_aliases as _qes_model_aliases
+    return _qes_model_aliases()
+
+def qes_models_kwargs(model_name: str | None = None):
+    """Return constructor kwargs metadata for one model or for the full registry."""
+    from .Algebra.Model import qes_models_kwargs as _qes_models_kwargs
+    return _qes_models_kwargs(model_name)
+
 
 # ----------------------------------------------------------------------------
 # Lazy Import Configuration
@@ -158,8 +168,8 @@ def qes_seed_scope(
 # If attribute_name_in_module is None, the module itself is imported.
 _STABLE_LAZY_IMPORTS = {
     # Session Management
-    'QESSession'        : ('.session',          'QESSession'),
-    'run'               : ('.session',          'run'),
+    'QESSession'                : ('.session',          'QESSession'),
+    'run'                       : ('.session',          'run'),
 
     # Top-level packages
     "Algebra"                   : (".Algebra", None),
@@ -172,6 +182,7 @@ _STABLE_LAZY_IMPORTS = {
     # Core classes from QES.Solver
     "MonteCarloSolver"          : (".Solver.MonteCarlo.montecarlo", "MonteCarloSolver"),
     "Sampler"                   : (".Solver.MonteCarlo.sampler", "Sampler"),
+    "choose_model"              : (".Algebra.Model", "choose_model"),
     # Networks from QES.general_python.ml
     "RBM"                       : (".general_python.ml.net_impl.networks.net_rbm", "RBM"),
     "CNN"                       : (".general_python.ml.net_impl.networks.net_cnn", "CNN"),
@@ -288,11 +299,21 @@ def _lazy_import(name: str):
 
 def __getattr__(name: str) -> _t.Any:  # PEP 562
     """Resolve lazy top-level attributes on demand."""
-    return _lazy_import(name)
+    try:
+        return _lazy_import(name)
+    except AttributeError:
+        from .Algebra.Model._registry import resolve_model_export as _resolve_model_export
+
+        try:
+            return _resolve_model_export(name)
+        except ValueError as exc:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
 
 def __dir__():
     """Return the stable top-level package attribute list."""
-    return sorted(set(__all__))
+    from .Algebra.Model._registry import get_model_export_names as _get_model_export_names
+
+    return sorted(set(__all__) | set(_get_model_export_names()))
 
 def next_jax_key() -> _t.Any:
     """Return a fresh JAX PRNG subkey.
@@ -327,6 +348,8 @@ __all__ = [
     "qes_next_key",
     "qes_split_keys",
     "qes_seed_scope",
+    "qes_model_aliases",
+    "qes_models_kwargs",
     # Discovery utilities
     "list_modules",
     "describe_module",
@@ -344,6 +367,10 @@ __all__ = [
     "__license__",
     "__description__",
 ] + list(_LAZY_IMPORTS.keys())
+
+from .Algebra.Model._registry import get_model_export_names as _get_model_export_names
+
+__all__ = __all__ + list(_get_model_export_names())
 
 # -----------------------------------------------------------------------------
 # End of package initialization

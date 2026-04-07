@@ -1,8 +1,18 @@
 """
-Help module for NQS.
+Help module for NQS. Provides the `nqs_help()` method for user guidance on NQS features, usage, and best practices.
+
+--------------------------------
+Author      : Maksymilian Kliczkowski
+Email       : maxgrom97@gmail.com
+Version     : 2.0
+License     : MIT
+--------------------------------
 """
 
-from QES.general_python.ml.networks import NetworkFactory
+try:
+    from QES.NQS.src.nqs_network_integration import NetworkFactory
+except ImportError:
+    raise ImportError("Failed to import NetworkFactory for NQS help. Ensure general_python package is correctly installed.")
 
 
 def nqs_help(self, topic: str = "general"):
@@ -128,40 +138,31 @@ def nqs_help(self, topic: str = "general"):
             {border}
             Current Ansatz: {type(self._net).__name__}
 
-            1. Initialization
-            psi     = NQS(logansatz='ar', model=hamil, sampler='ARSampler')
-            # or
-            psi     = NQS(logansatz=custom_net, sampler=custom_sampler)
-            # or VMC
-            psi     = NQS(logansatz='rbm', model=hamil, sampler='MCSampler', backend='jax', s_numsamples=5000)
+            Recommended config-first workflow:
+                from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
 
-            2. Training (via NQSTrainer)
-            trainer = NQSTrainer(psi, lin_solver='jax_cg', ...)
-            stats   = trainer.train(n_epochs=100)
+                p_cfg = NQSPhysicsConfig(model_type='kitaev', lattice_type='honeycomb', lx=4, ly=3)
+                s_cfg = NQSSolverConfig(ansatz='rbm', backend='jax')
 
-            3. Sampling & Observables
-            # Get raw samples and log-amplitudes
-            (_, _), (configs, log_psi), weights = psi.sample(num_samples=1000)
+                model, hilbert, lattice = p_cfg.make_hamiltonian()
+                net = s_cfg.make_net(p_cfg)
+                psi = NQS(ansatz=net, model=model, hilbert=hilbert, backend=s_cfg.backend)
 
-            # Compute Expectation Values (e.g. Energy)
-            E_stats = psi.compute_energy(configs)
-            print(f"Energy: {{E_stats.mean:.4f}} +/- {{E_stats.error:.4f}}")
+                train_cfg = NQSTrainConfig.from_solver(s_cfg, n_epochs=200)
+                stats = psi.train(**train_cfg.to_train_kwargs())
 
-            4. I/O Operations
-            psi.save_weights("checkpoint.h5")
-            psi.load_weights("checkpoint.h5")
+            Compact expert path:
+                psi = NQS(ansatz='rbm', model=hamil, hilbert=hilbert, backend='jax')
+                stats = psi.train(n_epochs=200, lr=1e-2)
 
-            5. Dynamic Settings (What you can change)
-            psi.batch_size = 2048  # Adjust batch size for evaluation
-            psi.net = new_net      # Swap architecture (resets optimizer)
-            psi.sampler = 'vmc'    # Switch sampling strategy
+            Sampling and measurement:
+                energy = psi.compute_energy(num_samples=1000)
+                obs = psi.measure({{'sx0': sig_x0.jax, 'sz0': sig_z0.jax}}, num_samples=1000)
 
-            6. Compute observables, for example for Hamiltonian for spin-1/2
-            lat = Lattice(...)
-            mod = Hamiltonian(...)
-            sig_x = mod.operators.sig_x(lattice=lat, sites=[0])
-            obs_x = psi.compute_observable(sig_x, num_samples=1000)
-            print(f"<Sx_0> = {{obs_x.mean:.4f}} +/- {{obs_x.error:.4f}}")
+            Dynamic settings:
+                psi.batch_size = 2048
+                psi.net = new_net
+                psi.sampler = 'vmc'
             """
 
     elif topic == "train":
@@ -248,45 +249,26 @@ def nqs_help(self, topic: str = "general"):
             {border}
             NQS Solver Help: Checkpoints & I/O
             {border}
-            Save and load model weights for resuming training or inference.
+            Persistence levels:
 
-            Manual Save/Load (Weights Only):
-                # Save current network parameters
+            1. Weights only
                 psi.save_weights("my_model.h5")
-
-                # Load weights (network architecture must match)
                 psi.load_weights("my_model.h5")
 
-                # With custom path
-                psi.save_weights("/path/to/checkpoints/epoch_100.h5")
-
-            Automatic Checkpoints During Training:
+            2. Training checkpoints
                 stats = psi.train(
                     n_epochs=300,
-                    checkpoint_every=50,       # Save every 50 epochs
-                    save_path="./checkpoints"  # Directory for auto-saves
+                    checkpoint_every=50,
+                    save_path="./checkpoints"
                 )
-                # Creates: ./checkpoints/epoch_50.h5, epoch_100.h5, ...
 
-            Resume Training from Checkpoint:
-                # Load weights from previous run
-                psi.load_weights("./checkpoints/epoch_200.h5")
+            3. Full config-driven reconstruction
+                from QES.NQS import load_nqs
+                bundle = load_nqs(physics_config, solver_config, checkpoint_step='latest')
+                psi = bundle.nqs
 
-                # Continue training (new trainer)
-                stats = psi.train(n_epochs=100)
-
-                # Or continue with same optimizer state
-                stats = psi.train(n_epochs=100, override=False)
-
-            File Format:
-                - HDF5 (.h5) format for weights
-                - Contains: network parameters, metadata
-                - Compatible with JAX/Flax serialization
-
-            Tips:
-                - Always save after successful training
-                - Use descriptive filenames (e.g., 'gs_N16_E-5.234.h5')
-                - Keep checkpoint_every reasonable (50-100 epochs)
+            Use weights-only loading when the architecture/config is already known.
+            Use config-driven loading when the construction path itself should be reproducible.
             """
 
     else:

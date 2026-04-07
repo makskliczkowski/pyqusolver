@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
+
 """
-NQS Demo: Variational Neural Quantum States for Frustrated Magnets
+NQS Demo: Variational Neural Quantum States
 
 This script demonstrates how to use the QES NQS module to find ground states
 and compute observables for various spin models on different lattices.
 
 Features:
-- Lattice selection (square, honeycomb, hexagonal, triangular)
-- Model selection (Kitaev, Heisenberg, TFIM, XXZ, J1J2)
-- Ansatz selection (RBM, CNN, ResNet, GCNN, AR, etc.)
+- Lattice selection 
+    (square, honeycomb, hexagonal, triangular)
+- Model selection 
+    (Kitaev, Heisenberg, TFIM, XXZ, J1J2)
+- Ansatz selection 
+    (RBM, CNN, ResNet, GCNN, AR, etc.)
 - ED comparison for small system sizes
 - Spin-spin correlation functions
 - Rényi entanglement entropy estimation
@@ -20,12 +24,14 @@ Usage:
     python demo_nqs.py --test  # Quick test on small system
 """
 
-from __future__ import annotations
+from    __future__ import annotations
+
+# Standard Library
 import  os
 import  sys
 import  argparse
 from    pathlib import Path
-from    typing  import List, Optional, Tuple, Union, Dict, Any, TYPE_CHECKING
+from    typing  import List, Optional, Any, TYPE_CHECKING
 
 # Add project root to sys.path
 _CWD        = Path(__file__).resolve().parent
@@ -33,12 +39,16 @@ _QES_ROOT   = _CWD.parents[3]
 if str(_QES_ROOT) not in sys.path:
     sys.path.insert(0, str(_QES_ROOT))
 
+# -----------------------------------------------------------------------
+#! Imports
+# -----------------------------------------------------------------------
+
 try:
     import  jax
     import  jax.numpy as jnp
     HAS_JAX = True
 except ImportError:
-    HAS_JAX = False
+    raise ImportError("JAX is required for this demo. Please install JAX and try again.")
 
 try:
     from QES.general_python.lattices            import Lattice
@@ -48,7 +58,6 @@ except ImportError as e:
 
 try:
     from QES.NQS                                import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
-    # Computation...
     from QES.NQS.src.nqs_entropy                import compute_renyi_entropy, compute_ed_entanglement_entropy, bipartition_cuts
 except ImportError as e:
     raise ImportError(f"Required modules from QES.NQS could not be imported. Please ensure the module is available.") from e
@@ -129,10 +138,10 @@ def compute_observables(nqs: Optional[NQS], hamil: Optional[Any], lattice: Latti
         logger.info(f"Computing ED observables for comparison...", lvl=1, color='cyan')
         # We reuse the logic from impurity_solver but simplified for demo
         from QES.NQS import EDDataset
-        ed_ds = EDDataset(num_states=1, losses=hamil.eig_val, model_type=str(hamil), lattice_type=lattice.typek)
-        corr, mag = ed_ds.get_operators(hamil, nstates_to_store=1)
-        results['ed_corr'] = corr
-        results['ed_mag'] = mag
+        ed_ds               = EDDataset(num_states=1, losses=hamil.eig_val, model_type=str(hamil), lattice_type=lattice.typek)
+        corr, mag           = ed_ds.get_operators(hamil, nstates_to_store=1)
+        results['ed_corr']  = corr
+        results['ed_mag']   = mag
         
         # Exact Entropy
         cuts = bipartition_cuts(lattice, cut_type="all")
@@ -172,6 +181,7 @@ def run_demo(args: argparse.Namespace):
         p_cfg.args['kz']        = args.K
         p_cfg.args['gamma_xy']  = args.Gamma
         p_cfg.args['gamma_z']   = args.Gamma
+        
     elif args.model.lower() in ('heisenberg', 'tfim', 'xxz', 'j1j2'):
         p_cfg.args['J']         = args.J
         if args.model.lower() == 'xxz': p_cfg.args['jz'] = args.Jz
@@ -214,11 +224,10 @@ def run_demo(args: argparse.Namespace):
         s_therm_steps   =   args.num_therm,
         s_sweep_steps   =   args.num_sweep,
         s_upd_fun       =   args.sampler_rule,
-        optimizer       =   s_cfg.optimizer,
-        early_stopper   =   s_cfg.early_stopping,
     )
     
-    if args.load: psi.load_weights(args.load)
+    if args.load:
+        psi.load_weights(filename=args.load)
         
     # Exact Diagonalization
     ed_stats = None
@@ -259,51 +268,51 @@ def run_demo(args: argparse.Namespace):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="NQS Demo: Variational Ground State Search")
-    parser.add_argument("--lattice",    type=str,   default="honeycomb")
-    parser.add_argument("--lx",         type=int,   default=4)
-    parser.add_argument("--ly",         type=int,   default=3)
-    parser.add_argument("--bc",         type=str,   default="pbc")
-    parser.add_argument("--model",      type=str,   default="kitaev")
-    parser.add_argument("-J",           type=float, default=1.0)
-    parser.add_argument("-K",           type=float, default=1.0)
-    parser.add_argument("--Gamma",      type=float, default=0.0)
-    parser.add_argument("--Jz",         type=float, default=1.0)
-    parser.add_argument("--J2",         type=float, default=0.0)
-    parser.add_argument("--hx",         type=float, default=0.0)
-    parser.add_argument("--hz",         type=float, default=0.0)
-    parser.add_argument("--impurity",   type=float, nargs=4, action="append")
-    parser.add_argument("--ansatz",     type=str,   default="rbm")
-    parser.add_argument("--alpha",      type=float, default=None)
-    parser.add_argument("--complex",    action="store_true")
-    parser.add_argument("--accuracy",   type=str,   default="medium")
-    parser.add_argument("--backend",    type=str,   default="jax")
-    parser.add_argument("--num-chains",  type=int,   default=16)
-    parser.add_argument("--num-samples", type=int,   default=1000)
-    parser.add_argument("--num-therm",   type=int,   default=100)
-    parser.add_argument("--num-sweep",   type=int,   default=10)
-    parser.add_argument("--sampler-rule",type=str,   default="LOCAL")
-    parser.add_argument("--train",      action="store_true")
-    parser.add_argument("--epochs",     type=int,   default=300)
-    parser.add_argument("--lr",         type=float, default=0.01)
-    parser.add_argument("--lr-scheduler",type=str,  default="cosine")
-    parser.add_argument("--optimizer",  type=str,   default=None, help="Optax optimizer: adam, sgd, adamw")
+    parser.add_argument("--lattice",        type=str,   default="honeycomb")
+    parser.add_argument("--lx",             type=int,   default=4)
+    parser.add_argument("--ly",             type=int,   default=3)
+    parser.add_argument("--bc",             type=str,   default="pbc")
+    parser.add_argument("--model",          type=str,   default="kitaev")
+    parser.add_argument("-J",               type=float, default=1.0)
+    parser.add_argument("-K",               type=float, default=1.0)
+    parser.add_argument("--Gamma",          type=float, default=0.0)
+    parser.add_argument("--Jz",             type=float, default=1.0)
+    parser.add_argument("--J2",             type=float, default=0.0)
+    parser.add_argument("--hx",             type=float, default=0.0)
+    parser.add_argument("--hz",             type=float, default=0.0)
+    parser.add_argument("--impurity",       type=float, nargs=4, action="append")
+    parser.add_argument("--ansatz",         type=str,   default="rbm")
+    parser.add_argument("--alpha",          type=float, default=None)
+    parser.add_argument("--complex",        action="store_true")
+    parser.add_argument("--train",          action="store_true")
     parser.add_argument("--early-stopping", action="store_true", help="Enable early stopping")
-    parser.add_argument("--patience",   type=int,   default=50, help="Early stopping patience")
-    parser.add_argument("--no-sr",      action="store_true")
-    parser.add_argument("--diag-shift", type=float, default=1e-3)
+    parser.add_argument("--accuracy",       type=str,   default="medium")
+    parser.add_argument("--backend",        type=str,   default="jax")
+    parser.add_argument("--num-chains",     type=int,   default=16)
+    parser.add_argument("--num-samples",    type=int,   default=1000)
+    parser.add_argument("--num-therm",      type=int,   default=100)
+    parser.add_argument("--num-sweep",      type=int,   default=10)
+    parser.add_argument("--sampler-rule",   type=str,   default="LOCAL")
+    parser.add_argument("--epochs",         type=int,   default=300)
+    parser.add_argument("--lr",             type=float, default=0.01)
+    parser.add_argument("--lr-scheduler",   type=str,   default="cosine")
+    parser.add_argument("--optimizer",      type=str,   default=None, help="Optax optimizer: adam, sgd, adamw")
+    parser.add_argument("--patience",       type=int,   default=50, help="Early stopping patience")
+    parser.add_argument("--no-sr",          action="store_true")
+    parser.add_argument("--diag-shift",     type=float, default=1e-3)
     parser.add_argument("--checkpoint-every", type=int, default=50)
-    parser.add_argument("--test",       action="store_true")
-    parser.add_argument("--ed",         action="store_true")
-    parser.add_argument("--max-ed-size",type=int,   default=16)
-    parser.add_argument("--load",       type=str,   default=None)
-    parser.add_argument("--save-dir",   type=str,   default="./demo_output")
+    parser.add_argument("--test",           action="store_true")
+    parser.add_argument("--ed",             action="store_true")
+    parser.add_argument("--max-ed-size",    type=int,   default=16)
+    parser.add_argument("--load",           type=str,   default=None)
+    parser.add_argument("--save-dir",       type=str,   default="./demo_output")
     parser.add_argument("--compute-observables", action="store_true")
     parser.add_argument("--compute-correlations", action="store_true")
     parser.add_argument("--compute-entropy",      action="store_true")
     parser.add_argument("--num-samples-entropy",  type=int, default=4096)
-    parser.add_argument("--plot",       action="store_true")
-    parser.add_argument("--show",       action="store_true")
-    parser.add_argument("--seed",       type=int,   default=42)
+    parser.add_argument("--plot",           action="store_true")
+    parser.add_argument("--show",           action="store_true")
+    parser.add_argument("--seed",           type=int,   default=42)
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -314,3 +323,7 @@ if __name__ == "__main__":
         args.complex, args.plot = True, True
     os.makedirs(args.save_dir, exist_ok=True)
     run_demo(args)
+
+# ----------------------------------------------------------------------------
+#! END OF FILE
+# ----------------------------------------------------------------------------

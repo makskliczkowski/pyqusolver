@@ -7,6 +7,8 @@ for different computational backends such as NumPy and JAX.
 --------------------------------------------------------------
 File                : NQS/src/nqs_backend.py
 Author              : Maksymilian Kliczkowski
+Version             : 2.0
+Email               : maxgrom97@gmail.com
 --------------------------------------------------------------
 """
 
@@ -20,37 +22,6 @@ import numpy as np
 # --------------------------------------------------------------
 #! Import net_utils from QES.general_python
 # --------------------------------------------------------------
-try:
-    import QES.general_python.ml.net_impl.utils.net_utils as net_utils
-except ImportError as e:
-    warnings.warn(
-        "Could not import net_utils from QES.general_python.ml.net_impl.utils. Ensure QES.general_python is installed correctly.",
-        ImportWarning,
-    )
-    raise e
-
-# --------------------------------------------------------------
-#! QES Imports
-# --------------------------------------------------------------
-
-try:
-    from QES.Algebra.hamil import Hamiltonian
-    from QES.general_python.algebra.utils import Array
-except ImportError as e:
-    warnings.warn(
-        "Could not import Hamiltonian from QES.Algebra.hamil. Ensure QES is installed correctly.",
-        ImportWarning,
-    )
-    raise e
-
-# Network
-try:
-    #! Neural Networks
-    from QES.general_python.ml import networks as Networks
-except ImportError as e:
-    raise ImportError(
-        "Could not import general_python.ml.networks modules. Make sure general_python.ml is installed correctly."
-    ) from e
 
 # Different backends imports
 try:
@@ -60,11 +31,10 @@ try:
 
     # jax tree
     try:
-        from jax.tree import tree_flatten
-        from orbax.checkpoint import CheckpointManager, PyTreeCheckpointHandler
+        from jax.tree           import tree_flatten
+        from orbax.checkpoint   import CheckpointManager, PyTreeCheckpointHandler
     except ImportError:
-        from jax.tree_util import tree_flatten
-
+        from jax.tree_util      import tree_flatten
         CheckpointManager, PyTreeCheckpointHandler = None, None
 
     # use flax
@@ -72,20 +42,35 @@ try:
 
     JAX_AVAILABLE = True
 except ImportError as e:
-    JAX_AVAILABLE = False
-    jax, jnp, flax = None, None, None
-    tree_flatten = None
-    CheckpointManager = None
+    JAX_AVAILABLE           = False
+    jax, jnp, flax          = None, None, None
+    tree_flatten            = None
+    CheckpointManager       = None
     PyTreeCheckpointHandler = None
-    warnings.warn(
-        "JAX or Flax could not be imported. Ensure they are installed correctly.", ImportWarning
-    )
+    warnings.warn("JAX or Flax could not be imported. Ensure they are installed correctly.", ImportWarning)
     raise e
+
+try:
+    import QES.general_python.ml.net_impl.utils.net_utils   as net_utils
+    from QES.general_python.ml                              import networks as Networks
+    from QES.general_python.algebra.utils                   import Array
+except ImportError as e:
+    raise ImportError("Could not import net_utils from QES.general_python.ml.net_impl.utils. Ensure general_python is installed correctly.") from e
+
+# --------------------------------------------------------------
+#! QES Imports
+# --------------------------------------------------------------
+
+try:
+    from QES.Algebra.hamil import Hamiltonian
+except ImportError as e:
+    raise ImportError("Could not import Hamiltonian or Array from QES. Ensure QES is installed correctly.") from e
+
+
 
 # --------------------------------------------------------------
 #! Backend Interface
 # --------------------------------------------------------------
-
 
 class BackendInterface(ABC):
     """Abstract backend (NumPy, JAX, etc.)."""
@@ -178,11 +163,9 @@ class BackendInterface(ABC):
         """Put array on JAX device."""
         pass
 
-
 # --------------------------------------------------------------
 #! NumPy backend
 # --------------------------------------------------------------
-
 
 class NumpyBackend(BackendInterface):
     """NumPy backend implementation."""
@@ -249,23 +232,21 @@ class NumpyBackend(BackendInterface):
             return np.asarray(x, dtype=dtype, **kwargs)
         return np.asarray(x, **kwargs)
 
-
 # --------------------------------------------------------------
 #! JAX backend
 # --------------------------------------------------------------
 
-
 class JAXBackend(BackendInterface):
     """JAX backend implementation."""
 
-    name: str = "jax"
-
     # Class-level cache for JIT'd functions to prevent recompilation
-    _jit_cache = {}
+    name: str   = "jax"
+    _jit_cache  = {}
 
     @classmethod
     def _get_cached_jit(cls, func, static_argnums):
         """Get or create cached JIT'd function to avoid recompilation."""
+        
         key = (id(func), static_argnums)
         if key not in cls._jit_cache:
             cls._jit_cache[key] = jax.jit(func, static_argnums=static_argnums)
@@ -305,17 +286,15 @@ class JAXBackend(BackendInterface):
 
         # depending on batch size, compile the functions differently
         if batch_size and batch_size > 1:
-            apply_func = jax.jit(
-                net_utils.jaxpy.apply_callable_batched_jax, static_argnums=(0, 4, 6)
-            )
+            apply_func = self._get_cached_jit(net_utils.jaxpy.apply_callable_batched_jax, (0, 4, 6))
         else:
-            apply_func = jax.jit(net_utils.jaxpy.apply_callable_jax, static_argnums=(0, 4, 6))
+            apply_func = self._get_cached_jit(net_utils.jaxpy.apply_callable_jax, (0, 4, 6))
 
         # Flax-backed interfaces evaluate full batches natively; avoid per-sample vmaps.
         if getattr(net, "supports_batched_apply", False):
-            eval_func = jax.jit(net_utils.jaxpy.eval_batched_jax_native, static_argnums=(0, 2))
+            eval_func = self._get_cached_jit(net_utils.jaxpy.eval_batched_jax_native, (0, 2))
         else:
-            eval_func = jax.jit(net_utils.jaxpy.eval_batched_jax, static_argnums=(0, 1))
+            eval_func = self._get_cached_jit(net_utils.jaxpy.eval_batched_jax, (0, 1))
 
         return ansatz_func, eval_func, apply_func
 
@@ -323,9 +302,7 @@ class JAXBackend(BackendInterface):
         params              = net.get_params()
         leaves, tree_def    = tree_flatten(params)
         leaf_info           = net_utils.jaxpy.prepare_leaf_info(params)  # list of (name, shape, is_complex)
-        slice_metadata      = net_utils.jaxpy.prepare_unflatten_metadata_from_leaf_info(
-            leaf_info
-        )  # list of slice metadata
+        slice_metadata      = net_utils.jaxpy.prepare_unflatten_metadata_from_leaf_info(leaf_info) # list of slice metadata
         sizes               = [s.size for s in slice_metadata]
         shapes              = [s.shape for s in slice_metadata]
         is_cplx             = [s.is_complex for s in slice_metadata]
@@ -407,14 +384,11 @@ class JAXBackend(BackendInterface):
 #! Summary of JAX functions
 # --------------------------------------------------------------
 
-
 class NQSBackendType(Enum):
-    NUMPY = "numpy"
-    JAX = "jax"
-
+    NUMPY   = "numpy"
+    JAX     = "jax"
 
 # --------------------------------------------------------------
-
 
 def nqs_get_backend(backend_type: Union[NQSBackendType, str]) -> BackendInterface:
     """Factory function to get the appropriate backend instance."""
@@ -436,8 +410,6 @@ def nqs_get_backend(backend_type: Union[NQSBackendType, str]) -> BackendInterfac
         return JAXBackend()
     else:
         raise ValueError(f"Unsupported backend type: {backend_type}")
-    return None
-
 
 # --------------------------------------------------------------
 #! EOF

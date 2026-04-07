@@ -14,7 +14,7 @@ Description     : Autoregressive Sampler for quantum states using JAX.
 from typing import Any, Callable, Optional, Tuple
 
 try:
-    from QES.Solver.MonteCarlo.sampler import JAX_AVAILABLE, Sampler
+    from QES.Solver.MonteCarlo.sampler import JAX_AVAILABLE, Sampler, resolve_state_defaults
 
     if not JAX_AVAILABLE:
         raise ImportError("JAX is required to use ARSampler.")
@@ -83,6 +83,7 @@ class ARSampler(Sampler):
 
         # Ensure we have the apply function
         self._net = net
+        self._network_adapter = kwargs.get("network_adapter", None)
 
         if hasattr(net, "_flax_module"):
             self._net_apply = net._flax_module.apply
@@ -93,13 +94,37 @@ class ARSampler(Sampler):
         else:
             self._net_apply = net  # Assuming it is a raw callable
 
+        self._logits_method = None
+        self._phase_method = None
+        if self._network_adapter is not None and hasattr(self._network_adapter, "resolve_sampling_hooks"):
+            try:
+                hooks = self._network_adapter.resolve_sampling_hooks()
+                self._logits_method = hooks.get("logits_method", None)
+                self._phase_method = hooks.get("phase_method", None)
+            except Exception:
+                pass
+        if self._logits_method is None:
+            self._logits_method = lambda n, x: n.get_logits(x, is_binary=True)
+        if self._phase_method is None:
+            self._phase_method = lambda n, x: n.get_phase(x, is_binary=True)
+
+        self._state_representation = kwargs.get("state_representation", getattr(self, "_state_representation", None))
+
         try:
             import QES.general_python.common.binary as Binary
-            self._spin = kwargs.get("spin", Binary.BACKEND_DEF_SPIN)
-            self._mode_repr = kwargs.get("mode_repr", Binary.BACKEND_REPR)
+            self._spin, self._mode_repr = resolve_state_defaults(
+                self._state_representation,
+                spin=kwargs.get("spin", None),
+                mode_repr=kwargs.get("mode_repr", None),
+                fallback_mode_repr=Binary.BACKEND_REPR,
+            )
         except ImportError:
-            self._spin = kwargs.get("spin", True)
-            self._mode_repr = kwargs.get("mode_repr", 0.5)
+            self._spin, self._mode_repr = resolve_state_defaults(
+                self._state_representation,
+                spin=kwargs.get("spin", None),
+                mode_repr=kwargs.get("mode_repr", None),
+                fallback_mode_repr=0.5,
+            )
 
         # Pre-compile the sampling kernel
         self._dtype = dtype
@@ -107,13 +132,25 @@ class ARSampler(Sampler):
         self._local_dim = kwargs.get("local_dim", 2)
         self._sample_jit = jax.jit(
             self._static_sample_ar,
-            static_argnames=["net_apply", "shape", "total_count", "statetype", "spin", "local_dim"],
+            static_argnames=[
+                "net_apply",
+                "logits_method",
+                "phase_method",
+                "shape",
+                "total_count",
+                "statetype",
+                "spin",
+                "local_dim",
+                "state_representation",
+            ],
         )
         self._name = "AR"
 
     @staticmethod
     def _static_sample_ar(
         net_apply,
+        logits_method,
+        phase_method,
         params,
         rng_key,
         shape,
@@ -121,8 +158,9 @@ class ARSampler(Sampler):
         statetype: Any = jnp.float32,
         mu: float = 2.0,
         spin: bool = True,
-        mode_repr: float = 0.5,
+        mode_repr: float = 1.0,
         local_dim: int = 2,
+        state_representation: Optional[str] = None,
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         JIT-compiled sequential autoregressive sampling.
@@ -145,13 +183,10 @@ class ARSampler(Sampler):
             variables = {"params": params}
 
             # 1. Evaluate Network to get logits for current site
-            # The lambda tells Flax to invoke the specific sub-method for logits
-            # NOTE: curr_configs is in binary (0,1) format during sampling if local_dim=2
             logits = net_apply(
                 variables,
                 curr_configs,
-                is_binary=True,
-                method=lambda n, x, is_binary: n.get_logits(x, is_binary=is_binary),
+                method=logits_method,
             )
 
             # Select logit for the CURRENT site we are filling
@@ -196,17 +231,17 @@ class ARSampler(Sampler):
         phases = net_apply(
             variables,
             final_configs,
-            is_binary=True,
-            method=lambda n, x, is_binary: n.get_phase(x, is_binary=is_binary),
+            method=phase_method,
         )
 
         # Combine Amplitude (log_prob / mu) and Phase
         final_log_psi = final_log_psi / mu + 1j * phases
 
-        # Convert 0/1 to physical representation for Hamiltonian compatibility
-        # The AR network internally works with (0,1) for local_dim=2
+        # Convert to requested output representation only once at the boundary.
         if local_dim == 2:
-            if spin:
+            if state_representation in {"binary_01", "occupation_binary"}:
+                final_configs_phys = final_configs
+            elif spin:
                 final_configs_phys = (final_configs * 2.0 - 1.0) * mode_repr
             else:
                 final_configs_phys = final_configs * mode_repr
@@ -234,6 +269,8 @@ class ARSampler(Sampler):
         self._rng_k, key_sample = jax.random.split(self._rng_k)
         configs, log_psi = self._sample_jit(
             self._net_apply,
+            self._logits_method,
+            self._phase_method,
             parameters,
             key_sample,
             self._shape,
@@ -243,6 +280,7 @@ class ARSampler(Sampler):
             self._spin,
             self._mode_repr,
             self._local_dim,
+            self._state_representation,
         )
 
         # Reshape to (Chains, Samples, N)

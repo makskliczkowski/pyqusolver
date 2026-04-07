@@ -1,43 +1,29 @@
 """
-QES Neural Quantum States (NQS)
-===============================
+Neural Quantum States for QES.
 
-Variational methods using Neural Networks and JAX.
+This package provides the maintained NQS solver stack used for variational
+ground states, TDVP time evolution, spectral-response workflows, and entropy
+estimators.
 
-This module implements the Variational Monte Carlo (VMC) method using
-neural network ansatzes. It supports ground state search, time evolution
-(TDVP), and excited state search.
+State conventions are resolved from the model and Hilbert metadata by default.
+The network layer stays general-purpose, while NQS selects a small specialized
+adapter path when a faster sampler or evaluation route is available.
 
-Entry Points
-------------
-- :class:`NQS`: The main solver class combining network, sampler, and model.
-- :class:`NQSTrainer`: Advanced training loop manager.
+Public entry points
+-------------------
+- ``NQS``: main solver that owns the ansatz, sampler, and resolved state convention.
+- ``NQSTrainer``: training and TDVP orchestration layer.
 
-Flow
-----
-::
+The intended flow is:
 
-    Hamiltonian (from Algebra)
-        |
-        v
-       NQS (Ansatz + Sampler)
-        |
-        v
-    Optimizer (SR / TDVP)
-        |
-        v
-     Results (Energy, Observables)
-
-Key Features
-------------
-- **JAX-based**: 
-    Fully differentiable and GPU-accelerated.
-- **Flexible Architectures**: 
-    RBMs, CNNs, Transformers, and custom Flax modules.
-- **Stochastic Reconfiguration (SR)**: 
-    Natural gradient descent implementation.
-- **Time Evolution**: 
-    Time-Dependent Variational Principle (TDVP).
+    Hamiltonian or model -> NQS -> SR or TDVP -> observables and spectra
+    
+---------------------------------
+Author      : Maksymilian Kliczkowski
+Email       : maxgrom97@gmail.com
+Version     : 2.0
+License     : MIT
+---------------------------------
 """
 
 import  importlib
@@ -60,6 +46,16 @@ def _default_to_repr(dc_field) -> Any:
         fac_name = getattr(dc_field.default_factory, "__name__", "factory")
         return f"<{fac_name}>"
     return "<required>"
+
+def _freeze_for_signature(value: Any) -> Any:
+    """Convert nested config content into a deterministic hashable form."""
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze_for_signature(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_for_signature(v) for v in value)
+    if isinstance(value, set):
+        return tuple(sorted(_freeze_for_signature(v) for v in value))
+    return value
 
 # ----------------------------------------------------------------------------
 
@@ -144,17 +140,18 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
     Configuration for the physical model in NQS.
     Behaves like a dictionary and allows dynamic argument addition.
     """
-    model_type      : str   = "kitaev"
-    lattice_type    : str   = "honeycomb"
-    lx              : int   = 3
-    ly              : int   = 3
-    lz              : int   = 1
-    bc              : str   = "pbc"
-    flux            : Optional[Union[str, Dict]] = None # Boundary fluxes, see Lattice class for details
+    model_type      : str                           = "kitaev"      # e.g. "kitaev", "heisenberg", etc.
+    lattice_type    : str                           = "honeycomb"   # e.g. "honeycomb", "square", etc.
+    lx              : int                           = 3
+    ly              : int                           = 3
+    lz              : int                           = 1
+    bc              : str                           = "pbc"
+    num_sites       : Optional[int]                 = None          # Total number of sites (optional if lattice dims are given)
+    flux            : Optional[Union[str, Dict]]    = None # Boundary fluxes, see Lattice class for details
     # magnetic field
-    hx              : float = 0.0
-    hy              : float = 0.0
-    hz              : float = 0.0
+    hx              : float                         = 0.0
+    hy              : float                         = 0.0
+    hz              : float                         = 0.0
     # Impurities: list of (site, amplitude) or (site, phi, theta, amplitude)
     impurities      : List[Tuple] = field(default_factory=list)
     # General couplings and other dynamic arguments
@@ -163,8 +160,9 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
     # ---------------
     # Lazy properties for derived quantities can be added here if needed
     # ---------------
-    FIELD_GROUPS: ClassVar[Dict[str, Tuple[str, ...]]] = {
-        "model": (
+    
+    FIELD_GROUPS    : ClassVar[Dict[str, Tuple[str, ...]]] = {
+        "model"     : (
             "model_type",
             "hx",
             "hy",
@@ -172,7 +170,7 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
             "impurities",
             "args",
         ),
-        "lattice": (
+        "lattice"   : (
             "lattice_type",
             "lx",
             "ly",
@@ -210,38 +208,135 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
         d.update(extra)
         return d
 
-    @property
-    def num_sites(self) -> int:
-        mult = 2 if self.lattice_type.lower() == 'honeycomb' else 1
-        return self.lx * self.ly * mult
+    def normalized_bc(self) -> Any:
+        """Return a boundary-condition value accepted by the lattice layer."""
+        if not isinstance(self.bc, str):
+            return self.bc
+
+        key = self.bc.strip().lower()
+        aliases = {
+            "periodic"  : "pbc",
+            "open"      : "obc",
+            "mixed"     : "mbc",
+            "special"   : "sbc",
+        }
+        return aliases.get(key, key)
+
+    def normalized_lattice_type(self) -> str:
+        """
+        Return a lattice identifier accepted by the lattice layer.
+
+        ``QES.NQS`` examples and estimator helpers occasionally use 1D aliases
+        such as ``"chain"``. The underlying lattice factory exposes these as a
+        1D square lattice, so the config layer normalizes them before lattice
+        construction or architecture estimation.
+        """
+        key     = str(self.lattice_type).strip().lower()
+        aliases = {"chain": "square", "line": "square", "1d": "square"}
+        return aliases.get(key, key)
+
+    def resolved_lattice_dims(self) -> Tuple[int, int, int]:
+        """
+        Return the effective lattice extents used for construction.
+
+        One-dimensional aliases are represented by the square-lattice backend
+        with ``ly = lz = 1``.
+        """
+        key = str(self.lattice_type).strip().lower()
+        if key in {"chain", "line", "1d"}:
+            return int(self.lx), 1, 1
+        return int(self.lx), int(self.ly), int(self.lz)
+
+    def make_lattice(self):
+        """
+        Create the lattice declared by this configuration and cache ``num_sites``.
+        """
+        from QES.general_python.lattices import choose_lattice
+
+        lx, ly, lz      = self.resolved_lattice_dims()
+        lattice_kwargs  = self.get("lattice_kwargs", {})
+        lattice         = choose_lattice(
+                            typek=self.normalized_lattice_type(),
+                            lx=lx,
+                            ly=ly,
+                            lz=lz,
+                            bc=self.normalized_bc(),
+                            flux=self.flux,
+                            **lattice_kwargs,
+                        )
+        self.num_sites  = int(lattice.ns)
+        return lattice
+
+    def signature(self) -> Tuple[Any, ...]:
+        """Return a deterministic signature for cache invalidation."""
+        lx, ly, lz = self.resolved_lattice_dims()
+        return (
+            self.model_type,
+            self.normalized_lattice_type(),
+            lx,
+            ly,
+            lz,
+            self.normalized_bc(),
+            _freeze_for_signature(self.flux),
+            float(self.hx),
+            float(self.hy),
+            float(self.hz),
+            _freeze_for_signature(self.impurities),
+            _freeze_for_signature(self.args),
+        )
+
+    def resolve_num_sites(self) -> int:
+        """
+        Resolve and cache the total number of lattice sites.
+
+        This keeps lightweight network estimation paths working even before a
+        full Hamiltonian/model object has been constructed.
+        """
+        if self.num_sites is not None:
+            return int(self.num_sites)
+        return int(self.make_lattice().ns)
+
+    # -----------------
 
     def make_hamiltonian(self, **kwargs):
         """
         Creates a Hamiltonian instance based on this configuration.
         """
         from QES.Algebra.Model              import choose_model
-        from QES.general_python.lattices    import choose_lattice
         from QES.Algebra.hilbert            import HilbertSpace
 
-        # Use local imports to avoid circular dependencies
-        # Pass only lattice-relevant args
-        lattice_kwargs  = self.get("lattice_kwargs", {})
-        lattice         = choose_lattice(
-                            typek   =   self.lattice_type,
-                            lx      =   self.lx,
-                            ly      =   self.ly,
-                            bc      =   self.bc,
-                            flux    =   self.flux,
-                            **lattice_kwargs
-                        )
+        lattice         = self.make_lattice()
 
         # Allow overriding hilbert kwargs from args, but also support direct kwargs
-        hilbert_kwargs = self.get("hilbert_kwargs", {})
+        hilbert_kwargs  = self.get("hilbert_kwargs", {})
         if "dtype" in kwargs and "dtype" not in hilbert_kwargs:
             hilbert_kwargs["dtype"] = kwargs["dtype"]
             
         hilbert         = HilbertSpace(lattice=lattice, **hilbert_kwargs)
         model_kwargs    = self.args.copy()
+
+        structural_fields = {
+            "model_type",
+            "lattice_type",
+            "lx",
+            "ly",
+            "lz",
+            "bc",
+            "num_sites",
+            "flux",
+            "hx",
+            "hy",
+            "hz",
+            "impurities",
+            "args",
+        }
+        for dc_field in fields(self):
+            if not dc_field.init or dc_field.name in structural_fields:
+                continue
+            if dc_field.name not in model_kwargs:
+                value = getattr(self, dc_field.name)
+                if value is not None:
+                    model_kwargs[dc_field.name] = value
         
         # Ensure we don't pass lattice_kwargs/hilbert_kwargs to choose_model
         model_kwargs.pop("lattice_kwargs", None)
@@ -255,15 +350,7 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
             "hz"            : self.hz if self.hz != 0 else None,
             "impurities"    : self.impurities,
         })
-        
-        # Special mapping for Kitaev couplings if provided in args
-        if self.model_type == 'kitaev':
-            
-            if 'K' not in model_kwargs and ('kxy' in self.args or 'kz' in self.args):
-                model_kwargs['K']       = (self.get('kxy', 0.0), self.get('kxy', 0.0), self.get('kz', 1.0))
                 
-            if 'Gamma' not in model_kwargs and ('gamma_xy' in self.args or 'gamma_z' in self.args):
-                model_kwargs['Gamma']   = (self.get('gamma_xy', 0.0), self.get('gamma_xy', 0.0), self.get('gamma_z', 0.0))
         # Update with any additional model-related args
         model_kwargs.update(kwargs)
 
@@ -327,6 +414,7 @@ class NQSSolverConfig(_ConfigSchemaMixin):
 
     # SOTA configuration estimated from physics
     sota_config         : Any = field(default=None, init=False)
+    _sota_signature     : Any = field(default=None, init=False, repr=False)
 
     FIELD_GROUPS: ClassVar[Dict[str, Tuple[str, ...]]] = {
         "core": (
@@ -390,16 +478,25 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         Automatically estimates network parameters based on physics configuration.
         """
         from QES.NQS.src.nqs_network_integration import estimate_network_params
-        
-        self.sota_config = estimate_network_params(
-            net_type=self.ansatz,
-            num_sites=physics_config.num_sites,
-            lattice_dims=(physics_config.lx, physics_config.ly),
-            lattice_type=physics_config.lattice_type,
+        num_sites       = physics_config.resolve_num_sites()
+        lattice_dims    = physics_config.resolved_lattice_dims()
+        signature       = (
+            physics_config.signature(),
+            self.ansatz,
+            self.dtype,
+            _freeze_for_signature(kwargs),
+        )
+
+        self.sota_config = estimate_network_params(net_type=self.ansatz,
+            num_sites=num_sites,
+            lattice_dims=lattice_dims,
+            lattice_type=physics_config.normalized_lattice_type(),
             model_type=physics_config.model_type,
+            bc=physics_config.normalized_bc(),
             dtype=self.dtype,
             **kwargs
         )
+        self._sota_signature = signature
         return self.sota_config
 
     def make_net(self, physics_config: NQSPhysicsConfig, **kwargs):
@@ -407,18 +504,18 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         Creates a network instance based on this configuration and a physics configuration.
         """
         from QES.NQS.src.nqs_network_integration import NetworkFactory
-        
-        if self.sota_config is None:
+
+        signature = (physics_config.signature(), self.ansatz, self.dtype, _freeze_for_signature(kwargs))
+        if self.sota_config is None or self._sota_signature != signature:
             self.estimate(physics_config, **kwargs)
-            
+
         factory_kwargs = self.sota_config.to_factory_kwargs()
         factory_kwargs.update(kwargs)
-        
-        return NetworkFactory.create(
-            network_type=self.ansatz,
-            backend=self.backend,
-            **factory_kwargs
-        )
+
+        if self.ansatz.strip().lower().replace("-", "_") == "eqgcnn":
+            factory_kwargs.setdefault("lattice", physics_config.make_lattice())
+
+        return NetworkFactory.create(network_type=self.ansatz, backend=self.backend, **factory_kwargs)
 
     def make_train_config(self, **kwargs) -> "NQSTrainConfig":
         """
@@ -621,10 +718,10 @@ class NQSTrainConfig(_ConfigSchemaMixin):
     }
 
     KWARG_ALIASES: ClassVar[Dict[str, str]] = {
-        "p_global": "global_p",
-        "lr_initial": "lr_init",
-        "reg_initial": "reg_init",
-        "diag_initial": "diag_init",
+        "p_global"      : "global_p",
+        "lr_initial"    : "lr_init",
+        "reg_initial"   : "reg_init",
+        "diag_initial"  : "diag_init",
     }
 
     @classmethod
@@ -643,11 +740,7 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         return text
 
     @classmethod
-    def from_solver(
-        cls,
-        solver_config: "NQSSolverConfig",
-        **kwargs,
-    ) -> "NQSTrainConfig":
+    def from_solver(cls, solver_config: "NQSSolverConfig", **kwargs) -> "NQSTrainConfig":
         """
         Build a training config from a solver config.
         """
@@ -702,98 +795,98 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         
         optimizer = self.optimizer
         if optimizer is None and solver_config is not None:
-            optimizer = solver_config.optimizer
+            optimizer   = solver_config.optimizer
 
         patience = self.patience
         if patience is None and solver_config is not None and solver_config.early_stopping:
-            patience = solver_config.patience
+            patience    = solver_config.patience
 
-        ex_pred = self.exact_predictions if exact_predictions is None else exact_predictions
-        ex_meth = self.exact_method if exact_method is None else exact_method
+        ex_pred         = self.exact_predictions if exact_predictions is None else exact_predictions
+        ex_meth         = self.exact_method if exact_method is None else exact_method
 
         train_kwargs = {
-            "n_epochs"          : self.n_epochs,
-            "checkpoint_every"  : self.checkpoint_every,
-            "save_best_checkpoint": self.save_best_checkpoint,
-            "best_checkpoint_every": self.best_checkpoint_every,
-            "best_checkpoint_min_delta": self.best_checkpoint_min_delta,
-            "save_best_stats"   : self.save_best_stats,
-            "load_checkpoint"   : self.load_checkpoint,
-            "checkpoint_step"   : self.checkpoint_step,
-            "override"          : self.override,
-            "reset_weights"     : self.reset_weights,
-            "reset_stats"       : self.reset_stats,
-            "save_path"         : self.save_path,
-            "phases"            : self.phases,
-            "n_batch"           : self.n_batch,
-            "n_update"          : self.n_update,
-            "num_samples"       : self.num_samples,
-            "num_chains"        : self.num_chains,
-            "num_thermal"       : self.num_thermal,
-            "num_sweep"         : self.num_sweep,
-            "pt_betas"          : self.pt_betas,
-            "upd_fun"           : self.upd_fun,
-            "update_kwargs"     : self.update_kwargs,
-            "global_p"          : self.global_p,
-            "global_update"     : self.global_update,
-            "global_fraction"   : self.global_fraction,
-            "lr"                : self.lr,
-            "lr_scheduler"      : self.lr_scheduler,
-            "reg"               : self.reg,
-            "reg_scheduler"     : self.reg_scheduler,
-            "diag_shift"        : self.diag_shift,
-            "diag_scheduler"    : self.diag_scheduler,
-            "lin_solver"        : self.lin_solver,
-            "pre_solver"        : self.pre_solver,
-            "ode_solver"        : self.ode_solver,
-            "tdvp"              : self.tdvp,
-            "lin_sigma"         : self.lin_sigma,
-            "lin_is_gram"       : self.lin_is_gram,
-            "lin_force_mat"     : self.lin_force_mat,
-            "use_sr"            : self.use_sr,
-            "use_minsr"         : self.use_minsr,
-            "rhs_prefactor"     : self.rhs_prefactor,
-            "grad_clip"         : self.grad_clip,
-            "timing_mode"       : self.timing_mode,
-            "early_stopper"     : self.early_stopper,
-            "optimizer"         : optimizer,
-            "lower_states"      : self.lower_states,
-            "symmetrize"        : self.symmetrize,
-            "background"        : self.background,
-            "use_pbar"          : self.use_pbar,
-            "patience"          : patience,
-            "exact_predictions" : ex_pred,
-            "exact_method"      : ex_meth,
+            "n_epochs"                  : self.n_epochs,
+            "checkpoint_every"          : self.checkpoint_every,
+            "save_best_checkpoint"      : self.save_best_checkpoint,
+            "best_checkpoint_every"     : self.best_checkpoint_every,
+            "best_checkpoint_min_delta" : self.best_checkpoint_min_delta,
+            "save_best_stats"           : self.save_best_stats,
+            "load_checkpoint"           : self.load_checkpoint,
+            "checkpoint_step"           : self.checkpoint_step,
+            "override"                  : self.override,
+            "reset_weights"             : self.reset_weights,
+            "reset_stats"               : self.reset_stats,
+            "save_path"                 : self.save_path,
+            "phases"                    : self.phases,
+            "n_batch"                   : self.n_batch,
+            "n_update"                  : self.n_update,
+            "num_samples"               : self.num_samples,
+            "num_chains"                : self.num_chains,
+            "num_thermal"               : self.num_thermal,
+            "num_sweep"                 : self.num_sweep,
+            "pt_betas"                  : self.pt_betas,
+            "upd_fun"                   : self.upd_fun,
+            "update_kwargs"             : self.update_kwargs,
+            "global_p"                  : self.global_p,
+            "global_update"             : self.global_update,
+            "global_fraction"           : self.global_fraction,
+            "lr"                        : self.lr,
+            "lr_scheduler"              : self.lr_scheduler,
+            "reg"                       : self.reg,
+            "reg_scheduler"             : self.reg_scheduler,
+            "diag_shift"                : self.diag_shift,
+            "diag_scheduler"            : self.diag_scheduler,
+            "lin_solver"                : self.lin_solver,
+            "pre_solver"                : self.pre_solver,
+            "ode_solver"                : self.ode_solver,
+            "tdvp"                      : self.tdvp,
+            "lin_sigma"                 : self.lin_sigma,
+            "lin_is_gram"               : self.lin_is_gram,
+            "lin_force_mat"             : self.lin_force_mat,
+            "use_sr"                    : self.use_sr,
+            "use_minsr"                 : self.use_minsr,
+            "rhs_prefactor"             : self.rhs_prefactor,
+            "grad_clip"                 : self.grad_clip,
+            "timing_mode"               : self.timing_mode,
+            "early_stopper"             : self.early_stopper,
+            "optimizer"                 : optimizer,
+            "lower_states"              : self.lower_states,
+            "symmetrize"                : self.symmetrize,
+            "background"                : self.background,
+            "use_pbar"                  : self.use_pbar,
+            "patience"                  : patience,
+            "exact_predictions"         : ex_pred,
+            "exact_method"              : ex_meth,
         }
 
         schedule_kwargs = {
-            "lr_init"           : self.lr_init,
-            "lr_initial"        : self.lr_init,
-            "lr_final"          : self.lr_final,
-            "lr_decay_rate"     : self.lr_decay_rate,
-            "lr_patience"       : self.lr_patience,
-            "lr_min_delta"      : self.lr_min_delta,
-            "lr_cooldown"       : self.lr_cooldown,
-            "lr_step_size"      : self.lr_step_size,
-            "lr_max_epochs"     : self.lr_max_epochs,
-            "lr_es"             : self.lr_es,
-            "lr_es_min"         : self.lr_es_min,
-            "reg_init"          : self.reg_init,
-            "reg_initial"       : self.reg_init,
-            "reg_final"         : self.reg_final,
-            "reg_decay_rate"    : self.reg_decay_rate,
-            "reg_patience"      : self.reg_patience,
-            "reg_min_delta"     : self.reg_min_delta,
-            "reg_step_size"     : self.reg_step_size,
-            "reg_max_epochs"    : self.reg_max_epochs,
-            "diag_init"         : self.diag_init,
-            "diag_initial"      : self.diag_init,
-            "diag_final"        : self.diag_final,
-            "diag_decay_rate"   : self.diag_decay_rate,
-            "diag_patience"     : self.diag_patience,
-            "diag_min_delta"    : self.diag_min_delta,
-            "diag_step_size"    : self.diag_step_size,
-            "diag_max_epochs"   : self.diag_max_epochs,
+            "lr_init"                   : self.lr_init,
+            "lr_initial"                : self.lr_init,
+            "lr_final"                  : self.lr_final,
+            "lr_decay_rate"             : self.lr_decay_rate,
+            "lr_patience"               : self.lr_patience,
+            "lr_min_delta"              : self.lr_min_delta,
+            "lr_cooldown"               : self.lr_cooldown,
+            "lr_step_size"              : self.lr_step_size,
+            "lr_max_epochs"             : self.lr_max_epochs,
+            "lr_es"                     : self.lr_es,
+            "lr_es_min"                 : self.lr_es_min,
+            "reg_init"                  : self.reg_init,
+            "reg_initial"               : self.reg_init,
+            "reg_final"                 : self.reg_final,
+            "reg_decay_rate"            : self.reg_decay_rate,
+            "reg_patience"              : self.reg_patience,
+            "reg_min_delta"             : self.reg_min_delta,
+            "reg_step_size"             : self.reg_step_size,
+            "reg_max_epochs"            : self.reg_max_epochs,
+            "diag_init"                 : self.diag_init,
+            "diag_initial"              : self.diag_init,
+            "diag_final"                : self.diag_final,
+            "diag_decay_rate"           : self.diag_decay_rate,
+            "diag_patience"             : self.diag_patience,
+            "diag_min_delta"            : self.diag_min_delta,
+            "diag_step_size"            : self.diag_step_size,
+            "diag_max_epochs"           : self.diag_max_epochs,
         }
         train_kwargs.update({k: v for k, v in schedule_kwargs.items() if v is not None})
         train_kwargs.update(self.extra_kwargs)
@@ -893,13 +986,23 @@ def load_nqs(
 
     # Avoid backend duplication with NQSSolverConfig.make_net(...),
     # which already forwards ``backend=self.backend``.
-    if "backend" in net_kws:
-        s_cfg.backend = net_kws.pop("backend")
+    net_backend = net_kws.pop("backend", s_cfg.backend)
 
-    net = s_cfg.make_net(p_cfg, **net_kws)
+    from QES.NQS.src.nqs_network_integration import resolve_model_representation
 
+    representation_info = resolve_model_representation(model, hilbert=hilbert)
+    net_kws.setdefault("representation_info", representation_info)
+    original_backend = s_cfg.backend
+    if net_backend != original_backend:
+        s_cfg.backend = net_backend
+    try:
+        net = s_cfg.make_net(p_cfg, **net_kws)
+    finally:
+        s_cfg.backend = original_backend
+
+    # Avoid redundant specification of sampler and backend, but allow nqs_kwargs to override solver defaults if desired.
     nqs_kws.setdefault("sampler", s_cfg.sampler)
-    nqs_kws.setdefault("backend", s_cfg.backend)
+    nqs_kws.setdefault("backend", net_backend)
     if dtype is not None:
         nqs_kws.setdefault("dtype", dtype)
     if hilbert is not None and hasattr(hilbert, "ns"):
@@ -914,7 +1017,7 @@ def load_nqs(
     nqs_kws.setdefault("s_therm_steps", s_cfg.n_therm)
 
     nqs_cls = __getattr__("NQS")
-    psi     = nqs_cls(logansatz=net, model=model, **nqs_kws)
+    psi     = nqs_cls(logansatz=net, model=model, hilbert=hilbert, **nqs_kws)
 
     metadata: Dict[str, Any] = {}
     if load_weights:
@@ -940,24 +1043,33 @@ def load_nqs(
 # ----------------------------------------------------------------------------
 
 _LAZY_IMPORTS = {
-    "NQS"                   : (".nqs", "NQS"),
-    "VMCSampler"            : ("QES.Solver.MonteCarlo.vmc", "VMCSampler"),
-    "NQSTrainer"            : (".src.nqs_train", "NQSTrainer"),
-    "NQSTrainStats"         : (".src.nqs_train", "NQSTrainStats"),
-    "NQSObservable"         : (".src.nqs_engine", "NQSObservable"),
-    "NQSLoss"               : (".src.nqs_engine", "NQSLoss"),
-    "NQSEvalEngine"         : (".src.nqs_engine", "NQSEvalEngine"),
-    "EvaluationResult"      : (".src.nqs_engine", "EvaluationResult"),
-    "NetworkFactory"        : (".src.nqs_network_integration", "NetworkFactory"),
-    "TDVP"                  : (".src.tdvp", "TDVP"),
-    "TDVPStepInfo"          : (".src.tdvp", "TDVPStepInfo"),
-    "NQSCorrelatorResult"   : (".src.nqs_spectral", "NQSCorrelatorResult"),
-    "NQSSpectralMapResult"  : (".src.nqs_spectral", "NQSSpectralMapResult"),
-    "NQSTDVPRecord"         : (".src.nqs_spectral", "NQSTDVPRecord"),
-    "NQSSpectralResult"     : (".src.nqs_spectral", "NQSSpectralResult"),
-    "NQSDataset"            : (".src.nqs_dataset", "NQSDataset"),
-    "EDDataset"             : (".src.nqs_dataset", "EDDataset"),
-    "CommonDataset"         : (".src.nqs_dataset", "CommonDataset"),
+    "ansatze"                           : (".ansatze",                      "__name__"),
+    "NQS"                               : (".nqs",                          "NQS"),
+    "VMCSampler"                        : ("QES.Solver.MonteCarlo.vmc",     "VMCSampler"),
+    "NQSTrainer"                        : (".src.nqs_train",                "NQSTrainer"),
+    "NQSTrainStats"                     : (".src.nqs_train",                "NQSTrainStats"),
+    "NQSObservable"                     : (".src.nqs_engine",               "NQSObservable"),
+    "NQSLoss"                           : (".src.nqs_engine",               "NQSLoss"),
+    "NQSEvalEngine"                     : (".src.nqs_engine",               "NQSEvalEngine"),
+    "EvaluationResult"                  : (".src.nqs_engine",               "EvaluationResult"),
+    "NetworkFactory"                    : (".src.nqs_network_integration",  "NetworkFactory"),
+    "TDVP"                              : (".src.tdvp",                     "TDVP"),
+    "TDVPStepInfo"                      : (".src.tdvp",                     "TDVPStepInfo"),
+    "NQSCorrelatorResult"               : (".src.nqs_spectral",             "NQSCorrelatorResult"),
+    "NQSSpectralMapResult"              : (".src.nqs_spectral",             "NQSSpectralMapResult"),
+    "NQSTDVPRecord"                     : (".src.nqs_spectral",             "NQSTDVPRecord"),
+    "NQSSpectralResult"                 : (".src.nqs_spectral",             "NQSSpectralResult"),
+    "NQSPrecisionPolicy"                : (".src.nqs_precision",            "NQSPrecisionPolicy"),
+    "resolve_precision_policy"          : (".src.nqs_precision",            "resolve_precision_policy"),
+    "cast_for_precision"                : (".src.nqs_precision",            "cast_for_precision"),
+    "load_exact_impl"                   : (".src.nqs_exact",                "load_exact_impl"),
+    "compute_ed_entanglement_entropy"   : (".src.nqs_entropy",              "compute_ed_entanglement_entropy"),
+    "compute_renyi_entropy"             : (".src.nqs_entropy",              "compute_renyi_entropy"),
+    "compute_entropy_sweep"             : (".src.nqs_entropy",              "compute_entropy_sweep"),
+    "bipartition_cuts"                  : (".src.nqs_entropy",              "bipartition_cuts"),
+    "NQSDataset"                        : (".src.nqs_dataset",              "NQSDataset"),
+    "EDDataset"                         : (".src.nqs_dataset",              "EDDataset"),
+    "CommonDataset"                     : (".src.nqs_dataset",              "CommonDataset"),
 }
 
 _LAZY_CACHE = {}
@@ -976,6 +1088,9 @@ if TYPE_CHECKING:
         NQSSpectralResult,
         NQSTDVPRecord,
     )
+    from .src.nqs_precision             import NQSPrecisionPolicy, cast_for_precision, resolve_precision_policy
+    from .src.nqs_exact                 import load_exact_impl
+    from .src.nqs_entropy               import bipartition_cuts, compute_ed_entanglement_entropy, compute_entropy_sweep, compute_renyi_entropy
     from .src.nqs_dataset               import NQSDataset, EDDataset, CommonDataset
 
 
@@ -992,7 +1107,7 @@ def __getattr__(name: str) -> Any:
             else:
                 module = importlib.import_module(module_path)
 
-            result = getattr(module, attr_name)
+            result = module if attr_name == "__name__" else getattr(module, attr_name)
             _LAZY_CACHE[name] = result
             return result
         except (ImportError, AttributeError) as e:
@@ -1038,77 +1153,51 @@ def quick_start(mode: str = "ground"):
 # ==========================================
 # QES NQS Quick Start Script
 # ==========================================
-import jax
-import jax.numpy as jnp
-from QES.NQS import NQS, NQSTrainer, NetworkFactory
-
-# 0. Define Hamiltonian (Placeholder)
-model = (...)  # Define your model here, it should expose function local_energy_fn
+from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
 """
 
     ground_body = """
-# 1. Create Network
-#    'alpha' is density of hidden units (N_hidden = alpha * N_visible)
-net = NetworkFactory.create('rbm', input_shape=(16,), alpha=1.0)
+# 1. Declare the physical system and solver defaults
+p_cfg = NQSPhysicsConfig(model_type="kitaev", lattice_type="honeycomb", lx=4, ly=3)
+s_cfg = NQSSolverConfig(ansatz="rbm", backend="jax", epochs=300, lr=1e-2)
 
-# 2. Initialize NQS
-psi = NQS(
-    ansatz=net,
-    hamiltonian=MockHamiltonian(),
-    n_visible=16
-)
+# 2. Build model + Hilbert + ansatz
+model, hilbert, lattice = p_cfg.make_hamiltonian()
+net = s_cfg.make_net(p_cfg, alpha=1.0)
 
-# 3. Initialize Trainer
-#    'phases' automates Pre-training -> Main -> Refinement
-trainer = NQSTrainer(
-    nqs=psi,
-    phases="kitaev",
-    n_batch=1024,
-    ode_solver="rk4"
-)
+# 3. Initialize NQS
+psi = NQS(ansatz=net, model=model, hilbert=hilbert, backend=s_cfg.backend)
 
-# 4. Run
-print("Starting Ground State Optimization...")
-stats = trainer.train()
+# 4. Train
+train_cfg = NQSTrainConfig.from_solver(s_cfg, phases="kitaev")
+stats = psi.train(**train_cfg.to_train_kwargs())
 print(f"Final Energy: {stats.history[-1]:.5f}")
 
-# Alternative: Use psi.train() directly
-# stats = psi.train(n_epochs=300, lr=1e-2, lr_scheduler='cosine')
-# psi.save_weights("ground_state.h5")  # Save weights
+# 5. Measure
+energy = psi.compute_energy(num_samples=s_cfg.n_samples)
+print(f"Measured energy: {energy.mean:.6f} +/- {energy.error_of_mean:.6f}")
 """
 
     excited_body = """
-# 1. Load/Create Ground State (The Lower State)
-#    In practice, you would load weights: psi_ground.load("ground_weights.h5")
-net_g = NetworkFactory.create('rbm', input_shape=(16,), alpha=1.0)
-psi_ground = NQS(net_g, MockHamiltonian(), n_visible=16)
+# 1. Build the shared physical problem
+p_cfg = NQSPhysicsConfig(model_type="kitaev", lattice_type="honeycomb", lx=4, ly=3)
+model, hilbert, lattice = p_cfg.make_hamiltonian()
 
-# 2. Define Penalty Strength
-#    This repels the new state from the ground state.
+# 2. Ground state used as a lower-state penalty target
+ground_cfg = NQSSolverConfig(ansatz="rbm", backend="jax", epochs=200)
+net_g = ground_cfg.make_net(p_cfg, alpha=1.0)
+psi_ground = NQS(ansatz=net_g, model=model, hilbert=hilbert, backend=ground_cfg.backend)
 psi_ground.beta_penalty = 10.0
 
-# 3. Create New State (The Excited State)
-#    Usually a different architecture or larger alpha
-net_e = NetworkFactory.create('cnn', input_shape=(16,), features=(8, 8))
-psi_excited = NQS(net_e, MockHamiltonian(), n_visible=16)
+# 3. Excited-state ansatz
+excited_cfg = NQSSolverConfig(ansatz="cnn", backend="jax", epochs=200)
+net_e = excited_cfg.make_net(p_cfg)
+psi_excited = NQS(ansatz=net_e, model=model, hilbert=hilbert, backend=excited_cfg.backend)
 
-# 4. Initialize Trainer with Lower States
-#    The trainer will automatically compute overlaps and add penalty forces.
-trainer = NQSTrainer(
-    nqs=psi_excited,
-    lower_states=[psi_ground],  # <--- Critical for excited states
-    phases="kitaev",
-    n_batch=2048
-)
-
-# 5. Run
-print("Starting Excited State Optimization...")
-stats = trainer.train()
+# 4. Train against the lower state
+train_cfg = NQSTrainConfig.from_solver(excited_cfg, lower_states=[psi_ground], phases="kitaev")
+stats = psi_excited.train(**train_cfg.to_train_kwargs())
 print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
-
-# Alternative: Use psi.train() with lower_states
-# stats = psi_excited.train(n_epochs=300, lower_states=[psi_ground], lr=1e-2)
-# psi_excited.save_weights("excited_state.h5")
 """
 
     if mode.lower() == "excited":
@@ -1120,6 +1209,7 @@ print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
 
 # Export
 __all__ = [
+    # Base classes and core utilities
     "NQS",
     "NQSTrainer",
     "NQSTrainStats",
@@ -1129,10 +1219,21 @@ __all__ = [
     "EvaluationResult",
     "TDVP",
     "TDVPStepInfo",
+    # Spectral and precision utilities
     "NQSCorrelatorResult",
     "NQSSpectralMapResult",
     "NQSTDVPRecord",
     "NQSSpectralResult",
+    "NQSPrecisionPolicy",
+    "resolve_precision_policy",
+    "cast_for_precision",
+    "load_exact_impl",
+    # Entropy and dataset utilities
+    "compute_ed_entanglement_entropy",
+    "compute_renyi_entropy",
+    "compute_entropy_sweep",
+    "bipartition_cuts",
+    # Datasets
     "NetworkFactory",
     "VMCSampler",
     # Configs and loading utilities
@@ -1141,6 +1242,7 @@ __all__ = [
     "NQSTrainConfig",
     "NQSLoadBundle",
     "load_nqs",
+    "ansatze",
     # info and quick start
     "quick_start",
     "info",

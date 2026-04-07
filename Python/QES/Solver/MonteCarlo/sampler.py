@@ -27,6 +27,10 @@ Functions:
 file    : Solver/MonteCarlo/sampler.py
 author  : Maksymilian Kliczkowski
 date    : 2025-02-01
+Version : 2.0
+Changes : 
+- 2.0: Refactored Sampler class to be an abstract base class, added detailed docstrings, and improved RNG handling. Added diagnostic method for sampler performance metrics.
+- 1.0: Initial implementation of the Sampler class and related utilities.
 ---------------------------------------------------------------------------
 """
 
@@ -109,13 +113,55 @@ class SamplerErrors(Exception):
     Errors for the Sampler class.
     """
 
-    NOT_GIVEN_SIZE_ERROR = "The size of the system is not given"
-    NOT_IMPLEMENTED_ERROR = "This feature is not implemented yet"
-    NOT_A_VALID_STATE_STRING = "The state string is not a valid state string"
-    NOT_A_VALID_STATE_DISTING = "The state is not a valid state"
-    NOT_A_VALID_SAMPLER_TYPE = "The sampler type is not a valid sampler type"
-    NOT_IN_RANGE_MU = "The parameter \\mu must be in the range [0, 2]"
-    NOT_HAVING_RNG = "Either rng or seed must be provided"
+    NOT_GIVEN_SIZE_ERROR        = "The size of the system is not given"
+    NOT_IMPLEMENTED_ERROR       = "This feature is not implemented yet"
+    NOT_A_VALID_STATE_STRING    = "The state string is not a valid state string"
+    NOT_A_VALID_STATE_DISTING   = "The state is not a valid state"
+    NOT_A_VALID_SAMPLER_TYPE    = "The sampler type is not a valid sampler type"
+    NOT_IN_RANGE_MU             = "The parameter \\mu must be in the range [0, 2]"
+    NOT_HAVING_RNG              = "Either rng or seed must be provided"
+
+def _bind_named_partial(fun: Callable, **kwargs) -> Callable:
+    bound = partial(fun, **kwargs)
+    try:
+        bound.__name__ = getattr(fun, "__name__", type(bound).__name__)
+    except Exception:
+        pass
+    return bound
+
+def resolve_state_defaults(
+    state_representation    : Optional[str] = None,
+    spin                    : Optional[bool] = None,
+    mode_repr               : Optional[float] = None,
+    fallback_mode_repr      : Optional[float] = None,
+) -> Tuple[bool, float]:
+    """
+    Resolve one consistent state convention for sampler-facing code.
+    This helps ensure that the sampler and the network are on the same page regarding input conventions, 
+    even if only partial information is provided in the configuration.
+    
+    Parameters
+    ----------
+    state_representation : Optional[str]
+        Explicit state representation string (e.g., "spin_pm", "binary_01").
+    spin : Optional[bool]   
+        Whether to use spin representation (True for {-1, +1}, False for {0, 1}).
+    mode_repr : Optional[float]
+        Numerical value representing the "mode" in the state (e.g., 1.0 for binary, -1.0 for spin).
+    """
+    representation  = str(state_representation).strip().lower() if state_representation is not None else None
+    is_binary       = representation in {"binary_01", "occupation_binary"}
+    if spin is None:
+        spin = representation == "spin_pm"
+
+    if mode_repr is None:
+        if is_binary:
+            mode_repr = 1.0
+        elif fallback_mode_repr is not None:
+            mode_repr = fallback_mode_repr
+        else:
+            mode_repr = Binary.BACKEND_REPR
+    return bool(spin), float(mode_repr)
 
 
 ########################################################################
@@ -254,14 +300,27 @@ class Sampler(ABC):
         self._numsamples = numsamples
         self._numchains = numchains
         self._states = None
+        self._representation_info = kwargs.get("representation_info", None)
+        self._network_adapter = kwargs.get("network_adapter", None)
+        self._state_representation = kwargs.get("state_representation", None)
+        if self._state_representation is None and self._representation_info is not None:
+            self._state_representation = getattr(
+                self._representation_info, "sampler_representation", None
+            )
 
         # handle the initial state
         self._modes = kwargs.get("modes", 2)
-        self._mode_repr = kwargs.get("mode_repr", Binary.BACKEND_REPR)
+        self._spin_repr, self._mode_repr = resolve_state_defaults(
+            self._state_representation,
+            spin=kwargs.get("spin", None),
+            mode_repr=kwargs.get("mode_repr", None),
+            fallback_mode_repr=Binary.BACKEND_REPR,
+        )
         state_kwargs = {
             "different": self._makediffer,
             "modes": kwargs.pop("modes", self._modes),
             "mode_repr": kwargs.pop("mode_repr", self._mode_repr),
+            "spin": kwargs.pop("spin", self._spin_repr),
             "n_particles": kwargs.get("n_particles", kwargs.get("nparticles", 1)),
             "magnetization": kwargs.get("magnetization", None),
         }
@@ -278,11 +337,17 @@ class Sampler(ABC):
         self._upd_fun = upd_fun
         if self._upd_fun is None:
             if self._isjax:
-                # Bind RNG arguments to the JAX updater and then wrap with JIT.
-                self._upd_fun = jax.jit(propose_local_flip)
+                self._upd_fun = _bind_named_partial(
+                    propose_local_flip,
+                    spin=bool(self._spin_repr),
+                    spin_value=float(self._mode_repr),
+                )
             else:
-                # Use the Numba version (potentially parallelized)
-                self._upd_fun = propose_local_flip_np
+                self._upd_fun = _bind_named_partial(
+                    propose_local_flip_np,
+                    spin=bool(self._spin_repr),
+                    spin_value=float(self._mode_repr),
+                )
 
     ###################################################################
     #!ABSTRACT
@@ -435,6 +500,26 @@ class Sampler(ABC):
     def isjax(self):
         return self._isjax
 
+    @property
+    def representation_info(self):
+        return self._representation_info
+
+    @property
+    def state_representation(self):
+        return self._state_representation
+
+    @property
+    def spin_representation(self):
+        return bool(self._spin_repr)
+
+    @property
+    def mode_representation(self):
+        return float(self._mode_repr)
+
+    @property
+    def local_dim(self):
+        return int(getattr(self, "_local_dim", 2))
+
     ###################################################################
     #! SETTERS
     ###################################################################
@@ -449,7 +534,7 @@ class Sampler(ABC):
         int_dtype = DEFAULT_JP_INT_TYPE if self._isjax else DEFAULT_NP_INT_TYPE
         self._num_proposed = self._backend.zeros(self._numchains, dtype=int_dtype)
         self._num_accepted = self._backend.zeros(self._numchains, dtype=int_dtype)
-        state_kwargs = {"modes": self._modes, "mode_repr": self._mode_repr}
+        state_kwargs = {"modes": self._modes, "mode_repr": self._mode_repr, "spin": self._spin_repr}
         self.set_initstate(self._initstate_t, **state_kwargs)
 
     # ---
@@ -482,7 +567,7 @@ class Sampler(ABC):
                 # Extract modes and mode_repr from kwargs
                 current_bcknd_str = "jax" if self._isjax else "numpy"
                 modes_val = kwargs.pop("modes", 2)
-                mode_repr_val = kwargs.pop("mode_repr", 0.5)
+                mode_repr_val = kwargs.pop("mode_repr", self._mode_repr)
 
                 if self._hilbert is None or True:
                     if different_initials:
@@ -803,30 +888,30 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
     """
     Get the update function based on the rule.
 
-    Parameters:
-        rule (str or UpdateRule):
-            The update rule.
-        backend (str):
-            'jax' or 'numpy'. currently only 'jax' supported for advanced rules.
-        **kwargs:
-            - hilbert:
-                HilbertSpace object (required for exchange/global/bond)
-            - patterns:
-                List of patterns for global update (required for global if not in hilbert)
-            - n_flip:
-                Number of flips for multi_flip (default 1)
-            - length:
-                Length of the worm/string for WORM update (default 4).
+    Parameters
+    ----------
+    rule (str or UpdateRule):
+        The update rule.
+    backend (str):
+        'jax' or 'numpy'. currently only 'jax' supported for advanced rules.
+    **kwargs:
+        - hilbert:
+            HilbertSpace object (required for exchange/global/bond)
+        - patterns:
+            List of patterns for global update (required for global if not in hilbert)
+        - n_flip:
+            Number of flips for multi_flip (default 1)
+        - length:
+            Length of the worm/string for WORM update (default 4).
 
     Returns:
         Callable: The update function.
     """
 
     def _to_padded_pattern(patterns: List[List[int]], pad_value: int = -1) -> jnp.ndarray:
-        max_len = max(len(p) for p in patterns)
-        n_patterns = len(patterns)
-
-        patterns_arr = np.full((n_patterns, max_len), pad_value, dtype=np.int32)
+        max_len         = max(len(p) for p in patterns)
+        n_patterns      = len(patterns)
+        patterns_arr    = np.full((n_patterns, max_len), pad_value, dtype=np.int32)
         for i, p in enumerate(patterns):
             patterns_arr[i, : len(p)] = p
 
@@ -835,18 +920,25 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
     if isinstance(rule, str):
         rule = UpdateRule.from_str(rule)
 
+    spin, spin_value    = resolve_state_defaults(
+                            kwargs.get("state_representation", None),
+                            spin                = kwargs.get("spin", None),
+                            mode_repr           = kwargs.get("mode_repr", None),
+                            fallback_mode_repr  = Binary.BACKEND_REPR,
+                        )
+
     if backend != "jax" and backend != "default":
         if rule == UpdateRule.LOCAL:
             # We need to return a function with signature (state, rng)
-            return propose_local_flip_np
+            return _bind_named_partial(propose_local_flip_np, spin=spin, spin_value=spin_value)
         raise NotImplementedError("Only JAX backend is supported for advanced update rules.")
 
     if rule == UpdateRule.LOCAL:
-        return propose_local_flip
+        return _bind_named_partial(propose_local_flip, spin=spin, spin_value=spin_value)
 
     elif rule == UpdateRule.MULTI_FLIP:
         n_flip = kwargs.get("n_flip", 1)
-        return partial(propose_multi_flip, n_flip=n_flip)
+        return _bind_named_partial(propose_multi_flip, n_flip=n_flip, spin=spin, spin_value=spin_value)
 
     elif rule == UpdateRule.WORM:
         try:
@@ -869,7 +961,13 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
         # Worm length
         length = kwargs.get("length", kwargs.get("worm_length", 4))
 
-        return partial(propose_worm_flip, neighbor_table=neighbor_table, length=length)
+        return _bind_named_partial(
+            propose_worm_flip,
+            neighbor_table=neighbor_table,
+            length=length,
+            spin=spin,
+            spin_value=spin_value,
+        )
 
     elif rule == UpdateRule.EXCHANGE:
         hilbert = kwargs.get("hilbert")
@@ -918,7 +1016,7 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
         # User can specify bond range/order (default 1 = nearest neighbors)
         bond_order = kwargs.get("bond_order", kwargs.get("order", 1))
         neighbor_table = get_neighbor_table(lattice, order=bond_order)
-        return partial(propose_bond_flip, neighbor_table=neighbor_table)
+        return _bind_named_partial(propose_bond_flip, neighbor_table=neighbor_table, spin=spin, spin_value=spin_value)
 
     ###############################################################################
     #! GLOBAL UPDATES
@@ -935,7 +1033,7 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
 
         patterns_jax = jnp.array(plaquettes)
         patterns_jax = _to_padded_pattern(plaquettes, pad_value=-1)
-        return partial(propose_global_flip, patterns=patterns_jax)
+        return _bind_named_partial(propose_global_flip, patterns=patterns_jax, spin=spin, spin_value=spin_value)
 
     elif rule == UpdateRule.SUBPLAQUETTE:
         # is like global but patterns come from lattice
@@ -958,7 +1056,7 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
         ]
 
         patterns_jax = _to_padded_pattern(subpatterns, pad_value=-1)
-        return partial(propose_global_flip, patterns=patterns_jax)
+        return _bind_named_partial(propose_global_flip, patterns=patterns_jax, spin=spin, spin_value=spin_value)
 
     elif rule == UpdateRule.WILSON:
         # is like global but patterns come from lattice
@@ -971,7 +1069,7 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
 
         patterns_jax = jnp.array(wilson_loops)
         patterns_jax = _to_padded_pattern(wilson_loops, pad_value=-1)
-        return partial(propose_global_flip, patterns=patterns_jax)
+        return _bind_named_partial(propose_global_flip, patterns=patterns_jax, spin=spin, spin_value=spin_value)
 
     elif rule == UpdateRule.GLOBAL:
         patterns = kwargs.get("patterns")
@@ -996,7 +1094,7 @@ def get_update_function(rule: Union[str, UpdateRule], backend="jax", **kwargs) -
 
         # Convert patterns to padded array
         patterns_jax = _to_padded_pattern(patterns, pad_value=-1)
-        return partial(propose_global_flip, patterns=patterns_jax)
+        return _bind_named_partial(propose_global_flip, patterns=patterns_jax, spin=spin, spin_value=spin_value)
 
     raise ValueError(f"Unknown update rule: {rule}")
 
