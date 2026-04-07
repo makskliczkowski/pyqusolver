@@ -1,381 +1,167 @@
-# Neural Quantum States (NQS) Module
+# Neural Quantum States (`QES.NQS`)
 
-Machine learning-based variational approach for finding quantum ground states and excited states through neural network ansätze.
+`QES.NQS` provides a maintained neural-quantum-state workflow for variational
+ground states, excited-state targeting, TDVP-based time evolution, and
+observable evaluation on top of the broader QES model and lattice stack.
 
-## Overview
+## Recommended Workflow
 
-Neural Quantum States represent quantum wavefunctions using neural networks and optimize them via variational Monte Carlo (VMC) or Time-Dependent Variational Principle (TDVP). This module provides:
+The preferred public path is config-first:
 
-- **Network Architectures**: Restricted Boltzmann Machines (RBMs), Convolutional Neural Networks (CNNs), fully-connected dense networks
-- **Sampling Methods**: Markov chain Monte Carlo (Metropolis-Hastings, Gibbs), importance sampling
-- **Training Methods**: Stochastic gradient descent, natural gradient descent via TDVP
-- **Observable Estimation**: Local energy, two-point correlators, magnetic moments
+1. define the physical problem with `NQSPhysicsConfig`
+2. define solver defaults with `NQSSolverConfig`
+3. optionally define training defaults with `NQSTrainConfig`
+4. build `model`, `hilbert`, and the ansatz
+5. construct `NQS`
+6. train and measure
 
-## Physical Background
+This keeps runs reproducible and makes the physical and solver assumptions
+explicit.
 
-### Variational Principle
-
-For a parameterized wavefunction $|\psi(\theta)\rangle$:
-
-$$E_{\text{var}}(\theta) = \frac{\langle \psi(\theta) | \hat{H} | \psi(\theta) \rangle}{\langle \psi(\theta) | \psi(\theta) \rangle} \geq E_0$$
-
-where $E_0$ is the true ground state energy. Optimizing $\theta$ minimizes $E_{\text{var}}(\theta)$.
-
-### Local Energy Estimator
-
-For Monte Carlo sampling from $|\psi(\theta)|^2$:
-
-$$\langle E \rangle = \frac{1}{M} \sum_{i=1}^M E_{\text{loc}}(s_i), \quad E_{\text{loc}}(s) = \frac{\langle s | \hat{H} | \psi(\theta) \rangle}{\langle s | \psi(\theta) \rangle}$$
-
-### Neural Network Ansatz
-
-The network computes the log-amplitude of the wavefunction:
-
-$$\log \psi(s_1, \ldots, s_N; \theta) = \text{Network}(s_1, \ldots, s_N; \theta)$$
-
-This ensures automatic normalizability and real-valued output.
-
-## Core Components
-
-### 1. Network Architectures
-
-#### Restricted Boltzmann Machine (RBM)
-- **Visible units**: Correspond to physical spins/qubits ($N$ sites)
-- **Hidden units**: Learned feature detectors ($\alpha N$ units, $\alpha = 2$ typical)
-- **Energy**: $E(v, h) = -a^T v - b^T h - v^T W h$
-- **Advantages**: Analytical gradient computation, proven effective for many quantum states
-- **Limitations**: Limited capacity for entangled states with $\alpha \lesssim 2$
+## Minimal Example
 
 ```python
-from QES.NQS.src.network_factory import NetworkFactory
-import jax.numpy as jnp
+from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
 
-# Create RBM with 16 visible, 32 hidden units
-net = NetworkFactory.create(
-    'rbm',
-    input_shape=(16,),
-    alpha=2.0,  # Hidden units = 2 × visible units
-    dtype=jnp.complex64
-)
-```
-
-#### Convolutional Neural Network (CNN)
-- Exploits spatial structure of lattices
-- Layers: Conv → ReLU/ELU → Pooling → Dense → Output
-- Effective for translationally invariant systems
-- Supports arbitrary spatial dimensions
-
-```python
-net = NetworkFactory.create(
-    'cnn',
-    input_shape=(64,),  # 8×8 lattice flattened
-    reshape_dims=(8, 8),
-    features=(16, 32),
-    kernel_sizes=[(3, 3), (3, 3)],
-    activations=['relu', 'relu'],
-    dtype=jnp.float32
-)
-```
-
-#### Fully-Connected Dense Network
-- General-purpose, highest expressibility
-- Many parameters → longer training, overfitting risk
-- Suitable for small systems ($N \lesssim 12$ sites)
-
-```python
-net = NetworkFactory.create(
-    'dense',
-    input_shape=(16,),
-    hidden_features=(64, 128, 64),
-    output_features=1,
-    activations=['relu', 'relu', 'relu']
-)
-```
-
-### 2. Sampling & State Estimation
-
-#### Markov Chain Monte Carlo
-Sample quantum states from $|\psi(\theta)|^2$ via random walks:
-
-```python
-from QES.Solver.MonteCarlo.sampler import VMCSampler
-
-sampler = VMCSampler(
-    net=net,
-    shape=(16,),  # System size
-    n_chains=4,   # Parallel chains
-    n_samples=1000,  # Samples per update
-    therm_steps=500,  # Thermalization steps
-    sweep_steps=1,    # Sweeps before accepting
-    backend='jax'
+p_cfg = NQSPhysicsConfig(
+    model_type="kitaev",
+    lattice_type="honeycomb",
+    lx=4,
+    ly=3,
+    bc="pbc",
 )
 
-# Sample states (shape: [n_chains × n_samples, 16])
-states, log_psi = sampler.sample(params)
-```
-
-#### Local Energy Computation
-
-$$E_{\text{loc}}(s) = \frac{\langle s | \hat{H} | \psi(\theta) \rangle}{\langle s | \psi(\theta) \rangle}$$
-
-Estimated from sampled states:
-
-```python
-local_energies = model.local_energy(states, log_psi, params)
-E_var = jnp.mean(local_energies)
-E_std = jnp.std(local_energies) / jnp.sqrt(n_samples)
-```
-
-### 3. Training Methods
-
-#### Stochastic Gradient Descent (SGD)
-Standard update: $\theta_{t+1} = \theta_t - \eta \nabla E(\theta_t)$
-
-```python
-from QES.NQS.nqs_train import NQSTrainer
-from optax import adam, exponential_decay
-
-# Learning rate schedule
-lr_schedule = exponential_decay(
-    init_value=0.01,
-    transition_steps=100,
-    decay_rate=0.95
+s_cfg = NQSSolverConfig(
+    ansatz="rbm",
+    backend="jax",
+    dtype="complex128",
+    n_samples=512,
+    n_chains=32,
+    epochs=200,
+    lr=1e-2,
 )
 
-trainer = NQSTrainer(
-    nqs=nqs,
-    optimizer=adam(learning_rate=lr_schedule),
-    batch_size=64,
-    n_epochs=500
+model, hilbert, lattice = p_cfg.make_hamiltonian()
+net = s_cfg.make_net(p_cfg, alpha=1.0)
+
+psi = NQS(
+    ansatz=net,
+    model=model,
+    hilbert=hilbert,
+    backend=s_cfg.backend,
+    dtype=s_cfg.dtype,
+    s_numchains=s_cfg.n_chains,
+    s_numsamples=s_cfg.n_samples,
 )
 
-history = trainer.train()
-print(f"Final energy: {history['energy'][-1]:.6f}")
+train_cfg = NQSTrainConfig.from_solver(s_cfg, phases="kitaev")
+stats = psi.train(**train_cfg.to_train_kwargs())
+
+energy = psi.compute_energy(num_samples=s_cfg.n_samples)
+print("final_energy", stats.history[-1])
+print("measured_energy", energy.mean, energy.error_of_mean)
 ```
 
-#### Time-Dependent Variational Principle (TDVP)
-Natural gradient descent using metric tensor $\mathcal{F}$:
+## Compact Expert Path
 
-$$\theta_{t+dt} = \theta_t - \mathcal{F}^{-1} \nabla E(\theta_t) \, dt$$
-
-where $\mathcal{F}$ is the Quantum Fisher Information Matrix (QFIM):
-
-$$\mathcal{F}_{ij} = \left\langle \frac{\partial \log \psi}{\partial \theta_i} \frac{\partial \log \psi}{\partial \theta_j} \right\rangle - \left\langle \frac{\partial \log \psi}{\partial \theta_i} \right\rangle \left\langle \frac{\partial \log \psi}{\partial \theta_j} \right\rangle$$
+If you already have a model, Hilbert space, and know exactly which ansatz you
+want, you can construct the solver directly:
 
 ```python
-from QES.NQS.tdvp import TDVP
-
-tdvp = TDVP(
-    nqs=nqs,
-    S_matrix_threshold=1e-4,  # Regularization
-    use_natural_gradient=True
-)
-
-# TDVP updates automatically use Fisher metric
-history = trainer.train(method='tdvp', tdvp_solver=tdvp)
-```
-
-## Quick Start Examples
-
-### Example 1: Basic NQS Training (SGD)
-
-```python
-import QES
-from QES.Algebra.Model.Interacting.Spin import TransverseFieldIsing
-from QES.general_python.lattices import SquareLattice
 from QES.NQS import NQS
 
-with QES.run(backend='jax', seed=42):
-    # 1D chain: 10 spins
-    lattice = SquareLattice(lx=10, ly=1)
-    
-    # Transverse Field Ising Model
-    H = TransverseFieldIsing(
-        lattice=lattice,
-        j=1.0,
-        hx=0.5,
-        hz=0.0
-    )
-    
-    # Create NQS with RBM ansatz
-    nqs = NQS(
-        model=H,
-        ansatz='rbm',
-        alpha=2.0,  # 20 hidden units
-        seed=42
-    )
-    
-    # Train with SGD
-    results = nqs.train(
-        n_epochs=300,
-        batch_size=64,
-        learning_rate=0.01,
-        optimizer='adam',
-        early_stopping_patience=30,
-        verbose=True
-    )
-    
-    print(f"Final variational energy: {results['energy_final']:.6f}")
-    print(f"Standard error: {results['energy_std']:.6f}")
-```
-
-### Example 2: NQS with TDVP (Natural Gradient)
-
-```python
-import jax.numpy as jnp
-from QES.NQS.nqs_train import NQSTrainer
-from QES.NQS.tdvp import TDVP
-
-with QES.run(backend='jax', seed=42):
-    # ... Setup model and NQS as above ...
-    
-    # Initialize TDVP solver
-    tdvp = TDVP(
-        nqs=nqs,
-        S_matrix_threshold=1e-3,  # Tikhonov regularization
-        method='moore_penrose'
-    )
-    
-    # Create trainer with TDVP
-    trainer = NQSTrainer(
-        nqs=nqs,
-        tdvp=tdvp,
-        batch_size=128,
-        learning_rate=0.001,
-    )
-    
-    # Train with natural gradient (typically faster convergence)
-    history = trainer.train(n_epochs=200)
-    
-    print(f"Best energy found: {min(history['energy']):.6f}")
-```
-
-### Example 3: Custom Network Architecture
-
-```python
-import flax.linen as nn
-from QES.general_python.ml.net_impl import FlaxInterface
-
-# Define custom Flax network
-class CustomNet(nn.Module):
-    """Hybrid RBM-CNN network"""
-    hidden_features: int = 32
-    
-    @nn.compact
-    def __call__(self, x):
-        # RBM layer
-        x = nn.Dense(self.hidden_features, use_bias=True)(x)
-        x = nn.sigmoid(x)
-        
-        # Global pooling and output
-        x = jnp.mean(x, axis=-1, keepdims=True)
-        return x.squeeze(-1)
-
-# Wrap and use
-net = FlaxInterface(
-    net_module=CustomNet,
-    input_shape=(16,),
-    backend='jax',
-    dtype=jnp.complex64
+psi = NQS(
+    ansatz="rbm",
+    model=model,
+    hilbert=hilbert,
+    backend="jax",
+    dtype="complex128",
 )
 
-nqs = NQS(
-    model=H,
-    ansatz=net,
-    seed=42
-)
-
-results = nqs.train(n_epochs=500)
+stats = psi.train(n_epochs=200, lr=1e-2)
 ```
 
-### Example 4: Observable Estimation
+## Core Objects
+
+- `NQS`
+  - main solver object owning the ansatz, sampler, state convention, and evaluation path
+- `NQSPhysicsConfig`
+  - physical model, lattice, geometry, and Hamiltonian-construction config
+- `NQSSolverConfig`
+  - ansatz, sampler, backend, and solver defaults
+- `NQSTrainConfig`
+  - training-time scheduling and checkpoint options
+- `load_nqs(...)`
+  - convenience path for config-driven reconstruction plus checkpoint restore
+
+## Measurement
+
+The low-level measurement API is:
+
+- `compute_energy(...)`
+- `compute_observable(...)`
+
+There is also a higher-level helper:
+
+- `measure(...)`
+
+Examples:
 
 ```python
-import jax.numpy as jnp
+energy = psi.compute_energy(num_samples=1000)
 
-# After training...
-# Compute expectation values
-
-# Magnetization (z-component)
-Sz_expectation = nqs.expectation_value(
-    observable='Sz',
-    samples=sampled_states
+obs = psi.measure(
+    {
+        "sx0": sig_x0.jax,
+        "sz0": sig_z0.jax,
+    },
+    num_samples=1000,
 )
 
-# Two-point correlations: ⟨σ^z_i σ^z_j⟩
-correlation_matrix = nqs.correlation_function(
-    operator='Sz',
-    operator_j='Sz',
-    sample_size=5000
-)
-print(f"Nearest-neighbor correlation: {correlation_matrix[0, 1]:.6f}")
+print(obs["sx0"].mean, obs["sx0"].error_of_mean)
 ```
 
-## Configuration & Tuning
+## Persistence
 
-### Hyperparameter Guidelines
+Three persistence levels are supported conceptually:
 
-| Parameter | Typical Range | Notes |
-|-----------|---------------|-------|
-| **Learning Rate** | $10^{-3}$ – $10^{-1}$ | Start high, decay over time |
-| **Batch Size** | 32–512 | Larger = smoother, slower per-update |
-| **Hidden Units (α)** | 1–4 | α=1–2 for 1D chains; α≥2 for 2D |
-| **Thermalization Steps** | 500–5000 | Ensure Markov chain convergence |
-| **Number of Samples** | 1000–10000 | More samples → lower variance |
+1. weights only
+   - `psi.save_weights(...)`
+   - `psi.load_weights(...)`
+2. resumable training checkpoints
+   - through `train(...)` checkpoint options
+3. full config-driven reconstruction
+   - `load_nqs(physics_config, solver_config, checkpoint_step=...)`
 
-### Debugging Convergence Issues
+Use `load_nqs(...)` when the construction path itself should be reproducible.
 
-```python
-# 1. Check if local energy has large variance
-print(f"Energy variance: {E_std**2:.6f}")
-if E_std**2 > 1.0:
-    # Increase sample size or improve network capacity
-    sampler.n_samples *= 2
+## Ansatz Selection
 
-# 2. Monitor gradient norms
-grad_norms = [jnp.linalg.norm(grad) for grad in grads]
-print(f"Max gradient: {jnp.max(grad_norms):.6f}")
+Typical ansatz names include:
 
-# 3. Check for NaN/Inf
-if jnp.isnan(E_var) or jnp.isinf(E_var):
-    # Reduce learning rate
-    lr *= 0.5
-```
+- `rbm`
+- `cnn`
+- `resnet`
+- `mlp`
+- `transformer`
+- `ar`
+- `pp`
+- `rbmpp`
+- `jastrow`
+- `mps`
+- `approx_symmetric`
+- `eqgcnn`
 
-## Limitations & Current Capabilities
+These are resolved through the NQS ansatz/factory layer, while still allowing
+user-provided networks and plain callables.
 
-**Verified Working**:
-- TFIM and XXZ on 1D/2D lattices (6–16 sites)
-- RBM and CNN ansätze
-- VMC with Metropolis-Hastings and Gibbs sampling
-- Early stopping, learning rate scheduling
+## Notes
 
-**Known Limitations**:
-- No multi-GPU support (single GPU only)
-- TDVP convergence sensitive to regularization parameter
-- RBM expressibility limited for highly entangled states
-- Fermion systems not yet supported
-
-**Not Yet Implemented**:
-- Excited state targeting via orthogonalization
-- Imaginary-time evolution
-- Multi-flavor fermion systems
-
-## References
-
-1. Carleo & Troyer (2017): "Solving the quantum many-body problem with artificial neural networks" – *Nature Physics* 13, 435–441
-2. Choo et al. (2020): "Efficient neural quantum states on loops" – *Physical Review X* 10, 021014  
-3. Stokes et al. (2020): "Quantum Fisher information and natural gradient learning" – *Physical Review A* 85, 062315
-4. Melko et al. (2019): "Restricted Boltzmann machines as effective descriptions of quantum many-body states" – *Nature Reviews Physics* 3, 856–880
-
-## Contributing
-
-Contributions welcome. Please ensure:
-1. Code follows PEP 8 (Black formatter)
-2. All training converges or includes warnings
-3. New architectures validated on benchmark systems
-4. Unit tests added for new features
-
-## License
-
-CC-BY-4.0 – See root [LICENSE.md](../../../../LICENSE.md)
+- The generic ML backbones live under `QES.general_python.ml`.
+- NQS-specific representation handling, ansatz wrappers, and faster sampler
+  integration live in `QES.NQS`.
+- If you need a printed walkthrough from inside a live solver instance, use:
+  - `psi.help("general")`
+  - `psi.help("usage")`
+  - `psi.help("sampling")`
+  - `psi.help("checkpoints")`

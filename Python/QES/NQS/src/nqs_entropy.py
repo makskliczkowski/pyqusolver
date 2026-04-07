@@ -153,7 +153,7 @@ def _enumerate_basis_states_nqs(nqs: "NQS") -> np.ndarray:
     is tiny.
     """
     from QES.general_python.common.binary   import int2base
-    from .nqs_network_integration           import resolve_nqs_state_defaults
+    from .network                          import resolve_nqs_state_defaults
 
     hilbert = getattr(nqs, "hilbert", None)
     if hilbert is None:

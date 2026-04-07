@@ -48,7 +48,7 @@ try:
     from .src.nqs_checkpoint_manager    import NQSCheckpointManager
     from .src.nqs_engine                import NQSEvalEngine, NQSLoss, NQSObservable
     from .src.nqs_kernels               import NQSSingleStepResult
-    from .src.nqs_network_integration   import *
+    from .src.network                   import *
     from .src.nqs_physics               import *
     from .src.nqs_precision             import cast_for_precision, resolve_precision_policy
     from .src.nqs_symmetry              import NQSSymmetricAnsatz

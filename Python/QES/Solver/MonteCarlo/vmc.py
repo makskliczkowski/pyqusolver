@@ -231,23 +231,22 @@ class VMCSampler(Sampler):
         therm_steps = max(1, int(therm_steps))
         sweep_steps = max(1, int(sweep_steps))
 
-        self._beta                  = beta
-        self._therm_steps           = therm_steps
-        self._sweep_steps           = sweep_steps
-        self._logprob_fact          = logprob_fact
-        self._logprobas             = None
-        self._total_therm_updates   = therm_steps * sweep_steps * self._size    # Total updates during thermalization
-        self._total_sample_updates_per_sample = sweep_steps * self._size        # Updates between collected samples
-        self._updates_per_sample    = self._sweep_steps  # Steps between samples
-        self._total_sample_updates_per_chain = numsamples * self._updates_per_sample * self._numchains
+        self._beta                      = beta
+        self._therm_steps               = therm_steps
+        self._sweep_steps               = sweep_steps
+        self._logprob_fact              = logprob_fact
+        self._logprobas                 = None
+        # Derived sampling schedule parameters
+        self._needs_thermalization      = True
+        self._static_sample_therm_steps = None
+        self._static_pt_therm_steps     = None
+        self._refresh_sampling_schedule(reset_compiled=False)
 
         # -----------------------------------------------------------------
         # Mixed Precision Setup
         # -----------------------------------------------------------------
-        self._dtype = (
-            dtype if dtype is not None else (jnp.complex128 if JAX_AVAILABLE else np.complex128)
-        )
-        self._sample_dtype = sample_dtype
+        self._dtype             = dtype if dtype is not None else (jnp.complex128 if JAX_AVAILABLE else np.complex128)
+        self._sample_dtype      = sample_dtype
 
         if self._isjax and self._sample_dtype is None:
             # Auto-enable mixed precision for double precision models
@@ -320,6 +319,20 @@ class VMCSampler(Sampler):
         )
         self._static_pt_sampler = None  # Lazily created on first PT sample call
         self._name = "VMC"
+
+    def _refresh_sampling_schedule(self, *, reset_compiled: bool = True):
+        """Recompute derived sampling counts after schedule changes."""
+        self._total_therm_updates               = self._therm_steps * self._sweep_steps * self._size
+        self._total_sample_updates_per_sample   = self._sweep_steps * self._size
+        self._updates_per_sample                = self._sweep_steps
+        self._total_sample_updates_per_chain    = self._numsamples * self._updates_per_sample * self._numchains
+        if reset_compiled:
+            self._needs_thermalization      = True
+            self._static_sample_fun         = None
+            self._static_pt_sampler         = None
+            self._static_sample_therm_steps = None
+            self._static_pt_therm_steps     = None
+            self._jit_cache                 = {}
 
     def _resolve_fast_update_fun(self, current_fun, upd_rule, **kwargs):
         """Attempts to replace the update function with a version that returns update info."""
@@ -414,6 +427,7 @@ class VMCSampler(Sampler):
         Ensures proper state shaping for Parallel Tempering if enabled.
         """
         super().reset()
+        self._needs_thermalization = True
 
         if getattr(self, "_is_pt", False) and self._states.ndim == len(self._shape) + 1:
             if self._isjax:
@@ -440,6 +454,8 @@ class VMCSampler(Sampler):
     def set_numchains(self, numchains):
         ''' Set the number of parallel chains. Reshapes state and counters if in PT mode. '''
         super().set_numchains(numchains)
+        self._refresh_sampling_schedule(reset_compiled=False)
+        self._needs_thermalization  = True
         if getattr(self, "_is_pt", False) and self._states.ndim == len(self._shape) + 1:
             if self._isjax:
                 self._states        = jnp.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
@@ -456,6 +472,8 @@ class VMCSampler(Sampler):
 
         self._static_sample_fun = None
         self._static_pt_sampler = None
+        self._static_sample_therm_steps = None
+        self._static_pt_therm_steps = None
         self._jit_cache         = {}
 
     def autotune_chains(self, max_memory_gb: float = 12.0, safety_factor: float = 0.8):
@@ -1655,20 +1673,16 @@ class VMCSampler(Sampler):
         self._numsamples = used_num_samples if used_num_samples is not None else self._numsamples
         if used_num_therm is not None:
             self._therm_steps = used_num_therm
-            self._total_therm_updates = self._therm_steps * self._sweep_steps * self._size
-        self._total_sample_updates_per_chain = (
-            self._numsamples * self._updates_per_sample * self._numchains
-        )
+        self._refresh_sampling_schedule(reset_compiled=False)
+        self._needs_thermalization = True
         self.reset()
-        current_states = self._states
-        current_proposed = self._num_proposed
-        current_accepted = self._num_accepted
-        if self._isjax:
-            self._static_sample_fun = self.get_sampler(self._numsamples, self._numchains)
-            self._static_pt_sampler = self._get_sampler_pt_jax(self._numsamples, self._numchains) if self._is_pt else None
-        else:
-            self._static_sample_fun = self._get_sampler_np(self._numsamples, self._numchains)
-            self._static_pt_sampler = None
+        current_states      = self._states
+        current_proposed    = self._num_proposed
+        current_accepted    = self._num_accepted
+        self._static_sample_fun         = None
+        self._static_pt_sampler         = None
+        self._static_sample_therm_steps = None
+        self._static_pt_therm_steps     = None
 
         return current_states, current_proposed, current_accepted
 
@@ -1721,10 +1735,17 @@ class VMCSampler(Sampler):
                 raise TypeError(f"Sampler's RNG key is invalid: {type(self._rng_k)}")
 
             if self._is_pt:
-                if self._static_pt_sampler is None:
+                effective_therm_steps = used_num_therm if self._needs_thermalization else 0
+                if (
+                    self._static_pt_sampler is None
+                    or self._static_pt_therm_steps != effective_therm_steps
+                ):
                     self._static_pt_sampler = self._get_sampler_pt_jax(
-                        num_samples=used_num_samples, num_chains=used_num_chains
+                        num_samples=used_num_samples,
+                        num_chains=used_num_chains,
+                        therm_steps=effective_therm_steps,
                     )
+                    self._static_pt_therm_steps = effective_therm_steps
 
                 final_state_tuple, samples_tuple, probs = self._static_pt_sampler(
                     states_init=current_states,
@@ -1742,19 +1763,20 @@ class VMCSampler(Sampler):
                     final_num_accepted,
                 ) = final_state_tuple
 
-                self._states = final_states
-                self._logprobas = final_logprobas
-                self._num_proposed = final_num_proposed
-                self._num_accepted = final_num_accepted
-                self._rng_k = final_rng_k
+                self._states                = final_states
+                self._logprobas             = final_logprobas
+                self._num_proposed          = final_num_proposed
+                self._num_accepted          = final_num_accepted
+                self._rng_k                 = final_rng_k
+                self._needs_thermalization  = False
 
                 final_state_info = (self._states[0], self._logprobas[0])
                 return final_state_info, samples_tuple, probs
 
-            if self._static_sample_fun is None:
-                self._static_sample_fun = self.get_sampler(
-                    num_samples=used_num_samples, num_chains=self._numchains
-                )
+            effective_therm_steps = used_num_therm if self._needs_thermalization else 0
+            if self._static_sample_fun is None or self._static_sample_therm_steps != effective_therm_steps:
+                self._static_sample_fun = self.get_sampler(num_samples=used_num_samples, num_chains=self._numchains, therm_steps=effective_therm_steps)
+                self._static_sample_therm_steps = effective_therm_steps
 
             final_state_tuple, samples_tuple, probs = self._static_sample_fun(
                 states_init=current_states,
@@ -1768,13 +1790,14 @@ class VMCSampler(Sampler):
                 final_state_tuple
             )
 
-            self._states = final_states
-            self._logprobas = final_logprobas
-            self._num_proposed = final_num_proposed
-            self._num_accepted = final_num_accepted
-            self._rng_k = final_rng_k
+            self._states                = final_states
+            self._logprobas             = final_logprobas
+            self._num_proposed          = final_num_proposed
+            self._num_accepted          = final_num_accepted
+            self._rng_k                 = final_rng_k
+            self._needs_thermalization  = False
 
-            final_state_info = (self._states, self._logprobas)
+            final_state_info            = (self._states, self._logprobas)
             return final_state_info, samples_tuple, probs
         else:
             return vmc_np_impl.sample_np(
@@ -1787,19 +1810,23 @@ class VMCSampler(Sampler):
     # -----------------------------------------------------------------
 
     def _get_sampler_pt_jax(
-        self, num_samples: Optional[int] = None, num_chains: Optional[int] = None
+        self,
+        num_samples: Optional[int] = None,
+        num_chains: Optional[int] = None,
+        therm_steps: Optional[int] = None,
     ) -> Callable:
         if not self._isjax:
             raise RuntimeError("PT JAX sampler only available for JAX backend.")
 
         static_num_samples = num_samples if num_samples is not None else self._numsamples
         static_num_chains = num_chains if num_chains is not None else self._numchains
+        static_therm_steps = self._therm_steps if therm_steps is None else int(therm_steps)
 
         baked_args = {
             "num_samples": static_num_samples,
             "num_chains": static_num_chains,
             "n_replicas": self._n_replicas,
-            "total_therm_updates": self._total_therm_updates,
+            "total_therm_updates": static_therm_steps * self._sweep_steps * self._size,
             "updates_per_sample": self._updates_per_sample,
             "shape": self._shape,
             "mu": self._mu,
@@ -1848,18 +1875,22 @@ class VMCSampler(Sampler):
         return jax.jit(wrapped_pt_sampler_impl)
 
     def _get_sampler_jax(
-        self, num_samples: Optional[int] = None, num_chains: Optional[int] = None
+        self,
+        num_samples: Optional[int] = None,
+        num_chains: Optional[int] = None,
+        therm_steps: Optional[int] = None,
     ) -> Callable:
         if not self._isjax:
             raise RuntimeError("Static JAX sampler getter only available for JAX backend.")
 
         static_num_samples  = num_samples if num_samples is not None else self._numsamples
         static_num_chains   = num_chains if num_chains is not None else self._numchains
+        static_therm_steps  = self._therm_steps if therm_steps is None else int(therm_steps)
 
         baked_args = {
             "num_samples"           : static_num_samples,
             "num_chains"            : static_num_chains,
-            "total_therm_updates"   : self._total_therm_updates,
+            "total_therm_updates"   : static_therm_steps * self._sweep_steps * self._size,
             "updates_per_sample"    : self._updates_per_sample,
             "shape"                 : self._shape,
             "update_proposer"       : self._upd_fun,
@@ -1912,17 +1943,18 @@ class VMCSampler(Sampler):
     ) -> Callable:
         return vmc_np_impl.get_sampler_np(sampler=self, num_samples=num_samples, num_chains=num_chains)
 
-    def get_sampler(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None) -> Callable:
+    def get_sampler(self, num_samples: Optional[int] = None, num_chains: Optional[int] = None, therm_steps: Optional[int] = None) -> Callable:
         '''
         Get a sampler function with the given number of samples and chains baked in as static arguments.
         '''
+        effective_therm_steps = self._therm_steps if therm_steps is None else int(therm_steps)
         cache_key = (
             num_samples if num_samples is not None else self._numsamples,
             num_chains  if num_chains  is not None else self._numchains,
+            effective_therm_steps,
             self._isjax,
             self._is_pt,
             self._donate_buffers if self._isjax else False,
-            self._total_therm_updates,
             self._updates_per_sample,
             self._mu,
             self._beta if not self._is_pt else None,
@@ -1938,7 +1970,7 @@ class VMCSampler(Sampler):
             return self._jit_cache[cache_key]
 
         if self._isjax:
-            sampler = self._get_sampler_jax(num_samples, num_chains)
+            sampler = self._get_sampler_jax(num_samples, num_chains, therm_steps=effective_therm_steps)
         elif not self._isjax:
             sampler = self._get_sampler_np(num_samples, num_chains)
         else:
@@ -1973,9 +2005,7 @@ class VMCSampler(Sampler):
         self._org_upd_fun = self._local_upd_fun
         self.set_update_num(self._numupd)
 
-        self._static_sample_fun = None
-        self._static_pt_sampler = None
-        self._jit_cache = {}
+        self._refresh_sampling_schedule(reset_compiled=True)
 
     ###################################################################
     #! SETTERS
@@ -1988,10 +2018,12 @@ class VMCSampler(Sampler):
         self._beta = beta
 
     def set_therm_steps(self, therm_steps):
-        self._therm_steps = therm_steps
+        self._therm_steps = max(0, int(therm_steps))
+        self._refresh_sampling_schedule(reset_compiled=True)
 
     def set_sweep_steps(self, sweep_steps):
-        self._sweep_steps = sweep_steps
+        self._sweep_steps = max(1, int(sweep_steps))
+        self._refresh_sampling_schedule(reset_compiled=True)
 
     def set_replicas(
         self,

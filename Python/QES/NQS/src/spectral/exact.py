@@ -9,7 +9,8 @@ import numpy as np
 
 try:
     from QES.general_python.common.binary   import int2base
-    from ..nqs_network_representation       import resolve_nqs_state_defaults
+    from ..network                          import resolve_nqs_state_defaults
+    from .operators                         import resolve_transition_kernel
 except ImportError as e:
     raise ImportError("Failed to import necessary utilities for NQS spectral module. Ensure general_python package is correctly installed.") from e
 
@@ -226,16 +227,6 @@ def exact_probe_weight(
         probe_matrix = exact_operator_matrix(nqs, probe_operator, cache=cache)
         return exact_expectation_value(nqs, probe_matrix.conj().T @ probe_matrix, cache=cache)
     return exact_expectation_value(nqs, weight_operator, cache=cache)
-
-
-def resolve_transition_kernel(operator):
-    if hasattr(operator, "jax"):
-        return operator.jax
-    if callable(operator):
-        return operator
-    raise ValueError("Operator must be callable or expose a .jax transition kernel.")
-
-
 __all__ = [
     "ExactSummationCache",
     "basis_state_key",

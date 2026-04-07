@@ -477,7 +477,7 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         """
         Automatically estimates network parameters based on physics configuration.
         """
-        from QES.NQS.src.nqs_network_integration import estimate_network_params
+        from QES.NQS.src.network import estimate_network_params
         num_sites       = physics_config.resolve_num_sites()
         lattice_dims    = physics_config.resolved_lattice_dims()
         signature       = (
@@ -503,7 +503,7 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         """
         Creates a network instance based on this configuration and a physics configuration.
         """
-        from QES.NQS.src.nqs_network_integration import NetworkFactory
+        from QES.NQS.src.network import NetworkFactory
 
         signature = (physics_config.signature(), self.ansatz, self.dtype, _freeze_for_signature(kwargs))
         if self.sota_config is None or self._sota_signature != signature:
@@ -988,7 +988,7 @@ def load_nqs(
     # which already forwards ``backend=self.backend``.
     net_backend = net_kws.pop("backend", s_cfg.backend)
 
-    from QES.NQS.src.nqs_network_integration import resolve_model_representation
+    from QES.NQS.src.network import resolve_model_representation
 
     representation_info = resolve_model_representation(model, hilbert=hilbert)
     net_kws.setdefault("representation_info", representation_info)
@@ -1052,7 +1052,7 @@ _LAZY_IMPORTS = {
     "NQSLoss"                           : (".src.nqs_engine",               "NQSLoss"),
     "NQSEvalEngine"                     : (".src.nqs_engine",               "NQSEvalEngine"),
     "EvaluationResult"                  : (".src.nqs_engine",               "EvaluationResult"),
-    "NetworkFactory"                    : (".src.nqs_network_integration",  "NetworkFactory"),
+    "NetworkFactory"                    : (".src.network",                  "NetworkFactory"),
     "TDVP"                              : (".src.tdvp",                     "TDVP"),
     "TDVPStepInfo"                      : (".src.tdvp",                     "TDVPStepInfo"),
     "NQSCorrelatorResult"               : (".src.nqs_spectral",             "NQSCorrelatorResult"),
@@ -1079,7 +1079,7 @@ if TYPE_CHECKING:
 
     from .nqs                           import NQS
     from .src.nqs_engine                import EvaluationResult, NQSEvalEngine, NQSLoss, NQSObservable
-    from .src.nqs_network_integration   import NetworkFactory
+    from .src.network                   import NetworkFactory
     from .src.nqs_train                 import NQSTrainer, NQSTrainStats
     from .src.tdvp                      import TDVP, TDVPStepInfo
     from .src.nqs_spectral              import (

@@ -10,7 +10,7 @@ License     : MIT
 """
 
 try:
-    from QES.NQS.src.nqs_network_integration import NetworkFactory
+    from QES.NQS.src.network import NetworkFactory
 except ImportError:
     raise ImportError("Failed to import NetworkFactory for NQS help. Ensure general_python package is correctly installed.")
 
