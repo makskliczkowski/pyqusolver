@@ -557,7 +557,16 @@ class Sampler(ABC):
         if initstate is None:
             initstate = SolverInitState.RND
 
-        different_initials = kwargs.get("different", False)
+        stochastic_init = False
+        if callable(initstate):
+            stochastic_init = True
+        elif isinstance(initstate, SolverInitState):
+            stochastic_init = initstate in {SolverInitState.RND, SolverInitState.RND_FIXED}
+        elif isinstance(initstate, str):
+            init_key        = initstate.strip().lower().replace("-", "_").replace(" ", "_")
+            stochastic_init = init_key in {"rnd", "random", "rnd_fixed", "random_fixed", "fixed_n", "conserved"}
+
+        different_initials  = kwargs.get("different", stochastic_init)
 
         # handle the initial state
         if initstate is None or isinstance(initstate, (str, SolverInitState)):
@@ -569,6 +578,13 @@ class Sampler(ABC):
 
                 if self._hilbert is None or True:
                     if different_initials:
+                        if self._isjax and self._rng_k is not None:
+                            split_keys      = jax.random.split(self._rng_k, self._numchains + 1)
+                            self._rng_k     = split_keys[0]
+                            per_chain_keys  = split_keys[1:]
+                        else:
+                            per_chain_keys  = [self._rng_k] * self._numchains
+
                         self._states = self._backend.stack(
                             [
                                 initialize_state(
@@ -578,11 +594,11 @@ class Sampler(ABC):
                                     shape=self._shape,
                                     backend=current_bcknd_str,
                                     rng=self._rng,
-                                    rng_k=self._rng_k,
+                                    rng_k=per_chain_keys[idx],
                                     mode_repr=mode_repr_val,
                                     **kwargs,
                                 )
-                                for _ in range(self._numchains)
+                                for idx in range(self._numchains)
                             ],
                             axis=0,
                         )

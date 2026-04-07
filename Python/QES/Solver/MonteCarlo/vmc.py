@@ -510,14 +510,10 @@ class VMCSampler(Sampler):
         )
 
     def __str__(self):
-        total_therm_updates_display = (
-            self._total_therm_updates * self.size
-        )  # Total updates per site
-        total_sample_updates_display = (
-            self._numsamples * self._updates_per_sample * self.size
-        )  # Total sample updates per site
-        init_str = str(self._initstate_t) if self._initstate_t is not None else "RND"
-        glob_p = getattr(self, "_global_p", 0.0)
+        total_therm_updates_display     = self._total_therm_updates
+        total_sample_updates_display    = self._numsamples * self._updates_per_sample
+        init_str                        = str(self._initstate_t) if self._initstate_t is not None else "RND"
+        glob_p                          = getattr(self, "_global_p", 0.0)
 
         return (
             f"MCSampler:\n"

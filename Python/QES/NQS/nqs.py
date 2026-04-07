@@ -1269,6 +1269,18 @@ class NQS(MonteCarloSolver):
         elif not isinstance(functions, list):
             functions = [functions]
 
+        resolved_functions = []
+        for func in functions:
+            resolved = self.resolve_operator(func)
+            if callable(resolved):
+                resolved_functions.append(resolved)
+                continue
+            if hasattr(resolved, "jax") and callable(getattr(resolved, "jax")):
+                resolved_functions.append(resolved.jax)
+                continue
+            resolved_functions.append(func)
+        functions = resolved_functions
+
         # check if the states and psi are provided
         states, ansatze = None, None
         if states_and_psi is not None:
@@ -1952,29 +1964,33 @@ class NQS(MonteCarloSolver):
     @property
     def state_convention(self) -> Dict[str, Any]:
         return {
-            "representation": self._state_representation,
-            "spin": bool(self._spin_repr),
-            "mode_repr": float(self._mode_repr),
-            "local_dim": int(self._local_dim),
-            "representation_info": self._representation_info,
+            "representation"        : self._state_representation,
+            "spin"                  : bool(self._spin_repr),
+            "mode_repr"             : float(self._mode_repr),
+            "local_dim"             : int(self._local_dim),
+            "representation_info"   : self._representation_info,
         }
 
     def resolve_operator(self, operator):
         if operator is None:
             return None
+        
         cache_key = (id(operator), self._state_convention_sig)
         if cache_key in self._resolved_operator_cache:
             return self._resolved_operator_cache[cache_key]
+        
         bind_fun = getattr(operator, "bind_state_convention", None)
         if callable(bind_fun):
             resolved = bind_fun(self.state_convention)
             self._resolved_operator_cache[cache_key] = resolved
             return resolved
+        
         bind_fun = getattr(operator, "with_state_convention", None)
         if callable(bind_fun):
             resolved = bind_fun(self.state_convention)
             self._resolved_operator_cache[cache_key] = resolved
             return resolved
+        
         self._resolved_operator_cache[cache_key] = operator
         return operator
 
@@ -2767,7 +2783,7 @@ class NQS(MonteCarloSolver):
         Return the list of operators associated with the physical model.
         """
         return self._model.operators if self._model is not None else None
-
+    
     # ---
 
     @property
@@ -3817,8 +3833,8 @@ class NQS(MonteCarloSolver):
         nqs                 : "NQS",
         region              : Optional["Array"] = None,
         *,
-        num_samples         : int = 4096,
-        num_chains          : int = 1,
+        num_samples         : Optional[int] = None,
+        num_chains          : Optional[int] = None,
         exact_sum           : bool = False,
         return_swap_mean    : bool = False,
         return_error        : bool = False,

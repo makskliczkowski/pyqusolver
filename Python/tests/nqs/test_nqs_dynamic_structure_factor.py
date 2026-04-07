@@ -206,3 +206,35 @@ def test_nqs_resolve_operator_caches_bound_operator():
 
     assert resolved_a == resolved_b
     assert probe.calls == 1
+
+
+def test_compute_observable_resolves_state_bound_operator():
+    _, _, _, nqs = _build_uniform_tfim_state(seed=7)
+    (_, _), (states, log_psi), probabilities = nqs.sample(num_samples=8, num_chains=4)
+
+    class _ObservableProbe:
+        def __init__(self):
+            self.calls = 0
+
+        def bind_state_convention(self, convention):
+            self.calls += 1
+            offset = 1.0 if convention["representation"] == "binary_01" else -1.0
+
+            def _kernel(s):
+                s = jnp.asarray(s)
+                return s[..., 0] * 0.0 + offset
+
+            return _kernel
+
+    probe = _ObservableProbe()
+    result = nqs.compute_observable(
+        states=states,
+        ansatze=log_psi,
+        probabilities=probabilities,
+        functions=probe,
+        return_stats=True,
+    )
+
+    assert probe.calls == 1
+    assert np.isfinite(result.mean)
+    assert np.isclose(result.mean, 1.0)

@@ -188,10 +188,10 @@ def compute_renyi_entropy(
     region                  : Optional[Any]     = None,
     *,
     q                       : int               = 2,
-    num_samples             : int               = 4096,
-    num_chains              : int               = 1,
+    num_samples             : Optional[int]     = None,
+    num_chains              : Optional[int]     = None,
     recompute_log_psi       : bool              = True,
-    independent_replicas    : bool              = True,
+    independent_replicas    : bool              = False,
     exact_sum               : bool              = False,
     return_error            : bool              = False,
     return_raw              : bool              = False,
@@ -223,16 +223,21 @@ def compute_renyi_entropy(
         Site indices defining subsystem A. If None, uses canonical half-system cut.
     q : int
         Rényi index. Must be >= 2. Default: 2.
-    num_samples : int
-        Number of Monte Carlo samples per replica.
-    num_chains : int
-        Number of Markov chains for sampling.
+    num_samples : int or None
+        Number of Monte Carlo samples per replica. If None, reuse the sampler's
+        current configured value instead of forcing a reinitialization.
+    num_chains : int or None
+        Number of Markov chains for sampling. If None, reuse the sampler's
+        current configured value instead of forcing a reinitialization.
     recompute_log_psi : bool
         If True (default), re-evaluate ``log(psi)`` on sampled configurations
         using ``nqs.ansatz`` for ratio consistency.
     independent_replicas : bool
-        If True (default), reset sampler state before each replica draw.
-        This improves independence between replicas in the swap estimator.
+        If True, reset sampler state before each replica draw. This may help
+        decorrelate replicas, but for local MCMC samplers it can also destroy a
+        well-equilibrated chain ensemble and bias the entropy estimate. The
+        default keeps the current sampler state and draws successive replica
+        batches from the warm chains.
     exact_sum : bool
         If True, bypass Monte Carlo and compute the Rényi entropy from the full
         NQS wavefunction on the computational basis. This is intended for tiny
@@ -296,6 +301,8 @@ def compute_renyi_entropy(
         mu = getattr(sampler, "mu", getattr(sampler, "_mu", None))
         if mu is not None and not np.isclose(float(mu), 2.0, atol=1e-8):
             warnings.warn(f"compute_renyi_entropy assumes Born sampling (mu=2), got mu={mu}. Results may be biased unless reweighting is applied.", RuntimeWarning, stacklevel=2)
+        sampler_num_samples = getattr(sampler, "_numsamples", None)
+        sampler_num_chains  = getattr(sampler, "_numchains", None)
     
     # Sample q independent replicas 
     replicas_s      = []  # configurations
@@ -359,8 +366,12 @@ def compute_renyi_entropy(
     sq_val          = float(jnp.real((1.0 / (1.0 - q)) * jnp.log(trace_val)))
     
     # Error estimation (chain-aware)
-    n_total         = int(n_samp)
-    n_chain         = max(int(num_chains), 1)
+    n_total             = int(n_samp)
+    sampler_num_chains  = getattr(sampler, "_numchains", None) if sampler is not None else None
+    resolved_num_chains = num_chains if num_chains is not None else sampler_num_chains
+    if resolved_num_chains is None:
+        resolved_num_chains = 1
+    n_chain         = max(int(resolved_num_chains), 1)
     trace_err       = 0.0
     sq_err          = 0.0
 

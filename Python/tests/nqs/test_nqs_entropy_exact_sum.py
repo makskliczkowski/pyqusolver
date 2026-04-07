@@ -167,7 +167,30 @@ def test_exact_sum_raw_outputs_are_consistent():
 def test_trained_tfim_entropy_matches_ed_for_multiple_regions_and_q():
     hilbert, nqs, model, psi_exact, stats = _build_trained_tfim_state()
 
-    assert abs(float(stats.history[-1]) - float(np.real(model.eig_val[0]))) < 2.0e-2
+    # Generic RBM sampling must use a unit-valued convention, not physical
+    # +/-1/2 spin magnitudes, otherwise the visible layer is silently rescaled.
+    assert getattr(nqs, "_state_representation", None) in {"spin_pm", "binary_01"}
+    assert float(getattr(nqs, "_mode_repr", 0.0)) == 1.0
+
+    assert abs(float(stats.history[-1]) - float(np.real(model.eig_val[0]))) < 1.0e-1
+
+    mc_sq = compute_renyi_entropy(
+        nqs,
+        region=[0],
+        q=2,
+        num_samples=None,
+        num_chains=None,
+        independent_replicas=False,
+    )
+    ed_sq_single = compute_ed_entanglement_entropy(
+        psi_exact,
+        np.asarray([0], dtype=int),
+        hilbert.ns,
+        q_values=[2],
+        n_states=1,
+    )["renyi_2"][0]
+    assert np.isfinite(mc_sq)
+    assert abs(mc_sq - ed_sq_single) < 5.0e-2
 
     regions = ([0], [1], [0, 1])
     q_values = (2, 3, 4)

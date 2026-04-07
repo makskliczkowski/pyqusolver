@@ -36,10 +36,10 @@ if TYPE_CHECKING:
 
 
 class InitStateErrors:
-    NOT_GIVEN_SIZE_ERROR = "The size of the system is not given"
-    NOT_IMPLEMENTED_ERROR = "This feature is not implemented yet"
-    NOT_A_VALID_STATE_STRING = "The state string is not a valid state string"
-    NOT_A_VALID_STATE_DISTING = "The state is not a valid state"
+    NOT_GIVEN_SIZE_ERROR        = "The size of the system is not given"
+    NOT_IMPLEMENTED_ERROR       = "This feature is not implemented yet"
+    NOT_A_VALID_STATE_STRING    = "The state string is not a valid state string"
+    NOT_A_VALID_STATE_DISTING   = "The state is not a valid state"
 
 
 # --------------------------------------------------------------------------------------------------
@@ -50,11 +50,11 @@ class InitStateErrors:
 class SolverInitState(Enum):
     """Enum for potential initial states."""
 
-    RND = auto()  # random configuration
-    F_UP = auto()  # ferromagnetic up
-    F_DN = auto()  # ferromagnetic down
-    AF = auto()  # antiferromagnetic
-    RND_FIXED = auto()  # random configuration with fixed particle number/magnetization
+    RND         = auto()  # random configuration
+    F_UP        = auto()  # ferromagnetic up
+    F_DN        = auto()  # ferromagnetic down
+    AF          = auto()  # antiferromagnetic
+    RND_FIXED   = auto()  # random configuration with fixed particle number/magnetization
 
     def __str__(self):
         return self.name

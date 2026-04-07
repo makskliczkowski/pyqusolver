@@ -9,7 +9,6 @@ import jax.numpy as jnp
 
 from .representation import ModelRepresentationInfo, resolve_spin_mode_repr
 
-
 def _get_nqs_metadata(net: Any) -> Dict[str, Any]:
     if hasattr(net, "get_nqs_metadata") and callable(net.get_nqs_metadata):
         try:
@@ -20,13 +19,12 @@ def _get_nqs_metadata(net: Any) -> Dict[str, Any]:
             pass
     return {}
 
-
 def infer_network_family(net: Any) -> str:
     """
     Coarse network family classifier used once during NQS setup.
     """
-    meta = _get_nqs_metadata(net)
-    family = str(meta.get("family", "")).strip().lower().replace("-", "_").replace(" ", "_")
+    meta    = _get_nqs_metadata(net)
+    family  = str(meta.get("family", "")).strip().lower().replace("-", "_").replace(" ", "_")
     if family:
         return family
     if meta.get("supports_exact_sampling", False):
@@ -38,8 +36,8 @@ def infer_network_family(net: Any) -> str:
     if hasattr(net, "log_psi_delta") or hasattr(net, "get_log_psi_delta"):
         return "rbm"
 
-    name = str(getattr(net, "name", type(net).__name__)).lower()
-    cls_name = type(net).__name__.lower()
+    name        = str(getattr(net, "name", type(net).__name__)).lower()
+    cls_name    = type(net).__name__.lower()
     module_name = str(getattr(type(net), "__module__", "")).lower()
 
     if any(tok in value for value in (name, cls_name, module_name) for tok in ("autoregressive", "complexar", "made")):
@@ -53,7 +51,6 @@ def infer_network_family(net: Any) -> str:
     if "transformer" in name or "transformer" in cls_name or "net_transformer" in module_name:
         return "transformer"
     return "dense"
-
 
 def _resolve_apply_and_params(net: Any) -> Tuple[Callable, Any]:
     """
@@ -75,13 +72,15 @@ def _resolve_apply_and_params(net: Any) -> Tuple[Callable, Any]:
         return net, None
     raise ValueError("Invalid network object provided. Needs to be callable or have an 'apply' method.")
 
-
 def _flip_selected_values(values: Any, *, state_spin: bool, state_value: float):
     arr = jnp.asarray(values)
     if state_spin:
         return -arr
     return jnp.asarray(float(state_value), dtype=arr.dtype) - arr
 
+# ------------------------------------------------------------------------------
+# Sampler-facing network adapter classes
+# ------------------------------------------------------------------------------
 
 class NQSNetAdapterBase:
     """
@@ -92,11 +91,11 @@ class NQSNetAdapterBase:
     sampler_kind = "MCSampler"
 
     def __init__(self, net: Any, representation: ModelRepresentationInfo, backend: str = "jax"):
-        self.net = net
-        self.representation = representation
-        self.backend = backend
-        self.metadata = _get_nqs_metadata(net)
-        self.native_representation = self.metadata.get("native_representation") or representation.network_representation
+        self.net                    = net
+        self.representation         = representation
+        self.backend                = backend
+        self.metadata               = _get_nqs_metadata(net)
+        self.native_representation  = self.metadata.get("native_representation") or representation.network_representation
 
     def preferred_sampler_representation(self) -> str:
         return self.representation.sampler_representation
@@ -110,66 +109,66 @@ class NQSNetAdapterBase:
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
         apply_fun, params = _resolve_apply_and_params(self.net)
         return {
-            "family": self.family,
-            "sampler_kind": self.sampler_kind,
-            "apply_fun": apply_fun,
-            "parameters": params,
-            "native_representation": self.native_representation,
-            "log_psi_delta": getattr(self.net, "log_psi_delta", None),
-            "log_psi_delta_cache_init": getattr(self.net, "init_log_psi_delta_cache", None),
-            "log_psi_delta_supports_cache": hasattr(self.net, "init_log_psi_delta_cache"),
-            "representation": self.representation,
-            "metadata": self.metadata,
+            "family"                        : self.family,
+            "sampler_kind"                  : self.sampler_kind,
+            "apply_fun"                     : apply_fun,
+            "parameters"                    : params,
+            "native_representation"         : self.native_representation,
+            "log_psi_delta"                 : getattr(self.net, "log_psi_delta", None),
+            "log_psi_delta_cache_init"      : getattr(self.net, "init_log_psi_delta_cache", None),
+            "log_psi_delta_supports_cache"  : hasattr(self.net, "init_log_psi_delta_cache"),
+            "representation"                : self.representation,
+            "metadata"                      : self.metadata,
         }
 
+# ------------------------------------------------------------------------------
 
 class NQSRBMAdapter(NQSNetAdapterBase):
     family = "rbm"
     sampler_kind = "MCSampler"
 
     def preferred_sampler_representation(self) -> str:
-        if self.representation.local_space_type.startswith("spin-") and getattr(self.net, "_in_activation", None) is None:
-            return "spin_pm"
         return self.representation.sampler_representation
 
     def preferred_sampler_mode_repr(self):
         if self.preferred_sampler_representation().replace("_", "-") == "spin-pm":
-            return resolve_spin_mode_repr(self.representation.local_space_type)
+            # Generic RBMs operating directly on signed spin inputs expect the
+            # conventional {-1, +1} encoding, not the physical spin magnitude
+            # (for example +/-0.5 for spin-1/2). The latter would silently
+            # rescale every visible unit and corrupt both training and exact
+            # entropy evaluation when a prebuilt generic RBM is passed into NQS.
+            return 1.0
         return super().preferred_sampler_mode_repr()
 
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
-        hooks = super().resolve_sampling_hooks()
-        sampler_representation = self.preferred_sampler_representation()
-        sampler_key = sampler_representation.replace("_", "-")
-        state_spin = sampler_key == "spin-pm"
-        state_value = 1.0 if sampler_key in {"binary-01", "occupation-binary"} else 0.5
+        hooks                   = super().resolve_sampling_hooks()
+        sampler_representation  = self.preferred_sampler_representation()
+        sampler_key             = sampler_representation.replace("_", "-")
+        state_spin              = sampler_key == "spin-pm"
+        state_value             = 1.0 if sampler_key in {"binary-01", "occupation-binary"} else 0.5
 
         if hooks["log_psi_delta"] is None and hasattr(self.net, "get_log_psi_delta"):
             hooks["log_psi_delta"] = self.net.get_log_psi_delta()
+            
         if hooks["log_psi_delta_cache_init"] is None and hasattr(self.net, "get_log_psi_delta_cache_init"):
-            hooks["log_psi_delta_cache_init"] = self.net.get_log_psi_delta_cache_init()
-            hooks["log_psi_delta_supports_cache"] = True
+            hooks["log_psi_delta_cache_init"]       = self.net.get_log_psi_delta_cache_init()
+            hooks["log_psi_delta_supports_cache"]   = True
 
         if hooks["log_psi_delta"] is not None:
             hooks["log_psi_delta"] = partial(
                 hooks["log_psi_delta"],
-                proposal_update=partial(
-                    _flip_selected_values,
-                    state_spin=state_spin,
-                    state_value=state_value,
-                ),
-            )
+                proposal_update=partial(_flip_selected_values, state_spin=state_spin, state_value=state_value))
         return hooks
 
+# ------------------------------------------------------------------------------
 
 class NQSDenseEvalAdapter(NQSNetAdapterBase):
-    family = "dense"
-    sampler_kind = "MCSampler"
-
+    family          = "dense"
+    sampler_kind    = "MCSampler"
 
 class NQSAutoregressiveAdapter(NQSNetAdapterBase):
-    family = "autoregressive"
-    sampler_kind = "ARSampler"
+    family          = "autoregressive"
+    sampler_kind    = "ARSampler"
 
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
         hooks = super().resolve_sampling_hooks()
@@ -185,6 +184,9 @@ class NQSAutoregressiveAdapter(NQSNetAdapterBase):
         )
         return hooks
 
+# ------------------------------------------------------------------------------
+#! Network adapter factory
+# ------------------------------------------------------------------------------
 
 def choose_nqs_network_adapter(
     net: Any,
@@ -210,3 +212,7 @@ __all__ = [
     "choose_nqs_network_adapter",
     "infer_network_family",
 ]
+
+# -----------------------------------------------------------------------------
+#! EOF
+# -----------------------------------------------------------------------------
