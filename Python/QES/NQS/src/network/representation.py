@@ -1,8 +1,17 @@
 """
-Representation resolution and NQS-side input overrides for network creation.
+QES.NQS.src.network.representation
+==================================
 
-This module owns the translation from model/Hilbert metadata to the input
-conventions expected by the NQS-facing ansatz wrappers and generic backbones.
+Representation resolution and NQS-side input overrides for network creation.
+This module translates model/Hilbert metadata to the input conventions expected 
+by the NQS-facing ansatz wrappers and generic backbones.
+
+It provides:
+    1. Metadata normalization (ModelRepresentationInfo).
+    2. State value resolution (spin magnitudes vs unit binary).
+    3. Array conversion between conventions (spin <-> binary).
+    4. Hamiltonian callback binding (local energy wrapping).
+    5. Network-specific input adapters (automatic PM1 mapping).
 """
 
 from dataclasses import dataclass
@@ -14,7 +23,6 @@ import numpy as np
 try:
     import jax
     import jax.numpy as jnp
-
     _JAX_AVAILABLE = True
 except ImportError:
     jax = None
@@ -30,7 +38,6 @@ class ModelRepresentationInfo:
     """
     Normalized description of the model-side state representation.
     """
-
     basis_type              : str
     local_space_type        : str
     vector_encoding         : str
@@ -46,24 +53,39 @@ class ModelRepresentationInfo:
     def is_spin(self) -> bool:
         return self.local_space_type.startswith("spin-")
 
+# ------------------------------------------------------------------------------
+#! UTILITIES
+# ------------------------------------------------------------------------------
+
 def _normalize_key(value: Any, default: str = "") -> str:
+    """ Normalize string keys for consistent comparison. """
     if value is None:
         return default
     return str(value).strip().lower().replace("_", "-").replace(" ", "-")
 
-def _resolve_sampler_representation(local_space_type: str, vector_encoding: str) -> str:
-    local_key = _normalize_key(local_space_type)
-    vector_key = _normalize_key(vector_encoding)
+def _is_jax_array(x: Any) -> bool:
+    """ Check if an object is a JAX array. """
+    if not _JAX_AVAILABLE:
+        return False
+    module = type(x).__module__
+    return isinstance(x, jax.Array) or module.startswith("jax")
 
-    if local_key in {"spin-1/2", "spin-half"}:
-        return "spin_pm"
-    if local_key in {"spinless-fermions", "abelian-anyons"}:
-        return "occupation_binary"
-    if local_key in {"spin-1", "bosons"}:
-        return "dense_local"
-    if "{0,1}" in vector_key:
-        return "binary_01"
-    return "dense_local"
+def _array_backend(x: Any):
+    """ Return the appropriate array backend (numpy or jnp). """
+    return jnp if _is_jax_array(x) else np
+
+def _same_convention(
+    source_representation   : Any,
+    source_mode_repr        : float,
+    target_representation   : Any,
+    target_mode_repr        : float,
+) -> bool:
+    """ Check if two conventions are effectively identical. """
+    return _normalize_key(source_representation) == _normalize_key(target_representation) and np.isclose(float(source_mode_repr), float(target_mode_repr))
+
+# ------------------------------------------------------------------------------
+#! RESOLUTION LOGIC
+# ------------------------------------------------------------------------------
 
 def resolve_spin_mode_repr(local_space_type: str) -> Optional[float]:
     """
@@ -77,10 +99,10 @@ def resolve_spin_mode_repr(local_space_type: str) -> Optional[float]:
     return None
 
 def resolve_representation_value(
-    representation: Any,
+    representation      : Any,
     *,
-    local_space_type: Optional[str] = None,
-    fallback: float = 1.0,
+    local_space_type    : Optional[str] = None,
+    fallback            : float         = 1.0,
 ) -> float:
     """
     Return the explicit value used for the "up"/occupied state in a convention.
@@ -96,91 +118,84 @@ def resolve_representation_value(
         return float(resolve_spin_mode_repr(local_space_type or "") or fallback)
     return float(fallback)
 
-def _is_jax_array(x: Any) -> bool:
-    if not _JAX_AVAILABLE:
-        return False
-    module = type(x).__module__
-    return isinstance(x, jax.Array) or module.startswith("jax")
+def _resolve_sampler_representation(local_space_type: str, vector_encoding: str) -> str:
+    """ Pick the default sampler representation based on model physics. """
+    local_key   = _normalize_key(local_space_type)
+    vector_key  = _normalize_key(vector_encoding)
 
-def _array_backend(x: Any):
-    return jnp if _is_jax_array(x) else np
+    if local_key in {"spin-1/2", "spin-half"}:
+        return "spin_pm"
+    if local_key in {"spinless-fermions", "abelian-anyons"}:
+        return "occupation_binary"
+    if local_key in {"spin-1", "bosons"}:
+        return "dense_local"
+    if "{0,1}" in vector_key:
+        return "binary_01"
+    return "dense_local"
 
-def _same_convention(
-    source_representation: Any,
-    source_mode_repr: float,
-    target_representation: Any,
-    target_mode_repr: float,
-) -> bool:
-    return (
-        _normalize_key(source_representation) == _normalize_key(target_representation)
-        and np.isclose(float(source_mode_repr), float(target_mode_repr))
-    )
+# ------------------------------------------------------------------------------
+#! CONVERSION & BINDING
+# ------------------------------------------------------------------------------
 
 def convert_state_array_representation(
-    states: Any,
+    states                  : Any,
     *,
-    source_representation: Any,
-    source_mode_repr: float,
-    target_representation: Any,
-    target_mode_repr: float,
+    source_representation   : Any,
+    source_mode_repr        : float,
+    target_representation   : Any,
+    target_mode_repr        : float,
 ):
     """
     Convert array-valued states between supported external NQS conventions.
 
-    The supported conversions are intentionally narrow:
-    - signed spin ``spin_pm`` <-> binary occupation ``binary_01``
-    - binary rescaling between different occupied-state values
-    - signed spin rescaling between different physical magnitudes
-    Dense local encodings are returned unchanged.
+    Supported conversions:
+        - signed spin ``spin_pm`` <-> binary occupation ``binary_01``
+        - rescaling between different binary/occupation values
+        - rescaling between different signed spin magnitudes
     """
-    if _same_convention(
-        source_representation,
-        source_mode_repr,
-        target_representation,
-        target_mode_repr,
-    ):
+    if _same_convention(source_representation, source_mode_repr, target_representation, target_mode_repr):
         return states
 
-    source_key = _normalize_key(source_representation)
-    target_key = _normalize_key(target_representation)
-    xp = _array_backend(states)
-    arr = xp.asarray(states)
-    dtype = getattr(arr, "dtype", None)
+    src_key     = _normalize_key(source_representation)
+    dst_key     = _normalize_key(target_representation)
+    xp          = _array_backend(states)
+    arr         = xp.asarray(states)
+    dtype       = getattr(arr, "dtype", None)
 
-    source_val = float(source_mode_repr)
-    target_val = float(target_mode_repr)
+    src_val     = float(source_mode_repr)
+    dst_val     = float(target_mode_repr)
 
-    if source_key == target_key:
-        if source_key in {"binary-01", "occupation-binary"} and source_val != 0.0:
-            return arr * (target_val / source_val)
-        if source_key == "spin-pm":
-            target = xp.asarray(target_val, dtype=dtype)
+    # Identical family (binary->binary or spin->spin) but different scale
+    if src_key == dst_key:
+        if src_key in {"binary-01", "occupation-binary"} and src_val != 0.0:
+            return arr * (dst_val / src_val)
+        if src_key == "spin-pm":
+            target = xp.asarray(dst_val, dtype=dtype)
             return xp.where(arr > 0, target, -target)
         return arr
 
-    if source_key in {"binary-01", "occupation-binary"} and target_key == "spin-pm":
-        source_scale = source_val if source_val != 0.0 else 1.0
-        target = xp.asarray(target_val, dtype=dtype)
-        return (2.0 * (arr / source_scale) - 1.0) * target
+    # Binary -> Spin
+    if src_key in {"binary-01", "occupation-binary"} and dst_key == "spin-pm":
+        src_scale   = src_val if src_val != 0.0 else 1.0
+        target      = xp.asarray(dst_val, dtype=dtype)
+        return (2.0 * (arr / src_scale) - 1.0) * target
 
-    if source_key == "spin-pm" and target_key in {"binary-01", "occupation-binary"}:
-        target = xp.asarray(target_val, dtype=dtype)
+    # Spin -> Binary
+    if src_key == "spin-pm" and dst_key in {"binary-01", "occupation-binary"}:
+        target      = xp.asarray(dst_val, dtype=dtype)
         return (arr > 0).astype(dtype) * target
 
-    if (
-        source_key in {"binary-01", "occupation-binary"}
-        and target_key in {"binary-01", "occupation-binary"}
-        and source_val != 0.0
-    ):
-        return arr * (target_val / source_val)
+    # Binary rescale (fallback)
+    if src_key in {"binary-01", "occupation-binary"} and dst_key in {"binary-01", "occupation-binary"} and src_val != 0.0:
+        return arr * (dst_val / src_val)
 
     return arr
 
 def bind_local_energy_state_convention(
-    local_energy_fn: Any,
+    local_energy_fn     : Any,
     *,
-    state_convention: Dict[str, Any],
-    local_convention: Dict[str, Any],
+    state_convention    : Dict[str, Any],
+    local_convention    : Dict[str, Any],
 ):
     """
     Wrap a Hamiltonian local-energy callback so inputs and generated states use
@@ -189,29 +204,29 @@ def bind_local_energy_state_convention(
     if local_energy_fn is None or not callable(local_energy_fn):
         return local_energy_fn
 
-    state_repr = state_convention.get("representation")
-    local_repr = local_convention.get("representation")
-    state_mode = float(state_convention.get("mode_repr", 1.0))
-    local_mode = float(local_convention.get("mode_repr", 1.0))
+    s_repr  = state_convention.get("representation")
+    l_repr  = local_convention.get("representation")
+    s_mode  = float(state_convention.get("mode_repr", 1.0))
+    l_mode  = float(local_convention.get("mode_repr", 1.0))
 
-    if _same_convention(state_repr, state_mode, local_repr, local_mode):
+    if _same_convention(s_repr, s_mode, l_repr, l_mode):
         return local_energy_fn
 
     def _wrapped(state):
         local_state = convert_state_array_representation(
             state,
-            source_representation=state_repr,
-            source_mode_repr=state_mode,
-            target_representation=local_repr,
-            target_mode_repr=local_mode,
+            source_representation   =   s_repr,
+            source_mode_repr        =   s_mode,
+            target_representation   =   l_repr,
+            target_mode_repr        =   l_mode,
         )
         new_states, coeffs = local_energy_fn(local_state)
         public_states = convert_state_array_representation(
             new_states,
-            source_representation=local_repr,
-            source_mode_repr=local_mode,
-            target_representation=state_repr,
-            target_mode_repr=state_mode,
+            source_representation   =   l_repr,
+            source_mode_repr        =   l_mode,
+            target_representation   =   s_repr,
+            target_mode_repr        =   s_mode,
         )
         return public_states, coeffs
 
@@ -222,13 +237,11 @@ def bind_local_energy_state_convention(
     return _wrapped
 
 # ------------------------------------------------------------------
-# Public API for model-driven representation resolution and NQS-side overrides based on model/Hilbert metadata
+#! NETWORK ADAPTERS
 # ------------------------------------------------------------------
 
 def canonical_network_request_family(network_type: Any) -> str:
-    """
-    Normalize user-facing network/ansatz identifiers to one family name.
-    """
+    """ Normalize user-facing network identifiers to a canonical family name. """
     if isinstance(network_type, (str, Networks)):
         key = str(network_type).strip().lower().replace("-", "_").replace(" ", "_")
     elif isinstance(network_type, type):
@@ -247,9 +260,7 @@ def canonical_network_request_family(network_type: Any) -> str:
     return aliases.get(key, key)
 
 def resolve_model_representation(model: Any, hilbert: Optional[Any] = None) -> ModelRepresentationInfo:
-    """
-    Resolve model-driven state representation from Hamiltonian/Hilbert metadata.
-    """
+    """ Resolve model-driven state representation from Hamiltonian/Hilbert metadata. """
     basis_type = "real"
     if model is not None:
         if hasattr(model, "get_transformation_state") and callable(model.get_transformation_state):
@@ -269,128 +280,124 @@ def resolve_model_representation(model: Any, hilbert: Optional[Any] = None) -> M
         if hilbert is None:
             hilbert = getattr(model, "_hilbert_space", None)
 
-    local_space_type    = "spin-1/2"
-    vector_encoding     = "Length-Ns array with entries in {0,1}."
-    integer_encoding    = "Binary computational basis."
+    l_type  = "spin-1/2"
+    v_enc   = "Length-Ns array with entries in {0,1}."
+    i_enc   = "Binary computational basis."
 
     if hilbert is not None:
-        local_space = getattr(hilbert, "local_space", None)
-        if local_space is not None and hasattr(local_space, "typ"):
-            local_space_type = _normalize_key(getattr(local_space.typ, "value", local_space_type), local_space_type)
+        l_space = getattr(hilbert, "local_space", None)
+        if l_space is not None and hasattr(l_space, "typ"):
+            l_type = _normalize_key(getattr(l_space.typ, "value", l_type), l_type)
 
-        convention = None
+        conv = None
         if hasattr(hilbert, "state_convention"):
             try:
-                convention = hilbert.state_convention
+                conv = hilbert.state_convention
             except Exception:
-                convention = None
+                conv = None
 
-        if convention:
-            local_space_type = _normalize_key(convention.get("name"), local_space_type)
-            vector_encoding = convention.get("vector_encoding", vector_encoding)
-            integer_encoding = convention.get("integer_encoding", integer_encoding)
+        if conv:
+            l_type  = _normalize_key(conv.get("name"), l_type)
+            v_enc   = conv.get("vector_encoding", v_enc)
+            i_enc   = conv.get("integer_encoding", i_enc)
 
-    sampler_representation = _resolve_sampler_representation(local_space_type, vector_encoding)
-    if sampler_representation == "binary_01" and basis_type == "real" and local_space_type.startswith("spin-"):
-        network_representation = "spin_binary_native"
-    elif sampler_representation == "occupation_binary":
-        network_representation = "occupation_binary_native"
+    s_repr = _resolve_sampler_representation(l_type, v_enc)
+    if s_repr == "binary_01" and basis_type == "real" and l_type.startswith("spin-"):
+        n_repr = "spin_binary_native"
+    elif s_repr == "occupation_binary":
+        n_repr = "occupation_binary_native"
     else:
-        network_representation = sampler_representation
+        n_repr = s_repr
 
     return ModelRepresentationInfo(
-        basis_type=basis_type,
-        local_space_type=local_space_type,
-        vector_encoding=vector_encoding,
-        integer_encoding=integer_encoding,
-        sampler_representation=sampler_representation,
-        network_representation=network_representation,
+        basis_type              =   basis_type,
+        local_space_type        =   l_type,
+        vector_encoding         =   v_enc,
+        integer_encoding        =   i_enc,
+        sampler_representation  =   s_repr,
+        network_representation  =   n_repr,
     )
 
-
 def apply_nqs_representation_overrides(
-    network_type: Any,
-    representation: Optional[ModelRepresentationInfo],
-    kwargs: Optional[Dict[str, Any]] = None,
+    network_type    : Any,
+    representation  : Optional[ModelRepresentationInfo],
+    kwargs          : Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Apply NQS-side basis/state-convention kwargs to otherwise generic networks.
+    Apply NQS-side basis/state-convention overrides to otherwise generic networks.
+    Useful for automatically mapping binary inputs to PM1 spins inside the network.
     """
-    resolved_kwargs = dict(kwargs or {})
+    res_kwargs = dict(kwargs or {})
     if representation is None:
-        return resolved_kwargs
+        return res_kwargs
 
     family = canonical_network_request_family(network_type)
     if not family:
-        return resolved_kwargs
+        return res_kwargs
 
-    sampler_representation = resolved_kwargs.get("state_representation", representation.sampler_representation)
-    sampler_key = _normalize_key(sampler_representation)
-    local_key = _normalize_key(representation.local_space_type)
-    is_spin_model = local_key.startswith("spin-")
-    is_binary_state = sampler_key in {"binary-01", "occupation-binary"}
-    is_spin_state = sampler_key == "spin-pm"
-    input_value = resolve_representation_value(
-        sampler_representation,
-        local_space_type=representation.local_space_type,
-        fallback=1.0,
-    )
+    s_repr      = res_kwargs.get("state_representation", representation.sampler_representation)
+    s_key       = _normalize_key(s_repr)
+    l_key       = _normalize_key(representation.local_space_type)
+    is_spin_m   = l_key.startswith("spin-")
+    is_bin_s    = s_key in {"binary-01", "occupation-binary"}
+    is_spin_s   = s_key == "spin-pm"
+    in_val      = resolve_representation_value(s_repr, local_space_type=representation.local_space_type, fallback=1.0)
 
-    if family == "rbm" and is_spin_model and is_binary_state:
-        resolved_kwargs.setdefault(
-            "input_activation",
-            partial(map_state_to_pm1, input_is_spin=is_spin_state, input_value=input_value),
-        )
-    elif family in {"cnn", "mlp", "gcnn", "resnet"} and is_spin_model and sampler_key == "binary-01":
-        resolved_kwargs.setdefault(
-            "input_adapter",
-            partial(map_state_to_pm1, input_is_spin=is_spin_state, input_value=input_value),
-        )
+    if family == "rbm" and is_spin_m and is_bin_s:
+        res_kwargs.setdefault("input_activation", partial(map_state_to_pm1, input_is_spin=is_spin_s, input_value=in_val))
+    elif family in {"cnn", "mlp", "gcnn", "resnet"} and is_spin_m and s_key == "binary-01":
+        res_kwargs.setdefault("input_adapter", partial(map_state_to_pm1, input_is_spin=is_spin_s, input_value=in_val))
     elif family in {"pp", "mps"}:
-        resolved_kwargs.setdefault("input_is_spin", is_spin_state)
-        resolved_kwargs.setdefault("input_value", input_value)
+        res_kwargs.setdefault("input_is_spin", is_spin_s)
+        res_kwargs.setdefault("input_value", in_val)
 
-    return resolved_kwargs
+    return res_kwargs
+
+# ------------------------------------------------------------------
+#! NQS INSTANCE HELPERS
+# ------------------------------------------------------------------
 
 def resolve_nqs_state_defaults(nqs: Any, fallback_mode_repr: float = 0.5) -> Tuple[bool, float]:
     """
-    Resolve the effective state convention attached to an NQS instance.
+    Resolve the effective state convention (spin flag and mode magnitude) 
+    attached to an NQS instance.
     """
-    convention = getattr(nqs, "state_convention", None)
-    if isinstance(convention, dict):
-        return bool(convention.get("spin", False)), float(convention.get("mode_repr", fallback_mode_repr))
+    # Try explicit convention attribute
+    conv = getattr(nqs, "state_convention", None)
+    if isinstance(conv, dict):
+        return bool(conv.get("spin", False)), float(conv.get("mode_repr", fallback_mode_repr))
 
     sampler = getattr(nqs, "sampler", None)
-    representation_info = getattr(nqs, "_representation_info", None)
+    rep_inf = getattr(nqs, "_representation_info", None)
 
-    sampler_representation = getattr(nqs, "_state_representation", None)
-    if sampler_representation is None:
-        sampler_representation = getattr(sampler, "state_representation", None)
-    if sampler_representation is None and representation_info is not None:
-        sampler_representation = getattr(representation_info, "sampler_representation", None)
+    # Resolve representation string
+    s_repr = getattr(nqs, "_state_representation", None)
+    if s_repr is None:
+        s_repr = getattr(sampler, "state_representation", None)
+    if s_repr is None and rep_inf is not None:
+        s_repr = getattr(rep_inf, "sampler_representation", None)
 
-    sampler_key = _normalize_key(sampler_representation)
-    sampler_spin = getattr(nqs, "_spin_repr", None)
-    if sampler_spin is None:
-        sampler_spin = getattr(sampler, "_spin_repr", None)
-    if sampler_spin is None:
-        sampler_spin = sampler_key == "spin-pm"
+    s_key = _normalize_key(s_repr)
 
-    sampler_mode_repr = getattr(nqs, "_mode_repr", None)
-    if sampler_mode_repr is None:
-        sampler_mode_repr = getattr(sampler, "_mode_repr", None)
-    if sampler_mode_repr is None:
-        sampler_mode_repr = resolve_representation_value(
-            sampler_representation,
-            local_space_type=(
-                getattr(representation_info, "local_space_type", None)
-                if representation_info is not None
-                else None
-            ),
-            fallback=float(fallback_mode_repr),
+    # Resolve spin flag
+    s_spin = getattr(nqs, "_spin_repr", None)
+    if s_spin is None:
+        s_spin = getattr(sampler, "_spin_repr", None)
+    if s_spin is None:
+        s_spin = s_key == "spin-pm"
+
+    # Resolve mode magnitude
+    s_mode = getattr(nqs, "_mode_repr", None)
+    if s_mode is None:
+        s_mode = getattr(sampler, "_mode_repr", None)
+    if s_mode is None:
+        s_mode = resolve_representation_value(
+            s_repr,
+            local_space_type    =   getattr(rep_inf, "local_space_type", None) if rep_inf else None,
+            fallback            =   float(fallback_mode_repr),
         )
 
-    return bool(sampler_spin), float(sampler_mode_repr)
+    return bool(s_spin), float(s_mode)
 
 
 __all__ = [

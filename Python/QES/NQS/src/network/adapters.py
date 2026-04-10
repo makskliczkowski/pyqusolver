@@ -136,32 +136,20 @@ class NQSNetAdapterBase:
         }
 
 # ------------------------------------------------------------------------------
-
 class NQSRBMAdapter(NQSNetAdapterBase):
     family = "rbm"
     sampler_kind = "MCSampler"
 
-    def preferred_sampler_representation(self) -> str:
-        return self.representation.sampler_representation
-
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
-        hooks                   = super().resolve_sampling_hooks()
-        sampler_representation  = self.preferred_sampler_representation()
-        sampler_key             = sampler_representation.replace("_", "-")
-        state_spin              = sampler_key == "spin-pm"
-        state_value             = self._resolve_sampler_value(sampler_representation, fallback=1.0)
+        hooks = super().resolve_sampling_hooks()
 
         if hooks["log_psi_delta"] is None and hasattr(self.net, "get_log_psi_delta"):
             hooks["log_psi_delta"] = self.net.get_log_psi_delta()
-            
+
         if hooks["log_psi_delta_cache_init"] is None and hasattr(self.net, "get_log_psi_delta_cache_init"):
             hooks["log_psi_delta_cache_init"]       = self.net.get_log_psi_delta_cache_init()
             hooks["log_psi_delta_supports_cache"]   = True
 
-        if hooks["log_psi_delta"] is not None:
-            hooks["log_psi_delta"] = partial(
-                hooks["log_psi_delta"],
-                proposal_update=partial(_flip_selected_values, state_spin=state_spin, state_value=state_value))
         return hooks
 
 # ------------------------------------------------------------------------------

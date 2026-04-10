@@ -1915,10 +1915,10 @@ class NQS(MonteCarloSolver):
     # --------------------------------
 
     def _model_state_convention(self) -> Dict[str, Any]:
-        representation = getattr(self._representation_info, "sampler_representation", None)
-        if representation is None:
-            representation  = self._state_representation
-
+        """
+        Extract the canonical Hamiltonian-facing state convention.
+        """
+        representation      = getattr(self._representation_info, "sampler_representation", self._state_representation)
         local_space_type    = getattr(self._representation_info, "local_space_type", None)
         mode_repr           = resolve_representation_value(
                                 representation,
@@ -1938,45 +1938,48 @@ class NQS(MonteCarloSolver):
             return local_energy_fn
         return bind_local_energy_state_convention(
             local_energy_fn,
-            state_convention=self.state_convention,
-            local_convention=self._model_state_convention(),
+            state_convention    =   self.state_convention,
+            local_convention    =   self._model_state_convention(),
         )
 
     def _refresh_loss_function_binding(self) -> None:
         if getattr(self._nqsproblem, "typ", None) not in {"wavefunction", "ground"}:
             return
-        raw_local_energy = getattr(self._nqsproblem, "local_energy_fn", None)
+        raw_local_energy    = getattr(self._nqsproblem, "local_energy_fn", None)
         self._local_en_func = self._bind_local_energy_function(raw_local_energy)
-        self._loss_func = self._local_en_func
-
-    def _preferred_state_convention(self) -> Tuple[Optional[str], Optional[float]]:
-        sampler_representation  = getattr(self._representation_info, "sampler_representation", None)
-        mode_repr               = None
-        if self._network_adapter is not None:
-            if hasattr(self._network_adapter, "preferred_sampler_representation"):
-                sampler_representation = self._network_adapter.preferred_sampler_representation()
-            if hasattr(self._network_adapter, "preferred_sampler_mode_repr"):
-                mode_repr = self._network_adapter.preferred_sampler_mode_repr()
-        return sampler_representation, mode_repr
+        self._loss_func     = self._local_en_func
 
     def _set_state_convention(self, **kwargs) -> Dict[str, Any]:
-        preferred_representation, preferred_mode_repr = self._preferred_state_convention()
+        """
+        Resolve and apply one consistent state convention for NQS-side interactions.
+        """
+        # 1. Resolve preferred defaults from network/model metadata
+        pref_repr           = getattr(self._representation_info, "sampler_representation", None)
+        pref_mode           = None
+        if self._network_adapter is not None:
+            if hasattr(self._network_adapter, "preferred_sampler_representation"):
+                pref_repr   = self._network_adapter.preferred_sampler_representation()
+            if hasattr(self._network_adapter, "preferred_sampler_mode_repr"):
+                pref_mode   = self._network_adapter.preferred_sampler_mode_repr()
+
+        # 2. Apply user overrides or defaults
         state_representation = kwargs.get("state_representation", self._state_representation)
         if state_representation is None:
-            state_representation = preferred_representation
+            state_representation = pref_repr
 
         spin_repr, mode_repr = resolve_state_defaults(
             state_representation,
-            spin=kwargs.get("spin", self._spin_repr),
-            mode_repr=kwargs.get("mode_repr", self._mode_repr),
-            fallback_mode_repr=(preferred_mode_repr if preferred_mode_repr is not None else 0.5),
+            spin                =   kwargs.get("spin", self._spin_repr),
+            mode_repr           =   kwargs.get("mode_repr", self._mode_repr),
+            fallback_mode_repr  =   (pref_mode if pref_mode is not None else 0.5),
         )
 
-        local_dim = kwargs.get(
+        local_dim           = kwargs.get(
             "local_dim",
             getattr(getattr(self._hilbert, "local_space", None), "local_dim", self._local_dim),
         )
 
+        # 3. Commit state
         self._state_representation  = state_representation
         self._spin_repr             = bool(spin_repr)
         self._mode_repr             = float(mode_repr)
@@ -1987,9 +1990,12 @@ class NQS(MonteCarloSolver):
             self._mode_repr,
             self._local_dim,
         )
+
+        # 4. Clear caches and re-bind problem functions
         self._resolved_operator_cache.clear()
         if getattr(self, "_nqsproblem", None) is not None:
             self._refresh_loss_function_binding()
+
         return self.state_convention
 
     @property
