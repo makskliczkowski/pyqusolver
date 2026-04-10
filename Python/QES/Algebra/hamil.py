@@ -130,7 +130,6 @@ class Hamiltonian(BasisAwareOperator):
     _ADD_TOLERANCE = 1e-10
 
     def _ADD_CONDITION(x, *args):
-        from collections.abc import Mapping, Iterable
         def _is_nonzero_like(value):
             """
             Robust scalar/array-like non-zero check.
@@ -180,11 +179,11 @@ class Hamiltonian(BasisAwareOperator):
                         return any(_is_nonzero_like(v) for v in np.ravel(value))
 
             # Mapping path fallback
-            if isinstance(value, Mapping):
+            if hasattr(value, "keys"):
                 return any(_is_nonzero_like(v) for v in value.values())
 
             # Generic iterable fallback
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
                 try:
                     return any(_is_nonzero_like(v) for v in value)
                 except Exception:
@@ -528,37 +527,26 @@ class Hamiltonian(BasisAwareOperator):
 
     def _coefficient_for_site(self, coefficient: Any, site: int):
         if callable(coefficient):
-            return coefficient(int(site))
-        if isinstance(coefficient, dict):
-            if site in coefficient:
-                return coefficient[site]
-            return coefficient.get(int(site), 0.0)
+            return coefficient(site)
         if isinstance(coefficient, (list, tuple)):
-            if len(coefficient) == int(self.ns):
-                return coefficient[int(site)]
+            if len(coefficient) == self.ns:
+                return coefficient[site]
             raise ValueError(f"Site coefficient sequence must have size Ns={self.ns}, got size={len(coefficient)}.")
         if hasattr(coefficient, "ndim"):
             if coefficient.ndim == 0:
                 return coefficient.item()
-            if coefficient.size == int(self.ns):
-                return coefficient[int(site)]
+            if coefficient.size == self.ns:
+                return coefficient[site]
             raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={coefficient.shape}.")
-        from collections.abc import Mapping
-        if isinstance(coefficient, Mapping):
+        if isinstance(coefficient, dict) or hasattr(coefficient, "get"):
             if site in coefficient:
                 return coefficient[site]
-            return coefficient.get(int(site), 0.0)
+            return coefficient.get(site, 0.0)
         return coefficient
 
     def _coefficient_for_bond(self, coefficient: Any, i: int, j: int, idx: int):
         if callable(coefficient):
-            return coefficient(int(i), int(j), int(idx))
-        if isinstance(coefficient, dict):
-            if (i, j) in coefficient:
-                return coefficient[(i, j)]
-            if (j, i) in coefficient:
-                return coefficient[(j, i)]
-            return 0.0
+            return coefficient(i, j, idx)
         if isinstance(coefficient, (list, tuple)):
             if idx < len(coefficient):
                 return coefficient[idx]
@@ -569,8 +557,7 @@ class Hamiltonian(BasisAwareOperator):
             if idx < coefficient.size:
                 return coefficient[idx]
             raise ValueError(f"Bond coefficient array sequence too short: need index {idx}, size={coefficient.size}.")
-        from collections.abc import Mapping
-        if isinstance(coefficient, Mapping):
+        if isinstance(coefficient, dict) or hasattr(coefficient, "get"):
             if (i, j) in coefficient:
                 return coefficient[(i, j)]
             if (j, i) in coefficient:
