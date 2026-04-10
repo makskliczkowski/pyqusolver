@@ -145,6 +145,32 @@ def test_nqs_spin_half_binary_overrides_keep_unit_binary_inputs():
 	)
 
 
+def test_explicit_binary_override_beats_spin_model_default():
+	representation = ModelRepresentationInfo(
+		basis_type="real",
+		local_space_type="spin-1/2",
+		vector_encoding="Length-Ns array with signed entries in {-0.5,+0.5}.",
+		integer_encoding="Binary computational basis.",
+		sampler_representation="spin_pm",
+		network_representation="spin_pm",
+	)
+	states = jnp.array([[0, 1, 0, 1]], dtype=jnp.float32)
+	expected = jnp.array([[-1, 1, -1, 1]], dtype=jnp.float32)
+
+	rbm_kwargs = apply_nqs_representation_overrides(
+		"rbm",
+		representation,
+		{"state_representation": "binary_01"},
+	)
+
+	np.testing.assert_allclose(
+		np.asarray(rbm_kwargs["input_activation"](states)),
+		np.asarray(expected),
+		rtol=1e-6,
+		atol=1e-6,
+	)
+
+
 def test_mps_and_pair_product_metadata_follow_input_convention():
 	mps_bin = MPS(input_shape=(4,), bond_dim=2, dtype=jnp.complex64, param_dtype=jnp.complex64, seed=0, input_spin=False, input_value=1.0)
 	mps_spin = MPS(input_shape=(4,), bond_dim=2, dtype=jnp.complex64, param_dtype=jnp.complex64, seed=0, input_spin=True, input_value=0.5)

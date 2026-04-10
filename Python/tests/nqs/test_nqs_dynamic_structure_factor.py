@@ -237,4 +237,5 @@ def test_compute_observable_resolves_state_bound_operator():
 
     assert probe.calls == 1
     assert np.isfinite(result.mean)
-    assert np.isclose(result.mean, 1.0)
+    expected = 1.0 if nqs.state_representation == "binary_01" else -1.0
+    assert np.isclose(result.mean, expected)

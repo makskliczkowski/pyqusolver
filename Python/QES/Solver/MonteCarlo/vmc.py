@@ -117,11 +117,11 @@ class VMCSampler(Sampler):
     ----------
     - **State Shape**: `(num_chains, *shape)`.
     - **State Convention**: The sampler stores and returns states in one explicit
-      external convention. For spin-1/2 systems the default convention is the
-      binary computational basis `{0, 1}` unless `state_representation` is set
-      explicitly. Generic backbones may internally remap these inputs to signed
-      values, but proposal rules, cached fast updates, and returned samples all
-      stay in the same external convention.
+      external convention. For spin-1/2 systems the default convention follows
+      the Hamiltonian/operator kernels and uses signed values `{-0.5, +0.5}`
+      unless `state_representation` is set explicitly. Proposal rules, cached
+      fast updates, local-energy evaluation, and returned samples all stay in
+      that same external convention.
     - **Log-Probabilities**: Maintained internally to avoid re-evaluation.
       Re-evaluated only after updates or when `reset()` is called.
     - **Fast Updates**: If `net` implements `log_psi_delta`, the sampler attempts to use

@@ -144,17 +144,6 @@ class NQSRBMAdapter(NQSNetAdapterBase):
     def preferred_sampler_representation(self) -> str:
         return self.representation.sampler_representation
 
-    def preferred_sampler_mode_repr(self):
-        sampler_representation = self.preferred_sampler_representation().replace("_", "-")
-        if sampler_representation == "spin-pm":
-            # Generic RBMs operating directly on signed spin inputs expect the
-            # conventional {-1, +1} encoding, not the physical spin magnitude
-            # (for example +/-0.5 for spin-1/2). The latter would silently
-            # rescale every visible unit and corrupt both training and exact
-            # entropy evaluation when a prebuilt generic RBM is passed into NQS.
-            return 1.0
-        return super().preferred_sampler_mode_repr()
-
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
         hooks                   = super().resolve_sampling_hooks()
         sampler_representation  = self.preferred_sampler_representation()

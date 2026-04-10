@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 CUSTOM_OP_BASE  = 1000  # Custom operators start from this code
 CUSTOM_OP_MAX   = 9999  # Maximum custom operator code
 
+
 def is_custom_code(code: int) -> bool:
     """Check if an instruction code represents a custom operator."""
     return CUSTOM_OP_BASE <= code <= CUSTOM_OP_MAX

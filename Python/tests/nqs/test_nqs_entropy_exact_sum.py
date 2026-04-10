@@ -19,6 +19,10 @@ except ImportError:
     pytest.skip("Required QES modules are not available.", allow_module_level=True)
 
 
+def _binary_to_spin_pm_half(states):
+    return np.asarray(states, dtype=np.float64) - 0.5
+
+
 def _build_exact_cat_state_nqs():
     lattice = SquareLattice(dim=1, lx=2, bc="obc")
     hilbert = HilbertSpace(lattice=lattice)
@@ -181,13 +185,61 @@ def test_spin_half_exact_helpers_match_sampler_binary_state_convention():
         assert unique_values.issubset({0.0, 1.0})
 
 
+def test_hamiltonian_local_energy_uses_active_binary_state_convention():
+    lattice = SquareLattice(dim=1, lx=2, bc="obc")
+    hilbert = HilbertSpace(lattice=lattice)
+    model = TransverseFieldIsing(
+        lattice=lattice,
+        hilbert_space=hilbert,
+        j=0.0,
+        hx=1.0,
+        hz=0.0,
+        dtype=np.complex128,
+    )
+    net = RBM(
+        input_shape=(hilbert.ns,),
+        n_hidden=2,
+        dtype=jnp.complex128,
+        param_dtype=jnp.complex128,
+        seed=1,
+    )
+    nqs = NQS(
+        logansatz=net,
+        model=model,
+        hilbert=hilbert,
+        sampler="vmc",
+        batch_size=8,
+        backend="jax",
+        dtype=np.complex128,
+        symmetrize=False,
+        verbose=False,
+        seed=1,
+        state_representation="binary_01",
+        s_numsamples=8,
+        s_numchains=2,
+        s_therm_steps=2,
+        s_sweep_steps=1,
+    )
+
+    state_binary = np.array([0.0, 1.0], dtype=np.float64)
+    bound_states, bound_vals = nqs.local_energy(state_binary)
+    ref_states, ref_vals = model.get_loc_energy_jax_fun()(jnp.asarray(_binary_to_spin_pm_half(state_binary)))
+
+    np.testing.assert_allclose(
+        np.asarray(bound_states),
+        (np.asarray(ref_states) > 0.0).astype(np.float64),
+        rtol=1e-10,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(np.asarray(bound_vals), np.asarray(ref_vals), rtol=1e-10, atol=1e-10)
+    assert set(np.unique(np.asarray(bound_states, dtype=np.float64)).tolist()).issubset({0.0, 1.0})
+
+
 def test_trained_tfim_entropy_matches_ed_for_multiple_regions_and_q():
     hilbert, nqs, model, psi_exact, stats = _build_trained_tfim_state()
 
-    # Generic RBM sampling must use a unit-valued convention, not physical
-    # +/-1/2 spin magnitudes, otherwise the visible layer is silently rescaled.
-    assert getattr(nqs, "_state_representation", None) in {"spin_pm", "binary_01"}
-    assert float(getattr(nqs, "_mode_repr", 0.0)) == 1.0
+    assert getattr(nqs, "_state_representation", None) == "spin_pm"
+    assert float(getattr(nqs, "_mode_repr", 0.0)) == 0.5
 
     assert abs(float(stats.history[-1]) - float(np.real(model.eig_val[0]))) < 1.0e-1
 

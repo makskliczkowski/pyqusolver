@@ -137,11 +137,11 @@ class NQS(MonteCarloSolver):
     - **Input Shapes**: The network must accept inputs of shape `(batch_size, n_sites)`.
     - **Output Shapes**: The network must return log-amplitudes of shape `(batch_size,)`.
       Complex outputs are expected for general quantum states.
-    - **State Convention**: Public states follow the attached model/Hilbert convention by default.
-      For spin-1/2 systems this means the binary computational basis with entries in `{0, 1}`
-      (`0 -> |down>`, `1 -> |up>`). Networks may remap these inputs internally, but
-      sampling, Hamiltonian evaluation, observables, entropy helpers, and exact summation
-      all use the same external convention unless `state_representation` is overridden explicitly.
+    - **State Convention**: Public states follow the attached model/Hamiltonian convention by default.
+      For spin-1/2 systems this means signed local values in `{-0.5, +0.5}` unless
+      `state_representation` is overridden explicitly. Networks may remap these inputs
+      internally, but sampling, Hamiltonian evaluation, observables, entropy helpers,
+      and exact summation all use one consistent external convention.
     - **Dtypes**: `complex128` (or `complex64`) is strongly recommended for numerical stability,
       especially for time evolution and phase-sensitive models.
     - **Normalization**: The ansatz does not need to be normalized; VMC handles normalization via ratio estimators.
@@ -287,9 +287,9 @@ class NQS(MonteCarloSolver):
                 The physical model (e.g., Hamiltonian) for the NQS.
                 - If physics is 'wavefunction', this must provide a `local_energy_fn`.
                 - For other physics types, refer to the specific requirements.
-                - Unless overridden, the NQS adopts the model/Hilbert state convention.
-                  For spin-1/2 this default is binary `{0, 1}` rather than physical
-                  signed values such as `+/-0.5`.
+                - Unless overridden, the NQS adopts the model/Hamiltonian state convention.
+                  For spin-1/2 this default is the signed operator convention
+                  `{-0.5, +0.5}`.
             batch_size [Optional[int]]:
                 The batch size for training.
             nthstate [Optional[int]]:
@@ -577,8 +577,7 @@ class NQS(MonteCarloSolver):
             raise ValueError(f"Failed to reset the physics problem. Original error: {e}")
 
         if self._nqsproblem.typ == "wavefunction":
-            self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
-            self._loss_func     = self._local_en_func
+            self._refresh_loss_function_binding()
         elif self._nqsproblem.typ == "densitymatrix":
             self._loss_func     = getattr(self._nqsproblem, "loss_fn", None)
         elif self._nqsproblem.typ == "unitary":
@@ -950,8 +949,6 @@ class NQS(MonteCarloSolver):
             sampler_kwargs["network_adapter"]       = self._network_adapter
             self._set_state_convention(**sampler_kwargs)
             sampler_kwargs.setdefault("state_representation", self._state_representation)
-            if self._network_adapter is not None:
-                setattr(self._network_adapter, "sampler_representation_override", self._state_representation)
 
             auto_cfg = {}
             if any(key not in kwargs for key in ("s_numchains", "s_numsamples", "s_sweep_steps", "s_therm_steps")):
@@ -1917,6 +1914,41 @@ class NQS(MonteCarloSolver):
     #! STATE CONVENTION RESOLUTION AND OPERATOR BINDING
     # --------------------------------
 
+    def _model_state_convention(self) -> Dict[str, Any]:
+        representation = getattr(self._representation_info, "sampler_representation", None)
+        if representation is None:
+            representation  = self._state_representation
+
+        local_space_type    = getattr(self._representation_info, "local_space_type", None)
+        mode_repr           = resolve_representation_value(
+                                representation,
+                                local_space_type=local_space_type,
+                                fallback=(self._mode_repr if self._mode_repr is not None else 1.0),
+                            )
+        return {
+            "representation"        : representation,
+            "spin"                  : str(representation).strip().lower().replace("_", "-") == "spin-pm",
+            "mode_repr"             : float(mode_repr),
+            "local_dim"             : int(self._local_dim),
+            "representation_info"   : self._representation_info,
+        }
+
+    def _bind_local_energy_function(self, local_energy_fn):
+        if local_energy_fn is None or not isinstance(self._model, Hamiltonian):
+            return local_energy_fn
+        return bind_local_energy_state_convention(
+            local_energy_fn,
+            state_convention=self.state_convention,
+            local_convention=self._model_state_convention(),
+        )
+
+    def _refresh_loss_function_binding(self) -> None:
+        if getattr(self._nqsproblem, "typ", None) not in {"wavefunction", "ground"}:
+            return
+        raw_local_energy = getattr(self._nqsproblem, "local_energy_fn", None)
+        self._local_en_func = self._bind_local_energy_function(raw_local_energy)
+        self._loss_func = self._local_en_func
+
     def _preferred_state_convention(self) -> Tuple[Optional[str], Optional[float]]:
         sampler_representation  = getattr(self._representation_info, "sampler_representation", None)
         mode_repr               = None
@@ -1956,6 +1988,8 @@ class NQS(MonteCarloSolver):
             self._local_dim,
         )
         self._resolved_operator_cache.clear()
+        if getattr(self, "_nqsproblem", None) is not None:
+            self._refresh_loss_function_binding()
         return self.state_convention
 
     @property
@@ -2769,13 +2803,18 @@ class NQS(MonteCarloSolver):
         Parameters:
             new_model: The new Hamiltonian/model to use.
         """
+        old_default_representation = getattr(self._representation_info, "sampler_representation", None)
         self._model = new_model
+        self._representation_info = resolve_model_representation(self._model, hilbert=self._hilbert)
+        keep_representation = self._state_representation
+        if keep_representation == old_default_representation:
+            keep_representation = None
+        self._set_state_convention(state_representation=keep_representation)
         self._nqsproblem.setup(self._model, self._net)
 
         # Reconfigure loss function for wavefunction problem
         if self._nqsproblem.typ == "wavefunction":
-            self._local_en_func = getattr(self._nqsproblem, "local_energy_fn", None)
-            self._loss_func = self._local_en_func
+            self._refresh_loss_function_binding()
 
         # Re-initialize directory for new model
         self._init_directory()
