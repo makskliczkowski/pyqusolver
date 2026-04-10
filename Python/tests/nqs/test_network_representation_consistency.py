@@ -5,6 +5,7 @@ jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
 
 try:
+	from QES.NQS.src.network.representation import ModelRepresentationInfo, apply_nqs_representation_overrides
 	from QES.general_python.ml.net_impl.networks.net_mlp import MLP
 	from QES.general_python.ml.net_impl.networks.net_cnn import CNN
 	from QES.general_python.ml.net_impl.networks.net_rbm import RBM
@@ -113,6 +114,35 @@ def test_rbm_binary_and_spin_inputs_match_when_configured_explicitly():
 	np.testing.assert_allclose(np.asarray(net_bin(states_bin)), np.asarray(net_spin(states_spin)), rtol=1e-6, atol=1e-6)
 	assert net_bin.get_nqs_metadata()["native_representation"] == "binary_01"
 	assert net_spin.get_nqs_metadata()["native_representation"] == "spin_pm"
+
+
+def test_nqs_spin_half_binary_overrides_keep_unit_binary_inputs():
+	representation = ModelRepresentationInfo(
+		basis_type="real",
+		local_space_type="spin-1/2",
+		vector_encoding="Length-Ns array with entries in {0,1}.",
+		integer_encoding="Binary computational basis.",
+		sampler_representation="binary_01",
+		network_representation="spin_binary_native",
+	)
+	states = jnp.array([[0, 1, 0, 1], [1, 0, 1, 0]], dtype=jnp.float32)
+	expected = jnp.array([[-1, 1, -1, 1], [1, -1, 1, -1]], dtype=jnp.float32)
+
+	rbm_kwargs = apply_nqs_representation_overrides("rbm", representation, {})
+	mlp_kwargs = apply_nqs_representation_overrides("mlp", representation, {})
+
+	np.testing.assert_allclose(
+		np.asarray(rbm_kwargs["input_activation"](states)),
+		np.asarray(expected),
+		rtol=1e-6,
+		atol=1e-6,
+	)
+	np.testing.assert_allclose(
+		np.asarray(mlp_kwargs["input_adapter"](states)),
+		np.asarray(expected),
+		rtol=1e-6,
+		atol=1e-6,
+	)
 
 
 def test_mps_and_pair_product_metadata_follow_input_convention():

@@ -28,6 +28,7 @@ from .representation import (
     canonical_network_request_family,
     resolve_model_representation,
     resolve_nqs_state_defaults,
+    resolve_representation_value,
     resolve_spin_mode_repr,
 )
 
@@ -47,5 +48,6 @@ __all__ = [
     "infer_network_family",
     "resolve_model_representation",
     "resolve_nqs_state_defaults",
+    "resolve_representation_value",
     "resolve_spin_mode_repr",
 ]

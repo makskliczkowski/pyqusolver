@@ -241,7 +241,7 @@ class UltrametricModel(hamil_module.Hamiltonian):
                 parts.append(f"a[min={amin:.{prec}f}, max={amax:.{prec}f}]")
         except TypeError:
             parts.append(hamil_module.Hamiltonian.fmt("a", a, prec))
-        return sep.join(parts) + ")"
+        return sep.join([p for p in parts if p]) + ")"
 
     def __repr__(self):
         return self.repr(ns=self.ns, n=self.n, J=self.J, g=self.gamma, alphas=self.alphas)

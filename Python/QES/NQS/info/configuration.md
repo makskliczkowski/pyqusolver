@@ -56,6 +56,11 @@ net     = s_cfg.make_net(physics_config)
 ```python
 from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
 
+# Accelerated path:
+# pip install "QES[jax]"
+# or:
+# pip install "QES[all]"
+
 # Define Physics
 p_cfg = NQSPhysicsConfig(model_type='kitaev', lx=4, ly=3, hx=0.1, hy=0.1, hz=0.1)
 p_cfg.args['kz'] = 1.0
@@ -68,7 +73,7 @@ hamil, hilbert, lattice = p_cfg.make_hamiltonian()
 net                     = s_cfg.make_net(p_cfg)
 
 # Initialize NQS
-psi         = NQS(ansatz=net, model=hamil, hilbert=hilbert, backend=s_cfg.backend)
+psi         = NQS(logansatz=net, model=hamil, hilbert=hilbert, backend=s_cfg.backend)
 train_cfg   = NQSTrainConfig.from_solver(s_cfg)
 psi.train(**train_cfg.to_train_kwargs())
 ```

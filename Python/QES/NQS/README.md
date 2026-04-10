@@ -23,6 +23,11 @@ explicit.
 ```python
 from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
 
+# Accelerated path:
+# pip install "QES[jax]"
+# or:
+# pip install "QES[all]"
+
 p_cfg = NQSPhysicsConfig(
     model_type="kitaev",
     lattice_type="honeycomb",
@@ -45,7 +50,7 @@ model, hilbert, lattice = p_cfg.make_hamiltonian()
 net = s_cfg.make_net(p_cfg, alpha=1.0)
 
 psi = NQS(
-    ansatz=net,
+    logansatz=net,
     model=model,
     hilbert=hilbert,
     backend=s_cfg.backend,
@@ -71,7 +76,7 @@ want, you can construct the solver directly:
 from QES.NQS import NQS
 
 psi = NQS(
-    ansatz="rbm",
+    logansatz="rbm",
     model=model,
     hilbert=hilbert,
     backend="jax",

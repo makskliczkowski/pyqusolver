@@ -40,6 +40,7 @@ from    contextlib import contextmanager as _contextmanager
 from    typing import TYPE_CHECKING
 import  typing as _t
 
+# -----------------------------------------------------------------------
 
 def _apply_master_backend_env_defaults() -> None:
     """Normalize global backend env flags before importing backend-aware modules."""
@@ -62,7 +63,6 @@ def _apply_master_backend_env_defaults() -> None:
         _os.environ.setdefault("JAX_PLATFORMS",         "cpu")
         _os.environ.setdefault("JAX_PLATFORM_NAME",     "cpu")
 
-
 _apply_master_backend_env_defaults()
 
 # -----------------------------------------------------------------------------
@@ -77,7 +77,7 @@ from .qes_globals       import split_jax_keys as _split_jax_keys
 # Registry helpers
 
 # Lightweight registry utilities
-from .registry import describe_module, list_modules
+from .registry          import describe_module, list_modules
 
 # -----------------------------------------------------------------------------
 # Stable compatibility wrappers
@@ -166,7 +166,7 @@ def qes_models_kwargs(model_name: str | None = None):
 
 # Mapping of attribute names to (module_relative_path, attribute_name_in_module)
 # If attribute_name_in_module is None, the module itself is imported.
-_STABLE_LAZY_IMPORTS = {
+_CORE_LAZY_IMPORTS = {
     # Session Management
     'QESSession'                : ('.session',          'QESSession'),
     'run'                       : ('.session',          'run'),
@@ -179,10 +179,18 @@ _STABLE_LAZY_IMPORTS = {
     "HilbertSpace"              : (".Algebra.hilbert", "HilbertSpace"),
     "Hamiltonian"               : (".Algebra.hamil", "Hamiltonian"),
     "Operator"                  : (".Algebra.Operator.operator", "Operator"),
+    "choose_model"              : (".Algebra.Model", "choose_model"),
+    # Common Utilities
+    "log_memory_status"         : (".general_python.common", "log_memory_status"),
+    "check_memory_for_operation": (".general_python.common", "check_memory_for_operation"),
+    "Timer"                     : (".general_python.common", "Timer"),
+    "dtype_to_name"             : (".general_python.common", "dtype_to_name"),
+}
+
+_CONVENIENCE_LAZY_IMPORTS = {
     # Core classes from QES.Solver
     "MonteCarloSolver"          : (".Solver.MonteCarlo.montecarlo", "MonteCarloSolver"),
     "Sampler"                   : (".Solver.MonteCarlo.sampler", "Sampler"),
-    "choose_model"              : (".Algebra.Model", "choose_model"),
     # Networks from QES.general_python.ml
     "RBM"                       : (".general_python.ml.net_impl.networks.net_rbm", "RBM"),
     "CNN"                       : (".general_python.ml.net_impl.networks.net_cnn", "CNN"),
@@ -190,10 +198,6 @@ _STABLE_LAZY_IMPORTS = {
     "Autoregressive"            : (".general_python.ml.net_impl.networks.net_autoregressive", "Autoregressive"),
     "SimpleNet"                 : (".general_python.ml.net_impl.net_simple", "SimpleNet"),
     "choose_network"            : (".general_python.ml.networks", "choose_network"),
-    # Common Utilities (Lazy & Flattened)
-    "log_memory_status"         : (".general_python.common", "log_memory_status"),
-    "check_memory_for_operation": (".general_python.common", "check_memory_for_operation"),
-    "Timer"                     : (".general_python.common", "Timer"),
 }
 
 _LEGACY_LAZY_IMPORTS = {
@@ -211,8 +215,9 @@ _LEGACY_LAZY_IMPORTS = {
     "NQS_Model"                 : (".NQS.nqs", "NQS"),
 }
 
-_LAZY_IMPORTS           = {**_STABLE_LAZY_IMPORTS, **_LEGACY_LAZY_IMPORTS}
-_LEGACY_IMPORT_NAMES    = frozenset(_LEGACY_LAZY_IMPORTS)
+_LAZY_IMPORTS               = {**_CORE_LAZY_IMPORTS, **_CONVENIENCE_LAZY_IMPORTS, **_LEGACY_LAZY_IMPORTS}
+_LEGACY_IMPORT_NAMES        = frozenset(_LEGACY_LAZY_IMPORTS)
+_CONVENIENCE_IMPORT_NAMES   = frozenset(_CONVENIENCE_LAZY_IMPORTS)
 
 # Cache for lazily loaded modules/attributes
 _LAZY_CACHE             = {}
@@ -238,20 +243,21 @@ if TYPE_CHECKING:
     from .general_python import physics as gp_physics
 
     # Utilities
-    from .general_python.common.memory import check_memory_for_operation, log_memory_status
-    from .general_python.common.timer import Timer
-    from .general_python.ml.net_impl.net_simple import SimpleNet
-    from .general_python.ml.net_impl.networks.net_autoregressive import Autoregressive
-    from .general_python.ml.net_impl.networks.net_cnn import CNN
+    from .general_python.common                                     import dtype_to_name
+    from .general_python.common.memory                              import check_memory_for_operation, log_memory_status
+    from .general_python.common.timer                               import Timer
+    from .general_python.ml.net_impl.net_simple                     import SimpleNet
+    from .general_python.ml.net_impl.networks.net_autoregressive    import Autoregressive
+    from .general_python.ml.net_impl.networks.net_cnn               import CNN
 
     # Networks
-    from .general_python.ml.net_impl.networks.net_rbm import RBM
-    from .general_python.ml.net_impl.networks.net_res import ResNet
+    from .general_python.ml.net_impl.networks.net_rbm               import RBM
+    from .general_python.ml.net_impl.networks.net_res               import ResNet
     from .general_python.ml.networks import choose_network
 
     # Solver
-    from .Solver.MonteCarlo.montecarlo import MonteCarloSolver
-    from .Solver.MonteCarlo.sampler import Sampler
+    from .Solver.MonteCarlo.montecarlo                              import MonteCarloSolver
+    from .Solver.MonteCarlo.sampler                                 import Sampler
 
 
 def _lazy_import(name: str):
@@ -302,7 +308,10 @@ def __getattr__(name: str) -> _t.Any:  # PEP 562
     try:
         return _lazy_import(name)
     except AttributeError:
-        from .Algebra.Model._registry import resolve_model_export as _resolve_model_export
+        try:
+            from .Algebra.Model._registry import resolve_model_export as _resolve_model_export
+        except ImportError as exc:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
 
         try:
             return _resolve_model_export(name)
@@ -311,9 +320,7 @@ def __getattr__(name: str) -> _t.Any:  # PEP 562
 
 def __dir__():
     """Return the stable top-level package attribute list."""
-    from .Algebra.Model._registry import get_model_export_names as _get_model_export_names
-
-    return sorted(set(__all__) | set(_get_model_export_names()))
+    return sorted(set(__all__))
 
 def next_jax_key() -> _t.Any:
     """Return a fresh JAX PRNG subkey.
@@ -339,7 +346,7 @@ def split_jax_keys(n: int) -> _t.Any:
     )
     return qes_split_keys(n)
 
-__all__ = [
+_PUBLIC_BASE_EXPORTS = [
     # Session
     "QESSession",
     "run",
@@ -350,6 +357,7 @@ __all__ = [
     "qes_seed_scope",
     "qes_model_aliases",
     "qes_models_kwargs",
+    "dtype_to_name",
     # Discovery utilities
     "list_modules",
     "describe_module",
@@ -366,11 +374,9 @@ __all__ = [
     "__email__",
     "__license__",
     "__description__",
-] + list(_LAZY_IMPORTS.keys())
+] + list(_CORE_LAZY_IMPORTS.keys())
 
-from .Algebra.Model._registry import get_model_export_names as _get_model_export_names
-
-__all__ = __all__ + list(_get_model_export_names())
+__all__ = list(dict.fromkeys(_PUBLIC_BASE_EXPORTS))
 
 # -----------------------------------------------------------------------------
 # End of package initialization

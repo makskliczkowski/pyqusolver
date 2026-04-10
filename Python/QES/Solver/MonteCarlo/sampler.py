@@ -148,6 +148,9 @@ def resolve_state_defaults(
         Whether to use spin representation (True for {-1, +1}, False for {0, 1}).
     mode_repr : Optional[float]
         Numerical value representing the "mode" in the state (e.g., 1.0 for binary, -1.0 for spin).
+        Binary/occupation conventions always default to unit-valued occupied/up
+        entries; physical spin magnitudes only apply to explicit signed-spin
+        conventions.
     """
     representation  = str(state_representation).strip().lower() if state_representation is not None else None
     is_binary       = representation in {"binary_01", "occupation_binary"}

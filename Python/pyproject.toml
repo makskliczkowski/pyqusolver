@@ -51,6 +51,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+standard = [
+    "jax>=0.4.0",
+    "jaxlib>=0.4.0",
+    "flax>=0.6.0",
+    "optax>=0.1.0",
+]
 jax = [
     "jax>=0.4.0",
     "jaxlib>=0.4.0",

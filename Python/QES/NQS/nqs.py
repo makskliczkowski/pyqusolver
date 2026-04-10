@@ -137,6 +137,11 @@ class NQS(MonteCarloSolver):
     - **Input Shapes**: The network must accept inputs of shape `(batch_size, n_sites)`.
     - **Output Shapes**: The network must return log-amplitudes of shape `(batch_size,)`.
       Complex outputs are expected for general quantum states.
+    - **State Convention**: Public states follow the attached model/Hilbert convention by default.
+      For spin-1/2 systems this means the binary computational basis with entries in `{0, 1}`
+      (`0 -> |down>`, `1 -> |up>`). Networks may remap these inputs internally, but
+      sampling, Hamiltonian evaluation, observables, entropy helpers, and exact summation
+      all use the same external convention unless `state_representation` is overridden explicitly.
     - **Dtypes**: `complex128` (or `complex64`) is strongly recommended for numerical stability,
       especially for time evolution and phase-sensitive models.
     - **Normalization**: The ansatz does not need to be normalized; VMC handles normalization via ratio estimators.
@@ -282,6 +287,9 @@ class NQS(MonteCarloSolver):
                 The physical model (e.g., Hamiltonian) for the NQS.
                 - If physics is 'wavefunction', this must provide a `local_energy_fn`.
                 - For other physics types, refer to the specific requirements.
+                - Unless overridden, the NQS adopts the model/Hilbert state convention.
+                  For spin-1/2 this default is binary `{0, 1}` rather than physical
+                  signed values such as `+/-0.5`.
             batch_size [Optional[int]]:
                 The batch size for training.
             nthstate [Optional[int]]:
@@ -332,6 +340,11 @@ class NQS(MonteCarloSolver):
                     Seed for network initialization (overrides global seed if provided).
                 - param_dtype:
                     Data type for network parameters (e.g., 'float32', 'complex128').
+                - state_representation:
+                    Optional explicit external state convention. If omitted, the
+                    model/Hilbert default is used. Binary conventions always use
+                    unit-valued occupied/up entries (`1.0`), while physical spin
+                    magnitudes only apply to explicit signed-spin conventions.
                 - beta_penalty:
                     Penalty term for particle number conservation (default: 0.0).
                 - use_orbax:

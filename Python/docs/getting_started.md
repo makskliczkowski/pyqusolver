@@ -42,7 +42,7 @@ python -m pip install -e ".[dev]"
 
 - **NumPy backend** is the safest default for broad compatibility.
 - **JAX backend** enables accelerator-ready and differentiable workflows, mainly for NQS/VMC paths.
-- If JAX is not installed, JAX-specific modules are expected to be unavailable.
+- If JAX is not installed, `import QES` still works and NumPy-based workflows remain available. JAX-specific execution fails only when those paths are used.
 
 General contract:
 
@@ -54,6 +54,12 @@ General contract:
 
 ```bash
 python -c "import QES; print('QES import OK')"
+```
+
+To confirm the optional NQS surface when the JAX stack is installed:
+
+```bash
+python -c "import QES; from QES.NQS import NQS; print('QES NQS import OK')"
 ```
 
 Stable top-level imports are:

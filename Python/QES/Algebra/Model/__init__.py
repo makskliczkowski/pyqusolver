@@ -25,23 +25,9 @@ Email       : maksymilian.kliczkowski@pwr.edu.pl
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING, Any
 
-from . import Interacting       as intr
-from . import Noninteracting    as nintr
-
-# ----------------------------------------------------------------------
-from ._impurity import (
-        SiteGeometry,
-        compute_impurity_distances,
-        compute_site_geometries,
-        group_site_geometries,
-        impurity_site_amplitude,
-        make_impurity,
-        pick_site_geometries_by_angle,
-    )
-
-# ------------------------------------------------------------------------
 from ._registry import (
     create_model            as _create_model,
     get_model_aliases       as _get_model_aliases,
@@ -57,6 +43,7 @@ __all__ = [
     "choose_model",
     "qes_model_aliases",
     "qes_models_kwargs",
+    # Impurity utilities
     "SiteGeometry",
     "make_impurity",
     "impurity_site_amplitude",
@@ -64,9 +51,29 @@ __all__ = [
     "compute_site_geometries",
     "group_site_geometries",
     "pick_site_geometries_by_angle",
+    "impurity"
 ] + list(_get_model_export_names())
 
+_MODULE_ALIASES = {
+    "intr"      : ".Interacting",
+    "nintr"     : ".Noninteracting",
+    "impurity"  : "._impurity",
+    "dummy"     : ".dummy",
+}
+
+_IMPURITY_EXPORTS = {
+    "SiteGeometry",
+    "make_impurity",
+    "impurity_site_amplitude",
+    "compute_impurity_distances",
+    "compute_site_geometries",
+    "group_site_geometries",
+    "pick_site_geometries_by_angle",
+}
+
 if TYPE_CHECKING:
+    # Impurity utilities
+    import _impurity                                                as impurity
     # Fermionic
     from .Interacting.Fermionic.free_fermion_manybody               import ManyBodyFreeFermions
     from .Interacting.Fermionic.hubbard                             import HubbardModel
@@ -111,8 +118,17 @@ def choose_model(model_name: str, **kwargs):
 
 
 def __getattr__(name: str):
-    if name in {"intr", "nintr"}:
-        return globals()[name]
+    
+    if name in _MODULE_ALIASES:
+        module = importlib.import_module(_MODULE_ALIASES[name], package=__name__)
+        globals()[name] = module
+        return module
+    
+    if name in _IMPURITY_EXPORTS:
+        module  = importlib.import_module("._impurity", package=__name__)
+        value   = getattr(module, name)
+        globals()[name] = value
+        return value
     try:
         return _resolve_model_export(name)
     except ValueError as exc:

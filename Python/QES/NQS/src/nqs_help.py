@@ -9,12 +9,6 @@ License     : MIT
 --------------------------------
 """
 
-try:
-    from QES.NQS.src.network import NetworkFactory
-except ImportError:
-    raise ImportError("Failed to import NetworkFactory for NQS help. Ensure general_python package is correctly installed.")
-
-
 def nqs_help(self, topic: str = "general"):
     """
     Prints usage information and physics background for NQS features.
@@ -141,18 +135,23 @@ def nqs_help(self, topic: str = "general"):
             Recommended config-first workflow:
                 from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
 
+                # Accelerated path:
+                # pip install "QES[jax]"
+                # or:
+                # pip install "QES[all]"
+
                 p_cfg = NQSPhysicsConfig(model_type='kitaev', lattice_type='honeycomb', lx=4, ly=3)
                 s_cfg = NQSSolverConfig(ansatz='rbm', backend='jax')
 
                 model, hilbert, lattice = p_cfg.make_hamiltonian()
                 net = s_cfg.make_net(p_cfg)
-                psi = NQS(ansatz=net, model=model, hilbert=hilbert, backend=s_cfg.backend)
+                psi = NQS(logansatz=net, model=model, hilbert=hilbert, backend=s_cfg.backend)
 
                 train_cfg = NQSTrainConfig.from_solver(s_cfg, n_epochs=200)
                 stats = psi.train(**train_cfg.to_train_kwargs())
 
             Compact expert path:
-                psi = NQS(ansatz='rbm', model=hamil, hilbert=hilbert, backend='jax')
+                psi = NQS(logansatz='rbm', model=hamil, hilbert=hilbert, backend='jax')
                 stats = psi.train(n_epochs=200, lr=1e-2)
 
             Sampling and measurement:
@@ -219,6 +218,7 @@ def nqs_help(self, topic: str = "general"):
             """
 
     elif topic == "network":
+        from QES.NQS.src.network import NetworkFactory
         info = NetworkFactory.net_help()
         if self._net is not None:
             net_type = self._net.name if hasattr(self._net, "name") else type(self._net).__name__
@@ -231,6 +231,7 @@ def nqs_help(self, topic: str = "general"):
                         {info.get(net_type, "No additional info available for this network type.")}
                         """
     elif topic == "networks":
+        from QES.NQS.src.network import NetworkFactory
         info = NetworkFactory.net_help()
         msg = f"""
             {border}

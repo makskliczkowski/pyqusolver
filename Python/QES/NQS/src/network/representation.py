@@ -34,12 +34,10 @@ class ModelRepresentationInfo:
     def is_spin(self) -> bool:
         return self.local_space_type.startswith("spin-")
 
-
 def _normalize_key(value: Any, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip().lower().replace("_", "-").replace(" ", "-")
-
 
 def _resolve_sampler_representation(local_space_type: str, vector_encoding: str) -> str:
     local_key = _normalize_key(local_space_type)
@@ -55,7 +53,6 @@ def _resolve_sampler_representation(local_space_type: str, vector_encoding: str)
         return "binary_01"
     return "dense_local"
 
-
 def resolve_spin_mode_repr(local_space_type: str) -> Optional[float]:
     """
     Return the physical spin magnitude for signed spin representations.
@@ -67,6 +64,28 @@ def resolve_spin_mode_repr(local_space_type: str) -> Optional[float]:
         return 1.0
     return None
 
+def resolve_representation_value(
+    representation: Any,
+    *,
+    local_space_type: Optional[str] = None,
+    fallback: float = 1.0,
+) -> float:
+    """
+    Return the explicit value used for the "up"/occupied state in a convention.
+
+    Binary computational bases always use unit-valued occupations externally,
+    even for spin-1/2 models. Physical spin magnitudes such as +/-0.5 only
+    apply to explicit signed-spin conventions.
+    """
+    key = _normalize_key(representation)
+    if key in {"binary-01", "occupation-binary"}:
+        return 1.0
+    if key == "spin-pm":
+        return float(resolve_spin_mode_repr(local_space_type or "") or fallback)
+    return float(fallback)
+
+# ------------------------------------------------------------------
+# Public API for model-driven representation resolution and NQS-side overrides based on model/Hilbert metadata
 # ------------------------------------------------------------------
 
 def canonical_network_request_family(network_type: Any) -> str:
@@ -99,7 +118,7 @@ def resolve_model_representation(model: Any, hilbert: Optional[Any] = None) -> M
         if hasattr(model, "get_transformation_state") and callable(model.get_transformation_state):
             try:
                 basis_state = model.get_transformation_state()
-                basis_type = _normalize_key(basis_state.get("current_basis"), default=basis_type)
+                basis_type  = _normalize_key(basis_state.get("current_basis"), default=basis_type)
             except Exception:
                 pass
         elif hasattr(model, "get_basis_type") and callable(model.get_basis_type):
@@ -170,11 +189,14 @@ def apply_nqs_representation_overrides(
 
     sampler_key = _normalize_key(representation.sampler_representation)
     local_key = _normalize_key(representation.local_space_type)
-    spin_value = float(resolve_spin_mode_repr(representation.local_space_type) or 1.0)
     is_spin_model = local_key.startswith("spin-")
     is_binary_state = sampler_key in {"binary-01", "occupation-binary"}
     is_spin_state = sampler_key == "spin-pm"
-    input_value = spin_value if is_spin_state else 1.0
+    input_value = resolve_representation_value(
+        representation.sampler_representation,
+        local_space_type=representation.local_space_type,
+        fallback=1.0,
+    )
 
     if family == "rbm" and is_spin_model and is_binary_state:
         resolved_kwargs.setdefault(
@@ -220,10 +242,15 @@ def resolve_nqs_state_defaults(nqs: Any, fallback_mode_repr: float = 0.5) -> Tup
     if sampler_mode_repr is None:
         sampler_mode_repr = getattr(sampler, "_mode_repr", None)
     if sampler_mode_repr is None:
-        if sampler_key in {"binary-01", "occupation-binary"}:
-            sampler_mode_repr = 1.0
-        else:
-            sampler_mode_repr = float(fallback_mode_repr)
+        sampler_mode_repr = resolve_representation_value(
+            sampler_representation,
+            local_space_type=(
+                getattr(representation_info, "local_space_type", None)
+                if representation_info is not None
+                else None
+            ),
+            fallback=float(fallback_mode_repr),
+        )
 
     return bool(sampler_spin), float(sampler_mode_repr)
 
@@ -234,6 +261,7 @@ __all__ = [
     "canonical_network_request_family",
     "resolve_model_representation",
     "resolve_nqs_state_defaults",
+    "resolve_representation_value",
     "resolve_spin_mode_repr",
 ]
 

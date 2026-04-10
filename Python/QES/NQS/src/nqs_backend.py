@@ -12,6 +12,8 @@ Email               : maxgrom97@gmail.com
 --------------------------------------------------------------
 """
 
+from __future__ import annotations
+
 import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -44,11 +46,11 @@ try:
 except ImportError as e:
     JAX_AVAILABLE           = False
     jax, jnp, flax          = None, None, None
+    nn                      = None
     tree_flatten            = None
     CheckpointManager       = None
     PyTreeCheckpointHandler = None
     warnings.warn("JAX or Flax could not be imported. Ensure they are installed correctly.", ImportWarning)
-    raise e
 
 try:
     import QES.general_python.ml.net_impl.utils.net_utils   as net_utils
@@ -246,7 +248,8 @@ class JAXBackend(BackendInterface):
     @classmethod
     def _get_cached_jit(cls, func, static_argnums):
         """Get or create cached JIT'd function to avoid recompilation."""
-        
+        if not JAX_AVAILABLE:
+            raise ImportError("JAX backend requested but JAX/Flax is not available.")
         key = (id(func), static_argnums)
         if key not in cls._jit_cache:
             cls._jit_cache[key] = jax.jit(func, static_argnums=static_argnums)
@@ -396,6 +399,8 @@ def nqs_get_backend(backend_type: Union[NQSBackendType, str]) -> BackendInterfac
     if isinstance(backend_type, str):
         b = (backend_type or "").lower()
         if b in ("jax", "gpu", "xla"):
+            if not JAX_AVAILABLE:
+                raise ImportError("JAX backend requested but JAX is not available.")
             return JAXBackend()
         if b in ("numpy", "np", "cpu", "default"):
             return NumpyBackend()

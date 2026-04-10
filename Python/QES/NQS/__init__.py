@@ -1060,6 +1060,15 @@ _LAZY_IMPORTS = {
     "NQSTDVPRecord"                     : (".src.nqs_spectral",             "NQSTDVPRecord"),
     "NQSSpectralResult"                 : (".src.nqs_spectral",             "NQSSpectralResult"),
     "NQSPrecisionPolicy"                : (".src.nqs_precision",            "NQSPrecisionPolicy"),
+    # Convenience names for different NQS handler modules
+    "NQSEntropy"                        : (".src.nqs_entropy",              "NQSEntropy"),
+    "NQSExact"                          : (".src.nqs_exact",                "NQSExact"),
+    "nqs_entropy"                       : (".src.nqs_entropy",              "__name__"),
+    "nqs_exact"                         : (".src.nqs_exact",                "__name__"),
+    "nqs_precision"                     : (".src.nqs_precision",            "__name__"),
+    "nqs_dataset"                       : (".src.nqs_dataset",              "__name__"),
+    "nqs_core"                          : (".src.nqs_core",                 "__name__"),
+    # Core precision utilities
     "resolve_precision_policy"          : (".src.nqs_precision",            "resolve_precision_policy"),
     "cast_for_precision"                : (".src.nqs_precision",            "cast_for_precision"),
     "load_exact_impl"                   : (".src.nqs_exact",                "load_exact_impl"),
@@ -1092,6 +1101,12 @@ if TYPE_CHECKING:
     from .src.nqs_exact                 import load_exact_impl
     from .src.nqs_entropy               import bipartition_cuts, compute_ed_entanglement_entropy, compute_entropy_sweep, compute_renyi_entropy
     from .src.nqs_dataset               import NQSDataset, EDDataset, CommonDataset
+    import src.nqs_entropy              as nqs_entropy
+    import src.nqs_exact                as nqs_exact
+    import src.nqs_precision            as nqs_precision
+    import src.nqs_dataset              as nqs_dataset
+    import ansatze                      as nqs_ansatze
+    import nqs                          as nqs_core
 
 
 def __getattr__(name: str) -> Any:
@@ -1154,6 +1169,11 @@ def quick_start(mode: str = "ground"):
 # QES NQS Quick Start Script
 # ==========================================
 from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
+
+# For the accelerated training path shown below, install:
+#   pip install "QES[jax]"
+# or use the full stack:
+#   pip install "QES[all]"
 """
 
     ground_body = """
@@ -1166,7 +1186,7 @@ model, hilbert, lattice = p_cfg.make_hamiltonian()
 net = s_cfg.make_net(p_cfg, alpha=1.0)
 
 # 3. Initialize NQS
-psi = NQS(ansatz=net, model=model, hilbert=hilbert, backend=s_cfg.backend)
+psi = NQS(logansatz=net, model=model, hilbert=hilbert, backend=s_cfg.backend)
 
 # 4. Train
 train_cfg = NQSTrainConfig.from_solver(s_cfg, phases="kitaev")
@@ -1186,13 +1206,13 @@ model, hilbert, lattice = p_cfg.make_hamiltonian()
 # 2. Ground state used as a lower-state penalty target
 ground_cfg = NQSSolverConfig(ansatz="rbm", backend="jax", epochs=200)
 net_g = ground_cfg.make_net(p_cfg, alpha=1.0)
-psi_ground = NQS(ansatz=net_g, model=model, hilbert=hilbert, backend=ground_cfg.backend)
+psi_ground = NQS(logansatz=net_g, model=model, hilbert=hilbert, backend=ground_cfg.backend)
 psi_ground.beta_penalty = 10.0
 
 # 3. Excited-state ansatz
 excited_cfg = NQSSolverConfig(ansatz="cnn", backend="jax", epochs=200)
 net_e = excited_cfg.make_net(p_cfg)
-psi_excited = NQS(ansatz=net_e, model=model, hilbert=hilbert, backend=excited_cfg.backend)
+psi_excited = NQS(logansatz=net_e, model=model, hilbert=hilbert, backend=excited_cfg.backend)
 
 # 4. Train against the lower state
 train_cfg = NQSTrainConfig.from_solver(excited_cfg, lower_states=[psi_ground], phases="kitaev")
@@ -1246,6 +1266,9 @@ __all__ = [
     # info and quick start
     "quick_start",
     "info",
+    # convenience imports for ansatze and other submodules
+    "NQSEntropy",
+    "NQSExact",
 ]
 
 # --------------------------------------------------------------

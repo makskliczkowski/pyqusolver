@@ -165,12 +165,13 @@ class ManyBodyFreeFermions(Hamiltonian):
                         self._add_hopping_bond(op_cdag_c, i, j, amp)
 
     def __repr__(self):
-        return (
-            f"ManyBodyFreeFermions(Ns={self.ns}, "
-            f"{Hamiltonian.fmt('t', self._t)}, "
-            f"{Hamiltonian.fmt('t2', self._t2) if self._t2 is not None else 't2=0'}, "
-            f"{Hamiltonian.fmt('mu', self._mu) if self._mu is not None else 'mu=0'})"
-        )
+        parts = [
+            f"ManyBodyFreeFermions(Ns={self.ns}",
+            Hamiltonian.fmt("t", self._t),
+            Hamiltonian.fmt("t2", self._t2) if self._t2 is not None else "t2=0",
+            Hamiltonian.fmt("mu", self._mu) if self._mu is not None else "mu=0",
+        ]
+        return ", ".join([p for p in parts if p]) + ")"
 
 # ----------------------------------------------------------------------------
 #! EOF

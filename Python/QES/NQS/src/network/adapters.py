@@ -7,7 +7,10 @@ from typing import Any, Callable, Dict, Tuple
 
 import jax.numpy as jnp
 
-from .representation import ModelRepresentationInfo, resolve_spin_mode_repr
+from .representation import (
+    ModelRepresentationInfo,
+    resolve_representation_value,
+)
 
 def _get_nqs_metadata(net: Any) -> Dict[str, Any]:
     if hasattr(net, "get_nqs_metadata") and callable(net.get_nqs_metadata):
@@ -100,11 +103,22 @@ class NQSNetAdapterBase:
     def preferred_sampler_representation(self) -> str:
         return self.representation.sampler_representation
 
+    def _resolve_sampler_value(
+        self,
+        representation: str | None = None,
+        *,
+        fallback: float = 1.0,
+    ) -> float:
+        return float(
+            resolve_representation_value(
+                representation or self.preferred_sampler_representation(),
+                local_space_type=self.representation.local_space_type,
+                fallback=fallback,
+            )
+        )
+
     def preferred_sampler_mode_repr(self):
-        sampler_representation = self.preferred_sampler_representation().replace("_", "-")
-        if sampler_representation in {"binary-01", "occupation-binary"}:
-            return 1.0
-        return None
+        return self._resolve_sampler_value(fallback=1.0)
 
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
         apply_fun, params = _resolve_apply_and_params(self.net)
@@ -131,7 +145,8 @@ class NQSRBMAdapter(NQSNetAdapterBase):
         return self.representation.sampler_representation
 
     def preferred_sampler_mode_repr(self):
-        if self.preferred_sampler_representation().replace("_", "-") == "spin-pm":
+        sampler_representation = self.preferred_sampler_representation().replace("_", "-")
+        if sampler_representation == "spin-pm":
             # Generic RBMs operating directly on signed spin inputs expect the
             # conventional {-1, +1} encoding, not the physical spin magnitude
             # (for example +/-0.5 for spin-1/2). The latter would silently
@@ -145,7 +160,7 @@ class NQSRBMAdapter(NQSNetAdapterBase):
         sampler_representation  = self.preferred_sampler_representation()
         sampler_key             = sampler_representation.replace("_", "-")
         state_spin              = sampler_key == "spin-pm"
-        state_value             = 1.0 if sampler_key in {"binary-01", "occupation-binary"} else 0.5
+        state_value             = self._resolve_sampler_value(sampler_representation, fallback=1.0)
 
         if hooks["log_psi_delta"] is None and hasattr(self.net, "get_log_psi_delta"):
             hooks["log_psi_delta"] = self.net.get_log_psi_delta()

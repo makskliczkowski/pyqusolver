@@ -95,24 +95,37 @@ Physics and numerical computing tools available throughout QES:
 ```bash
 git clone https://github.com/makskliczkowski/QuantumEigenSolver.git
 cd QuantumEigenSolver/pyqusolver
-pip install -e "Python/[dev]"
+pip install -e "Python[standard,dev]"
+```
+
+### Minimal Installation
+
+```bash
+git clone https://github.com/makskliczkowski/QuantumEigenSolver.git
+cd QuantumEigenSolver/pyqusolver
+pip install -e "Python[dev]"
 ```
 
 ### Optional Dependencies
 
 ```bash
+# Recommended standard stack (JAX/Flax/Optax)
+pip install -e "Python[standard]"
+
 # JAX support (GPU acceleration, automatic differentiation)
-pip install -e "Python/[jax]"
+pip install -e "Python[jax]"
 
 # Machine learning utilities (scikit-learn, scikit-image)
-pip install -e "Python/[ml]"
+pip install -e "Python[ml]"
 
 # HDF5 file I/O
-pip install -e "Python/[hdf5]"
+pip install -e "Python[hdf5]"
 
 # All features
-pip install -e "Python/[all,dev]"
+pip install -e "Python[all,dev]"
 ```
+
+The top-level `import QES` stays lightweight. Minimal installation does not require JAX/Flax, while the recommended standard installation includes them for NQS and accelerator-oriented workflows.
 
 ## Quick Checks
 
@@ -230,7 +243,7 @@ with QES.run(backend='jax', seed=42):
     # Initialize NQS solver with RBM ansatz (alpha=2 hidden units per visible)
     nqs = NQS(
         model=H,
-        ansatz='rbm',
+        logansatz='rbm',
         alpha=2,
         batch_size=32,
         learning_rate=0.01,

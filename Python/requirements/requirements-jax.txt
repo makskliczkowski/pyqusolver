@@ -1,10 +1,12 @@
-# QES JAX dependencies (GPU support)
+# QES JAX dependencies
+#
+# This file intentionally uses the portable CPU/default JAX packages so it works
+# as the standard optional stack on most machines. GPU-specific wheels should be
+# installed following the official JAX instructions for the target platform.
+jax>=0.4.0
+jaxlib>=0.4.0
 
-# For GPU installation, we use the specific JAX release link
---find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-jax[cuda12]
-
-# ML and optimization libraries (GPU-safe)
+# ML and optimization libraries used by NQS/VMC
 flax>=0.6.0
 optax>=0.1.0
 orbax-checkpoint>=0.10.0

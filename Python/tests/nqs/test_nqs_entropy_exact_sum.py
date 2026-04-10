@@ -7,7 +7,12 @@ try:
     from QES.Algebra.Model.Interacting.Spin.transverse_ising import TransverseFieldIsing
     from QES.Algebra.hilbert import HilbertSpace
     from QES.NQS.nqs import NQS
-    from QES.NQS.src.nqs_entropy import compute_ed_entanglement_entropy, compute_renyi_entropy
+    from QES.NQS.src.nqs_entropy import (
+        _enumerate_basis_states_nqs,
+        compute_ed_entanglement_entropy,
+        compute_renyi_entropy,
+    )
+    from QES.NQS.src.spectral.exact import enumerate_basis_states
     from QES.general_python.lattices import SquareLattice
     from QES.general_python.ml.net_impl.networks.net_rbm import RBM
 except ImportError:
@@ -162,6 +167,18 @@ def test_exact_sum_raw_outputs_are_consistent():
     assert raw["trace_rho_q"] > 0.0
     assert raw["sq_err"] == 0.0
     assert raw["trace_err"] == 0.0
+
+
+def test_spin_half_exact_helpers_match_sampler_binary_state_convention():
+    _, nqs, _ = _build_exact_cat_state_nqs()
+
+    entropy_basis = _enumerate_basis_states_nqs(nqs)
+    spectral_basis = enumerate_basis_states(nqs)
+    (_, _), (samples, _), _ = nqs.sample(num_samples=8, num_chains=2, reset=True)
+
+    for states in (entropy_basis, spectral_basis, samples):
+        unique_values = set(np.unique(np.asarray(states, dtype=np.float64)).tolist())
+        assert unique_values.issubset({0.0, 1.0})
 
 
 def test_trained_tfim_entropy_matches_ed_for_multiple_regions_and_q():

@@ -154,7 +154,7 @@ class TransverseFieldIsing(HamiltonianSpin):
             HamiltonianSpin.fmt("hz", self._hz, prec=prec) if self._hz  is not None else "",
         ]
 
-        return sep.join(parts) + ")"
+        return sep.join([p for p in parts if p]) + ")"
 
     def __str__(self):
         return self.__repr__()

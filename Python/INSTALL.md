@@ -1,48 +1,68 @@
 # QES (Quantum Eigen Solver)
 
-## Basic Installation
+## Minimal Installation
+
 ```bash
 pip install QES
 ```
 
+## Standard Installation
+
+```bash
+pip install "QES[standard]"
+```
+
 ## Development Installation
+
 ```bash
 # Clone the repository
 git clone https://github.com/makskliczkowski/QuantumEigenSolver.git
-cd QuantumEigenSolver/Python/QES
+cd QuantumEigenSolver/pyqusolver/Python
 
-# Install in development mode with all dependencies
-pip install -e ".[all]"
+# Install in development mode with the recommended standard stack
+pip install -e ".[standard,dev]"
 ```
 
 ## Optional Dependencies
 
 ### JAX Support (GPU/CPU acceleration)
+
 ```bash
 pip install "QES[jax]"
 ```
 
+### Standard Stack
+
+```bash
+pip install "QES[standard]"
+```
+
 ### Machine Learning Utilities
+
 ```bash
 pip install "QES[ml]"
 ```
 
 ### HDF5 File Support
+
 ```bash
 pip install "QES[hdf5]"
 ```
 
 ### Development Tools
+
 ```bash
 pip install "QES[dev]"
 ```
 
 ### Documentation Tools
+
 ```bash
 pip install "QES[docs]"
 ```
 
 ### All Optional Dependencies
+
 ```bash
 pip install "QES[all]"
 ```
@@ -52,15 +72,18 @@ pip install "QES[all]"
 ```python
 import QES
 
-# Your quantum eigenvalue solving code here
+# Lightweight top-level import
+print(QES.__version__)
 ```
 
 ## Requirements
 
-- Python ≥ 3.8
+- Python ≥ 3.10
 - NumPy ≥ 1.20.0
 - SciPy ≥ 1.7.0
-- See setup.py for full dependency list
+- See `pyproject.toml` for the full dependency list
+
+`import QES` works without JAX installed. Use the minimal install when you only need the core package. Use `QES[standard]` for the recommended JAX/Flax-enabled stack, or `QES[all]` for everything.
 
 ## License
 

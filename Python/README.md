@@ -17,18 +17,27 @@
 
 ## Installation
 
-### Core Package
+### Minimal Package
 
 ```bash
-# Editable install (recommended for development)
+# Editable minimal install
 pip install -e ".[dev]"
+```
 
-# With optional JAX (GPU acceleration, autodiff)
+### Standard Package
+
+```bash
+# Recommended editable install: core + JAX/Flax/Optax + dev tools
+pip install -e ".[standard,dev]"
+
+# Compatible alias for the same JAX-enabled stack
 pip install -e ".[jax,dev]"
 
 # All features
 pip install -e ".[all,dev]"
 ```
+
+The top-level `import QES` is intentionally lightweight. Minimal installation does not require JAX, while the recommended standard installation includes the JAX/Flax stack for NQS and VMC workflows.
 
 ### Dependencies
 
@@ -100,7 +109,7 @@ with QES.run(backend='jax', seed=42):
     # α = 2 gives 20 hidden units for 10 visible units
     nqs = NQS(
         model=H,
-        ansatz='rbm',
+        logansatz='rbm',
         alpha=2,
         batch_size=64,
         learning_rate=0.01,
@@ -331,7 +340,7 @@ pip install -e .
 **With JAX support:**
 
 ```bash
-pip install -e ".[jax]"
+pip install -e ".[standard]"
 ```
 
 **With all optional dependencies:**
@@ -339,6 +348,8 @@ pip install -e ".[jax]"
 ```bash
 pip install -e ".[all]"
 ```
+
+Use `.[standard]` for the recommended accelerator-ready NQS/VMC workflows. The `.[jax]` extra remains a compatible alias. Use `.[all]` if you want the full stack, including JAX, docs, and developer tooling.
 
 ---
 

@@ -1638,7 +1638,17 @@ class GeneralMatrix(spla.LinearOperator):
 
         Returns:
             str: A formatted string in the form 'name=value' with the specified precision.
+                 Returns an empty string for None/NaN values so repr builders can omit it.
         """
+        if val is None:
+            return ""
+
+        try:
+            if np.isnan(val):
+                return ""
+        except TypeError:
+            pass
+
         return f"{name}={val:.{prec}f}"
 
     @staticmethod
@@ -1661,6 +1671,9 @@ class GeneralMatrix(spla.LinearOperator):
                 - If all elements are (approximately) equal, returns a scalar format.
                 - Otherwise, returns 'name[min=..., max=...]' with specified precision.
         """
+        if arr is None:
+            return ""
+
         if isinstance(arr, DummyVector):
             return GeneralMatrix._fmt_scalar(name, arr[0])
 
@@ -1670,13 +1683,23 @@ class GeneralMatrix(spla.LinearOperator):
         arr = np.asarray(arr, dtype=float)
         if arr.size == 0:
             return f"{name}=[]"
-        if np.allclose(arr, arr.flat[0], atol=tol, rtol=0):
-            return GeneralMatrix._fmt_scalar(name, float(arr.flat[0]), prec=prec)
-        return f"{name}[min={arr.min():.{prec}f},max={arr.max():.{prec}f}]"
+
+        finite_mask = np.isfinite(arr)
+        if not np.any(finite_mask):
+            return ""
+
+        arr_finite = arr[finite_mask]
+        if np.allclose(arr_finite, arr_finite.flat[0], atol=tol, rtol=0):
+            return GeneralMatrix._fmt_scalar(name, float(arr_finite.flat[0]), prec=prec)
+
+        return f"{name}[min={arr_finite.min():.{prec}f},max={arr_finite.max():.{prec}f}]"
 
     @staticmethod
     def fmt(name, value, prec=1):
         """Choose scalar vs array formatter."""
+        if value is None:
+            return ""
+
         return (
             GeneralMatrix._fmt_scalar(name, value, prec=prec)
             if np.isscalar(value)

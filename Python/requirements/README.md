@@ -4,7 +4,9 @@ This directory contains various requirements files for different installation sc
 
 ## Core Requirements
 
-- `requirements.txt` - Core dependencies for basic functionality
+- `requirements.txt` - Minimal dependencies for basic functionality
+- `requirements-standard.txt` - Recommended standard stack: core + JAX/Flax/Optax
+- `requirements-all.txt` - Full stack installation, including JAX, ML, HDF5, docs, and dev tools
 
 ## Optional Requirements
 
@@ -16,27 +18,46 @@ This directory contains various requirements files for different installation sc
 
 ## Installation Examples
 
-### Basic installation
+### Minimal installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
+### Standard installation
+
+```bash
+pip install -r requirements-standard.txt
+```
+
 ### Development environment
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-standard.txt
 pip install -r requirements-dev.txt
 ```
 
 ### Full installation with all features
 
 ```bash
-pip install -r requirements.txt
-pip install -r requirements-jax.txt
-pip install -r requirements-ml.txt
-pip install -r requirements-hdf5.txt
+pip install -r requirements-all.txt
 ```
+
+### Extras via `pip`
+
+```bash
+pip install QES
+pip install "QES[standard]"
+pip install "QES[jax]"
+pip install "QES[all]"
+```
+
+Install policy:
+
+- `pip install QES` gives the minimal runtime without requiring JAX/Flax.
+- `pip install "QES[standard]"` is the recommended standard install and includes JAX/Flax/Optax.
+- `pip install "QES[jax]"` remains a compatible alias for the same accelerator-oriented stack.
+- `pip install "QES[all]"` remains the explicit "install everything" path and includes the JAX stack.
 
 ## Troubleshooting
 

@@ -100,8 +100,9 @@ from    QES.general_python.physics.density_matrix import mask_subsystem, psi_num
 from    QES.general_python.physics.entropy import vn_entropy, renyi_entropy
 
 if TYPE_CHECKING:
-    from QES.NQS.nqs import NQS
-    from QES.general_python.lattices import Lattice
+    from QES.NQS.nqs                    import NQS
+    from QES.general_python.lattices    import Lattice
+    from QES.general_python.physics     import entropy as qes_entropy
 
 try:
     import jax
@@ -113,36 +114,6 @@ except ImportError:
 # ===========================================================================
 #! Bipartition helpers
 # ===========================================================================
-
-def bipartition_cuts(lattice: "Lattice", cut_type: str = "half_x",) -> Dict[str, np.ndarray]:
-    """
-    Generate canonical bipartition cuts using the lattice region API.
-
-    This function is lattice-agnostic and relies on:
-    - ``lattice.get_entropy_cuts(...)`` (preferred), or
-    - ``lattice.regions.get_entropy_cuts(...)`` as fallback.
-
-    Parameters
-    ----------
-    lattice : Lattice
-        Lattice object with region support.
-    cut_type : str
-        One of: ``half_x``, ``half_y``, ``quarter``, ``sublattice_A``,
-        ``sweep``, ``all``.
-
-    Returns
-    -------
-    dict[str, np.ndarray]
-        Mapping ``cut_label -> region_indices``.
-    """
-    if hasattr(lattice, "get_entropy_cuts"):
-        raw_cuts = lattice.get_entropy_cuts(cut_type=cut_type)
-    elif hasattr(lattice, "regions") and hasattr(lattice.regions, "get_entropy_cuts"):
-        raw_cuts = lattice.regions.get_entropy_cuts(cut_type=cut_type)
-    else:
-        raise ValueError("Lattice does not expose entropy cut helpers. Expected `lattice.get_entropy_cuts` or `lattice.regions.get_entropy_cuts`.")
-
-    return {label: np.asarray(region, dtype=np.int32) for label, region in raw_cuts.items()}
 
 def _enumerate_basis_states_nqs(nqs: "NQS") -> np.ndarray:
     """

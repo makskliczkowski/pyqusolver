@@ -65,6 +65,7 @@ Current top-level API policy:
 
 * Stable imports live under `QES.Algebra`, `QES.NQS`, `QES.Solver`, and the small set of documented convenience re-exports such as `QES.HilbertSpace` and `QES.Hamiltonian`.
 * Historical `gp_*` aliases are compatibility-only and should not be used in new code.
+* The lazy runtime surface is paired with `TYPE_CHECKING`-friendly package exports so IDE completion and static analysis still see the intended names.
 
 ### 2. Global State Management
 
@@ -84,6 +85,11 @@ backend = QES.get_backend_manager()
 ### 3. Backend Agnosticism
 
 Many core components are written to be compatible with both NumPy and JAX. This allows you to prototype small systems on a CPU with NumPy and scale up to GPUs with JAX without rewriting your model definitions.
+
+Backend contract:
+
+* NumPy-first workflows remain available from the core install.
+* JAX-dependent code paths are optional and should fail only when explicitly requested without the `jax` extra installed.
 
 ### 4. Registry System
 

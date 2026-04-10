@@ -24,9 +24,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
-
-import jax
 import numpy as np
+
+try:
+    import jax
+    JAX_AVAILABLE = True
+except ImportError:
+    jax = None
+    JAX_AVAILABLE = False
 
 # TQDM for progress bars
 try:
@@ -710,10 +715,12 @@ class NQSTrainer:
         # The lower_states path stays non-jitted because it carries Python objects.
         if self.lower_states:
             self._step_jit = self._step_nojit
-        else:
+        elif JAX_AVAILABLE:
             self._step_jit = jax.jit(
                 train_step_logic_no_lower, static_argnames=["f", "est_fn", "num_chains"]
             )
+        else:
+            self._step_jit = self._step_nojit
 
         # State
         self.stats          = NQSTrainStats()
