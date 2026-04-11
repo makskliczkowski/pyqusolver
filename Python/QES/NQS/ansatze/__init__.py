@@ -25,20 +25,20 @@ _LAZY_EXPORTS = {
     "GCNN"                          : ("QES.general_python.ml.net_impl.networks.net_gcnn",          "GCNN"),
     "Transformer"                   : ("QES.general_python.ml.net_impl.networks.net_transformer",   "Transformer"),
     # Fully NQS-specific ansatze
-    "ComplexAR"                     : (".autoregressive",   "ComplexAR"),
-    "PairProduct"                   : (".pair_product",     "PairProduct"),
-    "Jastrow"                       : (".jastrow",          "Jastrow"),
-    "MPS"                           : (".mps",              "MPS"),
-    "AmplitudePhase"                : (".amplitude_phase",  "AmplitudePhase"),
-    "AnsatzApproxSymmetric"         : (".approx_symmetric", "AnsatzApproxSymmetric"),
-    "EquivariantGCNN"               : (".equivariant_gcnn", "EquivariantGCNN"),
+    "ComplexAR"                     : (".autoregressive",                                           "ComplexAR"),
+    "PairProduct"                   : (".pair_product",                                             "PairProduct"),
+    "Jastrow"                       : (".jastrow",                                                  "Jastrow"),
+    "MPS"                           : (".mps",                                                      "MPS"),
+    "AmplitudePhase"                : (".amplitude_phase",                                          "AmplitudePhase"),
+    "AnsatzApproxSymmetric"         : (".approx_symmetric",                                         "AnsatzApproxSymmetric"),
+    "EquivariantGCNN"               : (".equivariant_gcnn",                                         "EquivariantGCNN"),
     # Registry utilities
-    "canonicalize_ansatz_name"      : (".registry",         "canonicalize_ansatz_name"),
-    "is_registered_ansatz"          : (".registry",         "is_registered_ansatz"),
-    "list_available_ansatze"        : (".registry",         "list_available_ansatze"),
-    "load_ansatz_class"             : (".registry",         "load_ansatz_class"),
-    "resolve_ansatz_request"        : (".registry",         "resolve_ansatz_request"),
-    "resolve_ansatz_type"           : (".registry",         "resolve_ansatz_type"),
+    "canonicalize_ansatz_name"      : (".registry",                                                 "canonicalize_ansatz_name"),
+    "is_registered_ansatz"          : (".registry",                                                 "is_registered_ansatz"),
+    "list_available_ansatze"        : (".registry",                                                 "list_available_ansatze"),
+    "load_ansatz_class"             : (".registry",                                                 "load_ansatz_class"),
+    "resolve_ansatz_request"        : (".registry",                                                 "resolve_ansatz_request"),
+    "resolve_ansatz_type"           : (".registry",                                                 "resolve_ansatz_type"),
 }
 
 _LAZY_CACHE = {}

@@ -1338,7 +1338,7 @@ class VMCSampler(Sampler):
         else:
             delta_cache_init = None
 
-        #! Phase 1: Thermalization
+        #! Phase 1: Thermalization - run MCMC steps without collecting samples to reach equilibrium distribution.
         (
             states_therm,
             logprobas_therm,
@@ -1366,7 +1366,7 @@ class VMCSampler(Sampler):
             )
         )
 
-        #! Phase 2: Sampling
+        #! Phase 2: Sampling - run MCMC steps while collecting samples at specified intervals. Use lax.scan to efficiently collect samples across multiple steps.
         def sample_scan_body(carry, _):
             new_carry = VMCSampler._run_mcmc_steps_jax(
                 chain_init=carry[0],
@@ -1388,39 +1388,38 @@ class VMCSampler(Sampler):
             return new_carry, (new_carry[0], new_carry[1])
 
         initial_scan_carry = (
-            states_therm,
-            logprobas_therm,
-            rng_k_therm,
-            num_proposed_therm,
-            num_accepted_therm,
-            delta_cache_therm,
+            states_therm,       # states after thermalization
+            logprobas_therm,    # log probabilities after thermalization - ansatz values for the thermalized states
+            rng_k_therm,        # random key after thermalization
+            num_proposed_therm, # number of proposed moves during thermalization
+            num_accepted_therm, # number of accepted moves during thermalization
+            delta_cache_therm,  # cache for log_psi_delta if supported, after thermalization
         )
-        final_carry, collected_samples = jax.lax.scan(
-            sample_scan_body, initial_scan_carry, None, length=num_samples
-        )
+        
+        # Run the sampling phase, collecting states and log probabilities at each sample point. 
+        final_carry, collected_samples = jax.lax.scan(sample_scan_body, initial_scan_carry, None, length=num_samples)
 
-        collected_states, collected_logprobas = collected_samples
-        configs_flat = collected_states.reshape((-1,) + shape)
-        logprobas_flat = collected_logprobas.reshape((-1,))
-        batched_log_ansatz = logprobas_flat
+        collected_states, collected_logprobas   = collected_samples
+        configs_flat                            = collected_states.reshape((-1,) + shape)   # (num_samples * num_chains, state_shape)
+        logprobas_flat                          = collected_logprobas.reshape((-1,))        # (num_samples * num_chains,)
+        batched_log_ansatz                      = logprobas_flat                            # (num_samples * num_chains,)
 
-        log_prob_exponent = 1.0 / logprob_fact - mu
-        log_unnorm = log_prob_exponent * jnp.real(batched_log_ansatz)
-        log_max = jnp.max(log_unnorm)
-        probs = jnp.exp(log_unnorm - log_max)
+        log_prob_exponent                       = 1.0 / logprob_fact - mu                   # Adjust exponent based on logprob_fact and mu
+        log_unnorm                              = log_prob_exponent * jnp.real(batched_log_ansatz)
+        log_max                                 = jnp.max(log_unnorm)
+        probs                                   = jnp.exp(log_unnorm - log_max)
 
-        total_samples = num_samples * num_chains
-        norm_factor = jnp.maximum(jnp.sum(probs), 1e-10)
-        probs_normalized = probs / norm_factor * total_samples
+        total_samples                           = num_samples * num_chains
+        norm_factor                             = jnp.maximum(jnp.sum(probs), 1e-10)
+        probs_normalized                        = probs / norm_factor * total_samples
 
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache = final_carry
-        final_state_tuple = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
+        final_state_tuple                       = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
         return final_state_tuple, (configs_flat, batched_log_ansatz), probs_normalized
 
     ###################################################################
     #! PARALLEL TEMPERING (PT) SUPPORT
     ###################################################################
-
 
     @staticmethod
     @partial(jax.jit, static_argnames=("mu",))
