@@ -8,7 +8,6 @@ general-purpose implementations.
 
 --------------------------------
 Author      : Maksymilian Kliczkowski
-Email       : maxgrom97@gmail.com
 License     : MIT
 Version     : 1.0
 --------------------------------
@@ -19,12 +18,12 @@ from typing import Any
 
 _LAZY_EXPORTS = {
     # Backbone-shaped wrappers
-    "RBM"                           : (".shared", "RBM"),
-    "CNN"                           : (".shared", "CNN"),
-    "ResNet"                        : (".shared", "ResNet"),
-    "MLP"                           : (".shared", "MLP"),
-    "GCNN"                          : (".shared", "GCNN"),
-    "Transformer"                   : (".shared", "Transformer"),
+    "RBM"                           : ("QES.general_python.ml.net_impl.networks.net_rbm",           "RBM"),
+    "CNN"                           : ("QES.general_python.ml.net_impl.networks.net_cnn",           "CNN"),
+    "ResNet"                        : ("QES.general_python.ml.net_impl.networks.net_res",           "ResNet"),
+    "MLP"                           : ("QES.general_python.ml.net_impl.networks.net_mlp",           "MLP"),
+    "GCNN"                          : ("QES.general_python.ml.net_impl.networks.net_gcnn",          "GCNN"),
+    "Transformer"                   : ("QES.general_python.ml.net_impl.networks.net_transformer",   "Transformer"),
     # Fully NQS-specific ansatze
     "ComplexAR"                     : (".autoregressive",   "ComplexAR"),
     "PairProduct"                   : (".pair_product",     "PairProduct"),

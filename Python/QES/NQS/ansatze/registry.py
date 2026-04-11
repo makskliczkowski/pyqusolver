@@ -10,13 +10,11 @@ from dataclasses import dataclass, field
 import importlib
 from typing import Any, Dict, Tuple
 
-
 @dataclass(frozen=True)
 class AnsatzEntry:
     module_path     : str
     attr_name       : str
     default_kwargs  : Dict[str, Any] = field(default_factory=dict)
-
 
 _PRIMARY_ANSATZE: Tuple[str, ...] = (
     "rbm",
@@ -35,18 +33,17 @@ _PRIMARY_ANSATZE: Tuple[str, ...] = (
     "approx_symmetric",
 )
 
-
 _ANSATZ_REGISTRY: Dict[str, AnsatzEntry] = {
-    "rbm":              AnsatzEntry(".shared", "RBM"),
-    "cnn":              AnsatzEntry(".shared", "CNN"),
-    "res":              AnsatzEntry(".shared", "ResNet"),
-    "resnet":           AnsatzEntry(".shared", "ResNet"),
-    "ar":               AnsatzEntry(".autoregressive", "ComplexAR"),
-    "autoregressive":   AnsatzEntry(".autoregressive", "ComplexAR"),
-    "mlp":              AnsatzEntry(".shared", "MLP"),
-    "gcnn":             AnsatzEntry(".shared", "GCNN"),
+    "rbm":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_rbm",          "RBM"),
+    "cnn":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_cnn",          "CNN"),
+    "res":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_res",          "ResNet"),
+    "resnet":           AnsatzEntry("QES.general_python.ml.net_impl.networks.net_res",          "ResNet"),
+    "ar":               AnsatzEntry(".autoregressive",                                          "ComplexAR"),
+    "autoregressive":   AnsatzEntry(".autoregressive",                                          "ComplexAR"),
+    "mlp":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_mlp",          "MLP"),
+    "gcnn":             AnsatzEntry("QES.general_python.ml.net_impl.networks.net_gcnn",         "GCNN"),
     "eqgcnn":           AnsatzEntry(".equivariant_gcnn", "EquivariantGCNN"),
-    "transformer":      AnsatzEntry(".shared", "Transformer"),
+    "transformer":      AnsatzEntry("QES.general_python.ml.net_impl.networks.net_transformer",  "Transformer"),
     "pp":               AnsatzEntry(".pair_product", "PairProduct"),
     "pair_product":     AnsatzEntry(".pair_product", "PairProduct"),
     "rbmpp":            AnsatzEntry(".pair_product", "PairProduct", default_kwargs={"use_rbm": True}),
@@ -63,15 +60,19 @@ _ANSATZ_REGISTRY: Dict[str, AnsatzEntry] = {
 # ----------------------------------------------------------------------
 
 def canonicalize_ansatz_name(name: Any) -> str:
+    ''' Convert an ansatz name to a canonical form for registry lookup. This typically involves lowercasing and replacing certain characters. '''
     return str(name).strip().lower().replace("-", "_").replace(" ", "_")
 
 def is_registered_ansatz(name: Any) -> bool:
+    ''' Check if the given name corresponds to a registered ansatz. '''
     return canonicalize_ansatz_name(name) in _ANSATZ_REGISTRY
 
 def list_available_ansatze():
+    ''' List the canonical names of all registered ansatze. '''
     return list(_PRIMARY_ANSATZE)
 
 def load_ansatz_class(name: Any):
+    ''' Load the ansatz class corresponding to the given name. Raises ValueError if the name is not registered. '''
     key     = canonicalize_ansatz_name(name)
     if key not in _ANSATZ_REGISTRY:
         raise ValueError(f"Unknown NQS ansatz '{name}'. Supported NQS ansatze: {', '.join(_PRIMARY_ANSATZE)}.")
@@ -81,6 +82,7 @@ def load_ansatz_class(name: Any):
     return getattr(module, entry.attr_name)
 
 def resolve_ansatz_request(ansatz: Any, kwargs: Dict[str, Any] | None = None):
+    ''' Resolve an ansatz request that may be given as either a string or a direct class reference. Returns a tuple of (ansatz_class, resolved_kwargs). '''
     resolved_kwargs = dict(kwargs or {})
     if not isinstance(ansatz, str):
         return ansatz, resolved_kwargs
@@ -96,6 +98,7 @@ def resolve_ansatz_request(ansatz: Any, kwargs: Dict[str, Any] | None = None):
     return getattr(module, entry.attr_name), resolved_kwargs
 
 def resolve_ansatz_type(ansatz: Any):
+    ''' Resolve an ansatz request to its corresponding class type. Raises ValueError if the ansatz cannot be resolved. '''
     resolved_type, _ = resolve_ansatz_request(ansatz)
     return resolved_type
 

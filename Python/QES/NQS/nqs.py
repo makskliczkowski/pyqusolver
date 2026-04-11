@@ -126,25 +126,33 @@ class NQS(MonteCarloSolver):
     Neural Quantum State (NQS) Solver.
 
     Implements a Monte Carlo-based training method for optimizing NQS models.
-    Supports both NumPy and JAX backends for efficiency and flexibility.
+    Supports mainly JAX backend. Some methods may also work with NumPy but with limited functionality and performance.
 
-    The NQS represents the quantum wavefunction $\Psi(s)$ as a parameterized neural network.
-    The solver minimizes the energy expectation value $E = \langle \Psi | H | \Psi \rangle / \langle \Psi | \Psi \rangle$
+    The NQS represents the quantum problem, e.g., a wavefunction $\Psi(s)$ as a parameterized neural network.
+    Then, the solver minimizes the energy expectation value $E = \langle \Psi | H | \Psi \rangle / \langle \Psi | \Psi \rangle$
     using Variational Monte Carlo (VMC) and Stochastic Reconfiguration (SR) or Time-Dependent Variational Principle (TDVP).
 
     Invariants & Shapes
     -------------------
-    - **Input Shapes**: The network must accept inputs of shape `(batch_size, n_sites)`.
-    - **Output Shapes**: The network must return log-amplitudes of shape `(batch_size,)`.
-      Complex outputs are expected for general quantum states.
-    - **State Convention**: Public states follow the attached model/Hamiltonian convention by default.
-      For spin-1/2 systems this means signed local values in `{-0.5, +0.5}` unless
-      `state_representation` is overridden explicitly. Networks may remap these inputs
-      internally, but sampling, Hamiltonian evaluation, observables, entropy helpers,
-      and exact summation all use one consistent external convention.
-    - **Dtypes**: `complex128` (or `complex64`) is strongly recommended for numerical stability,
-      especially for time evolution and phase-sensitive models.
-    - **Normalization**: The ansatz does not need to be normalized; VMC handles normalization via ratio estimators.
+    - **Input Shapes**: 
+        The network must accept inputs of shape `(batch_size, input_shape)`, e.g., 
+        for spin-1/2 systems, `input_shape` would be `(num_sites,)` with values in `{-0.5, +0.5}` by default.
+    - **Output Shapes**:
+        The network must return log-amplitudes of shape `(batch_size,)`.
+        Complex outputs are expected for general quantum states.
+    - **State Convention**: 
+        Public states follow the attached model/Hamiltonian convention by default.
+        For spin-1/2 systems this means signed local values in `{-0.5, +0.5}` unless
+        `state_representation` is overridden explicitly. 
+        
+        Importantly, networks may remap these inputs
+        internally, but sampling, Hamiltonian evaluation, observables, entropy helpers,
+        and exact summation all use one consistent external convention.
+    - **dtypes**: 
+        `complex128` (or `complex64`) is strongly recommended for numerical stability,
+        especially for time evolution and phase-sensitive models.
+    - **Normalization**: 
+        The ansatz does not need to be normalized; VMC handles normalization via ratio estimators.
 
     Parallel Tempering (PT)
     -----------------------
@@ -205,6 +213,7 @@ class NQS(MonteCarloSolver):
     - "SUBPLAQUETTE": Flips sub-sequences of a pattern (e.g. edges of a plaquette).
     """
 
+    # Error messages:
     _ERROR_ALL_DTYPE_SAME       = "All weights must have the same dtype!"
     _ERROR_NOT_INITIALIZED      = "The NQS network is not initialized. Call init_network() first."
     _ERROR_INVALID_PHYSICS      = "Invalid physics problem specified."
@@ -226,6 +235,8 @@ class NQS(MonteCarloSolver):
     @staticmethod
     def DUMMY_APPLY_FUN_JAX(x):
         return jnp.array([jnp.array([x])] * 40), jnp.array([jnp.array([1.0])] * 40)
+
+    # ----------------------------------------------------------
 
     def __init__(
         self,
@@ -261,119 +272,138 @@ class NQS(MonteCarloSolver):
         **kwargs,
     ):
         r"""
-        Initialize the NQS solver.
+        Initialize the NQS solver. This sets up the network, sampler, and other components based on the provided arguments.
+        Below are the main steps performed during initialization:
+        1. **Store Initialization Parameters**: 
+            The provided arguments are stored as instance variables for later use.
+        2. **Determine State Representation**: 
+            The state representation is resolved based on the provided arguments and the model/Hilbert space conventions.
+        3. **Initialize Network**:
+            The neural network ansatz is initialized based on the `logansatz` argument. 
+            This can be a string (e.g., 'rbm'), a pre-initialized network object, or a callable that returns a network instance.
+        4. **Initialize Sampler**:
+            The sampler is initialized based on the `sampler` argument. If None, a default
+            `VMCSampler` is created using the provided network and other parameters.
+        5. **Set Up Checkpointing**:
+            A checkpoint manager is set up to handle saving and loading of model parameters during training.
+        6. **Set Up Logging**:
+            A logger is initialized for tracking training progress and other information.
+        7. **Handle Symmetries**:
+            If `symmetrize` is True and the Hilbert space has symmetries, a symmetry handler is set up to automatically symmetrize the ansatz.
+        8. **Finalize Initialization**:
+            Any additional setup steps are performed, and the NQS is ready for training or evaluation.
 
-        Parameters:
-            logansatz [Union[Callable, str, GeneralNet]]:
-                The neural network or callable to be used. This can be specified in several ways:
-                - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
-                - As a pre-initialized network object (must be a subclass of `GeneralNet`).
-                - As a raw Flax module class for custom networks. The factory will wrap it automatically.
-                See the documentation of `QES.general_python.ml.networks.choose_network` for details
-                on custom module requirements.
-                - As a callable that returns an ansatz. For example, a function that takes input shape and returns
-                    a network instance or it can be some custom logic to create the wavefunction ansatz:
-                    - PEPS ansatz function
-                    - Custom variational ansatz
-            sampler [Union[Callable, str, VMCSampler]]:
-                The sampler to be used. If None, a default `VMCSampler` will be created.
-                This can be specified in several ways:
-                - As a string (e.g., 'vmc') to use a built-in sampler.
-                - As a pre-initialized sampler object (must be a subclass of `VMCSampler`).
-                - As a callable that returns a sampler instance.
-                - If None, a default `VMCSampler` will be created using the provided network:
-                    - The sampler will be initialized with the network, shape, random number generators, and other parameters.
-            model [Hamiltonian or Operator]:
-                The physical model (e.g., Hamiltonian) for the NQS.
-                - If physics is 'wavefunction', this must provide a `local_energy_fn`.
-                - For other physics types, refer to the specific requirements.
-                - Unless overridden, the NQS adopts the model/Hamiltonian state convention.
-                  For spin-1/2 this default is the signed operator convention
-                  `{-0.5, +0.5}`.
-            batch_size [Optional[int]]:
-                The batch size for training.
-            nthstate [Optional[int]]:
-                The nth excited state to target (0 for ground state). Informative
-            nparticles [Optional[int]]:
-                The number of particles in the system. If not provided, defaults to system size.
-            seed [Optional[int]]:
-                Random seed for initialization.
-            beta [float]:
-                Inverse temperature for Monte Carlo sampling.
-            mu [float]:
-                Mu parameter for the NQS. This is used for collecting different sampling distribution.
-                By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
-            replica [int]:
-                Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
-                When replica > 1:
-                - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
-                to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
-                - MCMC runs in parallel across all temperature replicas.
-                - Periodic replica exchanges improve mixing and help escape local minima.
-                - Only samples from the physical replica (beta=1.0) are used for training.
-                - The return signature of `sample()` and `train()` remains unchanged.
-            shape [Union[list, tuple]]:
-                Shape of the input data, e.g., `(n_spins,)`.
-            modes:
-                Number of local modes per site (e.g., 2 for spin-1/2).
-            directory:
-                Directory for saving results.
-            backend:
-                Computational backend ('jax' or 'numpy').
-            dtype:
+        Parameters
+        ----------
+        logansatz [Union[Callable, str, GeneralNet]]:
+            The neural network or callable to be used. This can be specified in several ways:
+            - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
+            - As a pre-initialized network object (must be a subclass of `GeneralNet`).
+            - As a raw Flax module class for custom networks. The factory will wrap it automatically.
+            See the documentation of `QES.general_python.ml.networks.choose_network` for details
+            on custom module requirements.
+            - As a callable that returns an ansatz. For example, a function that takes input shape and returns
+                a network instance or it can be some custom logic to create the wavefunction ansatz:
+                - PEPS ansatz function
+                - Custom variational ansatz
+        sampler [Union[Callable, str, VMCSampler]]:
+            The sampler to be used. If None, a default `VMCSampler` will be created.
+            This can be specified in several ways:
+            - As a string (e.g., 'vmc') to use a built-in sampler.
+            - As a pre-initialized sampler object (must be a subclass of `VMCSampler`).
+            - As a callable that returns a sampler instance.
+            - If None, a default `VMCSampler` will be created using the provided network:
+                - The sampler will be initialized with the network, shape, random number generators, and other parameters.
+        model [Hamiltonian or Operator]:
+            The physical model (e.g., Hamiltonian) for the NQS.
+            - If physics is 'wavefunction', this must provide a `local_energy_fn`.
+            - For other physics types, refer to the specific requirements.
+            - Unless overridden, the NQS adopts the model/Hamiltonian state convention.
+                - For spin-1/2 this default is the signed operator convention `{-0.5, +0.5}`.
+        batch_size [Optional[int]]:
+            The batch size for training.
+        nthstate [Optional[int]]:
+            The nth excited state to target (0 for ground state). Informative
+        nparticles [Optional[int]]:
+            The number of particles in the system. If not provided, defaults to system size.
+        seed [Optional[int]]:
+            Random seed for initialization.
+        beta [float]:
+            Inverse temperature for Monte Carlo sampling.
+        mu [float]:
+            Mu parameter for the NQS. This is used for collecting different sampling distribution.
+            By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
+        replica [int]:
+            Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
+            When replica > 1:
+            - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
+            to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
+            - MCMC runs in parallel across all temperature replicas.
+            - Periodic replica exchanges improve mixing and help escape local minima.
+            - Only samples from the physical replica (beta=1.0) are used for training.
+            - The return signature of `sample()` and `train()` remains unchanged.
+        shape [Union[list, tuple]]:
+            Shape of the input data, e.g., `(n_spins,)`.
+        modes:
+            Number of local modes per site (e.g., 2 for spin-1/2).
+        directory:
+            Directory for saving results.
+        backend:
+            Computational backend ('jax' or 'numpy').
+        dtype:
+            Data type for network parameters (e.g., 'float32', 'complex128').
+        problem:
+            The physics problem to solve (e.g., 'wavefunction'). Future versions may support other problems, like density matrix.
+        symmetrize [bool]:
+            Whether to automatically symmetrize the ansatz if symmetries are present in the Hilbert space.
+            If True (default), and `hilbert` has symmetries, the network output will be projected onto the
+            specified symmetry sector:
+            :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
+            where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
+            This allows training symmetry-protected states.
+        verbose [bool]:
+            Whether to print verbose output. Default is True.
+        **kwargs:
+            Additional keyword arguments passed to the network constructor.
+            Including:
+            - seed:
+                Seed for network initialization (overrides global seed if provided).
+            - param_dtype:
                 Data type for network parameters (e.g., 'float32', 'complex128').
-            problem:
-                The physics problem to solve (e.g., 'wavefunction').
-            symmetrize [bool]:
-                Whether to automatically symmetrize the ansatz if symmetries are present in the Hilbert space.
-                If True (default), and `hilbert` has symmetries, the network output will be projected onto the
-                specified symmetry sector:
-                :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
-                where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
-                This allows training symmetry-protected states.
-            verbose [bool]:
-                Whether to print verbose output. Default is True.
-            **kwargs:
-                Additional keyword arguments passed to the network constructor.
-                Including:
-                - seed:
-                    Seed for network initialization (overrides global seed if provided).
-                - param_dtype:
-                    Data type for network parameters (e.g., 'float32', 'complex128').
-                - state_representation:
-                    Optional explicit external state convention. If omitted, the
-                    model/Hilbert default is used. Binary conventions always use
-                    unit-valued occupied/up entries (`1.0`), while physical spin
-                    magnitudes only apply to explicit signed-spin conventions.
-                - beta_penalty:
-                    Penalty term for particle number conservation (default: 0.0).
-                - use_orbax:
-                    Whether to use Orbax for checkpointing (default: True).
-                - orbax_max_to_keep:
-                    Maximum number of Orbax checkpoints to keep (default: 3).
-                - Sampler-specific parameters:
-                    - s_numchains       : Number of Markov chains (auto-configured by backend; override to set explicitly).
-                    - s_numsamples      : Number of samples per chain (auto-configured by backend; override to set explicitly).
-                    - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
-                    - s_sweep_steps     : Sweep steps between collected samples (auto-configured by backend).
-                    - s_therm_steps     : Thermalization steps (burn-in) (auto-configured by backend).
-                    - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
-                                        Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
-                                        See `NQS.help('sampling')` for details.
-                    - s_patterns        : List of patterns for "GLOBAL" update rule (required if upd_fun="GLOBAL").
-                    - s_n_flip          : Number of sites for "MULTI_FLIP" rule (default: 1).
-                    - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
-                    - s_logprob_fact    : Log probability factor (default: 0.5).
-                    - s_makediffer      : Whether to make the sampler differentiable (default: True).
-                    - Other sampler-specific parameters as needed.
-                - Parallel Tempering parameters (when replica > 1):
-                    - pt_betas          : Custom array of inverse temperatures (optional).
-                                        If not provided, a geometric ladder from 1.0 to 0.1 is generated.
-                    - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
-                                        Sampler-specific parameters (e.g., `global_p`, `global_fraction`) are
-                                        also passed through to the `VMCSampler` constructor via `**kwargs`.
-                    - global_p          : Probability of proposing a global update (default: 0.0).
-                    - global_update     : Custom global update function (optional).
+            - state_representation:
+                Optional explicit external state convention. If omitted, the
+                model/Hilbert default is used. Binary conventions always use
+                unit-valued occupied/up entries (`1.0`), while physical spin
+                magnitudes only apply to explicit signed-spin conventions.
+            - beta_penalty:
+                Penalty term for particle number conservation (default: 0.0).
+            - use_orbax:
+                Whether to use Orbax for checkpointing (default: True).
+            - orbax_max_to_keep:
+                Maximum number of Orbax checkpoints to keep (default: 3).
+            - Sampler-specific parameters:
+                - s_numchains       : Number of Markov chains (auto-configured by backend; override to set explicitly).
+                - s_numsamples      : Number of samples per chain (auto-configured by backend; override to set explicitly).
+                - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
+                - s_sweep_steps     : Sweep steps between collected samples (auto-configured by backend).
+                - s_therm_steps     : Thermalization steps (burn-in) (auto-configured by backend).
+                - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
+                                    Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
+                                    See `NQS.help('sampling')` for details.
+                - s_patterns        : List of patterns for "GLOBAL" update rule (required if upd_fun="GLOBAL").
+                - s_n_flip          : Number of sites for "MULTI_FLIP" rule (default: 1).
+                - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
+                - s_logprob_fact    : Log probability factor (default: 0.5).
+                - s_makediffer      : Whether to make the sampler differentiable (default: True).
+                - Other sampler-specific parameters as needed.
+            - Parallel Tempering parameters (when replica > 1):
+                - pt_betas          : Custom array of inverse temperatures (optional).
+                                    If not provided, a geometric ladder from 1.0 to 0.1 is generated.
+                - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
+                                    Sampler-specific parameters (e.g., `global_p`, `global_fraction`) are
+                                    also passed through to the `VMCSampler` constructor via `**kwargs`.
+                - global_p          : Probability of proposing a global update (default: 0.0).
+                - global_update     : Custom global update function (optional).
         """
 
         ansatz_alias = kwargs.pop("ansatz", None)
@@ -470,6 +500,8 @@ class NQS(MonteCarloSolver):
         if not self._initialized:
             self.init_network()
 
+        # Determine the network adapter based on the network type and representation info
+        # This just helps with setting up how the states look like etc.
         self._network_adapter           = choose_nqs_network_adapter(self._net, self._representation_info, backend=self._backend_str)
         self._state_representation      = None
         self._spin_repr                 = None
@@ -478,39 +510,40 @@ class NQS(MonteCarloSolver):
         self._state_convention_sig      = None
         self._resolved_operator_cache   = {}
         self._set_state_convention(**kwargs)
-
-        self._isjax                 = getattr(self._net, "is_jax", (self._nqsbackend.name == "jax"))
-        self._iscpx                 = self._net.is_complex
-        self._holomorphic           = self._net.is_holomorphic
-        self._analytic              = self._net.has_analytic_grad # Whether analytic gradients are supported - expected for JAX backends
-        self._dtype                 = self._net.dtype
+    
+        # Determine if the network is JAX-based, complex-valued, and supports holomorphic/analytic properties
+        self._isjax                     = getattr(self._net, "is_jax", (self._nqsbackend.name == "jax"))
+        self._iscpx                     = self._net.is_complex
+        self._holomorphic               = self._net.is_holomorphic
+        self._analytic                  = self._net.has_analytic_grad # Whether analytic gradients are supported - expected for JAX backends
+        self._dtype                     = self._net.dtype
 
         # Precision policy (mixed precision for stable paths)
         self._precision_policy: NQSPrecisionPolicy = resolve_precision_policy(self._dtype, is_jax=self._isjax, **kwargs)
 
         # Initialize SymmetryHandler
-        self.symmetry_handler       = NQSSymmetricAnsatz(self)
+        self.symmetry_handler           = NQSSymmetricAnsatz(self)
 
         # --------------------------------------------------
         #! Sampler
         # --------------------------------------------------
 
-        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)
+        self._sampler                   = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)
 
         # --------------------------------------------------
         #! Handle gradients
         # --------------------------------------------------
-        self._grad_info             = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)
-        self._flat_grad_func        = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
-        self._analytic_grad_func    = self._grad_info["analytic_grad_func"]     # Function to compute analytic gradients
-        self._dict_grad_type        = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
-        self._params_slice_metadata = self._grad_info["slice_metadata"]         # Metadata for slicing parameters
-        self._params_leaf_info      = self._grad_info["leaf_info"]              # Leaf information
-        self._params_tree_def       = self._grad_info["tree_def"]               # Tree definition
-        self._params_shapes         = self._grad_info["shapes"]                 # Shapes of parameters
-        self._params_sizes          = self._grad_info["sizes"]                  # Sizes of parameters
-        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]    # Whether each parameter is complex
-        self._params_total_size     = self._grad_info["total_size"]             # Total size of parameters -> cost for training
+        self._grad_info                 = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)
+        self._flat_grad_func            = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
+        self._analytic_grad_func        = self._grad_info["analytic_grad_func"]     # Function to compute analytic gradients
+        self._dict_grad_type            = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
+        self._params_slice_metadata     = self._grad_info["slice_metadata"]         # Metadata for slicing parameters
+        self._params_leaf_info          = self._grad_info["leaf_info"]              # Leaf information
+        self._params_tree_def           = self._grad_info["tree_def"]               # Tree definition
+        self._params_shapes             = self._grad_info["shapes"]                 # Shapes of parameters
+        self._params_sizes              = self._grad_info["sizes"]                  # Sizes of parameters
+        self._params_iscpx              = self._grad_info["is_complex_per_leaf"]    # Whether each parameter is complex
+        self._params_total_size         = self._grad_info["total_size"]             # Total size of parameters -> cost for training
 
         # --------------------------------------------------
         #! Compile functions
@@ -1918,22 +1951,37 @@ class NQS(MonteCarloSolver):
         """
         Extract the canonical Hamiltonian-facing state convention.
         """
-        representation      = getattr(self._representation_info, "sampler_representation", self._state_representation)
-        local_space_type    = getattr(self._representation_info, "local_space_type", None)
-        mode_repr           = resolve_representation_value(
-                                representation,
-                                local_space_type=local_space_type,
-                                fallback=(self._mode_repr if self._mode_repr is not None else 1.0),
-                            )
+        conv = None
+        if self._hilbert is not None and hasattr(self._hilbert, "state_convention"):
+            try:
+                conv = self._hilbert.state_convention
+            except Exception:
+                conv = None
+
+        if isinstance(conv, dict):
+            representation      = conv.get("vector_representation", conv.get("representation", self._state_representation))
+            local_space_type    = conv.get("local_space_type", getattr(self._representation_info, "local_space_type", None))
+            spin_repr           = bool(conv.get("spin", False))
+            mode_repr           = float(conv.get("vector_mode_repr", conv.get("mode_repr", 1.0)))
+        else:
+            representation      = getattr(self._representation_info, "sampler_representation", self._state_representation)
+            local_space_type    = getattr(self._representation_info, "local_space_type", None)
+            spin_repr           = str(representation).strip().lower().replace("_", "-") == "spin-pm"
+            mode_repr           = resolve_representation_value(
+                                    representation,
+                                    local_space_type=local_space_type,
+                                    fallback=(self._mode_repr if self._mode_repr is not None else 1.0),
+                                )
         return {
             "representation"        : representation,
-            "spin"                  : str(representation).strip().lower().replace("_", "-") == "spin-pm",
+            "spin"                  : bool(spin_repr),
             "mode_repr"             : float(mode_repr),
             "local_dim"             : int(self._local_dim),
             "representation_info"   : self._representation_info,
         }
 
     def _bind_local_energy_function(self, local_energy_fn):
+        ''' Bind the local energy function to the resolved state convention if it's a Hamiltonian problem. '''
         if local_energy_fn is None or not isinstance(self._model, Hamiltonian):
             return local_energy_fn
         return bind_local_energy_state_convention(
@@ -3968,12 +4016,16 @@ class NQS(MonteCarloSolver):
         """
         Automatically detect hardware and return VMC defaults.
 
-        Args:
-            system_size (int): Number of spins/sites (N).
-            target_total_samples (int): Target total samples per Monte Carlo evaluation.
-            dtype (jax.dtype): Runtime dtype.
-            model_hint (str, optional): Optional model identifier, e.g. ``'kitaev'``.
-            ansatz_hint (str, optional): Optional ansatz identifier.
+        Parameters
+        ----------
+        system_size (int)
+            Number of spins/sites (N).
+        target_total_samples (int)
+            Target total samples per Monte Carlo evaluation.
+        dtype (jax.dtype)
+            Runtime dtype.
+        model_hint (str, optional): Optional model identifier, e.g. ``'kitaev'``.
+        ansatz_hint (str, optional): Optional ansatz identifier.
 
         Returns:
             dict: ``s_numchains/s_numsamples/s_therm_steps/s_sweep_steps`` and metadata.

@@ -6,7 +6,10 @@ sigma_minus (lowering), their products, and a Fourier-transformed sigma_k operat
 ----------------------------------------------------------------------------
 Author      : Maksymilian Kliczkowski, WUST, Poland
 Date        : February 2025
-Version     : 1.0
+Version     : 1.1
+Changelog   : 
+- v1.1: Refactored to use JAX's lax.fori_loop for better performance and JIT compatibility.
+- v1.0: Initial implementation of spin operators using JAX.
 ----------------------------------------------------------------------------
 """
 
@@ -18,18 +21,11 @@ import numpy as np
 ################################################################################
 try:
     import QES.general_python.common.binary as _binary
-    from QES.Algebra.Operator.operator import ensure_operator_output_shape_jax
-    from QES.general_python.common.binary import (
-        BACKEND_DEF_SPIN,
-        JAX_AVAILABLE,
-    )
-    from QES.general_python.common.binary import (
-        BACKEND_REPR as _SPIN,
-    )
+    from QES.Algebra.Operator.operator      import ensure_operator_output_shape_jax
+    from QES.general_python.common.binary   import BACKEND_DEF_SPIN, JAX_AVAILABLE
+    from QES.general_python.common.binary   import BACKEND_REPR as _SPIN
 except ImportError as e:
-    raise ImportError(
-        "Failed to import Operator base class or utilities. Ensure that the QES package is correctly installed and accessible."
-    ) from e
+    raise ImportError("Failed to import Operator base class or utilities. Ensure that the QES package is correctly installed and accessible.") from e
 ################################################################################
 
 # JAX imports
@@ -53,12 +49,12 @@ if JAX_AVAILABLE:
     _SIG_P_jnp = jnp.array([[0, 1], [0, 0]], dtype=float)
     _SIG_M_jnp = jnp.array([[0, 0], [1, 0]], dtype=float)
 
-    @partial(jax.jit, static_argnums=(2,))
-    def _flip_func(state_val, pos, spin: bool):
-        return jax.lax.cond(
-            spin,
+    @partial(jax.jit, static_argnums=(2, 3))
+    def _flip_func(state_val, pos, spin: bool, spin_value: float):
+        ''' Flip the bit at position pos in state_val using the appropriate JAX function based on the spin convention. '''
+        return jax.lax.cond(spin,
             lambda _: _binary.jaxpy.flip_array_jax_spin(state_val, pos),
-            lambda _: _binary.jaxpy.flip_array_jax_nspin(state_val, pos),
+            lambda _: _binary.jaxpy.flip_array_jax_nspin(state_val, pos, spin_value=spin_value),
             operand=None,
         )
 
@@ -120,7 +116,7 @@ if JAX_AVAILABLE:
         def body(i, carry):
             curr_state, curr_coeff = carry
             # sites is static, so extract the site.
-            site = ns - 1 + sites[i]
+            site = ns - 1 - sites[i]
             # flip is assumed to be a JAX-compatible function that flips the bit at position pos.
             new_state = _binary.jaxpy.flip_int_traced_jax(curr_state, site)
             new_coeff = curr_coeff * spin_value
@@ -140,7 +136,8 @@ if JAX_AVAILABLE:
             return s.at[sites_arr].set(-s[sites_arr])
 
         def update_nspin(s):
-            return s.at[sites_arr].set(1 - s[sites_arr])
+            value = jnp.asarray(spin_value, dtype=s.dtype)
+            return s.at[sites_arr].set(value - s[sites_arr])
 
         new_state = jax.lax.cond(spin, update_spin, update_nspin, state)
         return ensure_operator_output_shape_jax(new_state, coeff)
@@ -211,9 +208,7 @@ if JAX_AVAILABLE:
             bitmask             = jnp.left_shift(1, pos)
             condition           = (state_val & bitmask) > 0
             # Corrected sign: bit=1 (down) -> -1j, bit=0 (up) -> 1j
-            factor              = lax.cond(
-                                    condition, lambda _: -1j * spin_value, lambda _: 1j * spin_value, operand=None
-                                )
+            factor              = lax.cond(condition, lambda _: -1j * spin_value, lambda _: 1j * spin_value, operand=None)
             new_state           = _binary.jaxpy.flip_int_traced_jax(state_val, pos)
             return (new_state, coeff * factor)
 
@@ -238,7 +233,8 @@ if JAX_AVAILABLE:
             return s.at[sites_arr].set(-s[sites_arr])
 
         def update_nspin(s):
-            return s.at[sites_arr].set(1 - s[sites_arr])
+            value = jnp.asarray(spin_value, dtype=s.dtype)
+            return s.at[sites_arr].set(value - s[sites_arr])
 
         new_state = lax.cond(spin, update_spin, update_nspin, state)
 
@@ -486,7 +482,7 @@ if JAX_AVAILABLE:
                 new_state = jax.lax.cond(
                     spin,
                     lambda _: _binary.jaxpy.flip_array_jax_spin(state_in, site),
-                    lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site),
+                    lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site, spin_value=spin_value),
                     operand=None,
                 )
                 return new_state, coeff_new
@@ -562,7 +558,7 @@ if JAX_AVAILABLE:
                 new_state = jax.lax.cond(
                     spin,
                     lambda _: _binary.jaxpy.flip_array_jax_spin(state_in, site),
-                    lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site),
+                    lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site, spin_value=spin_value),
                     operand=None,
                 )
                 return new_state, coeff_new
@@ -594,7 +590,7 @@ if JAX_AVAILABLE:
                 return jax.lax.cond(
                     _binary.jaxpy.check_arr_jax(state_val, pos),
                     lambda _: state_val,
-                    lambda _: _flip_func(state_val, pos, spin),
+                    lambda _: _flip_func(state_val, pos, spin, spin_value),
                     operand=None,
                 )
 
@@ -602,7 +598,7 @@ if JAX_AVAILABLE:
                 # If bit is not set, return state_val; else flip
                 return jax.lax.cond(
                     _binary.jaxpy.check_arr_jax(state_val, pos),
-                    lambda _: _flip_func(state_val, pos, spin),
+                    lambda _: _flip_func(state_val, pos, spin, spin_value),
                     lambda _: state_val,
                     operand=None,
                 )
@@ -632,13 +628,13 @@ if JAX_AVAILABLE:
                 bitmask = jnp.left_shift(1, pos)
                 even_branch = lax.cond(
                     (curr_state & bitmask) == 0,
-                    lambda _: (_flip_func(curr_state, pos, spin), curr_coeff * spin_value),
+                    lambda _: (_flip_func(curr_state, pos, spin, spin_value), curr_coeff * spin_value),
                     lambda _: (curr_state, 0.0),
                     operand=None,
                 )
                 odd_branch = lax.cond(
                     (curr_state & bitmask) > 0,
-                    lambda _: (_flip_func(curr_state, pos, spin), curr_coeff * spin_value),
+                    lambda _: (_flip_func(curr_state, pos, spin, spin_value), curr_coeff * spin_value),
                     lambda _: (curr_state, 0.0),
                     operand=None,
                 )
@@ -676,13 +672,13 @@ if JAX_AVAILABLE:
                 bitmask = jnp.left_shift(1, pos)
                 even_branch = lax.cond(
                     (curr_state & bitmask) > 0,
-                    lambda _: _flip_func(curr_state, pos, spin),
+                    lambda _: _flip_func(curr_state, pos, spin, spin_value),
                     lambda _: (curr_state, 0.0),
                     operand=None,
                 )
                 odd_branch = lax.cond(
                     (curr_state & bitmask) == 0,
-                    lambda _: (_flip_func(curr_state, pos, spin), curr_coeff * spin_value),
+                    lambda _: (_flip_func(curr_state, pos, spin, spin_value), curr_coeff * spin_value),
                     lambda _: (curr_state, 0.0),
                     operand=None,
                 )
@@ -730,7 +726,7 @@ if JAX_AVAILABLE:
                     new_state = jax.lax.cond(
                         spin,
                         lambda _: _binary.jaxpy.flip_array_jax_spin(state_in, site),
-                        lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site),
+                        lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site, spin_value=spin_value),
                         operand=None,
                     )
                     return new_state, coeff_new
@@ -746,7 +742,7 @@ if JAX_AVAILABLE:
                     new_state = jax.lax.cond(
                         spin,
                         lambda _: _binary.jaxpy.flip_array_jax_spin(state_in, site),
-                        lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site),
+                        lambda _: _binary.jaxpy.flip_array_jax_nspin(state_in, site, spin_value=spin_value),
                         operand=None,
                     )
                     return new_state, coeff_new
@@ -966,7 +962,7 @@ if JAX_AVAILABLE:
                 new_st  = jax.lax.cond(
                     spin,
                     lambda s: _binary.jaxpy.flip_array_jax_spin(s, site),
-                    lambda s: _binary.jaxpy.flip_array_jax_nspin(s, site),
+                    lambda s: _binary.jaxpy.flip_array_jax_nspin(s, site, spin_value=spin_value),
                     st,
                 )
                 return (new_st, c * spin_value)
@@ -982,7 +978,7 @@ if JAX_AVAILABLE:
                 new_st  = jax.lax.cond(
                     spin,
                     lambda s: _binary.jaxpy.flip_array_jax_spin(s, site),
-                    lambda s: _binary.jaxpy.flip_array_jax_nspin(s, site),
+                    lambda s: _binary.jaxpy.flip_array_jax_nspin(s, site, spin_value=spin_value),
                     st,
                 )
                 return (new_st, c * factor)

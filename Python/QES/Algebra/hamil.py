@@ -45,7 +45,7 @@ try:
 except ImportError as exc:
     raise ImportError("QES.Algebra.hilbert or QES.Algebra.Operator.operator could not be imported. Ensure QES is properly installed.") from exc
 
-###################################################################################################
+# -----------------------------------------------------------------------------
 
 try:
     from QES.general_python.algebra.utils import JAX_AVAILABLE, jax, jnp
@@ -106,31 +106,27 @@ class Hamiltonian(BasisAwareOperator):
     """
 
     # Error messages for Hamiltonian class
-    _ERR_EIGENVALUES_NOT_AVAILABLE  = (
-        "Eigenvalues are not available. Please diagonalize the Hamiltonian first."
-    )
-    _ERR_HAMILTONIAN_NOT_AVAILABLE  = (
-        "Hamiltonian matrix is not available. Please build or initialize the Hamiltonian."
-    )
-    _ERR_HAMILTONIAN_INITIALIZATION = (
-        "Failed to initialize the Hamiltonian matrix. Check Hilbert space, lattice, and parameters."
-    )
-    _ERR_HAMILTONIAN_BUILD          = (
-        "Failed to build the Hamiltonian matrix. Ensure all operators and spaces are properly set."
-    )
+    _ADD_TOLERANCE                  = 1e-10
+    _ERR_EIGENVALUES_NOT_AVAILABLE  = "Eigenvalues are not available. Please diagonalize the Hamiltonian first."
+    _ERR_HAMILTONIAN_NOT_AVAILABLE  = "Hamiltonian matrix is not available. Please build or initialize the Hamiltonian."
+    _ERR_HAMILTONIAN_INITIALIZATION = "Failed to initialize the Hamiltonian matrix. Check Hilbert space, lattice, and parameters."
+    _ERR_HAMILTONIAN_BUILD          = "Failed to build the Hamiltonian matrix. Ensure all operators and spaces are properly set."
 
     # Dictionary of error messages
-    _ERRORS = {
-        "eigenvalues_not_available"     : _ERR_EIGENVALUES_NOT_AVAILABLE,
-        "hamiltonian_not_available"     : _ERR_HAMILTONIAN_NOT_AVAILABLE,
-        "hamiltonian_initialization"    : _ERR_HAMILTONIAN_INITIALIZATION,
-        "hamiltonian_build"             : _ERR_HAMILTONIAN_BUILD,
-    }
-
-    _ADD_TOLERANCE = 1e-10
+    _ERRORS                         = {
+                                        "eigenvalues_not_available"     : _ERR_EIGENVALUES_NOT_AVAILABLE,
+                                        "hamiltonian_not_available"     : _ERR_HAMILTONIAN_NOT_AVAILABLE,
+                                        "hamiltonian_initialization"    : _ERR_HAMILTONIAN_INITIALIZATION,
+                                        "hamiltonian_build"             : _ERR_HAMILTONIAN_BUILD,
+                                    }
 
     def _ADD_CONDITION(x, *args):
+        """
+        Robust non-zero check for Hamiltonian term addition.
+        """
+        
         from collections.abc import Mapping, Iterable
+        
         def _is_nonzero_like(value):
             """
             Robust scalar/array-like non-zero check.
@@ -208,6 +204,11 @@ class Hamiltonian(BasisAwareOperator):
 
         return _is_nonzero_like(y)
 
+    def _check_build(self):
+        """Ensure the Hamiltonian is built before use."""
+        if not self._is_built:
+            self.build()
+
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
@@ -222,29 +223,21 @@ class Hamiltonian(BasisAwareOperator):
         # concerns the definition of the system type
         is_manybody: bool = True,  # True for many-body Hamiltonian, False for non-interacting
         *,
-        hilbert_space: Optional[
-            Union[HilbertSpace, HilbertConfig]
-        ] = None,  # Required if is_manybody=True
-        ns: Optional[
-            int
-        ] = None,  # Number of sites/modes (if not provided, will be inferred from hilbert_space or lattice)
-        lattice: Optional[
-            Union[str, List[int], 'Lattice']
-        ] = None,  # Alternative way to specify ns and get the Hilbert space
+        hilbert_space   : Optional[Union[HilbertSpace, HilbertConfig]] = None,  # Required if is_manybody=True
+        ns              : Optional[int] = None,  # Number of sites/modes (if not provided, will be inferred from hilbert_space or lattice)
+        lattice         : Optional[Union[str, List[int], 'Lattice']] = None,  # Alternative way to specify ns and get the Hilbert space
         # concerns the matrix and computation
-        is_sparse: bool = True,  # True for sparse matrix, False for dense matrix
-        dtype: Optional[
-            Union[str, np.dtype]
-        ] = None,  # Data type for the Hamiltonian matrix elements (if None, inferred from hilbert_space or backend)
-        backend: str = "default",
+        is_sparse       : bool = True,  # True for sparse matrix, False for dense matrix
+        dtype           : Optional[Union[str, np.dtype]] = None,  # Data type for the Hamiltonian matrix elements (if None, inferred from hilbert_space or backend)
+        backend         : str = "default",
         # logger and other kwargs
-        use_forward: bool = False,
-        logger: Optional["Logger"] = None,
-        seed: Optional[int] = None,
-        verbose: bool = False,
+        use_forward     : bool = False,
+        logger          : Optional["Logger"] = None,
+        seed            : Optional[int] = None,
+        verbose         : bool = False,
         **kwargs,
     ):
-        """
+        r"""
         Initialize the Hamiltonian class.
 
         Parameters
@@ -356,11 +349,11 @@ class Hamiltonian(BasisAwareOperator):
             - Computational backend and dtype
             - Sparsity and memory usage (if available)
         """
-        htype = "Many-Body" if self._is_manybody else "Quadratic"
-        hilbert_info = f"HilbertSpace(Nh={self._nh})" if self._hilbert_space is not None else ""
-        lattice_info = f"Lattice({self._lattice})" if self._lattice is not None else ""
-        backend_info = f"backend='{self._backendstr}', dtype={self._dtype}"
-        sparse_info = "sparse" if self._is_sparse else "dense"
+        htype           = "Many-Body" if self._is_manybody else "Quadratic"
+        hilbert_info    = f"HilbertSpace(Nh={self._nh})" if self._hilbert_space is not None else ""
+        lattice_info    = f"Lattice({self._lattice})" if self._lattice is not None else ""
+        backend_info    = f"backend='{self._backendstr}', dtype={self._dtype}"
+        sparse_info     = "sparse" if self._is_sparse else "dense"
 
         return (
             f"<{htype} Hamiltonian | Nh={self._nh}, Ns={self._ns}, "
@@ -374,15 +367,9 @@ class Hamiltonian(BasisAwareOperator):
         Generates the matrix representation.
         Overrides Operator.matrix to provide default Hilbert space.
         """
-        # Inject internal Hilbert space if not provided
-        # Operator.matrix(dim=None, matrix_type='sparse', dtype=None, hilbert_1=None, hilbert_2=None, use_numpy=True, **kwargs)
 
         # Check if hilbert_1 is provided in kwargs
         if "hilbert_1" not in kwargs:
-            # Check if it might be in args? Operator.matrix args are consumed before keywords.
-            # But checking args is hard without inspecting signature.
-            # Given standard usage, people pass hilbert_1 as kwarg or positional.
-            # If args is empty, safe to inject.
             if not args and self._hilbert_space is not None:
                 kwargs["hilbert_1"] = self._hilbert_space
 
@@ -391,6 +378,7 @@ class Hamiltonian(BasisAwareOperator):
     @property
     def signature(self):
         """Unique signature for the Hamiltonian configuration."""
+        
         # Use instructions if available
         if hasattr(self, '_instr_codes') and self._instr_codes:
             terms = []
@@ -403,11 +391,6 @@ class Hamiltonian(BasisAwareOperator):
             terms.sort(key=lambda x: (x[0], x[2], x[1].real, x[1].imag))
             return str(tuple(terms))
         return str(id(self))
-
-    def _check_build(self):
-        """Ensure the Hamiltonian is built before use."""
-        if not self._is_built:
-            self.build()
 
     def randomize(self, **kwargs):
         """Randomize the Hamiltonian matrix."""
@@ -427,6 +410,7 @@ class Hamiltonian(BasisAwareOperator):
         self._loc_energy_np_fun     = None
         self._loc_energy_jax_fun    = None
 
+        # Prune any cached composition functions that may depend on the operator structure
         if hasattr(self, "_composition_int_fun"):
             self._composition_int_fun = None
         if hasattr(self, "_composition_np_fun"):
@@ -436,10 +420,10 @@ class Hamiltonian(BasisAwareOperator):
         if hasattr(self, "_cached_matvec_fun"):
             self._cached_matvec_fun = None
 
-        self._is_built = False
-        self._eig_val = None
-        self._eig_vec = None
-        self._krylov = None
+        self._is_built  = False
+        self._eig_val   = None
+        self._eig_vec   = None
+        self._krylov    = None
 
         if clear_matrix:
             if hasattr(self, "_hamil"):
@@ -448,22 +432,6 @@ class Hamiltonian(BasisAwareOperator):
                 self._hamil_transformed = None
             if hasattr(self, "_operator_transformed"):
                 self._operator_transformed = None
-
-    def add(
-        self,
-        operator: Any,
-        multiplier: Union[float, complex, int],
-        modifies: bool = False,
-        sites=None,
-    ):
-        """
-        Add a Hamiltonian term and invalidate compiled caches when successful.
-        """
-        n_before = len(self._instr_codes) if hasattr(self, "_instr_codes") else 0
-        super().add(operator=operator, multiplier=multiplier, modifies=modifies, sites=sites)
-        n_after = len(self._instr_codes) if hasattr(self, "_instr_codes") else n_before
-        if n_after != n_before:
-            self.invalidate_runtime_cache(clear_matrix=True)
 
     def _resolve_sites_input(self, sites: Optional[Iterable[int]]) -> List[int]:
         if sites is None:
@@ -526,24 +494,39 @@ class Hamiltonian(BasisAwareOperator):
                 uniq.add((a, b))
         return sorted(uniq)
 
+    # ----------------------------------------------------------------------------------------------
+
     def _coefficient_for_site(self, coefficient: Any, site: int):
+        ''' Helper to resolve site-dependent coefficients for local terms. Supports:
+            - Scalar: returns the same coefficient for all sites.
+            - Callable: calls with site index to get coefficient.
+            - Dict: looks up site index, defaults to 0 if not found.
+            - Sequence: indexed by site, must match Ns.
+            - Array: 0-d treated as scalar, 1-d indexed by site, must match Ns.
+            - Mapping: similar to dict, but supports more types.
+        '''
+        from collections.abc import Mapping
+        
         if callable(coefficient):
             return coefficient(int(site))
+        
         if isinstance(coefficient, dict):
             if site in coefficient:
                 return coefficient[site]
             return coefficient.get(int(site), 0.0)
+        
         if isinstance(coefficient, (list, tuple)):
             if len(coefficient) == int(self.ns):
                 return coefficient[int(site)]
             raise ValueError(f"Site coefficient sequence must have size Ns={self.ns}, got size={len(coefficient)}.")
+        
         if hasattr(coefficient, "ndim"):
             if coefficient.ndim == 0:
                 return coefficient.item()
             if coefficient.size == int(self.ns):
                 return coefficient[int(site)]
             raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={coefficient.shape}.")
-        from collections.abc import Mapping
+        
         if isinstance(coefficient, Mapping):
             if site in coefficient:
                 return coefficient[site]
@@ -578,13 +561,37 @@ class Hamiltonian(BasisAwareOperator):
             return 0.0
         return coefficient
 
-    def add_local_term(
-        self,
-        operator: Any,
-        coefficient: Any,
+    def add(self,
+        operator    : Any,
+        multiplier  : Union[float, complex, int],
+        modifies    : bool = False,
+        sites       = None,
+    ):
+        """
+        Add a Hamiltonian term and invalidate compiled caches when successful.
+        Parameters
+        ----------
+        operator : Any
+            The operator to add, which can be specified in various forms (e.g., string, OperatorTypeActing, OperatorFunction, etc.).
+        multiplier : float, complex, or int
+            The coefficient for the operator term.
+        modifies : bool, optional
+            If True, indicates that this term modifies the state (e.g., off-diagonal). Default is False.
+        sites : iterable of int, optional
+            The sites on which the operator acts. If None, it may be inferred from the operator or treated as a global term.
+        """
+        n_before    = len(self._instr_codes) if hasattr(self, "_instr_codes") else 0
+        super().add(operator=operator, multiplier=multiplier, modifies=modifies, sites=sites)
+        n_after     = len(self._instr_codes) if hasattr(self, "_instr_codes") else n_before
+        if n_after != n_before:
+            self.invalidate_runtime_cache(clear_matrix=True)
+            
+    def add_local_term(self,
+        operator    : Any,
+        coefficient : Any,
         *,
-        sites: Optional[Iterable[int]] = None,
-        modifies: bool = False,
+        sites       : Optional[Iterable[int]] = None,
+        modifies    : bool = False,
     ) -> int:
         """
         Add a single-site term on selected sites.
@@ -601,15 +608,14 @@ class Hamiltonian(BasisAwareOperator):
             added += 1
         return added
 
-    def add_bond_term(
-        self,
-        operator: Any,
-        coefficient: Any,
+    def add_bond_term(self,
+        operator    : Any,
+        coefficient : Any,
         *,
-        bonds: Optional[Iterable[Sequence[int]]] = None,
-        order: int = 1,
-        modifies: bool = False,
-        unique: bool = True,
+        bonds       : Optional[Iterable[Sequence[int]]] = None,
+        order       : int = 1,
+        modifies    : bool = False,
+        unique      : bool = True,
     ) -> int:
         """
         Add a two-site term over bonds.
@@ -643,10 +649,10 @@ class Hamiltonian(BasisAwareOperator):
         super().clear()
 
         # Hamiltonian-specific cleanup
-        self._hamil = None
-        self._hamil_sp = None
-        self._delta_sp = None
-        self._constant_sp = None
+        self._hamil         = None
+        self._hamil_sp      = None
+        self._delta_sp      = None
+        self._constant_sp   = None
         self._log("Hamiltonian cleared...", lvl=2, color="blue")
 
     # ----------------------------------------------------------------------------------------------
@@ -849,9 +855,9 @@ class Hamiltonian(BasisAwareOperator):
             raise ValueError(f"Cannot transform to {target_basis}: {reason}")
 
         # Look up registered handler
-        from_str = str(current_basis).lower()
-        to_str = str(target_basis).lower()
-        handler = self._get_basis_transform_handler(from_str, to_str)
+        from_str    = str(current_basis).lower()
+        to_str      = str(target_basis).lower()
+        handler     = self._get_basis_transform_handler(from_str, to_str)
 
         if handler is None:
             raise NotImplementedError(
@@ -902,7 +908,7 @@ class Hamiltonian(BasisAwareOperator):
         self._log(f"Basis type set to {basis_type}", lvl=2, color="cyan")
 
     # -------------------------------------------------------------------------
-    #! Basis Transformation Infrastructure (General)
+    #! Basis Transformation Infrastructure
     # -------------------------------------------------------------------------
 
     def _infer_and_set_default_basis(self):
@@ -927,11 +933,8 @@ class Hamiltonian(BasisAwareOperator):
             default_basis = self._hilbert_space._basis_type
             self._basis_metadata["inherited_from_hilbert"] = True
             if self._verbose:
-                self._log(
-                    f"Hamiltonian basis inherited from HilbertSpace: {default_basis}",
-                    lvl=1,
-                    color="cyan",
-                )
+                self._log(f"Hamiltonian basis inherited from HilbertSpace: {default_basis}", lvl=1, color="cyan",)
+                
         else:
             # Priority 2: Infer from Hamiltonian properties
             if self._is_quadratic:
@@ -952,15 +955,11 @@ class Hamiltonian(BasisAwareOperator):
                     self._basis_metadata["system_type"] = "manybody-fock"
 
         # Set original and current basis
-        self._original_basis = default_basis
-        self._current_basis = default_basis
-        self._is_transformed = False
+        self._original_basis    = default_basis
+        self._current_basis     = default_basis
+        self._is_transformed    = False
         if self._verbose:
-            self._log(
-                f"Default basis inferred: {default_basis} ({self._basis_metadata.get('system_type', 'unknown')})",
-                lvl=2,
-                color="cyan",
-            )
+            self._log(f"Default basis inferred: {default_basis} ({self._basis_metadata.get('system_type', 'unknown')})", lvl=2, color="cyan")
 
     def get_transformation_state(self) -> Dict[str, Any]:
         """
@@ -981,19 +980,15 @@ class Hamiltonian(BasisAwareOperator):
             - 'metadata'            : Additional basis metadata
         """
         state = {
-            "original_basis": str(self._original_basis) if self._original_basis else None,
-            "current_basis": str(self._current_basis) if self._current_basis else None,
-            "is_transformed": self._is_transformed,
-            "has_real_space": self._hamil is not None or self._hamil_sp is not None,
-            "has_transformed": self._hamil_transformed is not None,
-            "transformed_shape": (
-                self._hamil_transformed.shape if self._hamil_transformed is not None else None
-            ),
-            "grid_shape": (
-                self._transformed_grid.shape if self._transformed_grid is not None else None
-            ),
-            "symmetry_info": self._symmetry_info,
-            "metadata": self._basis_metadata.copy(),
+            "original_basis"    : str(self._original_basis) if self._original_basis else None,
+            "current_basis"     : str(self._current_basis) if self._current_basis else None,
+            "is_transformed"    : self._is_transformed,
+            "has_real_space"    : self._hamil is not None or self._hamil_sp is not None,
+            "has_transformed"   : self._hamil_transformed is not None,
+            "transformed_shape" : self._hamil_transformed.shape if self._hamil_transformed is not None else None,
+            "grid_shape"        : self._transformed_grid.shape if self._transformed_grid is not None else None,
+            "symmetry_info"     : self._symmetry_info,
+            "metadata"          : self._basis_metadata.copy(),
         }
         return state
 
@@ -1013,9 +1008,7 @@ class Hamiltonian(BasisAwareOperator):
         if state["symmetry_info"]:
             self._log(f"  Symmetry: {state['symmetry_info']}", lvl=1)
 
-    def record_symmetry_application(
-        self, symmetry_name: Optional[str] = None, sector: Optional[str] = None
-    ):
+    def record_symmetry_application(self, symmetry_name: Optional[str] = None, sector: Optional[str] = None):
         """
         Record information about applied symmetries to track basis reductions.
 
@@ -1032,11 +1025,7 @@ class Hamiltonian(BasisAwareOperator):
         # Use the (potentially updated by super()) symmetry_name and sector for Hamiltonian-specific recording
         if self._symmetry_info:  # Check if super() successfully set _symmetry_info
             if self._verbose:
-                self._log(
-                    f"Hamiltonian recorded symmetry application: {self._symmetry_info}",
-                    lvl=3,
-                    color="yellow",
-                )
+                self._log(f"Hamiltonian recorded symmetry application: {self._symmetry_info}", lvl=3, color="yellow")
 
     def validate_basis_transformation(self, target_basis: str) -> Tuple[bool, str]:
         """
@@ -1203,10 +1192,10 @@ class Hamiltonian(BasisAwareOperator):
         Sets the appropriate matrix based on whether the Hamiltonian is many-body or quadratic.
         """
         if self._is_manybody:
-            self._hamil = matrix
-            self._matrix = matrix
+            self._hamil     = matrix
+            self._matrix    = matrix
         else:
-            self._hamil_sp = matrix
+            self._hamil_sp  = matrix
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1215,7 +1204,8 @@ class Hamiltonian(BasisAwareOperator):
         Returns the indices around the average energy of the Hamiltonian.
         This is used to track the average energy during calculations.
 
-        Returns:
+        Returns
+        -------
             tuple : (index, value) of the average energy.
         """
         hilbert_size = len(self.eig_val)
@@ -1225,14 +1215,14 @@ class Hamiltonian(BasisAwareOperator):
             fraction_in = int(fraction)
 
         #! get the energy index
-        energy_in = self.av_en if energy is None else energy
-        energy_index = (
+        energy_in       = self.av_en if energy is None else energy
+        energy_index    = (
             int(np.argmin(np.abs(self.eig_val - energy_in))) if energy is None else self.av_en_idx
         )
 
         #! left
-        left_index = min(max(0, energy_index - fraction_in // 2), energy_index - 5)
-        right_index = max(min(hilbert_size, energy_index + fraction_in // 2), energy_index + 5)
+        left_index      = min(max(0, energy_index - fraction_in // 2), energy_index - 5)
+        right_index     = max(min(hilbert_size, energy_index + fraction_in // 2), energy_index + 5)
 
         return left_index, right_index, energy_index
 
@@ -1353,11 +1343,7 @@ class Hamiltonian(BasisAwareOperator):
             # Initialize Quadratic Matrix (_hamil_sp)
             # Shape determined by subclass, assume (Ns, Ns) for now
             ham_shape = getattr(self, "_hamil_sp_shape", (self._ns, self._ns))
-            self._log(
-                f"Initializing Quadratic Hamiltonian structure {ham_shape} (Sparse={self.sparse})...",
-                lvl=3,
-                log="debug",
-            )
+            self._log(f"Initializing Quadratic Hamiltonian structure {ham_shape} (Sparse={self.sparse})...", lvl=3, log="debug")
 
             if self.sparse:
                 if self._is_numpy:
@@ -1373,25 +1359,15 @@ class Hamiltonian(BasisAwareOperator):
             self._hamil = None
         else:
             if self.sparse:
-                self._log(
-                    "Initializing the Hamiltonian matrix as a sparse matrix...", lvl=3, log="debug"
-                )
+                self._log("Initializing the Hamiltonian matrix as a sparse matrix...", lvl=3, log="debug")
 
                 # --------------------------------------------------------------------------------------
 
                 if not jax_maybe_avail or use_numpy:
-                    self._log(
-                        "Initializing the Hamiltonian matrix as a CSR sparse matrix...",
-                        lvl=3,
-                        log="debug",
-                    )
+                    self._log("Initializing the Hamiltonian matrix as a CSR sparse matrix...", lvl=3, log="debug")
                     self._hamil = sp.sparse.csr_matrix((self._nh, self._nh), dtype=self._dtype)
                 else:
-                    self._log(
-                        "Initializing the Hamiltonian matrix as a sparse matrix...",
-                        lvl=3,
-                        log="debug",
-                    )
+                    self._log("Initializing the Hamiltonian matrix as a sparse matrix...", lvl=3, log="debug")
                     # Create an empty sparse Hamiltonian matrix using JAX's BCOO format
                     indices     = self._backend.zeros((0, 2), dtype=np.int32)
                     data        = self._backend.zeros((0,), dtype=self._dtype)
@@ -1400,20 +1376,13 @@ class Hamiltonian(BasisAwareOperator):
                 # --------------------------------------------------------------------------------------
 
             else:
-                self._log(
-                    "Initializing the Hamiltonian matrix as a dense matrix...", lvl=3, log="debug"
-                )
+                self._log("Initializing the Hamiltonian matrix as a dense matrix...", lvl=3, log="debug")
                 if not JAX_AVAILABLE or self._backend == np:
                     self._hamil = self._backend.zeros((self._nh, self._nh), dtype=self._dtype)
                 else:
                     # do not initialize the Hamiltonian matrix
                     self._hamil = None
-        self._log(
-            f"Hamiltonian matrix initialized and it's {'many-body' if self._is_manybody else 'quadratic'}",
-            lvl=3,
-            color="green",
-            log="debug",
-        )
+        self._log(f"Hamiltonian matrix initialized and it's {'many-body' if self._is_manybody else 'quadratic'}", lvl=3, color="green", log="debug")
 
     # ----------------------------------------------------------------------------------------------
     #! Many body Hamiltonian matrix
@@ -1715,9 +1684,7 @@ class Hamiltonian(BasisAwareOperator):
 
         # -----------------------------------------------------------------------------------------
         matrix_type = "sparse" if self.sparse else "dense"
-        self._log(
-            f"Calculating the {matrix_type} Hamiltonian matrix...", lvl=1, color="blue", log="debug"
-        )
+        self._log(f"Calculating the {matrix_type} Hamiltonian matrix...", lvl=1, color="blue", log="debug")
         # -----------------------------------------------------------------------------------------
 
         # Check if JAX is available and the backend is not NumPy
@@ -1833,10 +1800,8 @@ class Hamiltonian(BasisAwareOperator):
                     ]
                 )
 
-    def diagonalize(
-        self, method: str = "exact", build: bool = False, verbose: bool = False, **kwargs
-    ):
-        """
+    def diagonalize(self, method: str = "exact", build: bool = False, verbose: bool = False, **kwargs) -> None:
+        r"""
         Diagonalizes the Hamiltonian matrix using a modular, flexible approach.
 
         This method provides a unified interface to multiple diagonalization strategies:

@@ -80,7 +80,6 @@ except ImportError:
 try:
     if TYPE_CHECKING:
         from QES.Algebra.hilbert import HilbertSpace
-        from QES.general_python.algebra.utils import Array
 
     from QES.general_python.algebra.utils import (
         DEFAULT_BACKEND_KEY,
@@ -92,6 +91,11 @@ except ImportError:
     DEFAULT_JP_INT_TYPE = np.int32
     DEFAULT_NP_INT_TYPE = np.int32
     DEFAULT_BACKEND_KEY = None
+
+try:
+    from QES.NQS.src.network.adapters import resolve_sampling_hooks_for_network
+except ImportError:
+    resolve_sampling_hooks_for_network = None
 
 # ---------------------------------------------------------------------------
 #! Variational Monte Carlo Sampler
@@ -274,9 +278,7 @@ class VMCSampler(Sampler):
         if isinstance(upd_fun, (str, Enum)):
             from .sampler import get_update_function
 
-            self._local_upd_fun = get_update_function(
-                upd_fun, backend="jax" if self._isjax else "numpy", hilbert=hilbert, **kwargs
-            )
+            self._local_upd_fun = get_update_function(upd_fun, backend="jax" if self._isjax else "numpy", hilbert=hilbert, **kwargs)
             self._upd_rule_name = str(upd_fun)
         else:
             self._local_upd_fun = upd_fun
@@ -294,9 +296,7 @@ class VMCSampler(Sampler):
 
         # Try to switch to fast updates if available
         if self._isjax and self._log_psi_delta_fun is not None:
-            self._local_upd_fun = self._resolve_fast_update_fun(
-                self._local_upd_fun, upd_fun, **kwargs
-            )
+            self._local_upd_fun = self._resolve_fast_update_fun(self._local_upd_fun, upd_fun, **kwargs)
 
         # Check for global update configuration
         self._org_upd_fun = self._local_upd_fun
@@ -309,6 +309,10 @@ class VMCSampler(Sampler):
         # -----------------------------------------------------------------
 
         self.set_replicas(pt_betas, pt_replicas)
+        
+        # -----------------------------------------------------------------
+        #! Set up hybrid proposer if requested
+        # -----------------------------------------------------------------
         self.set_hybrid_proposer(
             kwargs.get("global_p", kwargs.get("p_global", 0.0)),
             kwargs.get("global_fraction", 0.5),
@@ -319,12 +323,12 @@ class VMCSampler(Sampler):
         # -----------------------------------------------------------------
         # Static sampler function (standard or PT)
         # -----------------------------------------------------------------
-        self._jit_cache = {}  # Cache for JIT-compiled samplers
-        self._static_sample_fun = self.get_sampler(
-            num_samples=self._numsamples, num_chains=self._numchains
-        )
+        self._jit_cache         = {}  # Cache for JIT-compiled samplers
+        self._static_sample_fun = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
         self._static_pt_sampler = None  # Lazily created on first PT sample call
-        self._name = "VMC"
+        self._name              = "VMC"
+
+    # ----------------------------------------------------------------------
 
     def _refresh_sampling_schedule(self, *, reset_compiled: bool = True):
         """Recompute derived sampling counts after schedule changes."""
@@ -365,47 +369,46 @@ class VMCSampler(Sampler):
                 if isinstance(upd_rule, str):
                     upd_rule = UpdateRule.from_str(upd_rule)
 
+                # Try to match the update rule to a known proposer with info function
                 if upd_rule == UpdateRule.LOCAL and _rule_supported("LOCAL"):
                     return _bind_named_partial(propose_local_flip_with_info, spin=spin, spin_value=spin_value)
+                
                 elif upd_rule == UpdateRule.EXCHANGE and _rule_supported("EXCHANGE"):
                     from .updates import get_neighbor_table
 
-                    hilbert = kwargs.get("hilbert")
-                    order = kwargs.get("exchange_order", 1)
-                    neighbor_table = get_neighbor_table(hilbert.lattice, order=order)
+                    hilbert         = kwargs.get("hilbert")
+                    order           = kwargs.get("exchange_order", 1)
+                    neighbor_table  = get_neighbor_table(hilbert.lattice, order=order)
                     return partial(propose_exchange_with_info, neighbor_table=neighbor_table)
+                
                 elif upd_rule == UpdateRule.MULTI_FLIP and _rule_supported("MULTI_FLIP"):
                     n_flip = kwargs.get("n_flip", 1)
                     return _bind_named_partial(propose_multi_flip_with_info, n_flip=n_flip, spin=spin, spin_value=spin_value)
-                elif (
-                    upd_rule in [UpdateRule.GLOBAL, UpdateRule.PLAQUETTE, UpdateRule.WILSON]
-                    and _rule_supported("GLOBAL")
-                ):
-                    if (
-                        isinstance(current_fun, partial)
-                        and current_fun.func.__name__ == "propose_global_flip"
-                    ):
+                
+                elif upd_rule in [UpdateRule.GLOBAL, UpdateRule.PLAQUETTE, UpdateRule.WILSON] and _rule_supported("GLOBAL"):
+                    if (isinstance(current_fun, partial) and current_fun.func.__name__ == "propose_global_flip"):
                         return _bind_named_partial(propose_global_flip_with_info, **current_fun.keywords)
-                    pass
+
                 elif upd_rule == UpdateRule.BOND_FLIP and _rule_supported("BOND_FLIP"):
                     from .updates import get_neighbor_table
 
-                    hilbert = kwargs.get("hilbert")
-                    order = kwargs.get("bond_order", 1)
-                    neighbor_table = get_neighbor_table(hilbert.lattice, order=order)
+                    hilbert         = kwargs.get("hilbert")
+                    order           = kwargs.get("bond_order", 1)
+                    neighbor_table  = get_neighbor_table(hilbert.lattice, order=order)
                     return _bind_named_partial(
                         propose_bond_flip_with_info,
                         neighbor_table=neighbor_table,
                         spin=spin,
                         spin_value=spin_value,
                     )
+                    
                 elif upd_rule == UpdateRule.WORM and _rule_supported("WORM"):
                     from .updates import get_neighbor_table
 
-                    hilbert = kwargs.get("hilbert")
-                    order = kwargs.get("bond_order", 1)
-                    neighbor_table = get_neighbor_table(hilbert.lattice, order=order)
-                    length = kwargs.get("length", 4)
+                    hilbert         = kwargs.get("hilbert")
+                    order           = kwargs.get("bond_order", 1)
+                    neighbor_table  = get_neighbor_table(hilbert.lattice, order=order)
+                    length          = kwargs.get("length", 4)
                     return _bind_named_partial(
                         propose_worm_flip_with_info,
                         neighbor_table=neighbor_table,
@@ -415,10 +418,7 @@ class VMCSampler(Sampler):
                     )
 
             # If default was used
-            if (
-                current_fun == propose_local_flip
-                or (isinstance(current_fun, partial) and current_fun.func == propose_local_flip)
-            ) and _rule_supported("LOCAL"):
+            if (current_fun == propose_local_flip or (isinstance(current_fun, partial) and current_fun.func == propose_local_flip)) and _rule_supported("LOCAL"):
                 return _bind_named_partial(propose_local_flip_with_info, spin=spin, spin_value=spin_value)
 
         except ImportError:
@@ -535,60 +535,54 @@ class VMCSampler(Sampler):
             f"  - Sampling: {self._updates_per_sample} steps/sample ({total_sample_updates_display} total site updates/chain)\n"
         )
 
-    def _set_net_callable(self, net):
-        ''' Sets the network callable and parameters based on the provided net object. '''
-        self._net = net
-        if isinstance(net, nn.Module):
-            return net.apply, None
-        elif hasattr(net, "get_apply") and callable(net.get_apply):
-            network_callable, parameters = net.get_apply()
-            return network_callable, parameters
-        elif hasattr(net, "apply") and callable(net.apply):
-            params = (
-                net.get_params()
-                if hasattr(net, "get_params") and callable(net.get_params)
-                else None
-            )
-            return net.apply, params
-        elif callable(net):
-            return net, None
-        raise ValueError("Invalid network object provided. Needs to be callable or have an 'apply' method.")
-
     def _resolve_network_hooks(self, net, adapter=None):
         """
         Resolve the sampler-facing network hooks once during setup.
         """
         self._net = net
+        
+        # First check if the network adapter provides sampling hooks for this network type
+        # This means apply functions etc.
+        if resolve_sampling_hooks_for_network is not None:
+            return resolve_sampling_hooks_for_network(net, adapter=adapter)
+
         if adapter is not None and hasattr(adapter, "resolve_sampling_hooks"):
             hooks = adapter.resolve_sampling_hooks()
             if hooks is not None:
                 return hooks
 
-        net_callable, parameters = self._set_net_callable(net)
-        log_psi_delta_fun = None
-        if hasattr(net, "log_psi_delta"):
-            log_psi_delta_fun = net.log_psi_delta
-        elif hasattr(net, "get_log_psi_delta"):
+        if isinstance(net, nn.Module):
+            net_callable, parameters = net.apply, None
+        elif hasattr(net, "get_apply") and callable(net.get_apply):
+            net_callable, parameters = net.get_apply()
+        elif hasattr(net, "apply") and callable(net.apply):
+            parameters = net.get_params() if hasattr(net, "get_params") and callable(net.get_params) else None
+            net_callable = net.apply
+        elif callable(net):
+            net_callable, parameters = net, None
+        else:
+            raise ValueError("Invalid network object provided. Needs to be callable or have an 'apply' method.")
+
+        log_psi_delta_fun = getattr(net, "log_psi_delta", None)
+        if log_psi_delta_fun is None and hasattr(net, "get_log_psi_delta"):
             log_psi_delta_fun = net.get_log_psi_delta()
 
-        log_psi_delta_cache_init_fun = None
-        if hasattr(net, "init_log_psi_delta_cache"):
-            log_psi_delta_cache_init_fun = net.init_log_psi_delta_cache
-        elif hasattr(net, "get_log_psi_delta_cache_init"):
+        log_psi_delta_cache_init_fun = getattr(net, "init_log_psi_delta_cache", None)
+        if log_psi_delta_cache_init_fun is None and hasattr(net, "get_log_psi_delta_cache_init"):
             log_psi_delta_cache_init_fun = net.get_log_psi_delta_cache_init()
 
         return {
-            "apply_fun": net_callable,
-            "parameters": parameters,
-            "log_psi_delta": log_psi_delta_fun,
-            "log_psi_delta_cache_init": log_psi_delta_cache_init_fun,
-            "log_psi_delta_supports_cache": log_psi_delta_cache_init_fun is not None,
+            "apply_fun"                     : net_callable,
+            "parameters"                    : parameters,
+            "log_psi_delta"                 : log_psi_delta_fun,
+            "log_psi_delta_cache_init"      : log_psi_delta_cache_init_fun,
+            "log_psi_delta_supports_cache"  : log_psi_delta_cache_init_fun is not None,
         }
 
     def _set_replicas(self, betas: np.ndarray):
-        self._pt_betas = betas
-        self._is_pt = self._pt_betas is not None
-        self._n_replicas = len(self._pt_betas) if self._is_pt else 1
+        self._pt_betas      = betas
+        self._is_pt         = self._pt_betas is not None
+        self._n_replicas    = len(self._pt_betas) if self._is_pt else 1
 
         if self._is_pt:
             if self._isjax:
@@ -599,6 +593,8 @@ class VMCSampler(Sampler):
                 self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
                 self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
                 self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+
+    # ---------------------------------------------------------------------
 
     def set_update_num(self, numupd: int):
         ''' Set the number of times the update function is applied per update step. '''
@@ -832,6 +828,10 @@ class VMCSampler(Sampler):
             global_update   =   global_update,
         )
 
+    # ---------------------------------------------------------------------
+    # Jit-compiled and backend-dispatched implementations of core sampling functions
+    # ---------------------------------------------------------------------
+
     @staticmethod
     @jax.jit
     def _acceptance_probability_jax(current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
@@ -843,15 +843,7 @@ class VMCSampler(Sampler):
     @staticmethod
     def _acceptance_probability_np(current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
         return vmc_np_impl.acceptance_probability_np(current_val=current_val, candidate_val=candidate_val, beta=beta, mu=mu)
-
-    def acceptance_probability(self, current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
-        ''' Public method to calculate acceptance probability, dispatching to the appropriate backend implementation. '''
-        use_beta = beta if beta is not None else self._beta
-        if self._isjax:
-            return self._acceptance_probability_jax(current_val, candidate_val, beta=use_beta, mu=mu)
-        else:
-            return self._acceptance_probability_np(current_val, candidate_val, beta=use_beta, mu=mu)
-
+    
     @staticmethod
     def _flatten_batch_output_jax(values, batch_size: int):
         """
@@ -867,6 +859,15 @@ class VMCSampler(Sampler):
             return out
         return out.reshape((batch_size, -1))[:, 0]
 
+    def acceptance_probability(self, current_val, candidate_val, beta: float = 1.0, mu: float = 2.0):
+        ''' Public method to calculate acceptance probability, dispatching to the appropriate backend implementation. '''
+        use_beta = beta if beta is not None else self._beta
+        if self._isjax:
+            return self._acceptance_probability_jax(current_val, candidate_val, beta=use_beta, mu=mu)
+        else:
+            return self._acceptance_probability_np(current_val, candidate_val, beta=use_beta, mu=mu)
+
+
     @staticmethod
     @partial(jax.jit, static_argnames=("net_callable",))
     def _logprob_jax(x, net_callable, net_params=None):
@@ -874,7 +875,7 @@ class VMCSampler(Sampler):
             return net_callable(net_params, s)
 
         batched_log_psi = jax.vmap(apply_net)(x)
-        flat_log_psi = VMCSampler._flatten_batch_output_jax(batched_log_psi, x.shape[0])
+        flat_log_psi    = VMCSampler._flatten_batch_output_jax(batched_log_psi, x.shape[0])
         return jnp.real(flat_log_psi)
 
     @staticmethod
@@ -885,7 +886,14 @@ class VMCSampler(Sampler):
         ''' Calculate log-probability (log-amplitude) for a batch of states `x` 
         using the provided or default network callable and parameters.'''
         use_callable    = net_callable if net_callable is not None else self._net_callable
-        use_params      = net_params if net_params is not None else self._parameters
+        if net_params is not None:
+            use_params = net_params
+        elif hasattr(self._net, "get_params") and callable(self._net.get_params):
+            use_params = self._net.get_params()
+        elif hasattr(self._net, "params"):
+            use_params = self._net.params
+        else:
+            use_params = self._parameters
 
         if use_callable is None:
             raise ValueError("No callable provided for log probability calculation.")
@@ -1692,43 +1700,39 @@ class VMCSampler(Sampler):
         current_params = None
         if parameters is not None:
             current_params = parameters
-        elif self._parameters is not None:
-            current_params = self._parameters
         elif hasattr(self._net, "get_params") and callable(self._net.get_params):
             current_params = self._net.get_params()
         elif hasattr(self._net, "params"):
             current_params = self._net.params
+        else:
+            current_params = self._parameters
         net_callable = self._net_callable
         return net_callable, current_params
 
-    def sample(
-        self, parameters=None, num_samples=None, *, num_chains=None, num_therm=None, betas=None
-    ):
-        used_num_samples = num_samples if num_samples is not None else self._numsamples
-        used_num_chains = num_chains if num_chains is not None else self._numchains
-        used_num_therm = num_therm if num_therm is not None else self._therm_steps
+    # -----------------------------------------------------------------
+    #! Public sampling interface
+    # -----------------------------------------------------------------
+
+    def sample(self, parameters=None, num_samples=None, *, num_chains=None, num_therm=None, betas=None):
+        used_num_samples    = num_samples if num_samples is not None else self._numsamples
+        used_num_chains     = num_chains if num_chains is not None else self._numchains
+        used_num_therm      = num_therm if num_therm is not None else self._therm_steps
 
         if betas is not None:
             self._set_replicas(betas)
 
-        reinitialized_for_call = False
-        current_states = self._states
-        current_proposed = self._num_proposed
-        current_accepted = self._num_accepted
+        current_states      = self._states
+        current_proposed    = self._num_proposed
+        current_accepted    = self._num_accepted
 
         if (
-            used_num_chains != self._numchains
+            used_num_chains     != self._numchains
             or used_num_samples != self._numsamples
-            or used_num_therm != self._therm_steps
+            or used_num_therm   != self._therm_steps
         ):
             if self._logger:
-                self._logger.info(
-                    f"(Warning) Running sample with {used_num_chains} chains (instance default is {self._numchains}). State reinitialized for this call."
-                )
-            reinitialized_for_call = True
-            current_states, current_proposed, current_accepted = self._sample_reinitialize(
-                used_num_chains, used_num_samples, used_num_therm
-            )
+                self._logger.info(f"(Warning) Running sample with {used_num_chains} chains (instance default is {self._numchains}). State reinitialized for this call.")
+            current_states, current_proposed, current_accepted = self._sample_reinitialize(used_num_chains, used_num_samples, used_num_therm)
 
         net_callable, current_params = self._sample_callable(parameters)
 

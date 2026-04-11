@@ -44,28 +44,16 @@ import numpy as np
 # from algebra
 try:
     import QES.general_python.common.binary as Binary
-    from QES.general_python.algebra.utils import (
-        DEFAULT_BACKEND_KEY,
-        DEFAULT_JP_INT_TYPE,
-        DEFAULT_NP_FLOAT_TYPE,
-        DEFAULT_NP_INT_TYPE,
-        Array,
-        distinguish_type,
-        get_backend,
-    )
+    from QES.general_python.algebra.utils import DEFAULT_BACKEND_KEY, DEFAULT_JP_INT_TYPE, DEFAULT_NP_FLOAT_TYPE, DEFAULT_NP_INT_TYPE, Array, distinguish_type, get_backend
 except ImportError as e:
-    raise ImportError(
-        "Failed to import general_python modules. Ensure QES package is correctly installed."
-    ) from e
+    raise ImportError("Failed to import general_python modules. Ensure QES package is correctly installed.") from e
 
 # from hilbert
 try:
-    from QES.Algebra.hilbert import HilbertSpace
-    from QES.Algebra.Hilbert.hilbert_local import LocalSpaceTypes
+    from QES.Algebra.hilbert                import HilbertSpace
+    from QES.Algebra.Hilbert.hilbert_local  import LocalSpaceTypes
 except ImportError:
-    # raise ImportError("Failed to import HilbertSpace module. Ensure QES package is correctly installed.") from e
-    HilbertSpace = None
-    LocalSpaceTypes = None
+    raise ImportError("Failed to import Hilbert space modules. Ensure QES package is correctly installed.")
 
 # from updates
 try:
@@ -80,8 +68,7 @@ try:
         propose_multi_flip_np,
     )
 except ImportError:
-    # warnings.warn("Failed to import updates module. Update rules may not be available.")
-    pass
+    raise ImportError("Failed to import update functions. Ensure the updates module is present and correctly implemented.")
 
 # from initialization
 try:
@@ -92,8 +79,8 @@ except ImportError:
 #! JAX imports
 try:
     import jax
-    import jax.numpy as jnp
-    import jax.random as random_jp
+    import jax.numpy    as jnp
+    import jax.random   as random_jp
 
     JAX_AVAILABLE = True
 except ImportError:
@@ -154,7 +141,7 @@ def resolve_state_defaults(
         entries; physical spin magnitudes only apply to explicit signed-spin
         conventions.
     """
-    representation  = str(state_representation).strip().lower() if state_representation is not None else None
+    representation  = str(state_representation).strip().lower().replace("-", "_") if state_representation is not None else None
     is_binary       = representation in {"binary_01", "occupation_binary"}
     if spin is None:
         spin = representation == "spin_pm"
@@ -172,7 +159,6 @@ def resolve_state_defaults(
 ########################################################################
 #! Sampler class for Monte Carlo sampling
 ########################################################################
-
 
 class Sampler(ABC):
     """
@@ -255,11 +241,9 @@ class Sampler(ABC):
         self._logger = logger
 
         if rng is not None:
-            self._rng = rng
-            self._rng_k = (
-                rng_k if rng_k is not None else (DEFAULT_BACKEND_KEY if JAX_AVAILABLE else None)
-            )
-            self._backend = get_backend(backend)
+            self._rng       = rng
+            self._rng_k     = rng_k if rng_k is not None else (DEFAULT_BACKEND_KEY if JAX_AVAILABLE else None)
+            self._backend   = get_backend(backend)
         else:
             # default fallback to obtain the backend and RNGs
             # obtain_backend returns (_backend, _backend_sp, (_rng, _rng_k), backend_str)
@@ -268,89 +252,84 @@ class Sampler(ABC):
         # check JAX
         self._isjax = not self._backend == np
         if self._isjax:
-            is_valid_rng_k = (
-                self._rng_k is not None
+            is_valid_rng_k = (self._rng_k is not None
                 and isinstance(self._rng_k, jax.Array)
                 and self._rng_k.shape == (2,)
                 and self._rng_k.dtype == jnp.uint32
             )
+            
+            # If rng_k is provided but not valid, raise an error with detailed information
             if not is_valid_rng_k:
                 key_info = f"Value: {self._rng_k}, Type: {type(self._rng_k)}"
                 if isinstance(self._rng_k, jax.Array):
                     key_info += f", Shape: {self._rng_k.shape}, dtype: {self._rng_k.dtype}"
-                raise TypeError(
-                    f"Sampler's RNG key (self._rng_k) is not a valid JAX PRNGKey. {key_info}"
-                )
+                raise TypeError(f"Sampler's RNG key (self._rng_k) is not a valid JAX PRNGKey. {key_info}")
         if self._isjax and self._rng_k is None:
             raise SamplerErrors(SamplerErrors.NOT_HAVING_RNG + " (JAX requires rng_k)")
         if not self._isjax and self._rng is None:
             raise SamplerErrors(SamplerErrors.NOT_HAVING_RNG + " (NumPy requires rng)")
 
         # set the backend
-        self._backendstr = "np" if not self._isjax else "jax"
-        self._makediffer = makediffer
+        self._backendstr    = "np" if not self._isjax else "jax"
+        self._makediffer    = makediffer
 
         # handle the initial state
-        statetype = int if statetype is None else statetype
-        self._statetype = distinguish_type(statetype, "numpy" if not self._isjax else "jax")
+        statetype           = int if statetype is None else statetype
+        self._statetype     = distinguish_type(statetype, "numpy" if not self._isjax else "jax")
 
         # handle the Hilbert space - may control state initialization
-        self._hilbert = hilbert
+        self._hilbert       = hilbert
 
         # handle the states
-        self._shape = shape
-        self._size = int(np.prod(shape)) if isinstance(shape, tuple) else shape
-        self._numsamples = numsamples
-        self._numchains = numchains
-        self._states = None
-        self._representation_info = kwargs.get("representation_info", None)
-        self._network_adapter = kwargs.get("network_adapter", None)
-        self._state_representation = kwargs.get("state_representation", None)
+        self._shape                 = shape
+        self._size                  = int(np.prod(shape)) if isinstance(shape, tuple) else shape
+        self._numsamples            = numsamples
+        self._numchains             = numchains
+        self._states                = None
+        # representation info may also control state initialization and update proposals
+        self._representation_info   = kwargs.get("representation_info", None)
+        self._network_adapter       = kwargs.get("network_adapter", None)
+        self._state_representation  = kwargs.get("state_representation", None)
         if self._state_representation is None and self._representation_info is not None:
-            self._state_representation = getattr(
-                self._representation_info, "sampler_representation", None
-            )
+            self._state_representation = getattr(self._representation_info, "sampler_representation", None)
+        if self._state_representation is None and self._hilbert is not None and hasattr(self._hilbert, "state_convention"):
+            try:
+                self._state_representation = self._hilbert.state_convention.get("vector_representation", self._hilbert.state_convention.get("representation", None),)
+            except Exception:
+                pass
 
         # handle the initial state
-        self._modes = kwargs.get("modes", 2)
-        self._spin_repr, self._mode_repr = resolve_state_defaults(
-            self._state_representation,
-            spin=kwargs.get("spin", None),
-            mode_repr=kwargs.get("mode_repr", None),
-            fallback_mode_repr=Binary.BACKEND_REPR,
-        )
+        self._modes                         = kwargs.get("modes", 2)
+        self._spin_repr, self._mode_repr    = resolve_state_defaults(
+                                                self._state_representation,
+                                                spin=kwargs.get("spin", None),
+                                                mode_repr=kwargs.get("mode_repr", None),
+                                                fallback_mode_repr=Binary.BACKEND_REPR,
+                                            )
         state_kwargs = {
-            "different": self._makediffer,
-            "modes": kwargs.pop("modes", self._modes),
-            "mode_repr": kwargs.pop("mode_repr", self._mode_repr),
-            "spin": kwargs.pop("spin", self._spin_repr),
-            "n_particles": kwargs.get("n_particles", kwargs.get("nparticles", 1)),
-            "magnetization": kwargs.get("magnetization", None),
+            "different"     : self._makediffer,
+            "modes"         : kwargs.pop("modes", self._modes),
+            "mode_repr"     : kwargs.pop("mode_repr", self._mode_repr),
+            "spin"          : kwargs.pop("spin", self._spin_repr),
+            "n_particles"   : kwargs.get("n_particles", kwargs.get("nparticles", 1)),
+            "magnetization" : kwargs.get("magnetization", None),
         }
-        self._initstate_t = initstate
-        self._isint = isinstance(initstate, (int, np.integer, jnp.integer))
+        self._initstate_t   = initstate
+        self._isint         = isinstance(initstate, (int, np.integer, jnp.integer))
         self.set_initstate(self._initstate_t, **state_kwargs)
 
         # proposed state
-        int_dtype = DEFAULT_JP_INT_TYPE if self._isjax else DEFAULT_NP_INT_TYPE
-        self._num_proposed = self._backend.zeros(numchains, dtype=int_dtype)
-        self._num_accepted = self._backend.zeros(numchains, dtype=int_dtype)
+        int_dtype           = DEFAULT_JP_INT_TYPE if self._isjax else DEFAULT_NP_INT_TYPE
+        self._num_proposed  = self._backend.zeros(numchains, dtype=int_dtype)
+        self._num_accepted  = self._backend.zeros(numchains, dtype=int_dtype)
 
         # handle the update function
         self._upd_fun = upd_fun
         if self._upd_fun is None:
             if self._isjax:
-                self._upd_fun = _bind_named_partial(
-                    propose_local_flip,
-                    spin=bool(self._spin_repr),
-                    spin_value=float(self._mode_repr),
-                )
+                self._upd_fun = _bind_named_partial(propose_local_flip, spin=bool(self._spin_repr), spin_value=float(self._mode_repr))
             else:
-                self._upd_fun = _bind_named_partial(
-                    propose_local_flip_np,
-                    spin=bool(self._spin_repr),
-                    spin_value=float(self._mode_repr),
-                )
+                self._upd_fun = _bind_named_partial(propose_local_flip_np, spin=bool(self._spin_repr), spin_value=float(self._mode_repr))
 
     ###################################################################
     #!ABSTRACT
@@ -411,11 +390,8 @@ class Sampler(ABC):
                 _backend, _backend_sp = bck, None
                 _rng, _rng_k = None, None
             return _backend, _backend_sp, (_rng, _rng_k), backend
-        _backendstr = (
-            "np"
-            if (backend is None or (backend == "default" and not JAX_AVAILABLE) or backend == np)
-            else "jax"
-        )
+        
+        _backendstr = ("np" if (backend is None or (backend == "default" and not JAX_AVAILABLE) or backend == np) else "jax")
         return Sampler.obtain_backend(_backendstr, seed)
 
     ###################################################################
@@ -577,9 +553,9 @@ class Sampler(ABC):
         if initstate is None or isinstance(initstate, (str, SolverInitState)):
             try:
                 # Extract modes and mode_repr from kwargs
-                current_bcknd_str = "jax" if self._isjax else "numpy"
-                modes_val = kwargs.pop("modes", 2)
-                mode_repr_val = kwargs.pop("mode_repr", self._mode_repr)
+                current_bcknd_str   = "jax" if self._isjax else "numpy"
+                modes_val           = kwargs.pop("modes", 2)
+                mode_repr_val       = kwargs.pop("mode_repr", self._mode_repr)
 
                 if self._hilbert is None or True:
                     if different_initials:

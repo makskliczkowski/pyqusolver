@@ -46,13 +46,13 @@ class LocalOperator:
     Rich description of an onsite operator together with its kernels.
     """
 
-    key: str
-    kernels: LocalOpKernels
-    description: str
-    algebra: str
-    sign_convention: str
-    tags: Tuple[str, ...] = field(default_factory=tuple)
-    parameters: Dict[str, object] = field(default_factory=dict)
+    key                 : str
+    kernels             : LocalOpKernels
+    description         : str
+    algebra             : str
+    sign_convention     : str
+    tags                : Tuple[str, ...] = field(default_factory=tuple)
+    parameters          : Dict[str, object] = field(default_factory=dict)
 
     def summary(self) -> str:
         """
@@ -107,11 +107,11 @@ class HilbertBasisType(Enum):
 
     """
 
-    FOCK = "fock"  # Fock/occupation basis (most general)
-    REAL = "real"  # Position/site basis
-    KSPACE = "k-space"  # Momentum basis (Bloch representation)
-    SUBLATTICE = "sublattice"  # Sublattice-resolved (multipartite)
-    SYMMETRY_ADAPTED = "symmetry"  # Symmetry-adapted basis
+    FOCK                = "fock"        # Fock/occupation basis (most general)
+    REAL                = "real"        # Position/site basis
+    KSPACE              = "k-space"     # Momentum basis (Bloch representation)
+    SUBLATTICE          = "sublattice"  # Sublattice-resolved (multipartite)
+    SYMMETRY_ADAPTED    = "symmetry"    # Symmetry-adapted basis
 
     def __str__(self):
         return self.value
@@ -214,7 +214,12 @@ class LocalSpace:
 
     @property
     def state_convention(self) -> Dict[str, object]:
-        """Return state-encoding convention metadata for this local space."""
+        """
+        Return state-encoding convention metadata for this local space.
+
+        The metadata separates integer/basis encoding from the vector encoding
+        used for array-valued states.
+        """
         from QES.Algebra.Operator.impl import get_state_convention
 
         return get_state_convention(self.typ)

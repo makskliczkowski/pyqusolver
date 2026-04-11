@@ -15,7 +15,6 @@ It provides:
 """
 
 from dataclasses import dataclass
-from functools import partial
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -29,21 +28,26 @@ except ImportError:
     jnp = None
     _JAX_AVAILABLE = False
 
-from QES.general_python.ml.net_impl.utils.net_state_repr_jax import map_state_to_pm1
-from QES.general_python.ml.networks import Networks
+try:
+    from QES.general_python.ml.networks import Networks
+except ImportError:
+    raise ImportError("QES.general_python.ml.networks module is required for network family resolution.")
 
+# ------------------------------------------------------------------------------
+#! REPRESENTATION RESOLUTION
+# ------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class ModelRepresentationInfo:
     """
     Normalized description of the model-side state representation.
     """
-    basis_type              : str
-    local_space_type        : str
-    vector_encoding         : str
-    integer_encoding        : str
-    sampler_representation  : str
-    network_representation  : str
+    basis_type              : str   # e.g. "real", "complex", "qubit", etc.
+    local_space_type        : str   # e.g. "spin-1/2", "spin-1", "fermion", etc.
+    vector_encoding         : str   # e.g. "Length-Ns array with entries in {0,1}." or "Length-Ns array with entries in {-S,...,S}."
+    integer_encoding        : str   # e.g. "Binary computational basis." or "Integer encoding of spin states."
+    sampler_representation  : str   # e.g. "binary_01", "spin_pm", "occupation_binary", etc.
+    network_representation  : str   # e.g. "spin_binary_native", "occupation_binary_native", etc., for internal network input conventions.
 
     @property
     def is_binary(self) -> bool:
@@ -118,17 +122,16 @@ def resolve_representation_value(
         return float(resolve_spin_mode_repr(local_space_type or "") or fallback)
     return float(fallback)
 
-def _resolve_sampler_representation(local_space_type: str, vector_encoding: str) -> str:
+def _resolve_sampler_representation(local_space_type: str, local_representation: str, vector_encoding: str) -> str:
     """ Pick the default sampler representation based on model physics. """
     local_key   = _normalize_key(local_space_type)
+    local_repr  = _normalize_key(local_representation)
     vector_key  = _normalize_key(vector_encoding)
 
     if local_key in {"spin-1/2", "spin-half"}:
         return "spin_pm"
-    if local_key in {"spinless-fermions", "abelian-anyons"}:
-        return "occupation_binary"
-    if local_key in {"spin-1", "bosons"}:
-        return "dense_local"
+    if local_repr:
+        return local_repr
     if "{0,1}" in vector_key:
         return "binary_01"
     return "dense_local"
@@ -280,10 +283,10 @@ def resolve_model_representation(model: Any, hilbert: Optional[Any] = None) -> M
         if hilbert is None:
             hilbert = getattr(model, "_hilbert_space", None)
 
-    l_type  = "spin-1/2"
-    v_enc   = "Length-Ns array with entries in {0,1}."
-    i_enc   = "Binary computational basis."
-
+    l_type                  = "spin-1/2"
+    v_enc                   = "Length-Ns array with entries in {0,1}."
+    i_enc                   = "Binary computational basis."
+    local_representation    = ""
     if hilbert is not None:
         l_space = getattr(hilbert, "local_space", None)
         if l_space is not None and hasattr(l_space, "typ"):
@@ -297,11 +300,15 @@ def resolve_model_representation(model: Any, hilbert: Optional[Any] = None) -> M
                 conv = None
 
         if conv:
-            l_type  = _normalize_key(conv.get("name"), l_type)
+            l_type  = _normalize_key(conv.get("local_space_type", conv.get("name")), l_type)
+            local_representation = _normalize_key(
+                conv.get("vector_representation", conv.get("representation")),
+                "",
+            )
             v_enc   = conv.get("vector_encoding", v_enc)
             i_enc   = conv.get("integer_encoding", i_enc)
 
-    s_repr = _resolve_sampler_representation(l_type, v_enc)
+    s_repr = _resolve_sampler_representation(l_type, local_representation, v_enc)
     if s_repr == "binary_01" and basis_type == "real" and l_type.startswith("spin-"):
         n_repr = "spin_binary_native"
     elif s_repr == "occupation_binary":
@@ -342,11 +349,14 @@ def apply_nqs_representation_overrides(
     is_bin_s    = s_key in {"binary-01", "occupation-binary"}
     is_spin_s   = s_key == "spin-pm"
     in_val      = resolve_representation_value(s_repr, local_space_type=representation.local_space_type, fallback=1.0)
-
     if family == "rbm" and is_spin_m and is_bin_s:
-        res_kwargs.setdefault("input_activation", partial(map_state_to_pm1, input_is_spin=is_spin_s, input_value=in_val))
+        res_kwargs.setdefault("input_is_spin", is_spin_s)
+        res_kwargs.setdefault("input_value", in_val)
+        res_kwargs.setdefault("input_activation", True)
     elif family in {"cnn", "mlp", "gcnn", "resnet"} and is_spin_m and s_key == "binary-01":
-        res_kwargs.setdefault("input_adapter", partial(map_state_to_pm1, input_is_spin=is_spin_s, input_value=in_val))
+        res_kwargs.setdefault("input_is_spin", is_spin_s)
+        res_kwargs.setdefault("input_value", in_val)
+        res_kwargs.setdefault("transform_input", True)
     elif family in {"pp", "mps"}:
         res_kwargs.setdefault("input_is_spin", is_spin_s)
         res_kwargs.setdefault("input_value", in_val)
