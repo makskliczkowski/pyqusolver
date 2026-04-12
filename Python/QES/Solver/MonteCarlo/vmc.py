@@ -664,6 +664,15 @@ class VMCSampler(Sampler):
                     return getattr(fun.func, "__name__", "")
                 return getattr(fun, "__name__", "")
 
+            def _strip_update_info(proposer):
+                def _wrapped(state, key):
+                    out = proposer(state, key)
+                    if isinstance(out, tuple):
+                        return out[0]
+                    return out
+
+                return _wrapped
+
             local_returns_info = _fun_name(self._local_upd_fun).endswith("_with_info")
 
             def _resolve_plaquettes():
@@ -792,7 +801,15 @@ class VMCSampler(Sampler):
                 glob_type_str       = f"Multi-Flip (frac={fraction:.2f})"
                 self._global_name   = "multi-flip"
 
-            self._org_upd_fun   = make_hybrid_proposer(self._local_upd_fun, global_flip_fn, p_global)
+            local_for_hybrid    = self._local_upd_fun
+            global_for_hybrid   = global_flip_fn
+            if local_returns_info:
+                # Hybrid updates combine potentially different move families.
+                # Stripping update-info keeps both branches shape-compatible for JAX cond.
+                local_for_hybrid    = _strip_update_info(self._local_upd_fun)
+                global_for_hybrid   = _strip_update_info(global_flip_fn)
+
+            self._org_upd_fun   = make_hybrid_proposer(local_for_hybrid, global_for_hybrid, p_global)
             self._global_name   = glob_type_str
             self._global_p      = p_global
         else:
