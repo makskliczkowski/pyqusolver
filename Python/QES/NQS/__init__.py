@@ -467,6 +467,24 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         ),
     }
 
+    # Minimal stable subset used by higher-level runners
+    # to build NQS objects and compact training plans without exposing every advanced knob.
+    CORE_FIELDS: ClassVar[Tuple[str, ...]] = (
+        "ansatz",
+        "sampler",
+        "dtype",
+        "backend",
+        "epochs",
+        "lr",
+        "n_chains",
+        "n_samples",
+        "n_sweep",
+        "n_therm",
+        "optimizer",
+        "early_stopping",
+        "patience",
+    )
+
     def __post_init__(self):
         """
         Lazy estimation can be triggered here if enough information is present.
@@ -522,6 +540,15 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         Create a training config seeded from this solver config.
         """
         return NQSTrainConfig.from_solver(self, **kwargs)
+
+    def to_core_dict(self) -> Dict[str, Any]:
+        """
+        Return a compact, stable solver view for script-level orchestration.
+
+        This intentionally matches the fields commonly used by run_impurity.py and
+        similar runners while keeping advanced controls available on demand.
+        """
+        return {name: getattr(self, name) for name in self.CORE_FIELDS}
 
 @dataclass
 class NQSTrainConfig(_ConfigSchemaMixin):
@@ -724,6 +751,42 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         "diag_initial"  : "diag_init",
     }
 
+    # Centralized bridge between solver defaults and train kwargs.
+    # Keeping this mapping in one place avoids solver/train drift.
+    SOLVER_TO_TRAIN_MAP: ClassVar[Dict[str, str]] = {
+        "epochs"            : "n_epochs",
+        "phases"            : "phases",
+        "n_batch"           : "n_batch",
+        "n_update"          : "n_update",
+        "n_samples"         : "num_samples",
+        "n_chains"          : "num_chains",
+        "n_therm"           : "num_thermal",
+        "n_sweep"           : "num_sweep",
+        "pt_betas"          : "pt_betas",
+        "upd_fun"           : "upd_fun",
+        "global_p"          : "global_p",
+        "global_update"     : "global_update",
+        "global_fraction"   : "global_fraction",
+        "lr"                : "lr",
+        "lr_scheduler"      : "lr_scheduler",
+        "reg"               : "reg",
+        "reg_scheduler"     : "reg_scheduler",
+        "diag_shift"        : "diag_shift",
+        "diag_scheduler"    : "diag_scheduler",
+        "lin_solver"        : "lin_solver",
+        "pre_solver"        : "pre_solver",
+        "ode_solver"        : "ode_solver",
+        "lin_sigma"         : "lin_sigma",
+        "lin_is_gram"       : "lin_is_gram",
+        "lin_force_mat"     : "lin_force_mat",
+        "use_sr"            : "use_sr",
+        "use_minsr"         : "use_minsr",
+        "rhs_prefactor"     : "rhs_prefactor",
+        "grad_clip"         : "grad_clip",
+        "timing_mode"       : "timing_mode",
+        "optimizer"         : "optimizer",
+    }
+
     @classmethod
     def kwargs_aliases(cls) -> Dict[str, str]:
         """Return accepted compatibility aliases for train kwargs."""
@@ -744,42 +807,14 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         """
         Build a training config from a solver config.
         """
-        return cls(
-            n_epochs=solver_config.epochs,
-            phases=solver_config.phases,
-            n_batch=solver_config.n_batch,
-            n_update=solver_config.n_update,
-            num_samples=solver_config.n_samples,
-            num_chains=solver_config.n_chains,
-            num_thermal=solver_config.n_therm,
-            num_sweep=solver_config.n_sweep,
-            pt_betas=solver_config.pt_betas,
-            upd_fun=solver_config.upd_fun,
-            update_kwargs=(solver_config.update_kwargs.copy() if solver_config.update_kwargs else None),
-            global_p=solver_config.global_p,
-            global_update=solver_config.global_update,
-            global_fraction=solver_config.global_fraction,
-            lr=solver_config.lr,
-            lr_scheduler=solver_config.lr_scheduler,
-            reg=solver_config.reg,
-            reg_scheduler=solver_config.reg_scheduler,
-            diag_shift=solver_config.diag_shift,
-            diag_scheduler=solver_config.diag_scheduler,
-            lin_solver=solver_config.lin_solver,
-            pre_solver=solver_config.pre_solver,
-            ode_solver=solver_config.ode_solver,
-            lin_sigma=solver_config.lin_sigma,
-            lin_is_gram=solver_config.lin_is_gram,
-            lin_force_mat=solver_config.lin_force_mat,
-            use_sr=solver_config.use_sr,
-            use_minsr=solver_config.use_minsr,
-            rhs_prefactor=solver_config.rhs_prefactor,
-            grad_clip=solver_config.grad_clip,
-            timing_mode=solver_config.timing_mode,
-            optimizer=solver_config.optimizer,
-            patience=(solver_config.patience if solver_config.early_stopping else None),
-            **kwargs,
-        )
+        base_kwargs: Dict[str, Any]     = {}
+        for solver_name, train_name in cls.SOLVER_TO_TRAIN_MAP.items():
+            base_kwargs[train_name]     = getattr(solver_config, solver_name)
+
+        base_kwargs["update_kwargs"]    = solver_config.update_kwargs.copy() if solver_config.update_kwargs else None
+        base_kwargs["patience"]         = solver_config.patience if solver_config.early_stopping else None
+        base_kwargs.update(kwargs)
+        return cls(**base_kwargs)
 
     def to_train_kwargs(
         self,
