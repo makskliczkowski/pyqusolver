@@ -124,12 +124,14 @@ def resolve_sampling_hooks_for_network(net: Any, adapter: Any = None) -> Dict[st
     if cache_init is None and hasattr(net, "get_log_psi_delta_cache_init"):
         cache_init = net.get_log_psi_delta_cache_init()
 
+    supports_cache = bool(getattr(net, "log_psi_delta_supports_cache", False))
+
     return {
         "apply_fun"                     : apply_fun,
         "parameters"                    : params,
         "log_psi_delta"                 : log_psi_delta,
         "log_psi_delta_cache_init"      : cache_init,
-        "log_psi_delta_supports_cache"  : cache_init is not None,
+        "log_psi_delta_supports_cache"  : supports_cache,
     }
 
 def _flip_selected_values(values: Any, *, state_spin: bool, state_value: float):
@@ -180,6 +182,7 @@ class NQSNetAdapterBase:
 
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
         apply_fun, params = resolve_apply_and_params(self.net)
+        supports_cache = bool(getattr(self.net, "log_psi_delta_supports_cache", False))
         return {
             "family"                        : self.family,
             "sampler_kind"                  : self.sampler_kind,
@@ -188,7 +191,7 @@ class NQSNetAdapterBase:
             "native_representation"         : self.native_representation,
             "log_psi_delta"                 : getattr(self.net, "log_psi_delta", None),
             "log_psi_delta_cache_init"      : getattr(self.net, "init_log_psi_delta_cache", None),
-            "log_psi_delta_supports_cache"  : hasattr(self.net, "init_log_psi_delta_cache"),
+            "log_psi_delta_supports_cache"  : supports_cache,
             "representation"                : self.representation,
             "metadata"                      : self.metadata,
         }
@@ -206,7 +209,7 @@ class NQSRBMAdapter(NQSNetAdapterBase):
 
         if hooks["log_psi_delta_cache_init"] is None and hasattr(self.net, "get_log_psi_delta_cache_init"):
             hooks["log_psi_delta_cache_init"]       = self.net.get_log_psi_delta_cache_init()
-            hooks["log_psi_delta_supports_cache"]   = True
+            hooks["log_psi_delta_supports_cache"]   = bool(getattr(self.net, "log_psi_delta_supports_cache", False))
 
         return hooks
 

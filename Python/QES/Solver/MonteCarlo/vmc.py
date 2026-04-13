@@ -206,9 +206,7 @@ class VMCSampler(Sampler):
         if "log_psi_delta_cache_init" in kwargs:
             self._log_psi_delta_cache_init_fun = kwargs["log_psi_delta_cache_init"]
 
-        self._log_psi_delta_supports_cache = bool(
-            hooks.get("log_psi_delta_supports_cache", False) or self._log_psi_delta_cache_init_fun is not None
-        )
+        self._log_psi_delta_supports_cache = bool(hooks.get("log_psi_delta_supports_cache", False))
 
         # set the parameters - this for modification of the distribution
         self._mu = mu
@@ -571,12 +569,14 @@ class VMCSampler(Sampler):
         if log_psi_delta_cache_init_fun is None and hasattr(net, "get_log_psi_delta_cache_init"):
             log_psi_delta_cache_init_fun = net.get_log_psi_delta_cache_init()
 
+        supports_cache = bool(getattr(net, "log_psi_delta_supports_cache", False))
+
         return {
             "apply_fun"                     : net_callable,
             "parameters"                    : parameters,
             "log_psi_delta"                 : log_psi_delta_fun,
             "log_psi_delta_cache_init"      : log_psi_delta_cache_init_fun,
-            "log_psi_delta_supports_cache"  : log_psi_delta_cache_init_fun is not None,
+            "log_psi_delta_supports_cache"  : supports_cache,
         }
 
     def _set_replicas(self, betas: np.ndarray):
@@ -1044,14 +1044,10 @@ class VMCSampler(Sampler):
             if cache_in is None:
                 cache_out = None
             elif cache_prop is None:
-                if log_psi_delta_cache_init_fun is None:
-                    cache_out = cache_in
-                else:
-                    cache_out = lax.cond(jnp.any(keep),
-                        lambda _: log_psi_delta_cache_init_fun(params, chain_out),
-                        lambda _: cache_in,
-                        operand=None,
-                    )
+                # Keep the previous cache when the delta hook does not return an
+                # updated cache object. Re-initializing cache from scratch on each
+                # accepted move introduces a severe hot-path overhead.
+                cache_out = cache_in
             else:
                 def _select_cache(new_leaf, old_leaf):
                     cache_mask = keep.reshape((num_chains,) + (1,) * (new_leaf.ndim - 1))
@@ -1350,7 +1346,7 @@ class VMCSampler(Sampler):
 
         logprobas_init = net_callable_fun(params, states_init)
         logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
-        if log_psi_delta_cache_init_fun is not None:
+        if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
         else:
             delta_cache_init = None
@@ -1509,7 +1505,7 @@ class VMCSampler(Sampler):
         # All chains in replica r start with pt_betas[r]
         current_betas = jnp.tile(pt_betas[:, None], (1, num_chains))
 
-        if log_psi_delta_cache_init_fun is not None:
+        if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
         else:
             delta_cache_init = None
