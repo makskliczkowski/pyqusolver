@@ -344,6 +344,18 @@ class VMCSampler(Sampler):
             self._static_pt_therm_steps     = None
             self._jit_cache                 = {}
 
+    def _invalidate_compiled_samplers(self, *, require_thermalization: bool = True):
+        """
+        Drop cached JIT samplers after static-kernel parameter changes.
+        """
+        if require_thermalization:
+            self._needs_thermalization = True
+        self._static_sample_fun         = None
+        self._static_pt_sampler         = None
+        self._static_sample_therm_steps = None
+        self._static_pt_therm_steps     = None
+        self._jit_cache                 = {}
+
     def _resolve_fast_update_fun(self, current_fun, upd_rule, **kwargs):
         """Attempts to replace the update function with a version that returns update info."""
         spin, spin_value = resolve_state_defaults(
@@ -2035,9 +2047,11 @@ class VMCSampler(Sampler):
 
     def set_mu(self, mu):
         self._mu = mu
+        self._invalidate_compiled_samplers(require_thermalization=True)
 
     def set_beta(self, beta):
         self._beta = beta
+        self._invalidate_compiled_samplers(require_thermalization=True)
 
     def set_therm_steps(self, therm_steps):
         self._therm_steps = max(0, int(therm_steps))
@@ -2060,6 +2074,7 @@ class VMCSampler(Sampler):
             else:
                 betas = np.logspace(0, np.log10(min_beta), n_replicas)
         self._set_replicas(betas)
+        self._invalidate_compiled_samplers(require_thermalization=True)
 
     ###################################################################
     #! GETTERS
