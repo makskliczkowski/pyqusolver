@@ -723,6 +723,12 @@ class TDVP:
             self._covariance_fn = sr.covariance_jax_minsr if self.is_jax else sr.covariance_np_minsr
         else:
             self._covariance_fn = sr.covariance_jax if self.is_jax else sr.covariance_np
+        # Keep runtime callable in sync with the selected covariance path.
+        self._covariance_fn_j = self._covariance_fn
+        # Matvec cache depends on mode ("standard" vs "minsr"); clear stale closure.
+        self._cached_batched_matvec_obj = None
+        self._cached_batched_matvec_mode = None
+        self._cached_batched_matvec_fn = None
 
     def set_diag_shift(self, diag_shift: float):
         """
