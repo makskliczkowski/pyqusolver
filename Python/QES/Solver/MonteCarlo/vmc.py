@@ -1437,18 +1437,27 @@ class VMCSampler(Sampler):
         logprobas_flat                          = collected_logprobas.reshape((-1,))        # (num_samples * num_chains,)
         batched_log_ansatz                      = logprobas_flat                            # (num_samples * num_chains,)
 
-        if uniform_weights:
-            probs_normalized                    = jnp.ones_like(batched_log_ansatz, dtype=jnp.float32)
-        else:
-            log_prob_exponent                   = 1.0 / logprob_fact - mu                   # Adjust exponent based on logprob_fact and mu
+        log_prob_exponent                       = 1.0 / logprob_fact - mu                   # Adjust exponent based on logprob_fact and mu
+        total_samples                           = num_samples * num_chains
+    
+        # Fast path: with standard Born-rule settings (mu=2, logprob_fact=0.5),
+        # returned reweighting is analytically uniform. Avoid exp/sum over the
+        # full batch to reduce memory traffic in the hottest sampling path.
+        def _uniform_probs(_):
+            # Keep a logical length-(N,) vector for API compatibility while
+            # using broadcast semantics from a scalar constant.
+            prob_dtype                          = jnp.real(batched_log_ansatz).dtype
+            return jnp.broadcast_to(jnp.asarray(1.0, dtype=prob_dtype), (total_samples,))
+
+        def _reweighted_probs(_):
             log_unnorm                          = log_prob_exponent * jnp.real(batched_log_ansatz)
             log_max                             = jnp.max(log_unnorm)
             probs                               = jnp.exp(log_unnorm - log_max)
-
-            total_samples                       = num_samples * num_chains
             norm_factor                         = jnp.maximum(jnp.sum(probs), 1e-10)
-            probs_normalized                    = probs / norm_factor * total_samples
+            return probs / norm_factor * total_samples
 
+        is_uniform_reweighting                  = jnp.abs(jnp.asarray(log_prob_exponent)) < 1e-12
+        probs_normalized                        = jax.lax.cond(is_uniform_reweighting, _uniform_probs, _reweighted_probs, operand=None)
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache = final_carry
         final_state_tuple                       = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
         return final_state_tuple, (configs_flat, batched_log_ansatz), probs_normalized
@@ -1676,10 +1685,16 @@ class VMCSampler(Sampler):
             phys_beta           = pt_betas[0]
             log_prob_exponent   = 1.0 / logprob_fact - mu * phys_beta
 
-            log_unnorm          = log_prob_exponent * log_psi_real
-            log_unnorm_max      = jnp.max(log_unnorm)
-            probs               = jnp.exp(log_unnorm - log_unnorm_max)
-            probs_norm          = probs / jnp.maximum(jnp.sum(probs), 1e-10) * (num_samples * num_chains)
+        total_samples           = num_samples * num_chains
+        # PT physical samples are also uniform under standard Born-rule settings.
+        prob_dtype              = log_psi_real.dtype
+        uniform_probs_norm      = jnp.broadcast_to(jnp.asarray(1.0, dtype=prob_dtype), (total_samples,))
+        log_unnorm              = log_prob_exponent * log_psi_real
+        log_unnorm_max          = jnp.max(log_unnorm)
+        probs                   = jnp.exp(log_unnorm - log_unnorm_max)
+        weighted_probs_norm     = (probs / jnp.maximum(jnp.sum(probs), 1e-10) * total_samples)
+        is_uniform              = jnp.abs(log_prob_exponent) < jnp.asarray(1e-12, dtype=prob_dtype)
+        probs_norm              = jnp.where(is_uniform, uniform_probs_norm, weighted_probs_norm)
 
         # We should remove the betas from final_carry before returning to match expected signature if needed?
         # But final_carry is internal.
