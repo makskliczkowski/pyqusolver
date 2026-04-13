@@ -124,12 +124,15 @@ def resolve_sampling_hooks_for_network(net: Any, adapter: Any = None) -> Dict[st
     if cache_init is None and hasattr(net, "get_log_psi_delta_cache_init"):
         cache_init = net.get_log_psi_delta_cache_init()
 
+    # We also check for an explicit flag indicating whether log_psi_delta supports caching, as this can be important for samplers that want to use this feature.
+    supports_cache = bool(getattr(net, "log_psi_delta_supports_cache", False))
+
     return {
         "apply_fun"                     : apply_fun,
         "parameters"                    : params,
         "log_psi_delta"                 : log_psi_delta,
         "log_psi_delta_cache_init"      : cache_init,
-        "log_psi_delta_supports_cache"  : cache_init is not None,
+        "log_psi_delta_supports_cache"  : supports_cache,
     }
 
 def _flip_selected_values(values: Any, *, state_spin: bool, state_value: float):
@@ -176,10 +179,13 @@ class NQSNetAdapterBase:
         )
 
     def preferred_sampler_mode_repr(self):
+        ''' For samplers that need to know the preferred mode representation (e.g., spin vs occupation), we can resolve it from the representation info. '''
         return self._resolve_sampler_value(fallback=1.0)
 
     def resolve_sampling_hooks(self) -> Dict[str, Any]:
-        apply_fun, params = resolve_apply_and_params(self.net)
+        ''' Default hook resolver that just looks for common apply_fun and log_psi_delta patterns on the network. '''
+        apply_fun, params   = resolve_apply_and_params(self.net)
+        supports_cache      = bool(getattr(self.net, "log_psi_delta_supports_cache", False))
         return {
             "family"                        : self.family,
             "sampler_kind"                  : self.sampler_kind,
@@ -188,7 +194,7 @@ class NQSNetAdapterBase:
             "native_representation"         : self.native_representation,
             "log_psi_delta"                 : getattr(self.net, "log_psi_delta", None),
             "log_psi_delta_cache_init"      : getattr(self.net, "init_log_psi_delta_cache", None),
-            "log_psi_delta_supports_cache"  : hasattr(self.net, "init_log_psi_delta_cache"),
+            "log_psi_delta_supports_cache"  : supports_cache,
             "representation"                : self.representation,
             "metadata"                      : self.metadata,
         }
@@ -206,7 +212,7 @@ class NQSRBMAdapter(NQSNetAdapterBase):
 
         if hooks["log_psi_delta_cache_init"] is None and hasattr(self.net, "get_log_psi_delta_cache_init"):
             hooks["log_psi_delta_cache_init"]       = self.net.get_log_psi_delta_cache_init()
-            hooks["log_psi_delta_supports_cache"]   = True
+            hooks["log_psi_delta_supports_cache"]   = bool(getattr(self.net, "log_psi_delta_supports_cache", False))
 
         return hooks
 
