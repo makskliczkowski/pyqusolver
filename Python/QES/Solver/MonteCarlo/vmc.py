@@ -29,6 +29,7 @@ Version         : 2.0
 
 #######################################################################
 
+import inspect
 from enum import Enum
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
@@ -206,9 +207,9 @@ class VMCSampler(Sampler):
         if "log_psi_delta_cache_init" in kwargs:
             self._log_psi_delta_cache_init_fun = kwargs["log_psi_delta_cache_init"]
 
-        self._log_psi_delta_supports_cache = bool(
-            hooks.get("log_psi_delta_supports_cache", False) or self._log_psi_delta_cache_init_fun is not None
-        )
+        declared_cache_support = bool(hooks.get("log_psi_delta_supports_cache", False))
+        inferred_cache_support = self._callable_accepts_positional_args(self._log_psi_delta_fun, 5)
+        self._log_psi_delta_supports_cache = bool(declared_cache_support or inferred_cache_support)
 
         # set the parameters - this for modification of the distribution
         self._mu = mu
@@ -343,6 +344,32 @@ class VMCSampler(Sampler):
             self._static_sample_therm_steps = None
             self._static_pt_therm_steps     = None
             self._jit_cache                 = {}
+
+    @staticmethod
+    def _callable_accepts_positional_args(func: Optional[Callable], n_positional: int) -> bool:
+        """
+        Conservative signature check for cache-aware delta hooks.
+
+        Returns True when ``func`` can be called with at least ``n_positional``
+        positional arguments (or has ``*args``), False otherwise.
+        """
+        if func is None:
+            return False
+        try:
+            sig = inspect.signature(func)
+        except (TypeError, ValueError):
+            return False
+
+        params = list(sig.parameters.values())
+        accepts_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+        if accepts_varargs:
+            return True
+
+        positional_slots = sum(
+            p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for p in params
+        )
+        return positional_slots >= int(n_positional)
 
     def _resolve_fast_update_fun(self, current_fun, upd_rule, **kwargs):
         """Attempts to replace the update function with a version that returns update info."""
@@ -1350,7 +1377,7 @@ class VMCSampler(Sampler):
 
         logprobas_init = net_callable_fun(params, states_init)
         logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
-        if log_psi_delta_cache_init_fun is not None:
+        if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
         else:
             delta_cache_init = None
@@ -1509,7 +1536,7 @@ class VMCSampler(Sampler):
         # All chains in replica r start with pt_betas[r]
         current_betas = jnp.tile(pt_betas[:, None], (1, num_chains))
 
-        if log_psi_delta_cache_init_fun is not None:
+        if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
         else:
             delta_cache_init = None
