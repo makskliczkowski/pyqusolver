@@ -29,6 +29,7 @@ Version         : 2.0
 
 #######################################################################
 
+import inspect
 from enum import Enum
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union
@@ -206,7 +207,11 @@ class VMCSampler(Sampler):
         if "log_psi_delta_cache_init" in kwargs:
             self._log_psi_delta_cache_init_fun = kwargs["log_psi_delta_cache_init"]
 
-        self._log_psi_delta_supports_cache = bool(hooks.get("log_psi_delta_supports_cache", False))
+        declared_cache_support              = bool(hooks.get("log_psi_delta_supports_cache", False))
+        inferred_cache_support              = self._callable_accepts_positional_args(self._log_psi_delta_fun, 5)
+        # Gate cache-aware mode on the delta function actually being present; a declared or inferred
+        # flag alone cannot enable cache-aware sampling without a real log_psi_delta callable.
+        self._log_psi_delta_supports_cache  = (self._log_psi_delta_fun is not None) and bool(declared_cache_support or inferred_cache_support)
 
         # set the parameters - this for modification of the distribution
         self._mu = mu
@@ -342,25 +347,33 @@ class VMCSampler(Sampler):
             self._static_pt_therm_steps     = None
             self._jit_cache                 = {}
 
-    def _invalidate_compiled_samplers(self, *, require_thermalization: bool = True):
+    @staticmethod
+    def _callable_accepts_positional_args(func: Optional[Callable], n_positional: int) -> bool:
         """
-        Drop cached JIT samplers after static-kernel parameter changes.
+        Conservative signature check for cache-aware delta hooks.
+
+        Returns True when ``func`` can be called with at least ``n_positional``
+        positional arguments (or has ``*args``), False otherwise.
         """
-        if require_thermalization:
-            self._needs_thermalization = True
-        self._static_sample_fun         = None
-        self._static_pt_sampler         = None
-        self._static_sample_therm_steps = None
-        self._static_pt_therm_steps     = None
-        self._jit_cache                 = {}
+        if func is None:
+            return False
+        try:
+            sig = inspect.signature(func)
+        except (TypeError, ValueError):
+            return False
+
+        params            = list(sig.parameters.values())
+        accepts_varargs   = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+        if accepts_varargs:
+            return True
+
+        positional_slots  = sum(p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD) for p in params)
+        return positional_slots >= int(n_positional)
 
     def _resolve_fast_update_fun(self, current_fun, upd_rule, **kwargs):
         """Attempts to replace the update function with a version that returns update info."""
-        spin, spin_value = resolve_state_defaults(
-            getattr(self, "_state_representation", None),
-            spin=kwargs.get("spin", None),
-            mode_repr=kwargs.get("mode_repr", None),
-            fallback_mode_repr=getattr(self, "_mode_repr", 1.0),
+        spin, spin_value = resolve_state_defaults(getattr(self, "_state_representation", None), spin=kwargs.get("spin", None),
+            mode_repr=kwargs.get("mode_repr", None), fallback_mode_repr=getattr(self, "_mode_repr", 1.0),
         )
 
         def _rule_supported(name: str) -> bool:
@@ -1363,10 +1376,10 @@ class VMCSampler(Sampler):
         uniform_weights=False,
     ):
 
-        if logprobas_init is None:
-            logprobas_init = net_callable_fun(params, states_init)
-            logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
-        if log_psi_delta_cache_init_fun is not None:
+        logprobas_init = net_callable_fun(params, states_init)
+        logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
+        
+        if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
         else:
             delta_cache_init = None
