@@ -1426,21 +1426,29 @@ class VMCSampler(Sampler):
         # Fast path: with standard Born-rule settings (mu=2, logprob_fact=0.5),
         # returned reweighting is analytically uniform. Avoid exp/sum over the
         # full batch to reduce memory traffic in the hottest sampling path.
-        if abs(float(log_prob_exponent)) < 1e-12:
+        def _uniform_probs(_):
             # Keep a logical length-(N,) vector for API compatibility while
             # using broadcast semantics from a scalar constant.
             prob_dtype                          = jnp.real(batched_log_ansatz).dtype
-            probs_normalized                    = jnp.broadcast_to(
+            return jnp.broadcast_to(
                 jnp.asarray(1.0, dtype=prob_dtype),
                 (total_samples,),
             )
-        else:
+
+        def _reweighted_probs(_):
             log_unnorm                          = log_prob_exponent * jnp.real(batched_log_ansatz)
             log_max                             = jnp.max(log_unnorm)
             probs                               = jnp.exp(log_unnorm - log_max)
             norm_factor                         = jnp.maximum(jnp.sum(probs), 1e-10)
-            probs_normalized                    = probs / norm_factor * total_samples
+            return probs / norm_factor * total_samples
 
+        is_uniform_reweighting                  = jnp.abs(jnp.asarray(log_prob_exponent)) < 1e-12
+        probs_normalized                        = jax.lax.cond(
+            is_uniform_reweighting,
+            _uniform_probs,
+            _reweighted_probs,
+            operand=None,
+        )
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache = final_carry
         final_state_tuple                       = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
         return final_state_tuple, (configs_flat, batched_log_ansatz), probs_normalized
