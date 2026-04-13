@@ -170,6 +170,58 @@ def test_vmc_uses_rbm_fast_update_and_samples():
     assert isinstance(samples, tuple)
     assert probs is None
 
+def test_vmc_reuses_cached_initial_logprobs_in_jax_fast_update_path():
+    rbm = RBM(input_shape=(4,), n_hidden=3, seed=13, dtype=jnp.float32, param_dtype=jnp.float32)
+    sampler = VMCSampler(
+        net=rbm,
+        shape=(4,),
+        backend="jax",
+        rng=np.random.default_rng(3),
+        rng_k=jax.random.PRNGKey(3),
+        numsamples=1,
+        numchains=2,
+        therm_steps=1,
+        sweep_steps=1,
+    )
+
+    params = rbm.get_params()
+    states = sampler.states
+    cached_logprobs = sampler.logprob(states, net_params=params)
+    def _wrong_apply(_params, x):
+        return jnp.full((x.shape[0],), 1234.0, dtype=cached_logprobs.dtype)
+
+    final_state, samples, probs = VMCSampler._static_sample_jax(
+        states_init=states,
+        logprobas_init=cached_logprobs,
+        rng_k_init=sampler.rng_k,
+        params=params,
+        num_samples=1,
+        num_chains=2,
+        total_therm_updates=0,
+        updates_per_sample=0,
+        shape=(4,),
+        mu=sampler.mu,
+        beta=sampler.beta,
+        logprob_fact=sampler.logprob_fact,
+        update_proposer=sampler._upd_fun,
+        net_callable_fun=_wrong_apply,
+        log_psi_delta_fun=sampler._log_psi_delta_fun,
+        log_psi_delta_cache_init_fun=sampler._log_psi_delta_cache_init_fun,
+        log_psi_delta_supports_cache=sampler._log_psi_delta_supports_cache,
+        uniform_weights=sampler.has_uniform_weights,
+        num_proposed_init=sampler.proposed,
+        num_accepted_init=sampler.accepted,
+    )
+
+    _ = final_state
+    assert probs is None
+    np.testing.assert_allclose(
+        np.asarray(samples[1]),
+        np.asarray(cached_logprobs),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
 
 def test_nqs_step_with_uniform_jax_weights_does_not_resample_explicit_configs():
     hilbert, model, rbm = _build_spin_half_problem()

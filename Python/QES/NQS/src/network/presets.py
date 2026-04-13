@@ -95,8 +95,16 @@ def estimate_network_params(
 
     if lattice_dims is not None:
         reshape_dims = tuple(lattice_dims)
-        if lattice_type == "honeycomb":
-            reshape_dims = (lattice_dims[0], lattice_dims[1] * 2) if len(lattice_dims) == 2 else lattice_dims
+        # flatten to 2D if possible
+        if len(reshape_dims) == 1 and reshape_dims[0] == num_sites:
+            reshape_dims = (num_sites, 1)
+        elif len(reshape_dims) == 2 and reshape_dims[0] * reshape_dims[1] != num_sites:
+            x_num           = lattice_dims[0] * num_sites // (lattice_dims[1])
+            y_num           = lattice_dims[1]
+            if x_num * y_num == num_sites:
+                reshape_dims = (x_num, y_num)
+            else:
+                reshape_dims = (num_sites, 1)
     else:
         sqrt_n = int(math.sqrt(num_sites))
         if sqrt_n * sqrt_n == num_sites:
@@ -116,23 +124,25 @@ def estimate_network_params(
 
     if net_type == "rbm":
         base_alpha = {
-            "kitaev": 4.0,
-            "heisenberg": 2.0,
-            "j1j2": 4.0,
-            "tfi": 1.0,
-        }.get(model_type, 2.0)
+                "kitaev"        : 4.0,
+                "heisenberg"    : 2.0,
+                "j1j2"          : 4.0,
+                "tfi"           : 1.0
+            }.get(model_type, 2.0)
+        
         user_alpha = kwargs.get("alpha", None)
         if user_alpha is not None:
             base_alpha = user_alpha
         if num_sites > 50 and "alpha" not in kwargs:
+            
             base_alpha = max(base_alpha, 2.0 + num_sites / 50.0)
-        alpha = base_alpha * (tier_mult if "alpha" not in kwargs else 1.0)
-        n_hidden = int(alpha * num_sites)
-        n_params = n_hidden * num_sites + n_hidden + num_sites
+        alpha       = base_alpha * (tier_mult if "alpha" not in kwargs else 1.0)
+        n_hidden    = int(alpha * num_sites)
+        n_params    = n_hidden * num_sites + n_hidden + num_sites
         if max_params and n_params > max_params:
-            alpha = max_params / (num_sites * num_sites + num_sites + 1)
-            n_hidden = int(alpha * num_sites)
-            n_params = n_hidden * num_sites + n_hidden + num_sites
+            alpha       = max_params / (num_sites * num_sites + num_sites + 1)
+            n_hidden    = int(alpha * num_sites)
+            n_params    = n_hidden * num_sites + n_hidden + num_sites
         return SOTANetConfig(
             net_type="rbm",
             input_shape=(num_sites,),
@@ -153,16 +163,15 @@ def estimate_network_params(
         else:
             n_layers = max(1, min(4, int(2 * tier_mult)))
             base_feat = 8
-        n_layers = kwargs.get("n_layers", n_layers)
-        base_feat = kwargs.get("base_feat", base_feat)
-        features = tuple(max(2, int(base_feat * tier_mult - 2 * i)) for i in range(n_layers))
-        ndim = len(reshape_dims)
-        if ndim == 2:
-            k = min(3, min(reshape_dims))
-            kernel_sizes = tuple(((k, k),) * n_layers)
-        else:
-            k = min(3, reshape_dims[0])
+        n_layers    = kwargs.get("n_layers", n_layers)
+        base_feat   = kwargs.get("base_feat", base_feat)
+        features    = tuple(max(2, int(base_feat * tier_mult - 2 * i)) for i in range(n_layers))
+        ndim        = len(reshape_dims)
+        k = min(3, min(reshape_dims))
+        if ndim == 1:
             kernel_sizes = tuple(((k,),) * n_layers)
+        else:
+            kernel_sizes = tuple((((k,) * ndim),) * n_layers)
         activations = [kwargs.get("activation", "log_cosh")] * n_layers
         return SOTANetConfig(
             net_type="cnn",

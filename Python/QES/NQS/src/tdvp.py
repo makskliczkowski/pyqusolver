@@ -84,6 +84,26 @@ class TDVPTimes:
             + self.phase,
         }
 
+    def copy(self):
+        """Return a detached copy of the timing container."""
+        return TDVPTimes(
+            prepare     = self.prepare,
+            gradient    = self.gradient,
+            covariance  = self.covariance,
+            x0          = self.x0,
+            solve       = self.solve,
+            phase       = self.phase,
+        )
+
+    def reset(self, fill_value: float = np.nan):
+        """Reset per-step timings before the next TDVP solve."""
+        self.prepare    = fill_value
+        self.gradient   = fill_value
+        self.covariance = fill_value
+        self.x0         = fill_value
+        self.solve      = fill_value
+        self.phase      = fill_value
+
 
 @dataclass
 class TDVPStepInfo:
@@ -427,9 +447,7 @@ class TDVP:
         self._full_size                     = None  # full size of the covariance matrix
         self._x0                            = sr_lin_x0
         self.timings                        = TDVPTimes()
-        self._cached_batched_matvec_obj     = None
-        self._cached_batched_matvec_mode    = None
-        self._cached_batched_matvec_fn      = None
+        self._invalidate_solver_caches()
 
         # Global phase parameter tracking for dynamical correlation functions
         # Equation from paper: $|\psi_{\theta_0,\theta}\rangle = e^{\theta_0}|\psi_\theta\rangle$
@@ -683,6 +701,15 @@ class TDVP:
     #! SETTERS
     ###################
 
+    def _invalidate_solver_caches(self, *, matvec: bool = True, batched_solver: bool = True):
+        """Invalidate cached solver closures after TDVP runtime configuration changes."""
+        if matvec:
+            self._cached_batched_matvec_obj = None
+            self._cached_batched_matvec_mode = None
+            self._cached_batched_matvec_fn = None
+        if batched_solver:
+            self._cached_batched_solver_fn = None
+
     def set_solver(self, solver: Callable):
         """
         Set the solver for the TDVP equation.
@@ -694,7 +721,7 @@ class TDVP:
         """
         # Invalidate specialized batched solver cache when solver definition changes.
         self.sr_solve_lin               = solver
-        self._cached_batched_solver_fn  = None
+        self._invalidate_solver_caches()
         self._init_solver_lin()
 
     def set_preconditioner(self, precond: Callable):
@@ -726,9 +753,7 @@ class TDVP:
         # Keep runtime callable in sync with the selected covariance path.
         self._covariance_fn_j = self._covariance_fn
         # Matvec cache depends on mode ("standard" vs "minsr"); clear stale closure.
-        self._cached_batched_matvec_obj = None
-        self._cached_batched_matvec_mode = None
-        self._cached_batched_matvec_fn = None
+        self._invalidate_solver_caches(matvec=True, batched_solver=False)
 
     def set_diag_shift(self, diag_shift: float):
         """
@@ -743,6 +768,7 @@ class TDVP:
             The diagonal shift to be used for the TDVP equation.
         """
         self.sr_diag_shift = diag_shift
+        self._invalidate_solver_caches(matvec=False, batched_solver=True)
 
     def set_regularization(self, regularization: float):
         """
@@ -1148,7 +1174,7 @@ class TDVP:
 
         # Case 3: BatchedJacobian but configured for GRAM/MATRIX -> Need override
         # We cache this specialized solver to avoid recompilation overhead
-        if not hasattr(self, "_cached_batched_solver_fn") or self._cached_batched_solver_fn is None:
+        if self._cached_batched_solver_fn is None:
             self._cached_batched_solver_fn = self.sr_solve_lin.get_solver_func(
                 backend_module=self.backend,
                 use_matvec=True,
@@ -1393,6 +1419,7 @@ class TDVP:
             - converged : bool
                 Whether the solver converged.
         """
+        self.timings.reset(np.nan if self.use_timing else 0.0)
         # ? Get the lower states information penalty
 
         # obtain the loss and covariance without the preprocessor
@@ -1475,9 +1502,8 @@ class TDVP:
         if solution is not None:
             param_derivatives       = solution.x if hasattr(solution, "x") else solution
             log_derivatives_mean    = vd_m
-            theta0_dot              = self.compute_global_phase_evolution(
-                                        self._e_local_mean, param_derivatives, log_derivatives_mean
-                                    )
+            with self._time("phase", self.compute_global_phase_evolution, self._e_local_mean, param_derivatives, log_derivatives_mean) as phase:
+                theta0_dot = phase
 
         if self.use_timing and self.logger:
             self.logger.info(f"TDVP Solve Timings: {self.timings}", lvl=2, color="cyan")
@@ -1539,7 +1565,7 @@ class TDVP:
             sr_converged    =   solution.converged,
             sr_executed     =   True,
             sr_iterations   =   solution.iterations,
-            timings         =   self.timings,
+            timings         =   self.timings.copy(),
             theta0_dot      =   theta0_dot,     # Global phase time derivative
             theta0          =   self._theta0,   # Current global phase
         )

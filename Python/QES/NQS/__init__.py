@@ -145,6 +145,7 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
     lx              : int                           = 3
     ly              : int                           = 3
     lz              : int                           = 1
+    multipartity    : int                           = 1             # Multipartite unit cell replication factor
     bc              : str                           = "pbc"
     num_sites       : Optional[int]                 = None          # Total number of sites (optional if lattice dims are given)
     flux            : Optional[Union[str, Dict]]    = None # Boundary fluxes, see Lattice class for details
@@ -235,17 +236,22 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
         aliases = {"chain": "square", "line": "square", "1d": "square"}
         return aliases.get(key, key)
 
-    def resolved_lattice_dims(self) -> Tuple[int, int, int]:
+    def resolved_lattice_dims(self) -> Tuple[int, int, int, int]:
         """
         Return the effective lattice extents used for construction.
 
         One-dimensional aliases are represented by the square-lattice backend
         with ``ly = lz = 1``.
+        
+        Returns
+        -------
+        Tuple[int, int, int, int]
+            Resolved lattice dimensions (lx, ly, lz, multipartity).            
         """
         key = str(self.lattice_type).strip().lower()
         if key in {"chain", "line", "1d"}:
-            return int(self.lx), 1, 1
-        return int(self.lx), int(self.ly), int(self.lz)
+            return int(self.lx), 1, 1, 1
+        return int(self.lx), int(self.ly), int(self.lz), int(self.multipartity)
 
     def make_lattice(self):
         """
@@ -253,7 +259,7 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
         """
         from QES.general_python.lattices import choose_lattice
 
-        lx, ly, lz      = self.resolved_lattice_dims()
+        lx, ly, lz, _   = self.resolved_lattice_dims()
         lattice_kwargs  = self.get("lattice_kwargs", {})
         lattice         = choose_lattice(
                             typek=self.normalized_lattice_type(),
@@ -264,12 +270,13 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
                             flux=self.flux,
                             **lattice_kwargs,
                         )
-        self.num_sites  = int(lattice.ns)
+        self.num_sites      = int(lattice.ns)
+        self.multipartity   = int(lattice.multipartity)
         return lattice
 
     def signature(self) -> Tuple[Any, ...]:
         """Return a deterministic signature for cache invalidation."""
-        lx, ly, lz = self.resolved_lattice_dims()
+        lx, ly, lz, multipartity = self.resolved_lattice_dims()
         return (
             self.model_type,
             self.normalized_lattice_type(),
@@ -283,6 +290,7 @@ class NQSPhysicsConfig(_ConfigSchemaMixin):
             float(self.hz),
             _freeze_for_signature(self.impurities),
             _freeze_for_signature(self.args),
+            multipartity,
         )
 
     def resolve_num_sites(self) -> int:
@@ -496,16 +504,11 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         Automatically estimates network parameters based on physics configuration.
         """
         from QES.NQS.src.network import estimate_network_params
-        num_sites       = physics_config.resolve_num_sites()
-        lattice_dims    = physics_config.resolved_lattice_dims()
-        signature       = (
-            physics_config.signature(),
-            self.ansatz,
-            self.dtype,
-            _freeze_for_signature(kwargs),
-        )
+        num_sites           = physics_config.resolve_num_sites()
+        lattice_dims        = physics_config.resolved_lattice_dims()
+        signature           = (physics_config.signature(), self.ansatz, self.dtype, _freeze_for_signature(kwargs))
 
-        self.sota_config = estimate_network_params(net_type=self.ansatz,
+        self.sota_config    = estimate_network_params(net_type=self.ansatz,
             num_sites=num_sites,
             lattice_dims=lattice_dims,
             lattice_type=physics_config.normalized_lattice_type(),
@@ -527,10 +530,22 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         if self.sota_config is None or self._sota_signature != signature:
             self.estimate(physics_config, **kwargs)
 
-        factory_kwargs = self.sota_config.to_factory_kwargs()
+        factory_kwargs  = self.sota_config.to_factory_kwargs()
+        ansatz_key      = self.ansatz.strip().lower().replace("-", "_")
+        if ansatz_key in {"cnn", "res", "resnet"}:
+            lx, ly, lz, multipartity = physics_config.resolved_lattice_dims()
+            factory_kwargs.setdefault("x_dim", int(lx))
+            factory_kwargs.setdefault("y_dim", int(ly))
+            factory_kwargs.setdefault("z_dim", int(lz))
+            factory_kwargs.setdefault("multipartity", int(multipartity))
+            # Compatibility aliases expected by some call sites.
+            factory_kwargs.setdefault("lx", int(lx))
+            factory_kwargs.setdefault("ly", int(ly))
+            factory_kwargs.setdefault("lz", int(lz))
+
         factory_kwargs.update(kwargs)
 
-        if self.ansatz.strip().lower().replace("-", "_") == "eqgcnn":
+        if ansatz_key == "eqgcnn":
             factory_kwargs.setdefault("lattice", physics_config.make_lattice())
 
         return NetworkFactory.create(network_type=self.ansatz, backend=self.backend, **factory_kwargs)

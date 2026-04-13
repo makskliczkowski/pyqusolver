@@ -255,22 +255,15 @@ class VMCSampler(Sampler):
         self._refresh_sampling_schedule(reset_compiled=False)
 
         # -----------------------------------------------------------------
-        # Mixed Precision Setup
+        # Sampler precision metadata
         # -----------------------------------------------------------------
-        self._dtype             = dtype if dtype is not None else (jnp.complex128 if JAX_AVAILABLE else np.complex128)
-        self._sample_dtype      = sample_dtype
-
-        if self._isjax and self._sample_dtype is None:
-            # Auto-enable mixed precision for double precision models
-            if self._dtype == jnp.complex128:
-                self._sample_dtype = jnp.complex64
-            elif self._dtype == jnp.float64:
-                self._sample_dtype = jnp.float32
-            else:
-                self._sample_dtype = self._dtype
-
-        if self._sample_dtype is None:
-            self._sample_dtype = self._dtype
+        # State precision is controlled by ``statetype`` in the base sampler.
+        # ``sample_dtype`` is kept as a lightweight compatibility/serialization
+        # field for downstream code that records sampler precision metadata.
+        # We do not implicitly cast network execution here because that would
+        # add hot-path conversions without guaranteeing a real speedup.
+        self._dtype             = dtype if dtype is not None else self._statetype
+        self._sample_dtype      = self._statetype if sample_dtype is None else sample_dtype
 
         # -----------------------------------------------------------------
         # Resolve update function
@@ -1015,6 +1008,7 @@ class VMCSampler(Sampler):
         def _sweep_chain_jax_step_inner(carry, _):
             ''' Performs a single MCMC update step for all chains in parallel. '''
             chain_in, current_val_in, current_key, num_prop, num_acc, cache_in = carry
+            value_dtype = current_val_in.dtype
 
             key_step, next_key_carry    = jax.random.split(current_key)
             key_prop_base, key_acc      = jax.random.split(key_step)
@@ -1042,11 +1036,13 @@ class VMCSampler(Sampler):
                     delta_log_psi, cache_prop = delta_res
                 else:
                     delta_log_psi = delta_res
+                delta_log_psi   = jnp.asarray(delta_log_psi, dtype=value_dtype)
                 new_val         = current_val_in + delta_log_psi
                 delta           = jnp.real(delta_log_psi)
             else:
                 # O(N_sites * N_hidden) standard update
                 new_val = VMCSampler._flatten_batch_output_jax(logproba_fun(new_chain), num_chains)
+                new_val = jnp.asarray(new_val, dtype=value_dtype)
                 delta = jnp.real(new_val - current_val_in)
 
             # Work in log-space for numerical stability:
@@ -1366,8 +1362,9 @@ class VMCSampler(Sampler):
         uniform_weights=False,
     ):
 
-        logprobas_init = net_callable_fun(params, states_init)
-        logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
+        if logprobas_init is None:
+            logprobas_init = net_callable_fun(params, states_init)
+            logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
         
         if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)

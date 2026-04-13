@@ -180,7 +180,7 @@ class NetworkFactory:
         if family == "eqgcnn" and "symmetry_perms" not in resolved_kwargs:
             lattice = resolved_kwargs.pop("lattice", None)
             if lattice is not None:
-                channels = resolved_kwargs.pop("channels", (8, 8))
+                channels    = resolved_kwargs.pop("channels", (8, 8))
                 point_group = resolved_kwargs.pop("point_group", "full")
                 return EquivariantGCNN.from_lattice(
                     lattice,
