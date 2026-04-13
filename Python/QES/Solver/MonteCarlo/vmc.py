@@ -1422,13 +1422,24 @@ class VMCSampler(Sampler):
         batched_log_ansatz                      = logprobas_flat                            # (num_samples * num_chains,)
 
         log_prob_exponent                       = 1.0 / logprob_fact - mu                   # Adjust exponent based on logprob_fact and mu
-        log_unnorm                              = log_prob_exponent * jnp.real(batched_log_ansatz)
-        log_max                                 = jnp.max(log_unnorm)
-        probs                                   = jnp.exp(log_unnorm - log_max)
-
         total_samples                           = num_samples * num_chains
-        norm_factor                             = jnp.maximum(jnp.sum(probs), 1e-10)
-        probs_normalized                        = probs / norm_factor * total_samples
+        # Fast path: with standard Born-rule settings (mu=2, logprob_fact=0.5),
+        # returned reweighting is analytically uniform. Avoid exp/sum over the
+        # full batch to reduce memory traffic in the hottest sampling path.
+        if abs(float(log_prob_exponent)) < 1e-12:
+            # Keep a logical length-(N,) vector for API compatibility while
+            # using broadcast semantics from a scalar constant.
+            prob_dtype                          = jnp.real(batched_log_ansatz).dtype
+            probs_normalized                    = jnp.broadcast_to(
+                jnp.asarray(1.0, dtype=prob_dtype),
+                (total_samples,),
+            )
+        else:
+            log_unnorm                          = log_prob_exponent * jnp.real(batched_log_ansatz)
+            log_max                             = jnp.max(log_unnorm)
+            probs                               = jnp.exp(log_unnorm - log_max)
+            norm_factor                         = jnp.maximum(jnp.sum(probs), 1e-10)
+            probs_normalized                    = probs / norm_factor * total_samples
 
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache = final_carry
         final_state_tuple                       = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
@@ -1651,10 +1662,19 @@ class VMCSampler(Sampler):
         phys_beta = pt_betas[0]
         log_prob_exponent = 1.0 / logprob_fact - mu * phys_beta
 
-        log_unnorm = log_prob_exponent * log_psi_real
-        log_unnorm_max = jnp.max(log_unnorm)
-        probs = jnp.exp(log_unnorm - log_unnorm_max)
-        probs_norm = probs / jnp.maximum(jnp.sum(probs), 1e-10) * (num_samples * num_chains)
+        total_samples = num_samples * num_chains
+        # PT physical samples are also uniform under standard Born-rule settings.
+        if abs(float(log_prob_exponent)) < 1e-12:
+            prob_dtype = log_psi_real.dtype
+            probs_norm = jnp.broadcast_to(
+                jnp.asarray(1.0, dtype=prob_dtype),
+                (total_samples,),
+            )
+        else:
+            log_unnorm = log_prob_exponent * log_psi_real
+            log_unnorm_max = jnp.max(log_unnorm)
+            probs = jnp.exp(log_unnorm - log_unnorm_max)
+            probs_norm = probs / jnp.maximum(jnp.sum(probs), 1e-10) * total_samples
 
         # We should remove the betas from final_carry before returning to match expected signature if needed?
         # But final_carry is internal.
