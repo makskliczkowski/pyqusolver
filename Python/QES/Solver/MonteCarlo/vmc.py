@@ -1342,6 +1342,7 @@ class VMCSampler(Sampler):
     @staticmethod
     def _static_sample_jax(
         states_init,
+        logprobas_init,
         rng_k_init,
         num_proposed_init,
         num_accepted_init,
@@ -1362,10 +1363,10 @@ class VMCSampler(Sampler):
         uniform_weights=False,
     ):
 
-        logprobas_init = net_callable_fun(params, states_init)
-        logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
-
-        if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
+        if logprobas_init is None:
+            logprobas_init = net_callable_fun(params, states_init)
+            logprobas_init = VMCSampler._flatten_batch_output_jax(logprobas_init, num_chains)
+        if log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
         else:
             delta_cache_init = None
@@ -1503,6 +1504,7 @@ class VMCSampler(Sampler):
     @staticmethod
     def _static_sample_pt_jax(
         states_init,
+        logprobas_init,
         rng_k_init,
         num_proposed_init,
         num_accepted_init,
@@ -1558,9 +1560,10 @@ class VMCSampler(Sampler):
 
         vmapped_mcmc_step = jax.vmap(_single_replica_mcmc, in_axes=(0, 0, 0, 0, 0, 0, 0))
 
-        states_flat = states_init.reshape((-1,) + shape)
-        logprobas_flat = VMCSampler._batched_network_apply(params, states_flat, net_callable_fun)
-        logprobas_init = logprobas_flat.reshape((states_init.shape[0], states_init.shape[1]))
+        if logprobas_init is None:
+            states_flat = states_init.reshape((-1,) + shape)
+            logprobas_flat = VMCSampler._batched_network_apply(params, states_flat, net_callable_fun)
+            logprobas_init = logprobas_flat.reshape((states_init.shape[0], states_init.shape[1]))
 
         def therm_scan_body(carry, _):
             states, lpsi, key, n_prop, n_acc, delta_cache, betas = carry
@@ -1793,6 +1796,7 @@ class VMCSampler(Sampler):
 
                 final_state_tuple, samples_tuple, probs = self._static_pt_sampler(
                     states_init=current_states,
+                    logprobas_init=self._logprobas,
                     rng_k_init=self._rng_k,
                     params=current_params,
                     num_proposed_init=current_proposed,
@@ -1824,6 +1828,7 @@ class VMCSampler(Sampler):
 
             final_state_tuple, samples_tuple, probs = self._static_sample_fun(
                 states_init=current_states,
+                logprobas_init=self._logprobas,
                 rng_k_init=self._rng_k,
                 params=current_params,
                 num_proposed_init=current_proposed,
@@ -1896,6 +1901,7 @@ class VMCSampler(Sampler):
 
         def wrapped_pt_sampler_impl(
             states_init: jax.Array,
+            logprobas_init: Optional[jax.Array],
             rng_k_init: jax.Array,
             params: Any,
             num_proposed_init: Optional[jax.Array] = None,
@@ -1915,6 +1921,7 @@ class VMCSampler(Sampler):
 
             return partial_sampler(
                 states_init=states_init,
+                logprobas_init=logprobas_init,
                 rng_k_init=rng_k_init,
                 num_proposed_init=_num_proposed,
                 num_accepted_init=_num_accepted,
@@ -1960,6 +1967,7 @@ class VMCSampler(Sampler):
 
         def wrapped_sampler_impl(
             states_init         : jax.Array,
+            logprobas_init      : Optional[jax.Array],
             rng_k_init          : jax.Array,
             params              : Any,
             num_proposed_init   : Optional[jax.Array] = None,
@@ -1979,6 +1987,7 @@ class VMCSampler(Sampler):
 
             final_state_tuple, samples_tuple, probs = partial_sampler(
                 states_init=states_init,
+                logprobas_init=logprobas_init,
                 rng_k_init=rng_k_init,
                 num_proposed_init=_num_proposed_init,
                 num_accepted_init=_num_accepted_init,
@@ -2022,7 +2031,10 @@ class VMCSampler(Sampler):
             return self._jit_cache[cache_key]
 
         if self._isjax:
-            sampler = self._get_sampler_jax(num_samples, num_chains, therm_steps=effective_therm_steps)
+            if self._is_pt:
+                sampler = self._get_sampler_pt_jax(num_samples, num_chains, therm_steps=effective_therm_steps)
+            else:
+                sampler = self._get_sampler_jax(num_samples, num_chains, therm_steps=effective_therm_steps)
         elif not self._isjax:
             sampler = self._get_sampler_np(num_samples, num_chains)
         else:
