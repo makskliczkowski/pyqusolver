@@ -325,9 +325,9 @@ class VMCSampler(Sampler):
         # -----------------------------------------------------------------
         # Static sampler function (standard or PT)
         # -----------------------------------------------------------------
-        self._jit_cache         = {}  # Cache for JIT-compiled samplers
-        self._static_sample_fun = self.get_sampler(num_samples=self._numsamples, num_chains=self._numchains)
-        self._static_pt_sampler = None  # Lazily created on first PT sample call
+        self._jit_cache         = {}        # Cache for JIT-compiled samplers
+        self._static_sample_fun = None
+        self._static_pt_sampler = None      # Lazily created on first sample call
         self._name              = "VMC"
 
     # ----------------------------------------------------------------------
@@ -345,6 +345,48 @@ class VMCSampler(Sampler):
             self._static_sample_therm_steps = None
             self._static_pt_therm_steps     = None
             self._jit_cache                 = {}
+
+    def _invalidate_compiled_samplers(self, *, require_thermalization: bool = False):
+        """Drop cached sampler callables after a runtime configuration change."""
+        if require_thermalization:
+            self._needs_thermalization = True
+        self._static_sample_fun         = None
+        self._static_pt_sampler         = None
+        self._static_sample_therm_steps = None
+        self._static_pt_therm_steps     = None
+        self._jit_cache                 = {}
+
+    def _apply_replica_layout(self):
+        """
+        Normalize internal state and counter shapes after PT configuration changes.
+
+        Re-applying ``set_replicas(...)`` must be idempotent: it should never
+        introduce an extra replica axis or retain counters with incompatible
+        shapes.
+        """
+        if self._states is None:
+            return
+
+        chain_ndim  = len(self._shape) + 1
+        base_states = self._states[0] if self._states.ndim == chain_ndim + 1 else self._states
+        int_dtype   = DEFAULT_JP_INT_TYPE if self._isjax else DEFAULT_NP_INT_TYPE
+
+        if self._is_pt:
+            target_shape = (self._n_replicas,) + tuple(base_states.shape)
+            if self._isjax:
+                self._states        = jnp.broadcast_to(base_states[None, ...], target_shape)
+                self._num_proposed  = jnp.zeros((self._n_replicas, self._numchains), dtype=int_dtype)
+                self._num_accepted  = jnp.zeros((self._n_replicas, self._numchains), dtype=int_dtype)
+            else:
+                self._states        = np.repeat(base_states[None, ...], self._n_replicas, axis=0)
+                self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=int_dtype)
+                self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=int_dtype)
+        else:
+            self._states        = base_states
+            self._num_proposed  = self._backend.zeros(self._numchains, dtype=int_dtype)
+            self._num_accepted  = self._backend.zeros(self._numchains, dtype=int_dtype)
+
+        self._logprobas = None
 
     @staticmethod
     def _callable_accepts_positional_args(func: Optional[Callable], n_positional: int) -> bool:
@@ -456,28 +498,7 @@ class VMCSampler(Sampler):
         """
         super().reset()
         self._needs_thermalization = True
-
-        if getattr(self, "_is_pt", False) and self._states.ndim == len(self._shape) + 1:
-            if self._isjax:
-                self._states = jnp.tile(
-                    self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim
-                )
-                self._num_proposed = jnp.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_proposed.dtype
-                )
-                self._num_accepted = jnp.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_accepted.dtype
-                )
-            else:
-                self._states = np.tile(
-                    self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim
-                )
-                self._num_proposed = np.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_proposed.dtype
-                )
-                self._num_accepted = np.zeros(
-                    (self._n_replicas, self._numchains), dtype=self._num_accepted.dtype
-                )
+        self._apply_replica_layout()
 
     def set_numchains(self, numchains):
         ''' Set the number of parallel chains. Reshapes state and counters if in PT mode. '''
@@ -489,25 +510,8 @@ class VMCSampler(Sampler):
         super().set_numchains(numchains)
         self._refresh_sampling_schedule(reset_compiled=False)
         self._needs_thermalization  = True
-        if getattr(self, "_is_pt", False) and self._states.ndim == len(self._shape) + 1:
-            if self._isjax:
-                self._states        = jnp.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
-                self._num_proposed  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
-                self._num_accepted  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
-            else:
-                self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
-                self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
-                self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
-        else:
-            int_dtype = DEFAULT_JP_INT_TYPE if self._isjax else DEFAULT_NP_INT_TYPE
-            self._num_proposed = self._backend.zeros(self._numchains, dtype=int_dtype)
-            self._num_accepted = self._backend.zeros(self._numchains, dtype=int_dtype)
-
-        self._static_sample_fun = None
-        self._static_pt_sampler = None
-        self._static_sample_therm_steps = None
-        self._static_pt_therm_steps = None
-        self._jit_cache         = {}
+        self._apply_replica_layout()
+        self._invalidate_compiled_samplers(require_thermalization=False)
 
     def autotune_chains(self, max_memory_gb: float = 12.0, safety_factor: float = 0.8):
         """
@@ -612,16 +616,7 @@ class VMCSampler(Sampler):
         self._pt_betas      = betas
         self._is_pt         = self._pt_betas is not None
         self._n_replicas    = len(self._pt_betas) if self._is_pt else 1
-
-        if self._is_pt:
-            if self._isjax:
-                self._states        = jnp.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
-                self._num_proposed  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
-                self._num_accepted  = jnp.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
-            else:
-                self._states        = np.tile(self._states[None, ...], (self._n_replicas,) + (1,) * self._states.ndim)
-                self._num_proposed  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_proposed.dtype)
-                self._num_accepted  = np.zeros((self._n_replicas, self._numchains), dtype=self._num_accepted.dtype)
+        self._apply_replica_layout()
 
     # ---------------------------------------------------------------------
 
@@ -629,7 +624,7 @@ class VMCSampler(Sampler):
         ''' Set the number of times the update function is applied per update step. '''
         
         numupd = int(numupd)
-        if hasattr(self, "_numupd") and self._numupd == numupd and hasattr(self, "_upd_fun") and self._upd_fun is not None:
+        if (hasattr(self, "_numupd") and self._numupd == numupd and hasattr(self, "_upd_fun") and callable(self._upd_fun)):
             return
 
         self._numupd = numupd
@@ -851,9 +846,7 @@ class VMCSampler(Sampler):
             self._global_p      = 0.0
 
         self.set_update_num(self._numupd)
-        self._static_sample_fun = None
-        self._static_pt_sampler = None
-        self._jit_cache         = {}
+        self._invalidate_compiled_samplers(require_thermalization=True)
 
     def set_global_update(
         self,
@@ -922,10 +915,8 @@ class VMCSampler(Sampler):
     @staticmethod
     @partial(jax.jit, static_argnames=("net_callable",))
     def _logprob_jax(x, net_callable, net_params=None):
-        def apply_net(s):
-            return net_callable(net_params, s)
-
-        batched_log_psi = jax.vmap(apply_net)(x)
+        ''' Calculate log-probability (log-amplitude) for a batch of states `x` using the provided network callable and parameters. JIT-compiled. '''
+        batched_log_psi = net_callable(net_params, x)
         flat_log_psi    = VMCSampler._flatten_batch_output_jax(batched_log_psi, x.shape[0])
         return jnp.real(flat_log_psi)
 
@@ -1452,24 +1443,14 @@ class VMCSampler(Sampler):
         log_prob_exponent                       = 1.0 / logprob_fact - mu                   # Adjust exponent based on logprob_fact and mu
         total_samples                           = num_samples * num_chains
     
-        # Fast path: with standard Born-rule settings (mu=2, logprob_fact=0.5),
-        # returned reweighting is analytically uniform. Avoid exp/sum over the
-        # full batch to reduce memory traffic in the hottest sampling path.
-        def _uniform_probs(_):
-            # Keep a logical length-(N,) vector for API compatibility while
-            # using broadcast semantics from a scalar constant.
-            prob_dtype                          = jnp.real(batched_log_ansatz).dtype
-            return jnp.broadcast_to(jnp.asarray(1.0, dtype=prob_dtype), (total_samples,))
-
-        def _reweighted_probs(_):
+        def _reweighted_probs():
             log_unnorm                          = log_prob_exponent * jnp.real(batched_log_ansatz)
             log_max                             = jnp.max(log_unnorm)
             probs                               = jnp.exp(log_unnorm - log_max)
             norm_factor                         = jnp.maximum(jnp.sum(probs), 1e-10)
             return probs / norm_factor * total_samples
 
-        is_uniform_reweighting                  = jnp.abs(jnp.asarray(log_prob_exponent)) < 1e-12
-        probs_normalized                        = jax.lax.cond(is_uniform_reweighting, _uniform_probs, _reweighted_probs, operand=None)
+        probs_normalized                        = None if uniform_weights else _reweighted_probs()
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache = final_carry
         final_state_tuple                       = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
         return final_state_tuple, (configs_flat, batched_log_ansatz), probs_normalized
@@ -1549,7 +1530,7 @@ class VMCSampler(Sampler):
 
         # Initial betas: (n_replicas, n_chains)
         # All chains in replica r start with pt_betas[r]
-        current_betas = jnp.tile(pt_betas[:, None], (1, num_chains))
+        current_betas = jnp.broadcast_to(pt_betas[:, None], (n_replicas, num_chains))
 
         if log_psi_delta_supports_cache and log_psi_delta_cache_init_fun is not None:
             delta_cache_init = log_psi_delta_cache_init_fun(params, states_init)
@@ -1557,10 +1538,7 @@ class VMCSampler(Sampler):
             delta_cache_init = None
 
         def _single_replica_mcmc(chain, lpsi, key, n_prop, n_acc, delta_cache_r, beta_r):
-            # beta_r is now (n_chains,) - per-chain beta
-            # But _run_mcmc_steps_jax takes scalar beta or we need to modify it?
-            # _run_mcmc_steps_jax takes 'beta'. If we pass array, it propagates?
-            # log_acc = beta * mu * delta. If beta is array (num_chains,), it broadcasts. Yes.
+            # beta_r is now (n_chains,) - per-chain beta for this replica
             return VMCSampler._run_mcmc_steps_jax(
                 chain_init=chain,
                 current_val_init=lpsi,
@@ -1625,36 +1603,26 @@ class VMCSampler(Sampler):
 
         def sample_scan_body(carry, _):
             states, lpsi, key, n_prop, n_acc, delta_cache, betas = carry
-            key, subkey = jax.random.split(key)
-            replica_keys = jax.random.split(subkey, n_replicas)
+            key, subkey     = jax.random.split(key)
+            replica_keys    = jax.random.split(subkey, n_replicas)
 
             states_new, lpsi_new, keys_new, n_prop_new, n_acc_new, delta_cache_new = vmapped_mcmc_step(
                 states, lpsi, replica_keys, n_prop, n_acc, delta_cache, betas
             )
 
-            key, swap_key = jax.random.split(key)
-            betas_swapped = VMCSampler._replica_exchange_kernel_jax_betas(
-                lpsi_new, betas, swap_key, mu
-            )
-            new_carry = (
-                states_new,
-                lpsi_new,
-                key,
-                n_prop_new,
-                n_acc_new,
-                delta_cache_new,
-                betas_swapped,
-            )
+            key, swap_key   = jax.random.split(key)
+            betas_swapped   = VMCSampler._replica_exchange_kernel_jax_betas(lpsi_new, betas, swap_key, mu)
+            new_carry       = (states_new, lpsi_new, key, n_prop_new, n_acc_new, delta_cache_new, betas_swapped)
 
             # Collect Physical Samples
             # We want samples where beta == pt_betas[0] (1.0)
             # betas_swapped is (n_replicas, n_chains).
             # We need to gather states where beta matches target.
-            target_beta = pt_betas[0]
+            target_beta     = pt_betas[0]
 
             # Mask of physical chains: (n_replicas, n_chains)
             # Use approx equality for floats
-            is_physical = jnp.abs(betas_swapped - target_beta) < 1e-5
+            is_physical     = jnp.abs(betas_swapped - target_beta) < 1e-5
 
             # We need to return a fixed shape.
             # But number of physical samples per step is exactly 'num_chains' (one per column)
@@ -1708,14 +1676,6 @@ class VMCSampler(Sampler):
         is_uniform              = jnp.abs(log_prob_exponent) < jnp.asarray(1e-12, dtype=prob_dtype)
         probs_norm              = jnp.where(is_uniform, uniform_probs_norm, weighted_probs_norm)
 
-        # We should remove the betas from final_carry before returning to match expected signature if needed?
-        # But final_carry is internal.
-        # However, _get_sampler_pt_jax unpacks it? No, it returns final_state_tuple.
-        # We need to make sure the unpacking in wrapper matches.
-        # The wrapper returns (final_state_tuple, samples_tuple, probs).
-        # final_state_tuple corresponds to (states, lpsi, key, prop, acc).
-        # Our final_carry has betas at the end. We should strip it.
-
         # Unpack final carry
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache, fc_betas = final_carry
 
@@ -1734,13 +1694,9 @@ class VMCSampler(Sampler):
         for _ in range(fc_states.ndim - 2):
             take_indices = take_indices[..., None]
 
-        fc_states_sorted = jnp.take_along_axis(fc_states, take_indices, axis=0)
-        fc_lpsi_sorted = jnp.take_along_axis(fc_lpsi, sorted_indices, axis=0)
-
-        # We generally do NOT sort keys or counters, they stay with the replica slot.
-        # (Or should counters move with the chain? Usually counters track acceptance at a given T).
-
-        final_state_tuple = (fc_states_sorted, fc_lpsi_sorted, fc_key, fc_prop, fc_acc)
+        fc_states_sorted    = jnp.take_along_axis(fc_states, take_indices, axis=0)
+        fc_lpsi_sorted      = jnp.take_along_axis(fc_lpsi, sorted_indices, axis=0)
+        final_state_tuple   = (fc_states_sorted, fc_lpsi_sorted, fc_key, fc_prop, fc_acc)
 
         return final_state_tuple, (configs_flat, ansatz_flat), probs_norm
 
@@ -1757,10 +1713,7 @@ class VMCSampler(Sampler):
         current_states      = self._states
         current_proposed    = self._num_proposed
         current_accepted    = self._num_accepted
-        self._static_sample_fun         = None
-        self._static_pt_sampler         = None
-        self._static_sample_therm_steps = None
-        self._static_pt_therm_steps     = None
+        self._invalidate_compiled_samplers(require_thermalization=False)
 
         return current_states, current_proposed, current_accepted
 
@@ -1787,7 +1740,7 @@ class VMCSampler(Sampler):
         used_num_therm      = num_therm if num_therm is not None else self._therm_steps
 
         if betas is not None:
-            self._set_replicas(betas)
+            self.set_replicas(betas)
 
         current_states      = self._states
         current_proposed    = self._num_proposed

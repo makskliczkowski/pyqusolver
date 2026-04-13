@@ -71,6 +71,61 @@ def test_vmc_sampler_defaults_to_hilbert_state_representation_when_unset():
 	assert sampler.mode_representation == pytest.approx(0.5)
 
 
+def test_vmc_sampler_defers_jit_sampler_construction_until_first_sample():
+	hilbert, model, net = _build_spin_half_problem()
+	_ = model
+	sampler = VMCSampler(
+		net=net,
+		shape=(hilbert.ns,),
+		hilbert=hilbert,
+		backend="jax",
+		rng=np.random.default_rng(1),
+		rng_k=jax.random.PRNGKey(1),
+		numsamples=1,
+		numchains=1,
+		therm_steps=1,
+		sweep_steps=1,
+	)
+
+	assert sampler._static_sample_fun is None
+
+	sampler.sample(parameters=net.get_params(), num_samples=1, num_chains=1)
+
+	assert sampler._static_sample_fun is not None
+
+
+def test_vmc_set_replicas_is_idempotent_and_restores_chain_layout():
+	hilbert, model, net = _build_spin_half_problem()
+	_ = model
+	sampler = VMCSampler(
+		net=net,
+		shape=(hilbert.ns,),
+		hilbert=hilbert,
+		backend="jax",
+		rng=np.random.default_rng(2),
+		rng_k=jax.random.PRNGKey(2),
+		numsamples=2,
+		numchains=2,
+		therm_steps=1,
+		sweep_steps=1,
+	)
+
+	sampler.set_replicas(jnp.array([1.0, 0.5], dtype=jnp.float32))
+	assert sampler.states.shape == (2, 2, hilbert.ns)
+	assert sampler.proposed.shape == (2, 2)
+	assert sampler.accepted.shape == (2, 2)
+
+	sampler.set_replicas(jnp.array([1.0, 0.7, 0.4], dtype=jnp.float32))
+	assert sampler.states.shape == (3, 2, hilbert.ns)
+	assert sampler.proposed.shape == (3, 2)
+	assert sampler.accepted.shape == (3, 2)
+
+	sampler.set_replicas(None)
+	assert sampler.states.shape == (2, hilbert.ns)
+	assert sampler.proposed.shape == (2,)
+	assert sampler.accepted.shape == (2,)
+
+
 def test_sigma_x_jax_respects_nonunit_binary_vector_convention():
 	state = jnp.array([0.0, 0.5, 0.0, 0.5], dtype=jnp.float32)
 	new_state, coeff = sigma_x_jnp(state, (1, 2), spin=False, spin_value=0.5)

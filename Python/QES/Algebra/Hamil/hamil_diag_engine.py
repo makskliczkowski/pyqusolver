@@ -286,18 +286,17 @@ class DiagonalizationEngine:
             self._extract_krylov_basis(A, matvec)
 
         if self.verbose:
-            self.logger.info(f"Diagonalization completed using {method}", lvl=2)
-            self.logger.info(f"Computed {len(self._result.eigenvalues)} eigenvalues", lvl=2)
+            self.logger.info(f"Diagonalization completed using {method}", lvl=3)
+            self.logger.info(f"Computed {len(self._result.eigenvalues)} eigenvalues", lvl=4)
             if (
                 self._result.converged
                 and self._result.iterations is not None
                 and self._result.iterations > 1
             ):
-                self.logger.info(f"Converged in {self._result.iterations} iterations", lvl=2)
+                self.logger.info(f"Converged in {self._result.iterations} iterations", lvl=4)
             elif self._result.iterations is not None and self._result.iterations > 1:
-                self.logger.warning(
-                    f"  Warning: Did not converge after {self._result.iterations} iterations", lvl=2
-                )
+                self.logger.warning(f"Warning: Did not converge after {self._result.iterations} iterations", lvl=4)
+                
         return self._result
 
     # ------------------------------------------------------------------------------------

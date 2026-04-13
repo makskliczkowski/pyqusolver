@@ -1692,7 +1692,7 @@ class Hamiltonian(BasisAwareOperator):
 
         # Choose implementation based on backend availability.sym_eig_py
         if not jax_maybe_av or use_numpy:
-            self._log("Calculating the Hamiltonian matrix using NumPy...", lvl=2, log="info")
+            self._log("Calculating the Hamiltonian matrix using NumPy...", lvl=1, log="info")
 
             # Calculate the Hamiltonian matrix using the optimized matrix builder
             self._hamil = build_operator_matrix(

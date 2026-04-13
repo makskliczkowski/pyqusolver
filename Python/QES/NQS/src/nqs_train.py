@@ -531,7 +531,8 @@ class NQSTrainer:
 
         if nqs is None:
             raise ValueError(self._ERR_NO_NQS)
-        self.nqs                        = nqs  # Most important component
+        
+        self.nqs                        = nqs               # Most important component
         self.logger                     = logger
         self.n_batch                    = n_batch
         self.background                 = background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0"))
@@ -555,6 +556,7 @@ class NQSTrainer:
         self.lower_states   = lower_states
         
         # Setup Early Stopping
+        self._log("Initializing NQS Trainer...", lvl=1, color="green")
         self.early_stopper  = early_stopper
         if self.early_stopper is None:
             # Build explicit early-stopping kwargs to avoid colliding with
@@ -565,61 +567,29 @@ class NQSTrainer:
             if "min_delta" in kwargs and "early_stopping_min_delta" not in es_kwargs:
                 es_kwargs["early_stopping_min_delta"] = kwargs["min_delta"]
 
-            # Prefer unified factory when available, but keep compatibility with
-            # older/stale EarlyStopping implementations that may not expose it.
             if hasattr(EarlyStopping, "from_kwargs"):
-                self.early_stopper = EarlyStopping.from_kwargs(logger=self.logger, **es_kwargs)
+                self.early_stopper  = EarlyStopping.from_kwargs(logger=self.logger, **es_kwargs)
             else:
-                es_patience = es_kwargs.get(
-                    "patience",
-                    es_kwargs.get(
-                        "early_stopping_patience",
-                        es_kwargs.get("es_patience", es_kwargs.get("early_patience", 0)),
-                    ),
-                )
-                es_min_delta = es_kwargs.get(
-                    "min_delta",
-                    es_kwargs.get(
-                        "early_stopping_min_delta",
-                        es_kwargs.get("es_min_delta", es_kwargs.get("early_min_delta", 1e-3)),
-                    ),
-                )
-                self.early_stopper = EarlyStopping(
-                    patience=es_patience, min_delta=es_min_delta, logger=self.logger
-                )
+                es_patience         = es_kwargs.get("patience", es_kwargs.get("early_stopping_patience", es_kwargs.get("es_patience", es_kwargs.get("early_patience", 0))))
+                es_min_delta        = es_kwargs.get("min_delta", es_kwargs.get("early_stopping_min_delta", es_kwargs.get("es_min_delta", es_kwargs.get("early_min_delta", 1e-3))))
+                self.early_stopper  = EarlyStopping(patience=es_patience, min_delta=es_min_delta, logger=self.logger)
 
         if isinstance(timing_mode, str):
             try:
                 timing_mode = NQSTimeModes[timing_mode.upper()]
                 self.timing_mode = timing_mode
-                self._log(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color="green")
+                self._log(f"Timing mode set to: {self.timing_mode.name}", lvl=2, color="green")
             except KeyError:
                 raise ValueError(self._ERR_INVALID_TIMING_MODE)
         self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
 
         # Setup Schedulers (The Integrated Part)
         self._init_reg, self._init_lr, self._init_diag = reg, lr, diag_shift
-
-        # Prefer the Kitaev preset for Kitaev/Gamma models when caller left default preset.
-        if isinstance(phases, str) and phases.lower() == "default":
-            model_name = str(getattr(nqs, "model", getattr(nqs, "_model", ""))).lower()
-            if "kitaev" in model_name or "gamma" in model_name:
-                phases = "kitaev"
         
         # Determine max epochs for schedulers
+        self._log("Setting up schedulers...", lvl=2, color="green")
         max_ep_val = kwargs.get("n_epochs", kwargs.get("epochs", 500))
-        
-        self._set_phases(
-            phases,
-            lr,
-            reg,
-            lr_scheduler=lr_scheduler,
-            reg_scheduler=reg_scheduler,
-            diag_scheduler=diag_scheduler,
-            diag_shift=diag_shift,
-            n_epochs=max_ep_val,
-            **kwargs,
-        )
+        self._set_phases(phases, lr, reg, lr_scheduler=lr_scheduler, reg_scheduler=reg_scheduler, diag_scheduler=diag_scheduler, diag_shift=diag_shift, n_epochs=max_ep_val, **kwargs)
 
         # Setup Linear Solver + Preconditioner
         try:
@@ -640,9 +610,7 @@ class NQSTrainer:
         self.tdvp = tdvp
         self.grad_clip = grad_clip  # Store for later use
         if self.tdvp is None:
-            self._log(
-                "No TDVP engine provided. Creating default TDVP instance.", lvl=0, color="yellow"
-            )
+            self._log("No TDVP engine provided. Creating default TDVP instance.", lvl=2, color="yellow")
             self.tdvp = TDVP(
                 use_sr                  =use_sr,
                 use_minsr               =use_minsr,
@@ -888,41 +856,24 @@ class NQSTrainer:
 
         # Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
         elif isinstance(phases, str):
-            self._log(
-                f"Initializing training phases with preset: '{phases}'",
-                lvl=1,
-                color="green",
-                verbose=self.verbose,
-            )
-            self.lr_scheduler, self.reg_scheduler = create_phase_schedulers(phases, self.logger)
+            self._log(f"Initializing training phases with preset: '{phases}'", lvl=3, color="green", verbose=self.verbose,)
+            self.lr_scheduler, self.reg_scheduler   = create_phase_schedulers(phases, self.logger)
             # diag_scheduler is separate from phase presets
-            self.diag_scheduler = _resolve_scheduler(
-                diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs
-            )
+            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
         # Tuple of schedulers
         elif isinstance(phases, (tuple, list)) and len(phases) == 2:
             # Validate and resolve if strings
             self.lr_scheduler, self.reg_scheduler = phases
-            self.lr_scheduler = _resolve_scheduler(
-                self.lr_scheduler, lr, "lr", n_epochs, **lr_kwargs
-            )
-            self.reg_scheduler = _resolve_scheduler(
-                self.reg_scheduler, reg, "reg", n_epochs, **reg_kwargs
-            )
-            self.diag_scheduler = _resolve_scheduler(
-                diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs
-            )
+            self.lr_scheduler   = _resolve_scheduler(self.lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
+            self.reg_scheduler  = _resolve_scheduler(self.reg_scheduler, reg, "reg", n_epochs, **reg_kwargs)
+            self.diag_scheduler = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
         # No phases -> use injected schedulers or create from lr/reg
         else:
-            self.lr_scheduler = _resolve_scheduler(lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
-            self.reg_scheduler = _resolve_scheduler(
-                reg_scheduler, reg, "reg", n_epochs, **reg_kwargs
-            )
-            self.diag_scheduler = _resolve_scheduler(
-                diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs
-            )
+            self.lr_scheduler   = _resolve_scheduler(lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
+            self.reg_scheduler  = _resolve_scheduler(reg_scheduler, reg, "reg", n_epochs, **reg_kwargs)
+            self.diag_scheduler = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
         # Compute initial values (override with explicit lr/reg if provided)
         if self.lr_scheduler:

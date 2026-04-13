@@ -5,8 +5,10 @@ jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
 
 try:
+    from tests.nqs.test_nqs_model_state_convention            import _build_spin_half_problem
     from QES.general_python.ml.net_impl.networks            import net_rbm
     from QES.general_python.ml.net_impl.networks.net_rbm    import RBM
+    from QES.NQS                                           import NQS
     from QES.Solver.MonteCarlo.vmc                          import VMCSampler
     from QES.Solver.MonteCarlo.updates                      import spin_jax
 except ImportError:
@@ -166,7 +168,41 @@ def test_vmc_uses_rbm_fast_update_and_samples():
     )
     assert isinstance(final_state, tuple)
     assert isinstance(samples, tuple)
-    assert probs.shape[0] == 4
+    assert probs is None
+
+
+def test_nqs_step_with_uniform_jax_weights_does_not_resample_explicit_configs():
+    hilbert, model, rbm = _build_spin_half_problem()
+    nqs = NQS(
+        logansatz=rbm,
+        hilbert=hilbert,
+        model=model,
+        backend="jax",
+        rng=np.random.default_rng(0),
+        rng_k=jax.random.PRNGKey(0),
+        numsamples=2,
+        numchains=2,
+        therm_steps=1,
+        sweep_steps=1,
+    )
+
+    params = nqs.get_params()
+    (_, _), (configs, configs_ansatze), probs = nqs.sample(num_samples=2, num_chains=2)
+    assert probs is None
+
+    def _forbidden_sample(*args, **kwargs):
+        raise AssertionError("step() should not resample when configs and uniform weights are already provided")
+
+    nqs._sampler.sample = _forbidden_sample
+    out = nqs.step(
+        configs=configs,
+        configs_ansatze=configs_ansatze,
+        probabilities=None,
+        params=params,
+        batch_size=2,
+    )
+
+    assert out is not None
 
 
 def test_spin_jax_local_flip_supports_binary_representation():

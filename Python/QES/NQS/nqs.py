@@ -1275,12 +1275,10 @@ class NQS(MonteCarloSolver):
         _, (states, ansatze), probabilities = sampler.sample(
             parameters=parameters, num_samples=num_samples, num_chains=num_chains
         )
-        evaluated_results = [
-            NQS._apply_fun(
-                f, states, probabilities, ansatze, logproba_fun, parameters, batch_size, is_jax
-            )
-            for f in func
-        ]
+        if is_jax and probabilities is None:
+            evaluated_results = [NQS._apply_fun_jax_uniform(f, states, probabilities, ansatze, logproba_fun, parameters, batch_size) for f in func]
+        else:
+            evaluated_results = [NQS._apply_fun(f, states, probabilities, ansatze, logproba_fun, parameters, batch_size, is_jax) for f in func]
         return (states, ansatze), probabilities, evaluated_results
 
     def apply(
@@ -1347,20 +1345,14 @@ class NQS(MonteCarloSolver):
                 parameters=params, num_samples=num_samples, num_chains=num_chains
             )
 
+        use_uniform_apply = (probabilities is None and self._use_uniform_apply_path() and len(op_args) == 0 and (not probabilities_was_provided))
+
         # check if the probabilities are provided
-        if probabilities is None:
-            prob_dtype = (
-                self._precision_policy.prob_dtype
-                if hasattr(self, "_precision_policy")
-                else ansatze.dtype
-            )
+        if probabilities is None and not use_uniform_apply:
+            prob_dtype = (self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else ansatze.dtype)
             probabilities = self._nqsbackend.asarray(self._backend.ones(ansatze.shape, dtype=prob_dtype), dtype=prob_dtype)
-        else:
-            prob_dtype = (
-                self._precision_policy.prob_dtype
-                if hasattr(self, "_precision_policy")
-                else getattr(probabilities, "dtype", ansatze.dtype)
-            )
+        elif probabilities is not None:
+            prob_dtype = (self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else getattr(probabilities, "dtype", ansatze.dtype))
             if self._nqsbackend.is_jax_array(probabilities):
                 probabilities_are_complex = bool(jnp.issubdtype(probabilities.dtype, jnp.complexfloating))
             else:
@@ -1373,15 +1365,15 @@ class NQS(MonteCarloSolver):
         # jax.vmap expects (N, 1) to slice into (1,) which allows [0] indexing
         if hasattr(ansatze, 'ndim') and ansatze.ndim == 1:
             ansatze = ansatze.reshape(-1, 1)
-        if hasattr(probabilities, 'ndim') and probabilities.ndim == 1:
+            
+        if probabilities is not None and hasattr(probabilities, 'ndim') and probabilities.ndim == 1:
             probabilities = probabilities.reshape(-1, 1)
 
         # handle op_args being (None,)
         if isinstance(op_args, tuple) and len(op_args) == 1 and op_args[0] is None:
             op_args = ()
 
-        output              = []
-        use_uniform_apply   = self._use_uniform_apply_path() and len(op_args) == 0 and (not probabilities_was_provided)
+        output = []
         for i, f in enumerate(functions):
             
             
@@ -1916,7 +1908,9 @@ class NQS(MonteCarloSolver):
             - **last_ansatze**: Log amplitudes of final states. Shape (num_chains,).
             - **states**: All sampled states. Shape (num_chains * num_samples, n_visible).
             - **all_ansatze**: Log amplitudes of all states. Shape (num_chains * num_samples,).
-            - **all_probabilities**: Probabilities (or weights) of samples. Shape (num_chains * num_samples,).
+            - **all_probabilities**: Probabilities (or weights) of samples. Shape
+              ``(num_chains * num_samples,)`` for explicit reweighting, or ``None``
+              when the active JAX sampler has analytically uniform weights.
         """
         if reset and hasattr(self._sampler, "reset"):
             self._sampler.reset()
@@ -1925,9 +1919,7 @@ class NQS(MonteCarloSolver):
             params = self._net.get_params()
 
         (last_configs, last_ansatze), (states, all_ansatze), (all_probabilities) = (
-            self._sampler.sample(
-                parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs
-            )
+            self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs)
         )
 
         if kwargs.get("states", False):
@@ -2464,9 +2456,7 @@ class NQS(MonteCarloSolver):
             params = net_utils.jaxpy.transform_flat_params_jit(y, tree_def, slices, flat_size)
 
             # 2. Run the physics step
-            result = single_step_jax(
-                params, configs, configs_ansatze, probabilities, t=t, int_step=int_step
-            )
+            result = single_step_jax(params, configs, configs_ansatze, probabilities, t=t, int_step=int_step)
 
             # 3. Return flattened results for the optimizer
             return (
@@ -2506,7 +2496,7 @@ class NQS(MonteCarloSolver):
 
         # prepare the functions if not provided
         ansatz_fn           = kwargs.get("ansatz_fn", self._ansatz_func)
-        use_uniform_step    = (probabilities is None) and self._use_uniform_apply_path()
+        use_uniform_step    = (probabilities is None and configs is not None and configs_ansatze is not None and self._use_uniform_apply_path())
         default_apply       = self._apply_uniform_func if use_uniform_step else self._apply_func
         apply_fn            = kwargs.get("apply_fn", default_apply)
         loss_function       = kwargs.get("loss_function", self._loss_func)
@@ -2514,10 +2504,13 @@ class NQS(MonteCarloSolver):
         compute_grad_fun    = net_utils.jaxpy.compute_gradients_batched if self._isjax else None
 
         # check if the configurations are provided
-        if configs is None or configs_ansatze is None or probabilities is None:
+        if configs is None or configs_ansatze is None or (probabilities is None and not use_uniform_step):
             num_samples     = kwargs.pop("num_samples", self._sampler.numsamples)
             num_chains      = kwargs.pop("num_chains", self._sampler.numchains)
             (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains)
+            use_uniform_step = (probabilities is None) and self._use_uniform_apply_path()
+            default_apply    = self._apply_uniform_func if use_uniform_step else self._apply_func
+            apply_fn         = kwargs.get("apply_fn", default_apply)
 
         # call the appropriate single step function
         if isinstance(self._nqsproblem, WavefunctionPhysics):

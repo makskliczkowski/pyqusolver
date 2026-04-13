@@ -1157,21 +1157,14 @@ def __getattr__(name: str) -> Any:
             else:
                 module = importlib.import_module(module_path)
 
-            result = module if attr_name == "__name__" else getattr(module, attr_name)
-            _LAZY_CACHE[name] = result
+            result              = module if attr_name == "__name__" else getattr(module, attr_name)
+            _LAZY_CACHE[name]   = result
             return result
         except (ImportError, AttributeError) as e:
             # Special handling for NQS as it's critical
             if name == "NQS":
-                raise ImportError(
-                    f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}"
-                ) from e
-            # VMCSampler might be optional or handle gracefully
-            if name == "VMCSampler":
-                return None
-            raise ImportError(
-                f"Failed to import lazy attribute '{name}' from '{module_path}': {e}"
-            ) from e
+                raise ImportError(f"Could not import NQS module. Ensure QES is installed correctly.\nOriginal error: {e}") from e
+            raise ImportError(f"Failed to import lazy attribute '{name}' from '{module_path}': {e}") from e
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
