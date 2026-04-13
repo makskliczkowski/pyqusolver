@@ -23,7 +23,7 @@ Example
 File            : Python/QES/Solver/MonteCarlo/vmc.py
 Author          : Maksymilian Kliczkowski
 License         : MIT
-Version         : 2.0
+Version         : 2.1
 ---------------------------------
 """
 
@@ -222,7 +222,6 @@ class VMCSampler(Sampler):
                     backend_name = "cpu"
 
             if backend_name == "gpu":
-                # Table S2-inspired defaults for GPU runs.
                 default_therm   = 8
                 default_sweep   = 480
             else:
@@ -236,8 +235,8 @@ class VMCSampler(Sampler):
             if sweep_steps is None:
                 sweep_steps     = default_sweep
 
-        therm_steps = max(1, int(therm_steps))
-        sweep_steps = max(1, int(sweep_steps))
+        therm_steps                     = max(1, int(therm_steps))
+        sweep_steps                     = max(1, int(sweep_steps))
 
         self._beta                      = beta
         self._therm_steps               = therm_steps
@@ -281,7 +280,7 @@ class VMCSampler(Sampler):
         else:
             self._local_upd_fun = upd_fun
             if upd_fun is None:
-                self._upd_rule_name = "LOCAL (Default)"
+                self._upd_rule_name = "LOCAL"
 
         # number of times a function is applied per update
         self._numupd = numupd
@@ -312,10 +311,10 @@ class VMCSampler(Sampler):
         #! Set up hybrid proposer if requested
         # -----------------------------------------------------------------
         self.set_hybrid_proposer(
-            kwargs.get("global_p", kwargs.get("p_global", 0.0)),
-            kwargs.get("global_fraction", 0.5),
-            kwargs.get("patterns", None),
-            kwargs.get("global_update", None),
+            kwargs.get("global_p",          kwargs.get("p_global", 0.0)), # if 0.0, the proposer will just use the local update
+            kwargs.get("global_fraction",   0.5),
+            kwargs.get("patterns",          None),
+            kwargs.get("global_update",     None),
         )
 
         # -----------------------------------------------------------------
