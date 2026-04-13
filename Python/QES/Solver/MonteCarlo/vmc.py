@@ -209,7 +209,9 @@ class VMCSampler(Sampler):
 
         declared_cache_support              = bool(hooks.get("log_psi_delta_supports_cache", False))
         inferred_cache_support              = self._callable_accepts_positional_args(self._log_psi_delta_fun, 5)
-        self._log_psi_delta_supports_cache  = bool(declared_cache_support or inferred_cache_support)
+        # Gate cache-aware mode on the delta function actually being present; a declared or inferred
+        # flag alone cannot enable cache-aware sampling without a real log_psi_delta callable.
+        self._log_psi_delta_supports_cache  = (self._log_psi_delta_fun is not None) and bool(declared_cache_support or inferred_cache_support)
 
         # set the parameters - this for modification of the distribution
         self._mu = mu
