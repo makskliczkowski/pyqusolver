@@ -362,24 +362,18 @@ class VMCSampler(Sampler):
         except (TypeError, ValueError):
             return False
 
-        params = list(sig.parameters.values())
-        accepts_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+        params            = list(sig.parameters.values())
+        accepts_varargs   = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
         if accepts_varargs:
             return True
 
-        positional_slots = sum(
-            p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-            for p in params
-        )
+        positional_slots  = sum(p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD) for p in params)
         return positional_slots >= int(n_positional)
 
     def _resolve_fast_update_fun(self, current_fun, upd_rule, **kwargs):
         """Attempts to replace the update function with a version that returns update info."""
-        spin, spin_value = resolve_state_defaults(
-            getattr(self, "_state_representation", None),
-            spin=kwargs.get("spin", None),
-            mode_repr=kwargs.get("mode_repr", None),
-            fallback_mode_repr=getattr(self, "_mode_repr", 1.0),
+        spin, spin_value = resolve_state_defaults(getattr(self, "_state_representation", None), spin=kwargs.get("spin", None),
+            mode_repr=kwargs.get("mode_repr", None), fallback_mode_repr=getattr(self, "_mode_repr", 1.0),
         )
 
         def _rule_supported(name: str) -> bool:
@@ -1361,6 +1355,7 @@ class VMCSampler(Sampler):
     @staticmethod
     def _static_sample_jax(
         states_init,
+        logprobas_init,
         rng_k_init,
         num_proposed_init,
         num_accepted_init,
@@ -1455,18 +1450,27 @@ class VMCSampler(Sampler):
         logprobas_flat                          = collected_logprobas.reshape((-1,))        # (num_samples * num_chains,)
         batched_log_ansatz                      = logprobas_flat                            # (num_samples * num_chains,)
 
-        if uniform_weights:
-            probs_normalized                    = jnp.ones_like(batched_log_ansatz, dtype=jnp.float32)
-        else:
-            log_prob_exponent                   = 1.0 / logprob_fact - mu                   # Adjust exponent based on logprob_fact and mu
+        log_prob_exponent                       = 1.0 / logprob_fact - mu                   # Adjust exponent based on logprob_fact and mu
+        total_samples                           = num_samples * num_chains
+    
+        # Fast path: with standard Born-rule settings (mu=2, logprob_fact=0.5),
+        # returned reweighting is analytically uniform. Avoid exp/sum over the
+        # full batch to reduce memory traffic in the hottest sampling path.
+        def _uniform_probs(_):
+            # Keep a logical length-(N,) vector for API compatibility while
+            # using broadcast semantics from a scalar constant.
+            prob_dtype                          = jnp.real(batched_log_ansatz).dtype
+            return jnp.broadcast_to(jnp.asarray(1.0, dtype=prob_dtype), (total_samples,))
+
+        def _reweighted_probs(_):
             log_unnorm                          = log_prob_exponent * jnp.real(batched_log_ansatz)
             log_max                             = jnp.max(log_unnorm)
             probs                               = jnp.exp(log_unnorm - log_max)
-
-            total_samples                       = num_samples * num_chains
             norm_factor                         = jnp.maximum(jnp.sum(probs), 1e-10)
-            probs_normalized                    = probs / norm_factor * total_samples
+            return probs / norm_factor * total_samples
 
+        is_uniform_reweighting                  = jnp.abs(jnp.asarray(log_prob_exponent)) < 1e-12
+        probs_normalized                        = jax.lax.cond(is_uniform_reweighting, _uniform_probs, _reweighted_probs, operand=None)
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache = final_carry
         final_state_tuple                       = (fc_states, fc_lpsi, fc_key, fc_prop, fc_acc)
         return final_state_tuple, (configs_flat, batched_log_ansatz), probs_normalized
@@ -1522,6 +1526,7 @@ class VMCSampler(Sampler):
     @staticmethod
     def _static_sample_pt_jax(
         states_init,
+        logprobas_init,
         rng_k_init,
         num_proposed_init,
         num_accepted_init,
@@ -1577,9 +1582,10 @@ class VMCSampler(Sampler):
 
         vmapped_mcmc_step = jax.vmap(_single_replica_mcmc, in_axes=(0, 0, 0, 0, 0, 0, 0))
 
-        states_flat = states_init.reshape((-1,) + shape)
-        logprobas_flat = VMCSampler._batched_network_apply(params, states_flat, net_callable_fun)
-        logprobas_init = logprobas_flat.reshape((states_init.shape[0], states_init.shape[1]))
+        if logprobas_init is None:
+            states_flat = states_init.reshape((-1,) + shape)
+            logprobas_flat = VMCSampler._batched_network_apply(params, states_flat, net_callable_fun)
+            logprobas_init = logprobas_flat.reshape((states_init.shape[0], states_init.shape[1]))
 
         def therm_scan_body(carry, _):
             states, lpsi, key, n_prop, n_acc, delta_cache, betas = carry
@@ -1692,10 +1698,16 @@ class VMCSampler(Sampler):
             phys_beta           = pt_betas[0]
             log_prob_exponent   = 1.0 / logprob_fact - mu * phys_beta
 
-            log_unnorm          = log_prob_exponent * log_psi_real
-            log_unnorm_max      = jnp.max(log_unnorm)
-            probs               = jnp.exp(log_unnorm - log_unnorm_max)
-            probs_norm          = probs / jnp.maximum(jnp.sum(probs), 1e-10) * (num_samples * num_chains)
+        total_samples           = num_samples * num_chains
+        # PT physical samples are also uniform under standard Born-rule settings.
+        prob_dtype              = log_psi_real.dtype
+        uniform_probs_norm      = jnp.broadcast_to(jnp.asarray(1.0, dtype=prob_dtype), (total_samples,))
+        log_unnorm              = log_prob_exponent * log_psi_real
+        log_unnorm_max          = jnp.max(log_unnorm)
+        probs                   = jnp.exp(log_unnorm - log_unnorm_max)
+        weighted_probs_norm     = (probs / jnp.maximum(jnp.sum(probs), 1e-10) * total_samples)
+        is_uniform              = jnp.abs(log_prob_exponent) < jnp.asarray(1e-12, dtype=prob_dtype)
+        probs_norm              = jnp.where(is_uniform, uniform_probs_norm, weighted_probs_norm)
 
         # We should remove the betas from final_carry before returning to match expected signature if needed?
         # But final_carry is internal.
@@ -1812,6 +1824,7 @@ class VMCSampler(Sampler):
 
                 final_state_tuple, samples_tuple, probs = self._static_pt_sampler(
                     states_init=current_states,
+                    logprobas_init=self._logprobas,
                     rng_k_init=self._rng_k,
                     params=current_params,
                     num_proposed_init=current_proposed,
@@ -1843,6 +1856,7 @@ class VMCSampler(Sampler):
 
             final_state_tuple, samples_tuple, probs = self._static_sample_fun(
                 states_init=current_states,
+                logprobas_init=self._logprobas,
                 rng_k_init=self._rng_k,
                 params=current_params,
                 num_proposed_init=current_proposed,
@@ -1915,6 +1929,7 @@ class VMCSampler(Sampler):
 
         def wrapped_pt_sampler_impl(
             states_init: jax.Array,
+            logprobas_init: Optional[jax.Array],
             rng_k_init: jax.Array,
             params: Any,
             num_proposed_init: Optional[jax.Array] = None,
@@ -1934,6 +1949,7 @@ class VMCSampler(Sampler):
 
             return partial_sampler(
                 states_init=states_init,
+                logprobas_init=logprobas_init,
                 rng_k_init=rng_k_init,
                 num_proposed_init=_num_proposed,
                 num_accepted_init=_num_accepted,
@@ -1979,6 +1995,7 @@ class VMCSampler(Sampler):
 
         def wrapped_sampler_impl(
             states_init         : jax.Array,
+            logprobas_init      : Optional[jax.Array],
             rng_k_init          : jax.Array,
             params              : Any,
             num_proposed_init   : Optional[jax.Array] = None,
@@ -1998,6 +2015,7 @@ class VMCSampler(Sampler):
 
             final_state_tuple, samples_tuple, probs = partial_sampler(
                 states_init=states_init,
+                logprobas_init=logprobas_init,
                 rng_k_init=rng_k_init,
                 num_proposed_init=_num_proposed_init,
                 num_accepted_init=_num_accepted_init,
@@ -2041,7 +2059,10 @@ class VMCSampler(Sampler):
             return self._jit_cache[cache_key]
 
         if self._isjax:
-            sampler = self._get_sampler_jax(num_samples, num_chains, therm_steps=effective_therm_steps)
+            if self._is_pt:
+                sampler = self._get_sampler_pt_jax(num_samples, num_chains, therm_steps=effective_therm_steps)
+            else:
+                sampler = self._get_sampler_jax(num_samples, num_chains, therm_steps=effective_therm_steps)
         elif not self._isjax:
             sampler = self._get_sampler_np(num_samples, num_chains)
         else:
@@ -2085,10 +2106,12 @@ class VMCSampler(Sampler):
     def set_mu(self, mu):
         ''' Set the exponent mu for the sampler. This will trigger a refresh of the sampling schedule and recompilation of JIT functions if applicable.'''
         self._mu = mu
+        self._invalidate_compiled_samplers(require_thermalization=True)
 
     def set_beta(self, beta):
         ''' Set the inverse temperature beta for the sampler. This will trigger a refresh of the sampling schedule and recompilation of JIT functions if applicable.'''
         self._beta = beta
+        self._invalidate_compiled_samplers(require_thermalization=True)
 
     def set_therm_steps(self, therm_steps):
         ''' Set the number of thermalization steps. This will trigger a refresh of the sampling schedule and recompilation of JIT functions if applicable.'''
@@ -2114,6 +2137,7 @@ class VMCSampler(Sampler):
             else:
                 betas = np.logspace(0, np.log10(min_beta), n_replicas)
         self._set_replicas(betas)
+        self._invalidate_compiled_samplers(require_thermalization=True)
 
     ###################################################################
     #! GETTERS
