@@ -125,8 +125,6 @@ class Hamiltonian(BasisAwareOperator):
         Robust non-zero check for Hamiltonian term addition.
         """
         
-        from collections.abc import Mapping, Iterable
-        
         def _is_nonzero_like(value):
             """
             Robust scalar/array-like non-zero check.
@@ -175,12 +173,12 @@ class Hamiltonian(BasisAwareOperator):
                     except Exception:
                         return any(_is_nonzero_like(v) for v in np.ravel(value))
 
-            # Mapping path fallback
-            if isinstance(value, Mapping):
+            # Mapping path fallback (duck typing)
+            if hasattr(value, "values") and callable(value.values):
                 return any(_is_nonzero_like(v) for v in value.values())
 
-            # Generic iterable fallback
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            # Generic iterable fallback (duck typing)
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
                 try:
                     return any(_is_nonzero_like(v) for v in value)
                 except Exception:
