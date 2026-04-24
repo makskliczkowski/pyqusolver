@@ -505,7 +505,6 @@ class Hamiltonian(BasisAwareOperator):
             - Array: 0-d treated as scalar, 1-d indexed by site, must match Ns.
             - Mapping: similar to dict, but supports more types.
         '''
-        from collections.abc import Mapping
         
         if callable(coefficient):
             return coefficient(int(site))
@@ -527,7 +526,7 @@ class Hamiltonian(BasisAwareOperator):
                 return coefficient[int(site)]
             raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={coefficient.shape}.")
         
-        if isinstance(coefficient, Mapping):
+        if hasattr(coefficient, "get"):
             if site in coefficient:
                 return coefficient[site]
             return coefficient.get(int(site), 0.0)
@@ -552,8 +551,7 @@ class Hamiltonian(BasisAwareOperator):
             if idx < coefficient.size:
                 return coefficient[idx]
             raise ValueError(f"Bond coefficient array sequence too short: need index {idx}, size={coefficient.size}.")
-        from collections.abc import Mapping
-        if isinstance(coefficient, Mapping):
+        if hasattr(coefficient, "get"):
             if (i, j) in coefficient:
                 return coefficient[(i, j)]
             if (j, i) in coefficient:
