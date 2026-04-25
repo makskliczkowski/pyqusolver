@@ -353,7 +353,7 @@ def apply_nqs_representation_overrides(
         res_kwargs.setdefault("input_is_spin", is_spin_s)
         res_kwargs.setdefault("input_value", in_val)
         res_kwargs.setdefault("input_activation", True)
-    elif family in {"cnn", "mlp", "gcnn", "resnet"} and is_spin_m and s_key == "binary-01":
+    elif family in {"cnn", "mlp", "gcnn", "resnet"} and is_spin_m and (is_bin_s or is_spin_s):
         res_kwargs.setdefault("input_is_spin", is_spin_s)
         res_kwargs.setdefault("input_value", in_val)
         res_kwargs.setdefault("transform_input", True)

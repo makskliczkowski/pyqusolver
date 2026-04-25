@@ -1656,22 +1656,21 @@ class VMCSampler(Sampler):
         ansatz_flat = log_psi_flat
         log_psi_real = jnp.real(ansatz_flat)
 
-        if uniform_weights:
-            probs_norm          = jnp.ones_like(log_psi_real, dtype=jnp.float32)
-        else:
-            phys_beta           = pt_betas[0]
-            log_prob_exponent   = 1.0 / logprob_fact - mu * phys_beta
-
         total_samples           = num_samples * num_chains
-        # PT physical samples are also uniform under standard Born-rule settings.
         prob_dtype              = log_psi_real.dtype
-        uniform_probs_norm      = jnp.broadcast_to(jnp.asarray(1.0, dtype=prob_dtype), (total_samples,))
-        log_unnorm              = log_prob_exponent * log_psi_real
-        log_unnorm_max          = jnp.max(log_unnorm)
-        probs                   = jnp.exp(log_unnorm - log_unnorm_max)
-        weighted_probs_norm     = (probs / jnp.maximum(jnp.sum(probs), 1e-10) * total_samples)
-        is_uniform              = jnp.abs(log_prob_exponent) < jnp.asarray(1e-12, dtype=prob_dtype)
-        probs_norm              = jnp.where(is_uniform, uniform_probs_norm, weighted_probs_norm)
+        phys_beta               = pt_betas[0]
+        log_prob_exponent       = 1.0 / logprob_fact - mu * phys_beta
+
+        if uniform_weights:
+            probs_norm          = jnp.ones((total_samples,), dtype=prob_dtype)
+        else:
+            uniform_probs_norm  = jnp.broadcast_to(jnp.asarray(1.0, dtype=prob_dtype), (total_samples,))
+            log_unnorm          = log_prob_exponent * log_psi_real
+            log_unnorm_max      = jnp.max(log_unnorm)
+            probs               = jnp.exp(log_unnorm - log_unnorm_max)
+            weighted_probs_norm = (probs / jnp.maximum(jnp.sum(probs), 1e-10) * total_samples)
+            is_uniform          = jnp.abs(log_prob_exponent) < jnp.asarray(1e-12, dtype=prob_dtype)
+            probs_norm          = jnp.where(is_uniform, uniform_probs_norm, weighted_probs_norm)
 
         # Unpack final carry
         fc_states, fc_lpsi, fc_key, fc_prop, fc_acc, _fc_cache, fc_betas = final_carry

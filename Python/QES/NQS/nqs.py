@@ -987,14 +987,15 @@ class NQS(MonteCarloSolver):
             if any(key not in kwargs for key in ("s_numchains", "s_numsamples", "s_sweep_steps", "s_therm_steps")):
                 try:
                     net_depth_est   = getattr(self._net, "_param_num", 64)
+                    ansatz_profile  = str(getattr(self._network_adapter, "family", "") or getattr(self._net, "name", type(self._net).__name__)).lower()
                     auto_cfg        = NQS.get_auto_config(
-                                        system_size=self._size,
-                                        target_total_samples=kwargs.get("s_target_total_samples", 6144),
-                                        dtype=self._dtype,
-                                        logger=None,
-                                        net_depth_estimate=net_depth_est,
-                                        model_hint=(str(self._model).lower() if self._model is not None else None),
-                                        ansatz_hint=(str(getattr(self._net, "name", type(self._net).__name__)).lower()),
+                                        system_size             = self._size,
+                                        target_total_samples    = kwargs.get("s_target_total_samples", 6144),
+                                        dtype                   = self._dtype,
+                                        logger                  = None,
+                                        net_depth_estimate      = net_depth_est,
+                                        model_hint              = (str(self._model).lower() if self._model is not None else None),
+                                        ansatz_hint             = ansatz_profile,
                                     )
                 except Exception:
                     auto_cfg = {}
@@ -1004,6 +1005,8 @@ class NQS(MonteCarloSolver):
             sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", int(auto_cfg.get("s_numsamples", 192)))
             sampler_kwargs.pop("s_numsamples", None)
             sampler_kwargs.pop("s_target_total_samples", None)
+            sampler_kwargs.pop("hardware", None)
+            sampler_kwargs.pop("ansatz_profile", None)
 
             sampler_kwargs["numupd"]        = kwargs.get("s_numupd", 1)
             sampler_kwargs.pop("s_numupd", None)
@@ -1017,6 +1020,13 @@ class NQS(MonteCarloSolver):
             default_state_dtype             = self._precision_policy.state_dtype if hasattr(self, "_precision_policy") else (jnp.float32 if self._isjax else np.float32)
             sampler_kwargs["statetype"]     = kwargs.get("s_statetype", default_state_dtype)
             sampler_kwargs.pop("s_statetype", None)
+
+            no_delta_families               = {"cnn", "resnet", "gcnn", "pair_product", "mps", "transformer", "approx_symmetric", "dense"}
+            adapter_family                  = str(getattr(self._network_adapter, "family", "")).lower()
+            has_delta                       = callable(getattr(self._net, "log_psi_delta", None)) or hasattr(self._net, "get_log_psi_delta")
+            if adapter_family in no_delta_families and not has_delta:
+                proposal_count = int(sampler_kwargs["numchains"]) * int(sampler_kwargs["numsamples"]) * int(max(1, sampler_kwargs["sweep_steps"]))
+                self._logger.info(f"No fast-update ratio for ansatz '{adapter_family}'. Sampling will use about {proposal_count} full network evaluations per epoch.", lvl=2, color="yellow")
 
             if "s_sample_dtype" in kwargs:
                 sampler_kwargs["sample_dtype"] = kwargs.pop("s_sample_dtype")
@@ -2222,9 +2232,7 @@ class NQS(MonteCarloSolver):
     #! UPDATE PARAMETERS
     #####################################
 
-    def transform_flat_params(
-        self, flat_params: jnp.ndarray, shapes: list, sizes: list, is_cpx: bool
-    ) -> Any:
+    def transform_flat_params(self, flat_params: jnp.ndarray, shapes: list, sizes: list, is_cpx: bool) -> Any:
         """
         Transform a flat parameter vector into a PyTree structure.
         """
@@ -2248,28 +2256,20 @@ class NQS(MonteCarloSolver):
 
         #! Handle Input Types
         if isinstance(d_par, jnp.ndarray):
-            update_tree = self.transform_flat_params(
-                d_par * mult, shapes, sizes, iscpx
-            )  # Transform flat vector to PyTree structure
+            update_tree = self.transform_flat_params(d_par * mult, shapes, sizes, iscpx) # Transform flat vector to PyTree structure
 
-        elif isinstance(d_par, (dict, list)) or hasattr(
-            d_par, "__jax_flatten__"
-        ):  # Validate PyTree structure (necessary for correctness)
+        elif isinstance(d_par, (dict, list, tuple)) or hasattr(d_par, "__jax_flatten__"):  # Validate PyTree structure (necessary for correctness)
 
-            flat_leaves_dpar, tree_d_par = tree_flatten(d_par * mult)
+            _, tree_d_par = tree_flatten(d_par)
             if tree_d_par != self._params_tree_def:
-                raise ValueError(
-                    "Provided `d_par` PyTree structure does not match model parameters structure."
-                )
-            update_tree = d_par
+                raise ValueError("Provided `d_par` PyTree structure does not match model parameters structure.")
+            update_tree = tree_util.tree_map(lambda x: x * mult, d_par)
         else:
-            raise TypeError(
-                f"Unsupported type for parameter update `d_par`: {type(d_par)}. Expected PyTree or 1D JAX array."
-            )
+            raise TypeError(f"Unsupported type for parameter update `d_par`: {type(d_par)}. Expected PyTree or 1D JAX array.")
 
         #! Update Parameters
-        current_params = self._net.get_params()
-        new_params = net_utils.jaxpy.add_tree(current_params, update_tree)
+        current_params  = self._net.get_params()
+        new_params      = net_utils.jaxpy.add_tree(current_params, update_tree)
         self._net.set_params(new_params)
 
         # Aliases for update_parameters (similar to TensorFlow/PyTorch naming)
@@ -4021,7 +4021,7 @@ class NQS(MonteCarloSolver):
         ansatz_hint (str, optional): Optional ansatz identifier.
 
         Returns:
-            dict: ``s_numchains/s_numsamples/s_therm_steps/s_sweep_steps`` and metadata.
+            dict: ``s_numchains/s_numsamples/s_therm_steps/s_sweep_steps``.
         """
         if not JAX_AVAILABLE:
             raise ImportError("JAX is required for automatic configuration. Please install JAX to use this feature.")
@@ -4047,10 +4047,12 @@ class NQS(MonteCarloSolver):
         if backend == "gpu" and is_double_precision:
             logme("WARNING: Double precision (complex128) detected on GPU.", 2)
 
-        target_total_samples = int(max(256, round(float(target_total_samples))))
-        model_hint_l = str(model_hint).lower() if model_hint is not None else ""
-        ansatz_hint_l = str(ansatz_hint).lower() if ansatz_hint is not None else ""
-        is_spin_liquid_profile = (
+        target_total_samples    = int(max(256, round(float(target_total_samples))))
+        model_hint_l            = str(model_hint).lower() if model_hint is not None else ""
+        ansatz_hint_l           = str(ansatz_hint).lower() if ansatz_hint is not None else ""
+        plain_rbm               = ansatz_hint_l in {"rbm", "restricted_boltzmann_machine"}
+        no_fast_ansatz          = (not plain_rbm) and any(token in ansatz_hint_l for token in ("cnn", "resnet", "gcnn", "pair_product", "rbmpp", "rbm_pp", "pp", "mps", "transformer", "approx_symmetric", "dense"))
+        is_spin_liquid_profile  = (
             "kitaev" in model_hint_l
             or "gamma" in model_hint_l
             or "approx" in ansatz_hint_l
@@ -4105,52 +4107,43 @@ class NQS(MonteCarloSolver):
             optimal_chains          = int(min(optimal_chains, target_total_samples))
 
             s2_target               = max(6144, target_total_samples) if is_spin_liquid_profile else target_total_samples
+            if no_fast_ansatz:
+                s2_target           = min(s2_target, 2048)
             num_samples_per_chain   = int(max(1, -(-s2_target // optimal_chains)))
 
-            default_therm           = 8
-            default_sweep           = 480 if is_spin_liquid_profile else 160
+            default_therm           = 4 if no_fast_ansatz else 8
+            default_sweep           = 96 if no_fast_ansatz else (480 if is_spin_liquid_profile else 160)
             config                  = {
                                         "s_numchains"   : optimal_chains,
                                         "s_numsamples"  : num_samples_per_chain,
                                         "s_therm_steps" : int(num_therm if num_therm is not None else default_therm),
                                         "s_sweep_steps" : int(num_sweep if num_sweep is not None else default_sweep),
-                                        "hardware"      : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}',
                                     }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
         else:
             physical_cores          = psutil.cpu_count(logical=False) or 4
-            optimal_chains          = max(2, min(64, physical_cores * 2))
+            optimal_chains          = max(2, min(16 if no_fast_ansatz else 64, physical_cores * (1 if no_fast_ansatz else 2)))
 
-            cpu_target              = max(target_total_samples, 2048)
+            cpu_target              = min(target_total_samples, 1024) if no_fast_ansatz else max(target_total_samples, 2048)
             num_samples_per_chain   = int(max(1, -(-cpu_target // optimal_chains)))
 
-            default_therm           = max(16, min(96, int(system_size)))
-            default_sweep           = max(24, min(240, int(2 * np.sqrt(max(1, system_size)) * 8)))
+            if no_fast_ansatz:
+                default_therm       = max(4, min(16, int(max(1, system_size) // 2)))
+                default_sweep       = max(4, min(32, int(system_size)))
+            else:
+                default_therm       = max(16, min(96, int(system_size)))
+                default_sweep       = max(24, min(240, int(2 * np.sqrt(max(1, system_size)) * 8)))
             config                  = {
                 "s_numchains"       : optimal_chains,
                 "s_numsamples"      : num_samples_per_chain,
                 "s_therm_steps"     : int(num_therm if num_therm is not None else default_therm),
                 "s_sweep_steps"     : int(num_sweep if num_sweep is not None else default_sweep),
-                "hardware"          : "cpu",
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
         total_batch = config["s_numchains"] * config["s_numsamples"]
         logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.", 2)
-
-        if is_spin_liquid_profile:
-            config.update(
-                {
-                    "as_chi_channels"       : (1, 2, 4),
-                    "as_omega_channels"     : (4, 4, 4),
-                    "as_chi_kernel_size"    : 3,
-                    "as_omega_kernel_size"  : 15 if backend == "gpu" else 9,
-                    "as_nib_act"            : "c_sigmoid",
-                    "as_ib_act"             : "c_elu",
-                    "as_ib_init_std"        : 0.02,
-                }
-            )
 
         return config
 

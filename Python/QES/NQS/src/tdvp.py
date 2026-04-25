@@ -1257,6 +1257,7 @@ class TDVP:
                 "maxiter"       : self.sr_maxiter,
                 "tol"           : self.sr_pinv_tol,
                 "sigma"         : self.sr_diag_shift,
+                "normalization" : self._n_samples,
             }
             solution = actual_solve_func(**solver_kwargs)
 

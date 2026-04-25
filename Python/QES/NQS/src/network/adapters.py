@@ -2,10 +2,7 @@
 Small NQS-side adapter layer between network families and samplers.
 """
 
-from functools import partial
 from typing import Any, Callable, Dict, Tuple
-
-import jax.numpy as jnp
 
 try:
     from .representation import ModelRepresentationInfo, resolve_representation_value
@@ -14,53 +11,52 @@ except ImportError:
 
 # ----------------------------------------------------------------------
 
-def _get_nqs_metadata(net: Any) -> Dict[str, Any]:
-    ''' Try to get NQS metadata from the network if it provides it. '''
-    
-    if hasattr(net, "get_nqs_metadata") and callable(net.get_nqs_metadata):
-        try:
-            meta = net.get_nqs_metadata()
-            if isinstance(meta, dict):
-                return meta
-        except Exception:
-            pass
-    return {}
+def _key(value: Any) -> str:
+    """Normalize names used only by the NQS adapter layer."""
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+def _native_representation_from_input_convention(net: Any, fallback: str) -> str:
+    """Infer wrapper input convention without requiring generic code to know NQS."""
+    input_convention = getattr(net, "_input_convention", None)
+    if isinstance(input_convention, dict):
+        return "spin_pm" if bool(input_convention.get("input_is_spin", False)) else "binary_01"
+    return fallback
 
 def infer_network_family(net: Any) -> str:
     """
     Coarse network family classifier used once during NQS setup.
     Just a heuristic to pick the right sampler adapter, 
     not meant to be perfect or strictly correct in all cases. 
-    The main goal is to detect autoregressive and RBM-like structures, 
-    but it also looks for explicit metadata flags and common naming patterns.
+    The main goal is to detect autoregressive and RBM-like structures from
+    capabilities and common naming patterns.
     """
-    meta    = _get_nqs_metadata(net)
-    family  = str(meta.get("family", "")).strip().lower().replace("-", "_").replace(" ", "_")
-    if family:
-        return family
-    if meta.get("supports_exact_sampling", False):                  # Explicit metadata flag for autoregressive support
-        return "autoregressive"
-    if meta.get("supports_fast_updates", False):                    # Explicit metadata flag for RBM-like fast update support
-        return "rbm"
     if hasattr(net, "get_logits") and hasattr(net, "get_phase"):    # Presence of separate logits/phase methods is a strong indicator of autoregressive structure
         return "autoregressive"
     if hasattr(net, "log_psi_delta") or hasattr(net, "get_log_psi_delta"):
         return "rbm"
 
-    name        = str(getattr(net, "name", type(net).__name__)).lower()
-    cls_name    = type(net).__name__.lower()
-    module_name = str(getattr(type(net), "__module__", "")).lower()
+    name        = _key(getattr(net, "name", getattr(net, "_name", type(net).__name__)))
+    cls_name    = _key(type(net).__name__)
+    module_name = _key(getattr(type(net), "__module__", ""))
 
     if any(tok in value for value in (name, cls_name, module_name) for tok in ("autoregressive", "complexar", "made")):
         return "autoregressive"
-    if "rbm" in name or "rbm" in cls_name or "net_rbm" in module_name:
+    if any(tok in value for value in (name, cls_name, module_name) for tok in ("pair_product", "pairproduct", "rbm_pp", "net_pp")):
+        return "pair_product"
+    if any(tok in value for value in (name, cls_name, module_name) for tok in ("mps", "net_mps")):
+        return "mps"
+    if name == "rbm" or cls_name == "rbm" or "net_rbm" in module_name:
         return "rbm"
     if "gcnn" in name or "gcnn" in cls_name or "net_gcnn" in module_name:
         return "gcnn"
     if "cnn" in name or "cnn" in cls_name or "net_cnn" in module_name:
         return "cnn"
+    if "resnet" in name or "resnet" in cls_name or "net_res" in module_name:
+        return "resnet"
     if "transformer" in name or "transformer" in cls_name or "net_transformer" in module_name:
         return "transformer"
+    if "approx_symmetric" in name or "approx_symmetric" in cls_name:
+        return "approx_symmetric"
     return "dense"
 
 def resolve_apply_and_params(net: Any) -> Tuple[Callable, Any]:
@@ -101,7 +97,7 @@ def resolve_sampling_hooks_for_network(net: Any, adapter: Any = None) -> Dict[st
     """
     Resolve sampler-facing hooks either from an explicit adapter or directly from the network.
     
-    The sampling hooks are a dictionary of callables and metadata that the sampler can use to interact with the network.
+    The sampling hooks are a dictionary of callables and resolved adapter fields that the sampler can use to interact with the network.
     If an adapter is provided and has a resolve_sampling_hooks() method, we use that. Otherwise, 
     we try to resolve hooks directly from the network using common conventions 
     (like apply_fun, parameters, log_psi_delta, etc.).
@@ -135,13 +131,6 @@ def resolve_sampling_hooks_for_network(net: Any, adapter: Any = None) -> Dict[st
         "log_psi_delta_supports_cache"  : supports_cache,
     }
 
-def _flip_selected_values(values: Any, *, state_spin: bool, state_value: float):
-    
-    arr = jnp.asarray(values)
-    if state_spin:
-        return -arr
-    return jnp.asarray(float(state_value), dtype=arr.dtype) - arr
-
 # ------------------------------------------------------------------------------
 # Sampler-facing network adapter classes
 # ------------------------------------------------------------------------------
@@ -158,8 +147,8 @@ class NQSNetAdapterBase:
         self.net                    = net
         self.representation         = representation
         self.backend                = backend
-        self.metadata               = _get_nqs_metadata(net)
-        self.native_representation  = self.metadata.get("native_representation") or representation.network_representation
+        self.family                 = infer_network_family(net)
+        self.native_representation  = _native_representation_from_input_convention(net, representation.network_representation)
 
     def preferred_sampler_representation(self) -> str:
         return self.representation.sampler_representation
@@ -196,7 +185,6 @@ class NQSNetAdapterBase:
             "log_psi_delta_cache_init"      : getattr(self.net, "init_log_psi_delta_cache", None),
             "log_psi_delta_supports_cache"  : supports_cache,
             "representation"                : self.representation,
-            "metadata"                      : self.metadata,
         }
 
 # ------------------------------------------------------------------------------
@@ -247,9 +235,9 @@ class NQSAutoregressiveAdapter(NQSNetAdapterBase):
 def choose_nqs_network_adapter(net: Any, representation: ModelRepresentationInfo, backend: str = "jax") -> NQSNetAdapterBase:
     """
     Pick the sampler-facing adapter for a network once during setup.
-    This is a coarse classification based on heuristics and metadata, not meant to be perfect. 
+    This is a coarse classification based on capabilities and names, not meant to be perfect.
     The main goal is to detect autoregressive and RBM-like structures,
-    but it also looks for explicit metadata flags and common naming patterns.
+    and to label expensive dense-evaluation ansatze for configuration.
     
     Parameters
     ----------
