@@ -406,11 +406,6 @@ class NQS(MonteCarloSolver):
                 - global_update     : Custom global update function (optional).
         """
 
-        ansatz_alias = kwargs.pop("ansatz", None)
-        if logansatz is None:
-            logansatz = ansatz_alias
-        elif ansatz_alias is not None and ansatz_alias != logansatz:
-            raise ValueError("Provide either `logansatz` or `ansatz`, not conflicting values for both.")
         if model is None:
             raise ValueError(self._ERROR_NO_HAMILTONIAN)
 
@@ -931,7 +926,7 @@ class NQS(MonteCarloSolver):
         else:
             sampler_key = type(sampler).__name__.strip().lower()
 
-        if "arsampler" in sampler_key or sampler_key in {"ar", "autoregressive"}:
+        if "arsampler" in sampler_key or sampler_key == "ar":
             if "arsampler" not in preferred_key:
                 raise ValueError("ARSampler requires an autoregressive ansatz with exact conditional sampling support.")
             return
@@ -994,7 +989,6 @@ class NQS(MonteCarloSolver):
                                         dtype                   = self._dtype,
                                         logger                  = None,
                                         net_depth_estimate      = net_depth_est,
-                                        model_hint              = (str(self._model).lower() if self._model is not None else None),
                                         ansatz_hint             = ansatz_profile,
                                     )
                 except Exception:
@@ -1054,10 +1048,7 @@ class NQS(MonteCarloSolver):
             sampler_kwargs.pop("s_n_flip", None)
 
             # Global updates
-            if "s_p_global" in kwargs:
-                sampler_kwargs["global_p"]  = kwargs.pop("s_p_global")
-            else:
-                sampler_kwargs["global_p"]  = kwargs.pop("s_global_p", 0.0)
+            sampler_kwargs["global_p"]  = kwargs.pop("s_global_p", 0.0)
 
             sampler_kwargs["global_update"] = kwargs.pop("s_global_update", None)
 
@@ -3353,151 +3344,72 @@ class NQS(MonteCarloSolver):
             Interactive help and usage tips.
         """
 
-        # --------------------------------------------------
-        #! Handle force_numerical override
-        # --------------------------------------------------
-
-        if isinstance(phases, str) and phases.lower() == "default" and self._model is not None:
-            model_name = str(self._model).lower()
-            if "kitaev" in model_name or "gamma" in model_name:
-                phases = "kitaev"
-
         if reset_weights:
             self.reset()
             self.log("Network parameters reset before training.", lvl=1, color="blue")
 
-        # Configure symmetries
         if symmetrize is not None:
             self.symmetry_handler.set(symmetrize)
 
-        if self._sampler.name == "VMC":
-            if num_samples is not None:
-                self._sampler.set_numsamples(num_samples)
-            if num_chains is not None:
-                self._sampler.set_numchains(num_chains)
-            if num_thermal is not None and hasattr(self._sampler, "set_therm_steps"):
-                self._sampler.set_therm_steps(num_thermal)
-            if num_sweep is not None and hasattr(self._sampler, "set_sweep_steps"):
-                self._sampler.set_sweep_steps(num_sweep)
-            if pt_betas is not None and hasattr(self._sampler, "set_pt_betas"):
-                self._sampler.set_pt_betas(pt_betas)
+        trainer_kwargs = dict(kwargs)
+        trainer_kwargs.update(
+            {
+                "lin_solver": lin_solver,
+                "lin_force_mat": lin_force_mat,
+                "pre_solver": pre_solver,
+                "ode_solver": ode_solver,
+                "tdvp": tdvp,
+                "n_batch": n_batch,
+                "phases": phases,
+                "timing_mode": timing_mode,
+                "early_stopper": early_stopper,
+                "optimizer": optimizer,
+                "lower_states": lower_states,
+                "lr_scheduler": lr_scheduler,
+                "lr_max_epochs": trainer_kwargs.pop("lr_max_epochs", n_epochs),
+                "reg_scheduler": reg_scheduler,
+                "reg_max_epochs": trainer_kwargs.pop("reg_max_epochs", n_epochs),
+                "diag_scheduler": diag_scheduler,
+                "diag_max_epochs": trainer_kwargs.pop("diag_max_epochs", n_epochs),
+                "lr": lr,
+                "reg": reg,
+                "diag_shift": diag_shift,
+                "lin_sigma": lin_sigma,
+                "lin_is_gram": lin_is_gram,
+                "use_sr": use_sr,
+                "use_minsr": use_minsr,
+                "rhs_prefactor": rhs_prefactor,
+                "grad_clip": grad_clip,
+            }
+        )
 
-            # Configure Global Updates if parameters are present in kwargs
-            if (
-                "global_p" in kwargs
-                or "p_global" in kwargs
-                or "global_fraction" in kwargs
-                or "global_update" in kwargs
-            ):
-                if hasattr(self._sampler, "set_global_update"):
-                    # Support both names for backward compatibility
-                    g_p = kwargs.get("global_p", kwargs.get("p_global", 0.0))
-                    self._sampler.set_global_update(
-                        global_p=g_p,
-                        global_fraction=kwargs.get("global_fraction", 0.5),
-                        global_update=kwargs.get("global_update", None),
-                    )
-                    if g_p > 0:
-                        self.log(
-                            f"Global sampler update set to: {g_p:.2f} ({kwargs.get('global_update', 'default')})",
-                            lvl=2,
-                            color="blue",
-                        )
-
-            # Configure Update Function
-            if upd_fun is not None and hasattr(self._sampler, "set_update_function"):
-                u_kwargs = update_kwargs or {}
-                u_kwargs.update(
-                    {
-                        "hilbert": u_kwargs.pop("hilbert", self._model.hilbert),
-                        "lattice": self._model.lattice,
-                    }
-                )
-                self._sampler.set_update_function(upd_fun, **u_kwargs)
-                self.log(f"Sampler update function set to: {upd_fun}", lvl=2, color="blue")
-
-            if any(
-                param is not None
-                for param in [num_samples, num_chains, num_thermal, num_sweep, pt_betas]
-            ):
-                self.log(
-                    f"Sampler (re)configured: num_samples={self._sampler.numsamples}, num_chains={self._sampler.numchains}",
-                    lvl=2,
-                    color="blue",
-                )
-                if pt_betas is not None and hasattr(self._sampler, "pt_betas"):
-                    self.log(f"  PT Betas: {self._sampler.pt_betas}", lvl=2, color="blue")
-
-        # Create or reuse trainer
-        if override or self._trainer is None:
-            from QES.NQS.src.nqs_train import NQSTrainer
-
-            old_stats = self._trainer.stats if self._trainer is not None else None
-
-            self._trainer = NQSTrainer(
-                nqs=self,
-                # Solvers
-                lin_solver=lin_solver,
-                lin_force_mat=lin_force_mat,
-                pre_solver=pre_solver,
-                ode_solver=ode_solver,
-                tdvp=tdvp,
-                # Configuration
-                n_batch=n_batch,
-                phases=phases,
-                # Utilities
-                timing_mode=timing_mode,
-                early_stopper=early_stopper,
-                optimizer=optimizer,
-                logger=self._logger,
-                lower_states=lower_states,
-                # Schedulers
-                lr_scheduler=lr_scheduler,
-                lr_max_epochs=kwargs.pop("lr_max_epochs", n_epochs),
-                reg_scheduler=reg_scheduler,
-                reg_max_epochs=kwargs.pop("reg_max_epochs", n_epochs),
-                diag_scheduler=diag_scheduler,
-                diag_max_epochs=kwargs.pop("diag_max_epochs", n_epochs),
-                # Training options
-                lr=lr,
-                reg=reg,
-                diag_shift=diag_shift,
-                # Linear Solver
-                lin_sigma=lin_sigma,
-                lin_is_gram=lin_is_gram,
-                # TDVP
-                use_sr=use_sr,
-                use_minsr=use_minsr,
-                rhs_prefactor=rhs_prefactor,
-                grad_clip=grad_clip,
-                dtype=self._dtype,
-                background=background,
-                **kwargs,
-            )
-
-            if not reset_stats and old_stats is not None:
-                self._trainer.stats = old_stats
-
-        # Updates in sampler
-        if hasattr(self._sampler, "set_update_num") and n_update is not None:
-            self._sampler.set_update_num(n_update)
-            self.log(f"Sampler update number set to {n_update}", lvl=2, color="blue")
-
-        if exact_predictions is None and self._model.eig_vals is not None:
-            exact_predictions = self._model.eig_vals
-            self.exact = exact_predictions
-
-        if self.exact and exact_predictions is None:
-            exact_predictions = self.exact.get("exact_predictions", exact_predictions)
-            exact_method = self.exact.get("exact_method", exact_method)
+        self._configure_train_sampler(
+            num_samples=num_samples,
+            num_chains=num_chains,
+            num_thermal=num_thermal,
+            num_sweep=num_sweep,
+            pt_betas=pt_betas,
+            n_update=n_update,
+            upd_fun=upd_fun,
+            update_kwargs=update_kwargs,
+            extra_kwargs=kwargs,
+        )
+        self._ensure_trainer(
+            override=override,
+            reset_stats=(reset_stats or reset_weights),
+            background=background,
+            trainer_kwargs=trainer_kwargs,
+        )
+        exact_predictions, exact_method = self._resolve_exact_training_targets(
+            exact_predictions,
+            exact_method,
+        )
 
         # Run training
         if load_checkpoint:
             try:
-                # Load the state (weights + stats)
                 stats = self._trainer.load_checkpoint(step=checkpoint_step)
                 stats.exact_predictions = exact_predictions
-                reset_stats = False
                 return stats
 
             except Exception as e:
@@ -3518,6 +3430,117 @@ class NQS(MonteCarloSolver):
         )
 
         return stats
+
+    def _configure_train_sampler(
+        self,
+        *,
+        num_samples: Optional[int],
+        num_chains: Optional[int],
+        num_thermal: Optional[int],
+        num_sweep: Optional[int],
+        pt_betas: Optional[List[float]],
+        n_update: Optional[int],
+        upd_fun: Optional[Union[str, Any]],
+        update_kwargs: Optional[dict],
+        extra_kwargs: dict,
+    ) -> None:
+        """Apply per-run sampler configuration through a single path."""
+        if self._sampler.name != "VMC":
+            return
+
+        if num_samples is not None:
+            self._sampler.set_numsamples(num_samples)
+        if num_chains is not None:
+            self._sampler.set_numchains(num_chains)
+        if num_thermal is not None and hasattr(self._sampler, "set_therm_steps"):
+            self._sampler.set_therm_steps(num_thermal)
+        if num_sweep is not None and hasattr(self._sampler, "set_sweep_steps"):
+            self._sampler.set_sweep_steps(num_sweep)
+        if pt_betas is not None and hasattr(self._sampler, "set_pt_betas"):
+            self._sampler.set_pt_betas(pt_betas)
+
+        if (
+            "global_p" in extra_kwargs
+            or "global_fraction" in extra_kwargs
+            or "global_update" in extra_kwargs
+        ) and hasattr(self._sampler, "set_global_update"):
+            global_p = extra_kwargs.get("global_p", 0.0)
+            self._sampler.set_global_update(
+                global_p=global_p,
+                global_fraction=extra_kwargs.get("global_fraction", 0.5),
+                global_update=extra_kwargs.get("global_update", None),
+            )
+            if global_p > 0:
+                self.log(
+                    f"Global sampler update set to: {global_p:.2f} ({extra_kwargs.get('global_update', 'default')})",
+                    lvl=2,
+                    color="blue",
+                )
+
+        if upd_fun is not None and hasattr(self._sampler, "set_update_function"):
+            update_payload = dict(update_kwargs or {})
+            update_payload.update(
+                {
+                    "hilbert": update_payload.pop("hilbert", self._model.hilbert),
+                    "lattice": self._model.lattice,
+                }
+            )
+            self._sampler.set_update_function(upd_fun, **update_payload)
+            self.log(f"Sampler update function set to: {upd_fun}", lvl=2, color="blue")
+
+        if hasattr(self._sampler, "set_update_num") and n_update is not None:
+            self._sampler.set_update_num(n_update)
+            self.log(f"Sampler update number set to {n_update}", lvl=2, color="blue")
+
+        if any(param is not None for param in (num_samples, num_chains, num_thermal, num_sweep, pt_betas)):
+            self.log(
+                f"Sampler (re)configured: num_samples={self._sampler.numsamples}, num_chains={self._sampler.numchains}",
+                lvl=2,
+                color="blue",
+            )
+            if pt_betas is not None and hasattr(self._sampler, "pt_betas"):
+                self.log(f"  PT Betas: {self._sampler.pt_betas}", lvl=2, color="blue")
+
+    def _ensure_trainer(
+        self,
+        *,
+        override: bool,
+        reset_stats: bool,
+        background: bool,
+        trainer_kwargs: dict,
+    ) -> None:
+        """Create or refresh the trainer while preserving old stats when requested."""
+        if not override and self._trainer is not None:
+            return
+
+        from QES.NQS.src.nqs_train import NQSTrainer
+
+        old_stats = self._trainer.stats if self._trainer is not None else None
+        self._trainer = NQSTrainer(
+            nqs=self,
+            logger=self._logger,
+            dtype=self._dtype,
+            background=background,
+            **trainer_kwargs,
+        )
+        if not reset_stats and old_stats is not None:
+            self._trainer.stats = old_stats
+
+    def _resolve_exact_training_targets(
+        self,
+        exact_predictions: Any,
+        exact_method: str,
+    ) -> tuple[Any, str]:
+        """Resolve explicit or cached exact reference values for the training run."""
+        if exact_predictions is None and self._model.eig_vals is not None:
+            exact_predictions = self._model.eig_vals
+            self.exact = exact_predictions
+
+        if self.exact and exact_predictions is None:
+            exact_predictions = self.exact.get("exact_predictions", exact_predictions)
+            exact_method = self.exact.get("exact_method", exact_method)
+
+        return exact_predictions, exact_method
 
     #####################################
 
@@ -4003,7 +4026,6 @@ class NQS(MonteCarloSolver):
         net_depth_estimate: int     = 64,
         num_therm: Optional[int]    = None,
         num_sweep: Optional[int]    = None,
-        model_hint: Optional[str]   = None,
         ansatz_hint: Optional[str]  = None,
     ) -> dict:
         """
@@ -4017,7 +4039,6 @@ class NQS(MonteCarloSolver):
             Target total samples per Monte Carlo evaluation.
         dtype (jax.dtype)
             Runtime dtype.
-        model_hint (str, optional): Optional model identifier, e.g. ``'kitaev'``.
         ansatz_hint (str, optional): Optional ansatz identifier.
 
         Returns:
@@ -4048,16 +4069,9 @@ class NQS(MonteCarloSolver):
             logme("WARNING: Double precision (complex128) detected on GPU.", 2)
 
         target_total_samples    = int(max(256, round(float(target_total_samples))))
-        model_hint_l            = str(model_hint).lower() if model_hint is not None else ""
         ansatz_hint_l           = str(ansatz_hint).lower() if ansatz_hint is not None else ""
         plain_rbm               = ansatz_hint_l in {"rbm", "restricted_boltzmann_machine"}
         no_fast_ansatz          = (not plain_rbm) and any(token in ansatz_hint_l for token in ("cnn", "resnet", "gcnn", "pair_product", "rbmpp", "rbm_pp", "pp", "mps", "transformer", "approx_symmetric", "dense"))
-        is_spin_liquid_profile  = (
-            "kitaev" in model_hint_l
-            or "gamma" in model_hint_l
-            or "approx" in ansatz_hint_l
-            or "asym" in ansatz_hint_l
-        )
 
         if backend == "gpu":
             import subprocess
@@ -4106,13 +4120,13 @@ class NQS(MonteCarloSolver):
             optimal_chains          = max(64, optimal_chains)
             optimal_chains          = int(min(optimal_chains, target_total_samples))
 
-            s2_target               = max(6144, target_total_samples) if is_spin_liquid_profile else target_total_samples
+            s2_target               = target_total_samples
             if no_fast_ansatz:
                 s2_target           = min(s2_target, 2048)
             num_samples_per_chain   = int(max(1, -(-s2_target // optimal_chains)))
 
             default_therm           = 4 if no_fast_ansatz else 8
-            default_sweep           = 96 if no_fast_ansatz else (480 if is_spin_liquid_profile else 160)
+            default_sweep           = 96 if no_fast_ansatz else 160
             config                  = {
                                         "s_numchains"   : optimal_chains,
                                         "s_numsamples"  : num_samples_per_chain,

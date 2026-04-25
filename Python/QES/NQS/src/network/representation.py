@@ -252,15 +252,13 @@ def canonical_network_request_family(network_type: Any) -> str:
     else:
         return ""
 
-    aliases = {
-        "res"                       : "resnet",
+    class_name_map = {
         "complexar"                 : "ar",
-        "autoregressive"            : "ar",
         "pairproduct"               : "pp",
         "ansatzapproxsymmetric"     : "approx_symmetric",
         "equivariantgcnn"           : "eqgcnn",
     }
-    return aliases.get(key, key)
+    return class_name_map.get(key, key)
 
 def resolve_model_representation(model: Any, hilbert: Optional[Any] = None) -> ModelRepresentationInfo:
     """ Resolve model-driven state representation from Hamiltonian/Hilbert metadata. """

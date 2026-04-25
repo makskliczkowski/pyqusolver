@@ -59,7 +59,7 @@ psi = NQS(
     s_numsamples=s_cfg.n_samples,
 )
 
-train_cfg = NQSTrainConfig.from_solver(s_cfg, phases="kitaev")
+train_cfg = NQSTrainConfig.from_solver(s_cfg)
 stats = psi.train(**train_cfg.to_train_kwargs())
 
 energy = psi.compute_energy(num_samples=s_cfg.n_samples)

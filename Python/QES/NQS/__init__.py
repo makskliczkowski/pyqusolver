@@ -420,9 +420,8 @@ class NQSSolverConfig(_ConfigSchemaMixin):
     early_stopping      : bool = False
     patience            : int = 50
 
-    # SOTA configuration estimated from physics
+    # Last estimated construction metadata for preset-driven ansatze.
     sota_config         : Any = field(default=None, init=False)
-    _sota_signature     : Any = field(default=None, init=False, repr=False)
 
     FIELD_GROUPS: ClassVar[Dict[str, Tuple[str, ...]]] = {
         "core": (
@@ -493,52 +492,60 @@ class NQSSolverConfig(_ConfigSchemaMixin):
         "patience",
     )
 
-    def __post_init__(self):
-        """
-        Lazy estimation can be triggered here if enough information is present.
-        """
-        pass
-
     def estimate(self, physics_config: NQSPhysicsConfig, **kwargs):
         """
-        Automatically estimates network parameters based on physics configuration.
+        Estimate preset-driven network hyperparameters from the physical system.
         """
         from QES.NQS.src.network import estimate_network_params
         num_sites           = physics_config.resolve_num_sites()
         lattice_dims        = physics_config.resolved_lattice_dims()
-        signature           = (physics_config.signature(), self.ansatz, self.dtype, _freeze_for_signature(kwargs))
-
         self.sota_config    = estimate_network_params(net_type=self.ansatz,
             num_sites=num_sites,
             lattice_dims=lattice_dims,
             lattice_type=physics_config.normalized_lattice_type(),
-            model_type=physics_config.model_type,
             bc=physics_config.normalized_bc(),
             dtype=self.dtype,
             **kwargs
         )
-        self._sota_signature = signature
         return self.sota_config
 
     def make_net(self, physics_config: NQSPhysicsConfig, **kwargs):
         """
-        Creates a network instance based on this configuration and a physics configuration.
+        Create a network instance for the given physical system.
+
+        Preset estimation is used only for ansatze that expose a maintained
+        heuristic path. Other registered families are built directly from the
+        forwarded kwargs so the config layer stays generic.
         """
         from QES.NQS.src.network import NetworkFactory
 
-        signature = (physics_config.signature(), self.ansatz, self.dtype, _freeze_for_signature(kwargs))
-        if self.sota_config is None or self._sota_signature != signature:
-            self.estimate(physics_config, **kwargs)
+        ansatz_key          = self.ansatz.strip().lower().replace("-", "_")
+        preset_supported    = ansatz_key in {
+                                "rbm",
+                                "cnn",
+                                "resnet",
+                                "ar",
+                                "pp",
+                                "rbmpp",
+                                "eqgcnn",
+                                "approx_symmetric",
+                            }
+        if preset_supported:
+            net_cfg = self.estimate(physics_config, **kwargs)
+            factory_kwargs      = net_cfg.to_factory_kwargs()
+        else:
+            self.sota_config    = None
+            factory_kwargs      = {
+                                    "input_shape"   : (physics_config.resolve_num_sites(),),
+                                    "dtype"         : self.dtype,
+                                }
 
-        factory_kwargs  = self.sota_config.to_factory_kwargs()
-        ansatz_key      = self.ansatz.strip().lower().replace("-", "_")
-        if ansatz_key in {"cnn", "res", "resnet"}:
+        if ansatz_key in {"cnn", "resnet"}:
             lx, ly, lz, multipartity = physics_config.resolved_lattice_dims()
             factory_kwargs.setdefault("x_dim", int(lx))
             factory_kwargs.setdefault("y_dim", int(ly))
             factory_kwargs.setdefault("z_dim", int(lz))
             factory_kwargs.setdefault("multipartity", int(multipartity))
-            # Compatibility aliases expected by some call sites.
             factory_kwargs.setdefault("lx", int(lx))
             factory_kwargs.setdefault("ly", int(ly))
             factory_kwargs.setdefault("lz", int(lz))
@@ -759,13 +766,6 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         ),
     }
 
-    KWARG_ALIASES: ClassVar[Dict[str, str]] = {
-        "p_global"      : "global_p",
-        "lr_initial"    : "lr_init",
-        "reg_initial"   : "reg_init",
-        "diag_initial"  : "diag_init",
-    }
-
     # Centralized bridge between solver defaults and train kwargs.
     # Keeping this mapping in one place avoids solver/train drift.
     SOLVER_TO_TRAIN_MAP: ClassVar[Dict[str, str]] = {
@@ -802,20 +802,83 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         "optimizer"         : "optimizer",
     }
 
-    @classmethod
-    def kwargs_aliases(cls) -> Dict[str, str]:
-        """Return accepted compatibility aliases for train kwargs."""
-        return dict(cls.KWARG_ALIASES)
+    TRAIN_KWARGS: ClassVar[Tuple[str, ...]] = (
+        "n_epochs",
+        "checkpoint_every",
+        "save_best_checkpoint",
+        "best_checkpoint_every",
+        "best_checkpoint_min_delta",
+        "save_best_stats",
+        "load_checkpoint",
+        "checkpoint_step",
+        "override",
+        "reset_weights",
+        "reset_stats",
+        "save_path",
+        "phases",
+        "n_batch",
+        "n_update",
+        "num_samples",
+        "num_chains",
+        "num_thermal",
+        "num_sweep",
+        "pt_betas",
+        "upd_fun",
+        "update_kwargs",
+        "global_p",
+        "global_update",
+        "global_fraction",
+        "lr",
+        "lr_scheduler",
+        "reg",
+        "reg_scheduler",
+        "diag_shift",
+        "diag_scheduler",
+        "lin_solver",
+        "pre_solver",
+        "ode_solver",
+        "tdvp",
+        "lin_sigma",
+        "lin_is_gram",
+        "lin_force_mat",
+        "use_sr",
+        "use_minsr",
+        "rhs_prefactor",
+        "grad_clip",
+        "timing_mode",
+        "early_stopper",
+        "lower_states",
+        "symmetrize",
+        "background",
+        "use_pbar",
+    )
 
-    @classmethod
-    def describe_kwargs(cls, grouped: bool = True, include_aliases: bool = True) -> str:
-        """Describe available kwargs and include alias mapping when requested."""
-        text = cls.describe(grouped=grouped)
-        if include_aliases:
-            text += "\nAliases:"
-            for alias, canonical in cls.KWARG_ALIASES.items():
-                text += f"\n  - {alias} -> {canonical}"
-        return text
+    SCHEDULER_KWARGS: ClassVar[Tuple[str, ...]] = (
+        "lr_init",
+        "lr_final",
+        "lr_decay_rate",
+        "lr_patience",
+        "lr_min_delta",
+        "lr_cooldown",
+        "lr_step_size",
+        "lr_max_epochs",
+        "lr_es",
+        "lr_es_min",
+        "reg_init",
+        "reg_final",
+        "reg_decay_rate",
+        "reg_patience",
+        "reg_min_delta",
+        "reg_step_size",
+        "reg_max_epochs",
+        "diag_init",
+        "diag_final",
+        "diag_decay_rate",
+        "diag_patience",
+        "diag_min_delta",
+        "diag_step_size",
+        "diag_max_epochs",
+    )
 
     @classmethod
     def from_solver(cls, solver_config: "NQSSolverConfig", **kwargs) -> "NQSTrainConfig":
@@ -854,90 +917,13 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         ex_pred         = self.exact_predictions if exact_predictions is None else exact_predictions
         ex_meth         = self.exact_method if exact_method is None else exact_method
 
-        train_kwargs = {
-            "n_epochs"                  : self.n_epochs,
-            "checkpoint_every"          : self.checkpoint_every,
-            "save_best_checkpoint"      : self.save_best_checkpoint,
-            "best_checkpoint_every"     : self.best_checkpoint_every,
-            "best_checkpoint_min_delta" : self.best_checkpoint_min_delta,
-            "save_best_stats"           : self.save_best_stats,
-            "load_checkpoint"           : self.load_checkpoint,
-            "checkpoint_step"           : self.checkpoint_step,
-            "override"                  : self.override,
-            "reset_weights"             : self.reset_weights,
-            "reset_stats"               : self.reset_stats,
-            "save_path"                 : self.save_path,
-            "phases"                    : self.phases,
-            "n_batch"                   : self.n_batch,
-            "n_update"                  : self.n_update,
-            "num_samples"               : self.num_samples,
-            "num_chains"                : self.num_chains,
-            "num_thermal"               : self.num_thermal,
-            "num_sweep"                 : self.num_sweep,
-            "pt_betas"                  : self.pt_betas,
-            "upd_fun"                   : self.upd_fun,
-            "update_kwargs"             : self.update_kwargs,
-            "global_p"                  : self.global_p,
-            "global_update"             : self.global_update,
-            "global_fraction"           : self.global_fraction,
-            "lr"                        : self.lr,
-            "lr_scheduler"              : self.lr_scheduler,
-            "reg"                       : self.reg,
-            "reg_scheduler"             : self.reg_scheduler,
-            "diag_shift"                : self.diag_shift,
-            "diag_scheduler"            : self.diag_scheduler,
-            "lin_solver"                : self.lin_solver,
-            "pre_solver"                : self.pre_solver,
-            "ode_solver"                : self.ode_solver,
-            "tdvp"                      : self.tdvp,
-            "lin_sigma"                 : self.lin_sigma,
-            "lin_is_gram"               : self.lin_is_gram,
-            "lin_force_mat"             : self.lin_force_mat,
-            "use_sr"                    : self.use_sr,
-            "use_minsr"                 : self.use_minsr,
-            "rhs_prefactor"             : self.rhs_prefactor,
-            "grad_clip"                 : self.grad_clip,
-            "timing_mode"               : self.timing_mode,
-            "early_stopper"             : self.early_stopper,
-            "optimizer"                 : optimizer,
-            "lower_states"              : self.lower_states,
-            "symmetrize"                : self.symmetrize,
-            "background"                : self.background,
-            "use_pbar"                  : self.use_pbar,
-            "patience"                  : patience,
-            "exact_predictions"         : ex_pred,
-            "exact_method"              : ex_meth,
-        }
+        train_kwargs = {name: getattr(self, name) for name in self.TRAIN_KWARGS}
+        train_kwargs["optimizer"] = optimizer
+        train_kwargs["patience"] = patience
+        train_kwargs["exact_predictions"] = ex_pred
+        train_kwargs["exact_method"] = ex_meth
 
-        schedule_kwargs = {
-            "lr_init"                   : self.lr_init,
-            "lr_initial"                : self.lr_init,
-            "lr_final"                  : self.lr_final,
-            "lr_decay_rate"             : self.lr_decay_rate,
-            "lr_patience"               : self.lr_patience,
-            "lr_min_delta"              : self.lr_min_delta,
-            "lr_cooldown"               : self.lr_cooldown,
-            "lr_step_size"              : self.lr_step_size,
-            "lr_max_epochs"             : self.lr_max_epochs,
-            "lr_es"                     : self.lr_es,
-            "lr_es_min"                 : self.lr_es_min,
-            "reg_init"                  : self.reg_init,
-            "reg_initial"               : self.reg_init,
-            "reg_final"                 : self.reg_final,
-            "reg_decay_rate"            : self.reg_decay_rate,
-            "reg_patience"              : self.reg_patience,
-            "reg_min_delta"             : self.reg_min_delta,
-            "reg_step_size"             : self.reg_step_size,
-            "reg_max_epochs"            : self.reg_max_epochs,
-            "diag_init"                 : self.diag_init,
-            "diag_initial"              : self.diag_init,
-            "diag_final"                : self.diag_final,
-            "diag_decay_rate"           : self.diag_decay_rate,
-            "diag_patience"             : self.diag_patience,
-            "diag_min_delta"            : self.diag_min_delta,
-            "diag_step_size"            : self.diag_step_size,
-            "diag_max_epochs"           : self.diag_max_epochs,
-        }
+        schedule_kwargs = {name: getattr(self, name) for name in self.SCHEDULER_KWARGS}
         train_kwargs.update({k: v for k, v in schedule_kwargs.items() if v is not None})
         train_kwargs.update(self.extra_kwargs)
         train_kwargs.update(overrides)
@@ -1102,6 +1088,13 @@ _LAZY_IMPORTS = {
     "NQSLoss"                           : (".src.nqs_engine",               "NQSLoss"),
     "NQSEvalEngine"                     : (".src.nqs_engine",               "NQSEvalEngine"),
     "EvaluationResult"                  : (".src.nqs_engine",               "EvaluationResult"),
+    "AbstractLog"                       : (".src.nqs_driver",               "AbstractLog"),
+    "RuntimeLog"                        : (".src.nqs_driver",               "RuntimeLog"),
+    "JsonLog"                           : (".src.nqs_driver",               "JsonLog"),
+    "StopTraining"                      : (".src.nqs_driver",               "StopTraining"),
+    "InvalidLossStopping"               : (".src.nqs_driver",               "InvalidLossStopping"),
+    "ConvergenceStopping"               : (".src.nqs_driver",               "ConvergenceStopping"),
+    "TimeoutStopping"                   : (".src.nqs_driver",               "TimeoutStopping"),
     "NetworkFactory"                    : (".src.network",                  "NetworkFactory"),
     "TDVP"                              : (".src.tdvp",                     "TDVP"),
     "TDVPStepInfo"                      : (".src.tdvp",                     "TDVPStepInfo"),
@@ -1138,6 +1131,7 @@ if TYPE_CHECKING:
 
     from .nqs                           import NQS
     from .src.nqs_engine                import EvaluationResult, NQSEvalEngine, NQSLoss, NQSObservable
+    from .src.nqs_driver                import AbstractLog, RuntimeLog, JsonLog, StopTraining, InvalidLossStopping, ConvergenceStopping, TimeoutStopping
     from .src.network                   import NetworkFactory
     from .src.nqs_train                 import NQSTrainer, NQSTrainStats
     from .src.tdvp                      import TDVP, TDVPStepInfo
@@ -1232,7 +1226,7 @@ net = s_cfg.make_net(p_cfg, alpha=1.0)
 psi = NQS(logansatz=net, model=model, hilbert=hilbert, backend=s_cfg.backend)
 
 # 4. Train
-train_cfg = NQSTrainConfig.from_solver(s_cfg, phases="kitaev")
+train_cfg = NQSTrainConfig.from_solver(s_cfg)
 stats = psi.train(**train_cfg.to_train_kwargs())
 print(f"Final Energy: {stats.history[-1]:.5f}")
 
@@ -1258,7 +1252,7 @@ net_e = excited_cfg.make_net(p_cfg)
 psi_excited = NQS(logansatz=net_e, model=model, hilbert=hilbert, backend=excited_cfg.backend)
 
 # 4. Train against the lower state
-train_cfg = NQSTrainConfig.from_solver(excited_cfg, lower_states=[psi_ground], phases="kitaev")
+train_cfg = NQSTrainConfig.from_solver(excited_cfg, lower_states=[psi_ground])
 stats = psi_excited.train(**train_cfg.to_train_kwargs())
 print(f"Final Energy (Excited): {stats.history[-1]:.5f}")
 """
@@ -1280,6 +1274,13 @@ __all__ = [
     "NQSLoss",
     "NQSEvalEngine",
     "EvaluationResult",
+    "AbstractLog",
+    "RuntimeLog",
+    "JsonLog",
+    "StopTraining",
+    "InvalidLossStopping",
+    "ConvergenceStopping",
+    "TimeoutStopping",
     "TDVP",
     "TDVPStepInfo",
     # Spectral and precision utilities

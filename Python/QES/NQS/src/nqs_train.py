@@ -62,6 +62,7 @@ try:
     from QES.general_python.ml.schedulers       import EarlyStopping
     from QES.general_python.ml.training_phases  import PhaseScheduler, create_phase_schedulers
     from QES.NQS.nqs                            import NQS
+    from QES.NQS.src.nqs_driver                 import StopTraining, normalize_callbacks, normalize_loggers
     from QES.NQS.src.auto_tuner                 import TDVPAutoTuner
     from QES.NQS.src.tdvp                       import TDVP, TDVPLowerPenalty
 except ImportError as e:
@@ -1299,6 +1300,8 @@ class NQSTrainer:
         timing_report_every             = int(kwargs.pop("timing_report_every", 0) or 0)
         timing_report_last_n            = int(kwargs.pop("timing_report_last_n", 20) or 20)
         timing_report_final             = bool(kwargs.pop("timing_report_final", True))
+        callbacks                       = normalize_callbacks(kwargs.pop("callback", None))
+        loggers                         = normalize_loggers(kwargs.pop("out", None))
 
         background_flag = (self.background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0")) or bool(kwargs.pop("background", False)))
         use_pbar        = use_pbar and not background_flag
@@ -1487,6 +1490,21 @@ class NQSTrainer:
                 total_elapsed = total_time_offset + (time.time() - run_t0)
                 self.stats.timings.total.append(total_elapsed)
 
+                log_data = {
+                    "mean"          : float(mean_loss),
+                    "std"           : float(np.real(std_loss)),
+                    "lr"            : float(lr),
+                    "reg"           : float(reg) if reg is not None else float("nan"),
+                    "diag_shift"    : float(diag),
+                    "sigma2"        : float(np.real(sigma2)),
+                    "r_hat"         : float(np.real(r_hat)) if r_hat is not None else float("nan"),
+                    "acceptance"    : float(getattr(self.nqs.sampler, "accepted_ratio", float("nan"))),
+                    "global_phase"  : complex(self.tdvp.global_phase),
+                    "total_time"    : float(total_elapsed),
+                }
+                for logger in loggers:
+                    logger(global_epoch, log_data, trainer=self)
+
                 # Track best
                 if mean_loss < (self.best_energy - best_checkpoint_min_delta):
                     self.best_energy = mean_loss
@@ -1518,6 +1536,11 @@ class NQSTrainer:
                     exact_loss=(self.nqs.exact["exact_energy"] if self.nqs.exact is not None else None),
                 )
 
+                for cb in callbacks:
+                    should_continue = cb(global_epoch, log_data, self)
+                    if should_continue is False:
+                        raise StopTraining(f"Callback requested stop at epoch {global_epoch}.")
+
                 # Checkpointing (use global_epoch for consistent checkpoint naming)
                 if epoch % checkpoint_every == 0 and epoch > 0:
                     self.save_checkpoint(
@@ -1539,6 +1562,8 @@ class NQSTrainer:
 
         except KeyboardInterrupt:
             self._log("Training interrupted by user.", lvl=0, color="red")
+        except StopTraining as e:
+            self._log(str(e), lvl=0, color="yellow")
         except StopIteration as e:
             self._log(f"Training stopped: {e}", lvl=0, color="yellow")
         except Exception as e:
@@ -1556,6 +1581,8 @@ class NQSTrainer:
             self._log_timing_breakdown(last_n=timing_report_last_n)
             
         self.save_checkpoint("final", save_path, fmt="h5", overwrite=True, verbose=True, **kwargs)
+        for logger in loggers:
+            logger.flush(trainer=self)
         run_elapsed                 = time.time() - run_t0
         total_elapsed               = total_time_offset + run_elapsed
         self._log(f"Training completed in {run_elapsed:.2f} seconds (accumulated total: {total_elapsed:.2f} seconds). "
