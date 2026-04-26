@@ -802,83 +802,25 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         "optimizer"         : "optimizer",
     }
 
-    TRAIN_KWARGS: ClassVar[Tuple[str, ...]] = (
-        "n_epochs",
-        "checkpoint_every",
-        "save_best_checkpoint",
-        "best_checkpoint_every",
-        "best_checkpoint_min_delta",
-        "save_best_stats",
-        "load_checkpoint",
-        "checkpoint_step",
-        "override",
-        "reset_weights",
-        "reset_stats",
-        "save_path",
-        "phases",
-        "n_batch",
-        "n_update",
-        "num_samples",
-        "num_chains",
-        "num_thermal",
-        "num_sweep",
-        "pt_betas",
-        "upd_fun",
-        "update_kwargs",
-        "global_p",
-        "global_update",
-        "global_fraction",
-        "lr",
-        "lr_scheduler",
-        "reg",
-        "reg_scheduler",
-        "diag_shift",
-        "diag_scheduler",
-        "lin_solver",
-        "pre_solver",
-        "ode_solver",
-        "tdvp",
-        "lin_sigma",
-        "lin_is_gram",
-        "lin_force_mat",
-        "use_sr",
-        "use_minsr",
-        "rhs_prefactor",
-        "grad_clip",
-        "timing_mode",
-        "early_stopper",
-        "lower_states",
-        "symmetrize",
-        "background",
-        "use_pbar",
-    )
+    @classmethod
+    def _train_kwarg_names(cls) -> Tuple[str, ...]:
+        """
+        Canonical set of keyword names forwarded to ``NQS.train(...)``.
+        """
+        names = []
+        for group_name in ("core_loop", "sampling_updates", "schedules", "tdvp_solver", "utilities"):
+            for name in cls.FIELD_GROUPS[group_name]:
+                if name in {"extra_kwargs", "patience", "exact_predictions", "exact_method"}:
+                    continue
+                names.append(name)
+        return tuple(names)
 
-    SCHEDULER_KWARGS: ClassVar[Tuple[str, ...]] = (
-        "lr_init",
-        "lr_final",
-        "lr_decay_rate",
-        "lr_patience",
-        "lr_min_delta",
-        "lr_cooldown",
-        "lr_step_size",
-        "lr_max_epochs",
-        "lr_es",
-        "lr_es_min",
-        "reg_init",
-        "reg_final",
-        "reg_decay_rate",
-        "reg_patience",
-        "reg_min_delta",
-        "reg_step_size",
-        "reg_max_epochs",
-        "diag_init",
-        "diag_final",
-        "diag_decay_rate",
-        "diag_patience",
-        "diag_min_delta",
-        "diag_step_size",
-        "diag_max_epochs",
-    )
+    @classmethod
+    def _scheduler_kwarg_names(cls) -> Tuple[str, ...]:
+        """
+        Scheduler-only kwargs consumed by ``NQSTrainer`` through prefixed keys.
+        """
+        return tuple(name for name in cls.FIELD_GROUPS["schedules"] if name.endswith(("_init", "_final", "_rate", "_patience", "_delta", "_cooldown", "_step_size", "_max_epochs", "_es", "_es_min")))
 
     @classmethod
     def from_solver(cls, solver_config: "NQSSolverConfig", **kwargs) -> "NQSTrainConfig":
@@ -917,13 +859,13 @@ class NQSTrainConfig(_ConfigSchemaMixin):
         ex_pred         = self.exact_predictions if exact_predictions is None else exact_predictions
         ex_meth         = self.exact_method if exact_method is None else exact_method
 
-        train_kwargs = {name: getattr(self, name) for name in self.TRAIN_KWARGS}
+        train_kwargs = {name: getattr(self, name) for name in self._train_kwarg_names()}
         train_kwargs["optimizer"] = optimizer
         train_kwargs["patience"] = patience
         train_kwargs["exact_predictions"] = ex_pred
         train_kwargs["exact_method"] = ex_meth
 
-        schedule_kwargs = {name: getattr(self, name) for name in self.SCHEDULER_KWARGS}
+        schedule_kwargs = {name: getattr(self, name) for name in self._scheduler_kwarg_names()}
         train_kwargs.update({k: v for k, v in schedule_kwargs.items() if v is not None})
         train_kwargs.update(self.extra_kwargs)
         train_kwargs.update(overrides)

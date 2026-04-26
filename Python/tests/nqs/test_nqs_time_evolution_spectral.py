@@ -1,3 +1,5 @@
+"""Regression tests for nqs time evolution spectral."""
+
 import numpy as np
 import pytest
 
@@ -18,6 +20,7 @@ except ImportError:
 
 
 def _build_uniform_rbm_state(model_seed: int = 0):
+    """Build uniform rbm state."""
     lattice = SquareLattice(dim=2, lx=2, ly=2, bc="obc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -59,6 +62,7 @@ def _build_uniform_rbm_state(model_seed: int = 0):
 
 
 def _build_uniform_rbm_chain(model_seed: int = 0):
+    """Build uniform rbm chain."""
     lattice = SquareLattice(dim=1, lx=4, bc="pbc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -100,6 +104,7 @@ def _build_uniform_rbm_chain(model_seed: int = 0):
 
 
 def _build_static_uniform_rbm_chain(model_seed: int = 0):
+    """Build static uniform rbm chain."""
     lattice = SquareLattice(dim=1, lx=4, bc="pbc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -141,6 +146,7 @@ def _build_static_uniform_rbm_chain(model_seed: int = 0):
 
 
 def test_square_tfim_time_evolution_and_spectral_smoke():
+    """Verify test square tfim time evolution and spectral smoke."""
     model, nqs = _build_uniform_rbm_state()
     times = np.linspace(0.0, 0.10, 3)
 
@@ -183,6 +189,7 @@ def test_square_tfim_time_evolution_and_spectral_smoke():
 
 
 def test_tfim_modifier_time_evolution_smoke():
+    """Verify test tfim modifier time evolution smoke."""
     model, nqs = _build_static_uniform_rbm_chain()
     times = np.linspace(0.0, 0.10, 3)
     probe = sig_k(np.pi, lattice=model.lattice, ns=model.hilbert.ns)

@@ -1,3 +1,5 @@
+"""Regression tests for nqs model state convention."""
+
 import numpy as np
 import pytest
 
@@ -16,6 +18,7 @@ except ImportError:
 
 
 def _build_spin_half_problem():
+	"""Build spin half problem."""
 	lattice = SquareLattice(dim=1, lx=2, bc="obc")
 	hilbert = HilbertSpace(lattice=lattice)
 	model = TransverseFieldIsing(
@@ -37,6 +40,7 @@ def _build_spin_half_problem():
 
 
 def test_hilbert_state_convention_exposes_machine_representation_fields():
+	"""Verify test hilbert state convention exposes machine representation fields."""
 	hilbert, _, _ = _build_spin_half_problem()
 	convention = hilbert.state_convention
 
@@ -51,6 +55,7 @@ def test_hilbert_state_convention_exposes_machine_representation_fields():
 
 
 def test_vmc_sampler_defaults_to_hilbert_state_representation_when_unset():
+	"""Verify test vmc sampler defaults to hilbert state representation when unset."""
 	hilbert, model, net = _build_spin_half_problem()
 	_ = model
 	sampler = VMCSampler(
@@ -72,6 +77,7 @@ def test_vmc_sampler_defaults_to_hilbert_state_representation_when_unset():
 
 
 def test_vmc_sampler_defers_jit_sampler_construction_until_first_sample():
+	"""Verify test vmc sampler defers jit sampler construction until first sample."""
 	hilbert, model, net = _build_spin_half_problem()
 	_ = model
 	sampler = VMCSampler(
@@ -95,6 +101,7 @@ def test_vmc_sampler_defers_jit_sampler_construction_until_first_sample():
 
 
 def test_vmc_set_replicas_is_idempotent_and_restores_chain_layout():
+	"""Verify test vmc set replicas is idempotent and restores chain layout."""
 	hilbert, model, net = _build_spin_half_problem()
 	_ = model
 	sampler = VMCSampler(
@@ -127,6 +134,7 @@ def test_vmc_set_replicas_is_idempotent_and_restores_chain_layout():
 
 
 def test_sigma_x_jax_respects_nonunit_binary_vector_convention():
+	"""Verify test sigma x jax respects nonunit binary vector convention."""
 	state = jnp.array([0.0, 0.5, 0.0, 0.5], dtype=jnp.float32)
 	new_state, coeff = sigma_x_jnp(state, (1, 2), spin=False, spin_value=0.5)
 

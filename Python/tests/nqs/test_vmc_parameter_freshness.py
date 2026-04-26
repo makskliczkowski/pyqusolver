@@ -1,3 +1,5 @@
+"""Regression tests for vmc parameter freshness."""
+
 import numpy as np
 import pytest
 
@@ -12,6 +14,7 @@ except ImportError:
 
 
 def _shift_params(params, delta):
+    """Shift params."""
     return jax.tree_util.tree_map(
         lambda x: x + jnp.asarray(delta, dtype=x.dtype),
         params,
@@ -19,6 +22,7 @@ def _shift_params(params, delta):
 
 
 def test_vmc_uses_live_network_params_by_default():
+    """Verify test vmc uses live network params by default."""
     rbm = RBM(
         input_shape=(4,),
         n_hidden=3,

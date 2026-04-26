@@ -1,3 +1,5 @@
+"""Regression tests for tdvp matrix free regressions."""
+
 import numpy as np
 import pytest
 
@@ -5,6 +7,7 @@ jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
 
 from QES.general_python.algebra import solvers
+from QES.NQS.src.tdvp import TDVP
 
 
 def _wide_operator():
@@ -19,10 +22,12 @@ def _wide_operator():
 
 
 def _loss_vector():
+	"""Create vector."""
 	return jnp.array([0.4 - 0.1j, -0.2 + 0.7j], dtype=jnp.complex64)
 
 
 def _gram_solver(shift):
+	"""Build Gram solver."""
 	solver = solvers.choose_solver(
 		"minres_qlp",
 		is_gram=True,
@@ -34,6 +39,7 @@ def _gram_solver(shift):
 
 
 def test_matrix_free_standard_sr_uses_sample_normalization_for_wide_operator():
+	"""Verify test matrix free standard sr uses sample normalization for wide operator."""
 	O       = _wide_operator()
 	loss    = _loss_vector()
 	n_s     = O.shape[0]
@@ -64,6 +70,7 @@ def test_matrix_free_standard_sr_uses_sample_normalization_for_wide_operator():
 
 
 def test_matrix_free_minsr_uses_sample_normalization_for_transposed_operator():
+	"""Verify test matrix free minsr uses sample normalization for transposed operator."""
 	O       = _wide_operator()
 	loss    = _loss_vector()
 	n_s     = O.shape[0]
@@ -91,3 +98,27 @@ def test_matrix_free_minsr_uses_sample_normalization_for_transposed_operator():
 
 	assert result.converged
 	np.testing.assert_allclose(np.asarray(result.x), np.asarray(expected), rtol=2e-5, atol=2e-6)
+
+
+def test_tdvp_accepts_only_canonical_solver_form_names():
+	"""Verify TDVP solver-form parsing accepts canonical names only."""
+	tdvp = TDVP(backend="jax", sr_lin_solver="cg", sr_lin_solver_t="gram")
+
+	assert tdvp._normalize_solver_form("gram") == solvers.SolverForm.GRAM
+	assert tdvp._normalize_solver_form("matvec") == solvers.SolverForm.MATVEC
+	assert tdvp._normalize_solver_form("matrix") == solvers.SolverForm.MATRIX
+
+	with pytest.raises(ValueError):
+		tdvp._normalize_solver_form("full")
+	with pytest.raises(ValueError):
+		tdvp._normalize_solver_form("mat")
+
+
+def test_tdvp_reuses_cached_jit_wrappers():
+	"""Verify TDVP reuses shared JIT wrappers for SR helper functions."""
+	tdvp_a = TDVP(backend="jax", sr_lin_solver="cg", sr_lin_solver_t="gram")
+	tdvp_b = TDVP(backend="jax", sr_lin_solver="cg", sr_lin_solver_t="gram")
+
+	assert tdvp_a._gradient_fn_j is tdvp_b._gradient_fn_j
+	assert tdvp_a._loss_c_fn_j is tdvp_b._loss_c_fn_j
+	assert tdvp_a._deriv_c_fn_j is tdvp_b._deriv_c_fn_j

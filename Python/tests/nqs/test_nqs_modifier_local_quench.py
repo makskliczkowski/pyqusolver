@@ -1,3 +1,5 @@
+"""Regression tests for nqs modifier local quench."""
+
 import numpy as np
 import pytest
 
@@ -17,6 +19,7 @@ except ImportError:
 
 
 def _build_heisenberg_chain(seed: int = 3):
+    """Build heisenberg chain."""
     lattice = SquareLattice(dim=1, lx=4, bc="pbc")
     hilbert = HilbertSpace(lattice=lattice)
     model = XXZ(
@@ -59,6 +62,7 @@ def _build_heisenberg_chain(seed: int = 3):
 
 
 def _exact_local_quench_correlator(model, hilbert, probe, times):
+    """Compute exact local quench correlator."""
     model.diagonalize()
     eig_vec = np.asarray(model._eig_vec, dtype=np.complex128)
     eig_val = np.asarray(model._eig_val, dtype=np.float64)
@@ -77,6 +81,7 @@ def _exact_local_quench_correlator(model, hilbert, probe, times):
 
 
 def test_heisenberg_modifier_local_quench_smoke():
+    """Verify test heisenberg modifier local quench smoke."""
     model, hilbert, nqs = _build_heisenberg_chain()
     times = np.linspace(0.0, 0.20, 5)
 

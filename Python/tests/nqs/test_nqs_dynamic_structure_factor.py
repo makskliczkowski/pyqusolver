@@ -1,3 +1,5 @@
+"""Regression tests for nqs dynamic structure factor."""
+
 import numpy as np
 import pytest
 
@@ -17,6 +19,7 @@ except ImportError:
 
 
 def _build_uniform_tfim_state(seed: int = 0):
+    """Build uniform tfim state."""
     lattice = SquareLattice(dim=1, lx=4, bc="pbc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -58,6 +61,7 @@ def _build_uniform_tfim_state(seed: int = 0):
 
 
 def test_dynamic_structure_factor_modifier_smoke():
+    """Verify test dynamic structure factor modifier smoke."""
     model, hilbert, lattice, nqs = _build_uniform_tfim_state(seed=0)
     probe_q = sig_k(np.pi, lattice=lattice, ns=hilbert.ns)
     probe_mq = sig_k(-np.pi, lattice=lattice, ns=hilbert.ns)
@@ -180,6 +184,7 @@ def test_dynamic_structure_factor_modifier_smoke():
 
 
 def test_spawn_like_preserves_nqs_state_convention():
+    """Verify test spawn like preserves nqs state convention."""
     _, _, _, nqs = _build_uniform_tfim_state(seed=3)
     spawned = nqs.spawn_like(use_orbax=False, verbose=False)
 
@@ -190,13 +195,17 @@ def test_spawn_like_preserves_nqs_state_convention():
 
 
 def test_nqs_resolve_operator_caches_bound_operator():
+    """Verify test nqs resolve operator caches bound operator."""
     _, _, _, nqs = _build_uniform_tfim_state(seed=5)
 
     class _BoundProbe:
+        """Test helper class for BoundProbe."""
         def __init__(self):
+            """Helper for init."""
             self.calls = 0
 
         def bind_state_convention(self, convention):
+            """Helper for bind state convention."""
             self.calls += 1
             return ("bound", convention["representation"], convention["mode_repr"])
 
@@ -209,18 +218,23 @@ def test_nqs_resolve_operator_caches_bound_operator():
 
 
 def test_compute_observable_resolves_state_bound_operator():
+    """Verify test compute observable resolves state bound operator."""
     _, _, _, nqs = _build_uniform_tfim_state(seed=7)
     (_, _), (states, log_psi), probabilities = nqs.sample(num_samples=8, num_chains=4)
 
     class _ObservableProbe:
+        """Test helper class for ObservableProbe."""
         def __init__(self):
+            """Helper for init."""
             self.calls = 0
 
         def bind_state_convention(self, convention):
+            """Helper for bind state convention."""
             self.calls += 1
             offset = 1.0 if convention["representation"] == "binary_01" else -1.0
 
             def _kernel(s):
+                """Helper for kernel."""
                 s = jnp.asarray(s)
                 return s[..., 0] * 0.0 + offset
 

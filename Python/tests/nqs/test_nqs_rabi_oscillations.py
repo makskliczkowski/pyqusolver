@@ -1,3 +1,5 @@
+"""Regression tests for nqs rabi oscillations."""
+
 import numpy as np
 import pytest
 
@@ -111,6 +113,7 @@ def _observable_from_trajectory(nqs, trajectory, operator) -> np.ndarray:
 
 
 def _exact_ed_observable(model, times, operator) -> np.ndarray:
+    """Compute exact ed observable."""
     model.diagonalize()
     eig_vec = np.asarray(model._eig_vec)
     eig_val = np.asarray(model._eig_val)
@@ -127,6 +130,7 @@ def _exact_ed_observable(model, times, operator) -> np.ndarray:
 
 
 def _exact_two_sided_probe_correlator(model, times, probe) -> np.ndarray:
+    """Compute exact two sided probe correlator."""
     model.diagonalize()
     eig_vec = np.asarray(model._eig_vec)
     eig_val = np.asarray(model._eig_val)
@@ -179,6 +183,7 @@ def test_single_spin_rabi_oscillation_matches_ed():
 
 
 def test_single_spin_two_sided_probe_correlator_matches_ed():
+    """Verify test single spin two sided probe correlator matches ed."""
     model, nqs = _build_single_spin_rabi_nqs(seed=7)
     times = np.linspace(0.0, 0.5 * np.pi, 5)
     probe = sig_x(ns=model.hilbert.ns, sites=[0])

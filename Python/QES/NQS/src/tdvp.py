@@ -291,6 +291,18 @@ class TDVP:
         # flags
         is_jax: bool
 
+    _jit_cache = {}
+
+    @classmethod
+    def _get_cached_jit(cls, func: Callable):
+        """Return one shared JIT wrapper per helper function."""
+        if not JAX_AVAILABLE:
+            return func
+        key = id(func)
+        if key not in cls._jit_cache:
+            cls._jit_cache[key] = jax.jit(func)
+        return cls._jit_cache[key]
+
     def __init__(
         self,
         use_sr: bool = True,
@@ -462,7 +474,7 @@ class TDVP:
         """
         Normalize solver-form inputs to ``solvers.SolverForm``.
 
-        Supports enum values, integer codes, and common string aliases.
+        Supports enum values, integer codes, and canonical string names.
         """
         if isinstance(solver_form, solvers.SolverForm):
             return solver_form
@@ -471,19 +483,12 @@ class TDVP:
             return solvers.SolverForm(solver_form)
 
         if isinstance(solver_form, str):
-            key     = solver_form.strip().upper()
-            alias   = {"FULL": "MATRIX", "MAT": "MATRIX"}
-            key     = alias.get(key, key)
-
-            if key in solvers.SolverForm.__members__:
-                return solvers.SolverForm[key]
-
             low = solver_form.strip().lower()
             if low == "gram":
                 return solvers.SolverForm.GRAM
             if low == "matvec":
                 return solvers.SolverForm.MATVEC
-            if low in ("matrix", "full"):
+            if low == "matrix":
                 return solvers.SolverForm.MATRIX
 
         raise ValueError(f"Invalid solver form: {solver_form!r}")
@@ -562,9 +567,9 @@ class TDVP:
         try:
             #! store the jitted functions
             if self.is_jax:
-                self._gradient_fn_j     = jax.jit(self._gradient_fn)
-                self._loss_c_fn_j       = jax.jit(self._loss_c_fn)
-                self._deriv_c_fn_j      = jax.jit(self._deriv_c_fn)
+                self._gradient_fn_j     = self._get_cached_jit(self._gradient_fn)
+                self._loss_c_fn_j       = self._get_cached_jit(self._loss_c_fn)
+                self._deriv_c_fn_j      = self._get_cached_jit(self._deriv_c_fn)
                 # These ARE decorated with @jax.jit in sr module - don't double-wrap
                 self._covariance_fn_j   = self._covariance_fn
                 self._prepare_fn_j      = self._prepare_fn

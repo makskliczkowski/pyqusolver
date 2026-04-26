@@ -231,12 +231,11 @@ class NQSTrainer:
     ---------------------------------
     There are multiple ways to configure learning rate (LR) and regularization (Reg) schedules:
 
-    **1. Preset Phases (Recommended for beginners)**
+    **1. Named Presets**
 
     Use a named preset that defines multi-phase training:
 
     >>> trainer = NQSTrainer(nqs, phases='default')  # Pre-train -> Main -> Refine
-    >>> trainer = NQSTrainer(nqs, phases='kitaev')   # Specialized for Kitaev models
 
     **2. Custom Phase List**
 
@@ -338,7 +337,7 @@ class NQSTrainer:
         tdvp                : Optional[TDVP] = None,            # Setup TDVP engine
         # Configuration
         n_batch             : int = 256,                        # Batch size for sampling
-        phases              : Union[str, tuple] = None,         # e.g., "kitaev" or (lr_sched, reg_sched)
+        phases              : Union[str, tuple] = None,         # e.g., "default" or (lr_sched, reg_sched)
         # Utilities
         timing_mode         : NQSTimeModes = NQSTimeModes.LAST, # Timing mode
         early_stopper       : Any = None,                       # Callable or EarlyStopping
@@ -388,7 +387,7 @@ class NQSTrainer:
         -------------------------------------------------
         phases : Union[str, Tuple, None], default=None
             Phase scheduling configuration. Can be:
-            - ``str``   : Preset name ('default', 'kitaev')
+            - ``str``   : Preset name (for example ``'default'``)
             - ``tuple`` : (lr_scheduler, reg_scheduler) - each can be string, callable, or PhaseScheduler
             - ``None``  : Use lr_scheduler/reg_scheduler/diag_scheduler params or constant lr/reg/diag values
 
@@ -510,7 +509,6 @@ class NQSTrainer:
         --------
         >>> # 1. Preset phases (recommended for beginners)
         >>> trainer     = NQSTrainer(nqs, phases='default')
-        >>> trainer     = NQSTrainer(nqs, phases='kitaev')
 
         >>> # 2. String scheduler types (simple and flexible)
         >>> trainer     = NQSTrainer(nqs, lr_scheduler='cosine', lr=0.01, reg=0.001, diag_shift=1e-5, phases=None)
@@ -747,7 +745,7 @@ class NQSTrainer:
 
         Supports multiple configuration patterns:
 
-        1. Preset string: phases='default' or phases='kitaev'
+        1. Preset string: phases='default'
         2. Tuple of schedulers: phases=(lr_sched, reg_sched)
         3. String scheduler types: lr_scheduler='cosine', reg_scheduler='constant'
         4. Direct float values: lr=0.01, reg=0.001 (constant schedulers)
@@ -795,35 +793,49 @@ class NQSTrainer:
         """
         from QES.general_python.ml.schedulers import choose_scheduler
 
-        def _normalize_scheduler_aliases(sched_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-            """Normalize short aliases (e.g. ``lr_init``) to scheduler factory keys."""
-            out = dict(sched_kwargs)
-            if "lr_init" in out and "lr_initial" not in out:
-                out["lr_initial"] = out.pop("lr_init")
+        def _scheduler_kwargs(prefix: str, initial_value: Optional[float]) -> Dict[str, Any]:
+            """
+            Build canonical scheduler-factory kwargs for one parameter family.
+            """
+            out = {}
+            for key, value in kwargs.items():
+                if not key.startswith(f"{prefix}_"):
+                    continue
+                suffix = key[len(prefix) + 1 :]
+                if suffix == "init":
+                    out["initial_lr"] = value
+                elif suffix == "final":
+                    out["lr_final"] = value
+                elif suffix == "decay":
+                    out["lr_decay"] = value
+                elif suffix == "decay_rate":
+                    out["lr_decay_rate"] = value
+                elif suffix == "step_size":
+                    out["lr_step_size"] = value
+                elif suffix == "min":
+                    out["min_lr"] = value
+                elif suffix == "clamp":
+                    out["lr_clamp"] = value
+                elif suffix == "max_epochs":
+                    out["lr_max_epochs"] = value
+                elif suffix == "es":
+                    out["lr_es"] = value
+                elif suffix == "es_min":
+                    out["lr_es_min"] = value
+                else:
+                    out[suffix if suffix.startswith("lr_") else f"lr_{suffix}"] = value
+
+            if initial_value is not None and "initial_lr" not in out:
+                out["initial_lr"] = initial_value
             return out
 
-        diag_kwargs = {k: v for k, v in kwargs.items() if k.startswith("diag_")}
-        reg_kwargs  = {k: v for k, v in kwargs.items() if k.startswith("reg_")}
-        lr_kwargs   = {k: v for k, v in kwargs.items() if k.startswith("lr_")}
-        # transform keys to be accepted by scheduler factory
-
-        diag_kwargs = {k.replace("diag_", "lr_"): v for k, v in diag_kwargs.items()}
-        if self._init_diag is not None:
-            diag_kwargs["lr_initial"] = self._init_diag
-        diag_kwargs = _normalize_scheduler_aliases(diag_kwargs)
-
-        reg_kwargs  = {k.replace("reg_", "lr_"): v for k, v in reg_kwargs.items()}
-        if self._init_reg is not None:
-            reg_kwargs["lr_initial"] = self._init_reg
-        reg_kwargs  = _normalize_scheduler_aliases(reg_kwargs)
-
-        lr_kwargs   = {k.replace("lr_", "lr_"): v for k, v in lr_kwargs.items()}
-        if self._init_lr is not None:
-            lr_kwargs["lr_initial"] = self._init_lr
-        lr_kwargs   = _normalize_scheduler_aliases(lr_kwargs)
+        lr_kwargs   = _scheduler_kwargs("lr", self._init_lr)
+        reg_kwargs  = _scheduler_kwargs("reg", self._init_reg)
+        diag_kwargs = _scheduler_kwargs("diag", self._init_diag)
 
         # Helper to create scheduler from string or passthrough
         def _resolve_scheduler(sched, init_val, param_name, max_epochs, **kwargs):
+            sched_kwargs = dict(kwargs)
             if sched is None:
                 if init_val is not None:  # Constant scheduler from float value
                     return choose_scheduler("constant", initial_lr=init_val, max_epochs=max_epochs, logger=self.logger)
@@ -831,8 +843,10 @@ class NQSTrainer:
 
             elif isinstance(sched, str):
                 # String scheduler type -> create via factory
-                init = init_val if init_val is not None else (1e-2 if param_name == "lr" else 1e-3)
-                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs)
+                init = sched_kwargs.pop("initial_lr", init_val)
+                if init is None:
+                    init = 1e-2 if param_name == "lr" else 1e-3
+                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **sched_kwargs)
 
             elif callable(sched) or isinstance(sched, PhaseScheduler):
                 return sched
@@ -854,7 +868,7 @@ class NQSTrainer:
             self.reg_scheduler  = _resolve_scheduler(reg_scheduler, reg, "reg", n_epochs, **reg_kwargs)
             self.diag_scheduler = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
-        # Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
+        # Preset string (for example 'default') - only if no direct scheduler provided
         elif isinstance(phases, str):
             self._log(f"Initializing training phases with preset: '{phases}'", lvl=3, color="green", verbose=self.verbose,)
             self.lr_scheduler, self.reg_scheduler   = create_phase_schedulers(phases, self.logger)
@@ -1335,6 +1349,8 @@ class NQSTrainer:
         run_t0                      = time.time()
         n_epochs                    = n_epochs or 100
         pbar                        = trange(n_epochs, desc="NQS Training", leave=True) if use_pbar else range(n_epochs)
+        current_params              = self.nqs.get_params()
+        current_params_flat         = self.nqs.get_params(unravel=True)
 
         try:
             for epoch in pbar:
@@ -1354,14 +1370,7 @@ class NQSTrainer:
                 if self.auto_tuner:
                     current_num_samples = self.auto_tuner.n_samples
 
-                sample_out = self._timed_execute(
-                    "sample",
-                    self.nqs.sample,
-                    reset=(global_epoch == 0),
-                    epoch=global_epoch,
-                    num_samples=current_num_samples,
-                    num_chains=num_chains,
-                )
+                sample_out = self._timed_execute("sample", self.nqs.sample, reset=(global_epoch == 0), epoch=global_epoch, num_samples=current_num_samples, num_chains=num_chains, params=current_params)
                 (_, _), (cfgs, cfgs_psi), probs = sample_out
                 if epoch == 0:
                     self._log(
@@ -1381,10 +1390,9 @@ class NQSTrainer:
                         verbose=self.verbose,
                     )
                 # Physics Step (TDVP / ODE) (Timed)
-                params_flat = self.nqs.get_params(unravel=True)
                 step_kwargs = {
                                 "f"                 : self.tdvp,
-                                "y"                 : params_flat,
+                                "y"                 : current_params_flat,
                                 "t"                 : 0.0,
                                 "est_fn"            : self._single_step_jit,
                                 "configs"           : cfgs,
@@ -1443,33 +1451,22 @@ class NQSTrainer:
                         # ODE solver returns new parameters dparams. 
                         # direction = (new - old) / dt
                         dt_step     = float(lr)
-                        direction   = (dparams - params_flat) / dt_step if dt_step > 1e-12 else (dparams - params_flat)
+                        direction   = (dparams - current_params_flat) / dt_step if dt_step > 1e-12 else (dparams - current_params_flat)
                         
                         # Direction is -grad for standard gradient descent
                         # optax expects gradients to subtract (update = -lr * grad)
                         # So we pass -direction as the gradient
-                        updates, self.opt_state = self.optimizer.update(-direction, self.opt_state, params_flat)
-                        new_params_flat         = optax.apply_updates(params_flat, updates)
-                        
-                        self._timed_execute(
-                            "update",
-                            self.nqs.set_params,
-                            new_params_flat,
-                            shapes=shapes_info[0],
-                            sizes=shapes_info[1],
-                            iscpx=shapes_info[2],
-                            epoch=global_epoch,
-                        )
+                        updates, self.opt_state = self.optimizer.update(-direction, self.opt_state, current_params_flat)
+                        new_params_flat         = optax.apply_updates(current_params_flat, updates)
+                        new_params_pytree       = self.nqs.transform_flat_params(new_params_flat, shapes_info[0], shapes_info[1], shapes_info[2])
+                        self._timed_execute("update", self.nqs.set_params, new_params_pytree, epoch=global_epoch)
+                        current_params_flat     = new_params_flat
+                        current_params          = new_params_pytree
                     else:
-                        self._timed_execute(
-                            "update",
-                            self.nqs.set_params,
-                            dparams,
-                            shapes=shapes_info[0],
-                            sizes=shapes_info[1],
-                            iscpx=shapes_info[2],
-                            epoch=global_epoch,
-                        )
+                        new_params_pytree       = self.nqs.transform_flat_params(dparams, shapes_info[0], shapes_info[1], shapes_info[2])
+                        self._timed_execute("update", self.nqs.set_params, new_params_pytree, epoch=global_epoch)
+                        current_params_flat     = dparams
+                        current_params          = new_params_pytree
 
                 # Global Phase Integration
                 # Extract theta0_dot from JIT output and update TDVP state

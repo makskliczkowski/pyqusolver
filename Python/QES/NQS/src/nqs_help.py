@@ -33,6 +33,10 @@ def nqs_help(self, topic: str = "general"):
             Training with the train() method (LR scheduling, SR, etc.).
         - 'checkpoints':
             Saving and loading model weights and checkpoints.
+        - 'network':
+            Details about the loaded ansatz.
+        - 'networks':
+            Overview of available ansatz architectures.
     """
     topic = topic.lower().strip()
     msg = ""
@@ -140,7 +144,7 @@ def nqs_help(self, topic: str = "general"):
                 # or:
                 # pip install "QES[all]"
 
-                p_cfg = NQSPhysicsConfig(model_type='kitaev', lattice_type='honeycomb', lx=4, ly=3)
+                p_cfg = NQSPhysicsConfig(model_type='tfim', lattice_type='chain', lx=16, bc='obc')
                 s_cfg = NQSSolverConfig(ansatz='rbm', backend='jax')
 
                 model, hilbert, lattice = p_cfg.make_hamiltonian()
@@ -273,6 +277,10 @@ def nqs_help(self, topic: str = "general"):
             """
 
     else:
-        msg = f"Unknown topic '{topic}'. Try: 'general', 'modifier', 'sampling', 'usage', 'train', 'checkpoints'."
+        msg = (
+            f"Unknown topic '{topic}'. Try: "
+            "'general', 'modifier', 'sampling', 'network', 'networks', "
+            "'usage', 'train', 'checkpoints'."
+        )
 
     print(msg)

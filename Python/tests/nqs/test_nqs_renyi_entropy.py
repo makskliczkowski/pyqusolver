@@ -45,6 +45,7 @@ class DummyNQS:
     backend_str = "jax"
 
     def __init__(self, s1, s2):
+        """Helper for init."""
         self._s1        = jnp.asarray(s1, dtype=jnp.float64)
         self._s2        = jnp.asarray(s2, dtype=jnp.float64)
         self.nvisible   = int(self._s1.shape[1])
@@ -52,6 +53,7 @@ class DummyNQS:
 
     @staticmethod
     def ansatz(states):
+        """Helper for ansatz."""
         s = jnp.asarray(states, dtype=jnp.float64)
         if s.ndim == 1:
             s = s.reshape(1, -1)
@@ -66,6 +68,7 @@ class DummyNQS:
         )
 
     def sample(self, num_samples=None, num_chains=None, reset=False, **kwargs):
+        """Helper for sample."""
         if self._counter % 2 == 0:
             states = self._s1
         else:
@@ -78,6 +81,7 @@ class DummyNQS:
 
 
 def _manual_s2(dummy, region):
+    """Compute manual s2."""
     s1 = dummy._s1
     s2 = dummy._s2
     region = jnp.asarray(region, dtype=jnp.int32)
@@ -92,6 +96,7 @@ def _manual_s2(dummy, region):
 
 
 def _wrong_row_swap_s2(dummy, region):
+    """Construct intentionally wrong row swap s2."""
     s1 = dummy._s1
     s2 = dummy._s2
     region = jnp.asarray(region, dtype=jnp.int32)
@@ -107,6 +112,7 @@ def _wrong_row_swap_s2(dummy, region):
 
 
 def test_compute_renyi2_swaps_sites_not_rows():
+    """Verify test compute renyi2 swaps sites not rows."""
     dummy = DummyNQS(SAMPLE_A, SAMPLE_B)
     region = [0, 1]
 
@@ -119,6 +125,7 @@ def test_compute_renyi2_swaps_sites_not_rows():
 
 
 def test_compute_renyi2_error_outputs_are_finite():
+    """Verify test compute renyi2 error outputs are finite."""
     dummy = DummyNQS(SAMPLE_A, SAMPLE_B)
 
     s2_mean, s2_err = NQS.compute_renyi2(
@@ -147,6 +154,7 @@ def test_compute_renyi2_error_outputs_are_finite():
 
 
 def test_compute_mc_stats_returns_chain_diagnostics_keys():
+    """Verify test compute mc stats returns chain diagnostics keys."""
     values = np.array([1.0, 1.2, 0.8, 1.1, 0.9, 1.05, 0.95, 1.0])
     stats = NQS.compute_mc_stats(values, num_chains=2)
 
@@ -164,17 +172,20 @@ class ProductStateDummyNQS:
     backend_str = "jax"
 
     def __init__(self, samples):
+        """Helper for init."""
         self._samples = jnp.asarray(samples, dtype=jnp.float64)
         self.nvisible = int(self._samples.shape[1])
 
     @staticmethod
     def ansatz(states):
+        """Helper for ansatz."""
         s = jnp.asarray(states)
         if s.ndim == 1:
             s = s.reshape(1, -1)
         return jnp.zeros((s.shape[0],), dtype=jnp.float64)
 
     def sample(self, num_samples=None, num_chains=None, reset=False):
+        """Helper for sample."""
         states = self._samples
         log_psi = self.ansatz(states)
         probs = jnp.ones(states.shape[0], dtype=jnp.float64)
@@ -186,6 +197,7 @@ class LargeScaleDummyNQS(DummyNQS):
 
     @staticmethod
     def ansatz(states):
+        """Helper for ansatz."""
         s = jnp.asarray(states, dtype=jnp.float64)
         if s.ndim == 1:
             s = s.reshape(1, -1)
@@ -224,6 +236,7 @@ def test_compute_renyi2_subsystem_entropy_product_state_zero():
 
 
 def test_compute_renyi3_error_outputs_remain_finite_for_large_logratios():
+    """Verify test compute renyi3 error outputs remain finite for large logratios."""
     dummy = LargeScaleDummyNQS(SAMPLE_A, SAMPLE_B)
     s3, s3_err = compute_renyi_entropy(
         dummy,

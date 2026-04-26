@@ -29,11 +29,10 @@ from QES.NQS import NQS, NQSPhysicsConfig, NQSSolverConfig, NQSTrainConfig
 # pip install "QES[all]"
 
 p_cfg = NQSPhysicsConfig(
-    model_type="kitaev",
-    lattice_type="honeycomb",
-    lx=4,
-    ly=3,
-    bc="pbc",
+    model_type="tfim",
+    lattice_type="chain",
+    lx=16,
+    bc="obc",
 )
 
 s_cfg = NQSSolverConfig(

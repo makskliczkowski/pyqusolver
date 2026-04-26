@@ -2397,19 +2397,21 @@ class NQS(MonteCarloSolver):
         """
 
         batch_size          = batch_size if batch_size is not None else self._batch_size
-        self._set_batch_size(batch_size)
 
         # ! Snapshot the current functions
         # This guarantees that the trainer uses exactly what was active when wrapped
-        ansatz_fn           = self._ansatz_func
+        if batch_size == self._batch_size:
+            ansatz_fn                       = self._ansatz_func
+            apply_fn                        = self._apply_uniform_func if self._use_uniform_apply_path() else self._apply_func
+        else:
+            ansatz_fn, _eval_fn, apply_fn   = self.nqsbackend.compile_functions(self._net, batch_size=batch_size)
+            if self._isjax and JAX_AVAILABLE:
+                apply_uniform_fn            = self.nqsbackend._get_cached_jit(NQS._apply_fun_jax_uniform, (0, 4, 6))
+                apply_fn                    = apply_uniform_fn if bool(getattr(self._sampler, "has_uniform_weights", False)) else apply_fn
+                
         local_loss_fn       = self._loss_func
         flat_grad_fn        = self._flat_grad_func
-        apply_fn            = self._apply_uniform_func if self._use_uniform_apply_path() else self._apply_func
-        compute_grad_f      = (
-                                net_utils.jaxpy.compute_gradients_batched
-                                if not self._analytic
-                                else self._analytic_grad_func
-                            )
+        compute_grad_f      = net_utils.jaxpy.compute_gradients_batched if not self._analytic else self._analytic_grad_func
 
         # Parameter structure does not depend on the sampled states, so use the
         # initialization-time metadata instead of sampling again while wrapping.
@@ -2953,20 +2955,9 @@ class NQS(MonteCarloSolver):
         # elif self._nqsproblem.typ == 'densitymatrix' or self._nqsproblem.typ == 'time':
         # return self._tdvp_func
 
-    #! Aliases for local energy
     @property
     def local_energy(self):
         """Return the local energy function."""
-        return self._local_en_func
-
-    @property
-    def loc_energy(self):
-        """Alias for local_energy"""
-        return self._local_en_func
-
-    @property
-    def local_en(self):
-        """Alias for local_energy"""
         return self._local_en_func
 
     #! Other loss functions (TODO: implement)
@@ -3351,36 +3342,32 @@ class NQS(MonteCarloSolver):
         if symmetrize is not None:
             self.symmetry_handler.set(symmetrize)
 
-        trainer_kwargs = dict(kwargs)
-        trainer_kwargs.update(
-            {
-                "lin_solver": lin_solver,
-                "lin_force_mat": lin_force_mat,
-                "pre_solver": pre_solver,
-                "ode_solver": ode_solver,
-                "tdvp": tdvp,
-                "n_batch": n_batch,
-                "phases": phases,
-                "timing_mode": timing_mode,
-                "early_stopper": early_stopper,
-                "optimizer": optimizer,
-                "lower_states": lower_states,
-                "lr_scheduler": lr_scheduler,
-                "lr_max_epochs": trainer_kwargs.pop("lr_max_epochs", n_epochs),
-                "reg_scheduler": reg_scheduler,
-                "reg_max_epochs": trainer_kwargs.pop("reg_max_epochs", n_epochs),
-                "diag_scheduler": diag_scheduler,
-                "diag_max_epochs": trainer_kwargs.pop("diag_max_epochs", n_epochs),
-                "lr": lr,
-                "reg": reg,
-                "diag_shift": diag_shift,
-                "lin_sigma": lin_sigma,
-                "lin_is_gram": lin_is_gram,
-                "use_sr": use_sr,
-                "use_minsr": use_minsr,
-                "rhs_prefactor": rhs_prefactor,
-                "grad_clip": grad_clip,
-            }
+        trainer_kwargs = self._build_trainer_kwargs(
+            n_epochs=n_epochs,
+            n_batch=n_batch,
+            phases=phases,
+            timing_mode=timing_mode,
+            early_stopper=early_stopper,
+            optimizer=optimizer,
+            lower_states=lower_states,
+            lr=lr,
+            lr_scheduler=lr_scheduler,
+            reg=reg,
+            reg_scheduler=reg_scheduler,
+            diag_shift=diag_shift,
+            diag_scheduler=diag_scheduler,
+            lin_solver=lin_solver,
+            lin_force_mat=lin_force_mat,
+            pre_solver=pre_solver,
+            ode_solver=ode_solver,
+            tdvp=tdvp,
+            lin_sigma=lin_sigma,
+            lin_is_gram=lin_is_gram,
+            use_sr=use_sr,
+            use_minsr=use_minsr,
+            rhs_prefactor=rhs_prefactor,
+            grad_clip=grad_clip,
+            extra_kwargs=kwargs,
         )
 
         self._configure_train_sampler(
@@ -3525,6 +3512,74 @@ class NQS(MonteCarloSolver):
         )
         if not reset_stats and old_stats is not None:
             self._trainer.stats = old_stats
+
+    def _build_trainer_kwargs(
+        self,
+        *,
+        n_epochs: int,
+        n_batch: int,
+        phases: Any,
+        timing_mode: Any,
+        early_stopper: Any,
+        optimizer: Any,
+        lower_states: Any,
+        lr: Any,
+        lr_scheduler: Any,
+        reg: Any,
+        reg_scheduler: Any,
+        diag_shift: Any,
+        diag_scheduler: Any,
+        lin_solver: Any,
+        lin_force_mat: bool,
+        pre_solver: Any,
+        ode_solver: Any,
+        tdvp: Any,
+        lin_sigma: Any,
+        lin_is_gram: bool,
+        use_sr: bool,
+        use_minsr: bool,
+        rhs_prefactor: float,
+        grad_clip: Any,
+        extra_kwargs: dict,
+    ) -> dict:
+        """
+        Build the canonical option payload consumed by ``NQSTrainer``.
+        """
+        trainer_kwargs = dict(extra_kwargs)
+        scheduler_defaults = {
+            "lr_max_epochs": trainer_kwargs.pop("lr_max_epochs", n_epochs),
+            "reg_max_epochs": trainer_kwargs.pop("reg_max_epochs", n_epochs),
+            "diag_max_epochs": trainer_kwargs.pop("diag_max_epochs", n_epochs),
+        }
+        trainer_kwargs.update(
+            {
+                "n_batch": n_batch,
+                "phases": phases,
+                "timing_mode": timing_mode,
+                "early_stopper": early_stopper,
+                "optimizer": optimizer,
+                "lower_states": lower_states,
+                "lr": lr,
+                "lr_scheduler": lr_scheduler,
+                "reg": reg,
+                "reg_scheduler": reg_scheduler,
+                "diag_shift": diag_shift,
+                "diag_scheduler": diag_scheduler,
+                "lin_solver": lin_solver,
+                "lin_force_mat": lin_force_mat,
+                "pre_solver": pre_solver,
+                "ode_solver": ode_solver,
+                "tdvp": tdvp,
+                "lin_sigma": lin_sigma,
+                "lin_is_gram": lin_is_gram,
+                "use_sr": use_sr,
+                "use_minsr": use_minsr,
+                "rhs_prefactor": rhs_prefactor,
+                "grad_clip": grad_clip,
+            }
+        )
+        trainer_kwargs.update(scheduler_defaults)
+        return trainer_kwargs
 
     def _resolve_exact_training_targets(
         self,

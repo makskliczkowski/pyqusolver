@@ -1,3 +1,5 @@
+"""Regression tests for nqs driver callbacks and logs."""
+
 import json
 import numpy as np
 import pytest
@@ -16,6 +18,7 @@ except ImportError:
 
 
 def _build_tiny_problem():
+	"""Build tiny problem."""
 	lattice = SquareLattice(dim=1, lx=4, bc="obc")
 	hilbert = HilbertSpace(lattice=lattice)
 	model = TransverseFieldIsing(
@@ -55,10 +58,12 @@ def _build_tiny_problem():
 
 
 def test_runtime_log_collects_epoch_data_and_callback_stops_early(tmp_path):
+	"""Verify test runtime log collects epoch data and callback stops early."""
 	psi = _build_tiny_problem()
 	runtime_log = RuntimeLog()
 
 	def stop_after_first_epoch(step, log_data, trainer):
+		"""Helper for stop after first epoch."""
 		assert "mean" in log_data
 		assert "acceptance" in log_data
 		return step < 0
@@ -88,6 +93,7 @@ def test_runtime_log_collects_epoch_data_and_callback_stops_early(tmp_path):
 
 
 def test_json_log_writes_serialized_training_history(tmp_path):
+	"""Verify test json log writes serialized training history."""
 	psi = _build_tiny_problem()
 	log_prefix = tmp_path / "nqs_run"
 

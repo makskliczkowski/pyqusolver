@@ -1,3 +1,5 @@
+"""Regression tests for nqs entropy exact sum."""
+
 import numpy as np
 import pytest
 
@@ -20,10 +22,12 @@ except ImportError:
 
 
 def _binary_to_spin_pm_half(states):
+    """Convert binary representation to to spin pm half."""
     return np.asarray(states, dtype=np.float64) - 0.5
 
 
 def _build_exact_cat_state_nqs():
+    """Build exact cat state nqs."""
     lattice = SquareLattice(dim=1, lx=2, bc="obc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -76,6 +80,7 @@ def _build_exact_cat_state_nqs():
 
 
 def _build_trained_tfim_state():
+    """Build trained tfim state."""
     lattice = SquareLattice(dim=1, lx=2, bc="obc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -146,6 +151,7 @@ def _build_trained_tfim_state():
     ],
 )
 def test_exact_sum_renyi_matches_ed_for_multiple_regions_and_q(region, q):
+    """Verify test exact sum renyi matches ed for multiple regions and q."""
     hilbert, nqs, psi = _build_exact_cat_state_nqs()
 
     exact_sum_sq = compute_renyi_entropy(nqs, region=region, q=q, exact_sum=True)
@@ -161,6 +167,7 @@ def test_exact_sum_renyi_matches_ed_for_multiple_regions_and_q(region, q):
 
 
 def test_exact_sum_raw_outputs_are_consistent():
+    """Verify test exact sum raw outputs are consistent."""
     _, nqs, _ = _build_exact_cat_state_nqs()
     raw = compute_renyi_entropy(nqs, region=[0], q=3, exact_sum=True, return_raw=True)
 
@@ -174,6 +181,7 @@ def test_exact_sum_raw_outputs_are_consistent():
 
 
 def test_spin_half_exact_helpers_match_sampler_binary_state_convention():
+    """Verify test spin half exact helpers match sampler binary state convention."""
     _, nqs, _ = _build_exact_cat_state_nqs()
 
     entropy_basis = _enumerate_basis_states_nqs(nqs)
@@ -186,6 +194,7 @@ def test_spin_half_exact_helpers_match_sampler_binary_state_convention():
 
 
 def test_hamiltonian_local_energy_uses_active_binary_state_convention():
+    """Verify test hamiltonian local energy uses active binary state convention."""
     lattice = SquareLattice(dim=1, lx=2, bc="obc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -236,6 +245,7 @@ def test_hamiltonian_local_energy_uses_active_binary_state_convention():
 
 
 def test_trained_tfim_entropy_matches_ed_for_multiple_regions_and_q():
+    """Verify test trained tfim entropy matches ed for multiple regions and q."""
     hilbert, nqs, model, psi_exact, stats = _build_trained_tfim_state()
 
     assert getattr(nqs, "_state_representation", None) == "spin_pm"
