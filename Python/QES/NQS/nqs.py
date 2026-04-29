@@ -524,6 +524,7 @@ class NQS(MonteCarloSolver):
         # --------------------------------------------------
 
         self._sampler                   = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)
+        self._connected_eval_chunk_size = int(kwargs.get("connected_eval_chunk_size", getattr(self._sampler, "_network_eval_chunk_size", max(1, batch_size))))
 
         # --------------------------------------------------
         #! Handle gradients
@@ -548,7 +549,7 @@ class NQS(MonteCarloSolver):
         self._ansatz_base_func = self._ansatz_func  # Keep a reference to the pure ansatz function
         
         if self._isjax and JAX_AVAILABLE:
-            self._apply_uniform_func = jax.jit(NQS._apply_fun_jax_uniform, static_argnums=(0, 4, 6),)
+            self._apply_uniform_func = NQS._apply_fun_jax_uniform
         else:
             self._apply_uniform_func = None
         
@@ -644,10 +645,30 @@ class NQS(MonteCarloSolver):
         else:
             self._ansatz_func = current_ansatz
 
-        # Update the sampler's apply function if possible
+        # Update the sampler's apply function if possible. Fast updates (e.g., for RBM)
+        # are only valid for the raw network ansatz, not for wrapped/projected
+        # functions.
         if hasattr(self, "_sampler") and self._sampler is not None:
+            wrapped = self._modifier_source is not None or self.symmetry_handler.active
+            
             if hasattr(self._sampler, "set_apply_fun"):
-                self._sampler.set_apply_fun(self._ansatz_func)
+                if wrapped:
+                    self._sampler.set_apply_fun(self._ansatz_func)
+                    
+                else:
+                    log_psi_delta_fun = getattr(self._net, "log_psi_delta", None)
+                    if log_psi_delta_fun is None and hasattr(self._net, "get_log_psi_delta"):
+                        log_psi_delta_fun = self._net.get_log_psi_delta()
+                    
+                    cache_init_fun = getattr(self._net, "init_log_psi_delta_cache", None)
+                    if cache_init_fun is None and hasattr(self._net, "get_log_psi_delta_cache_init"):
+                        cache_init_fun = self._net.get_log_psi_delta_cache_init()
+                        
+                    self._sampler.set_apply_fun(self._ansatz_func,
+                                    log_psi_delta_fun            = log_psi_delta_fun,
+                                    log_psi_delta_cache_init_fun = cache_init_fun,
+                                    log_psi_delta_supports_cache = bool(getattr(self._net, "log_psi_delta_supports_cache", False)),
+                                )
             elif hasattr(self._sampler, "_apply_fun"):
                 self._sampler._apply_fun = self._ansatz_func
 
@@ -899,12 +920,21 @@ class NQS(MonteCarloSolver):
         if batch_size is None or self._batch_size == batch_size:
             return
         self._batch_size        = batch_size
-        self._ansatz_base_func  = self._ansatz_func
-        self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
+        self._ansatz_base_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         if self._isjax and JAX_AVAILABLE:
-            self._apply_uniform_func = self.nqsbackend._get_cached_jit(NQS._apply_fun_jax_uniform, (0, 4, 6))
+            self._apply_uniform_func = NQS._apply_fun_jax_uniform
         else:
             self._apply_uniform_func = None
+        self._rebuild_ansatz_function()
+
+    def set_connected_eval_chunk_size(self, connected_eval_chunk_size: int):
+        """
+        Set the chunk size for connected-state network evaluation inside estimators.
+        """
+        connected_eval_chunk_size = int(connected_eval_chunk_size)
+        if connected_eval_chunk_size <= 0:
+            raise ValueError("connected_eval_chunk_size must be a positive integer.")
+        self._connected_eval_chunk_size = connected_eval_chunk_size
 
     def _use_uniform_apply_path(self) -> bool:
         """
@@ -1024,6 +1054,8 @@ class NQS(MonteCarloSolver):
 
             if "s_sample_dtype" in kwargs:
                 sampler_kwargs["sample_dtype"] = kwargs.pop("s_sample_dtype")
+            if "s_network_eval_chunk_size" in kwargs:
+                sampler_kwargs["network_eval_chunk_size"] = kwargs.pop("s_network_eval_chunk_size")
 
             sampler_kwargs["initstate"]     = kwargs.get("s_initstate", None)
             sampler_kwargs.pop("s_initstate", None)
@@ -1224,13 +1256,14 @@ class NQS(MonteCarloSolver):
 
     @staticmethod
     def _apply_fun_jax_uniform(
-        func            : Callable,
-        states          : Array,
-        sample_probas   : Array,
-        logprobas_in    : Array,
-        logproba_fun    : Callable,
-        parameters      : Any,
-        batch_size      : int,
+        func                    : Callable,
+        states                  : Array,
+        sample_probas           : Array,
+        logprobas_in            : Array,
+        logproba_fun            : Callable,
+        parameters              : Any,
+        batch_size              : int,
+        connected_batch_size    : Optional[int] = None,
     ):
         """
         Compatibility wrapper for uniform-weight JAX estimators.
@@ -1243,6 +1276,7 @@ class NQS(MonteCarloSolver):
             logproba_fun=logproba_fun,
             parameters=parameters,
             batch_size=batch_size,
+            connected_batch_size=connected_batch_size,
         )
 
     @staticmethod
@@ -1390,6 +1424,7 @@ class NQS(MonteCarloSolver):
                                 self._ansatz_func,
                                 params,
                                 batch_size,
+                                self._connected_eval_chunk_size,
                                 *op_args,
                             )
 
@@ -2285,6 +2320,7 @@ class NQS(MonteCarloSolver):
         flat_grad_fn,
         compute_grad_f,
         batch_size,
+        connected_eval_chunk_size,
         t=0,
     ):
         """
@@ -2312,6 +2348,7 @@ class NQS(MonteCarloSolver):
                             flat_grad_fn=flat_grad_fn,
                             compute_grad_f=compute_grad_f,
                             batch_size=batch_size,
+                            connected_eval_chunk_size=connected_eval_chunk_size,
                             t=t,
                             use_jax=False,
                         )
@@ -2397,18 +2434,12 @@ class NQS(MonteCarloSolver):
         """
 
         batch_size          = batch_size if batch_size is not None else self._batch_size
+        self._set_batch_size(batch_size)
 
         # ! Snapshot the current functions
         # This guarantees that the trainer uses exactly what was active when wrapped
-        if batch_size == self._batch_size:
-            ansatz_fn                       = self._ansatz_func
-            apply_fn                        = self._apply_uniform_func if self._use_uniform_apply_path() else self._apply_func
-        else:
-            ansatz_fn, _eval_fn, apply_fn   = self.nqsbackend.compile_functions(self._net, batch_size=batch_size)
-            if self._isjax and JAX_AVAILABLE:
-                apply_uniform_fn            = self.nqsbackend._get_cached_jit(NQS._apply_fun_jax_uniform, (0, 4, 6))
-                apply_fn                    = apply_uniform_fn if bool(getattr(self._sampler, "has_uniform_weights", False)) else apply_fn
-                
+        ansatz_fn           = self._ansatz_func
+        apply_fn            = self._apply_uniform_func if self._use_uniform_apply_path() else self._apply_func
         local_loss_fn       = self._loss_func
         flat_grad_fn        = self._flat_grad_func
         compute_grad_f      = net_utils.jaxpy.compute_gradients_batched if not self._analytic else self._analytic_grad_func
@@ -2431,15 +2462,16 @@ class NQS(MonteCarloSolver):
 
         single_step_jax = partial(
             nqs_kernels._single_step,
-            ansatz_fn           =   ansatz_fn,
-            local_loss_fn       =   local_loss_fn,
-            flat_grad_fn        =   flat_grad_fn,
-            apply_fn            =   apply_fn,
-            batch_size          =   batch_size,
-            compute_grad_f      =   compute_grad_f,
-            accum_real_dtype    =   accum_real_dtype,
-            accum_complex_dtype =   accum_complex_dtype,
-            use_jax             =   self._isjax,
+            ansatz_fn                   =   ansatz_fn,
+            local_loss_fn               =   local_loss_fn,
+            flat_grad_fn                =   flat_grad_fn,
+            apply_fn                    =   apply_fn,
+            batch_size                  =   batch_size,
+            compute_grad_f              =   compute_grad_f,
+            accum_real_dtype            =   accum_real_dtype,
+            accum_complex_dtype         =   accum_complex_dtype,
+            use_jax                     =   self._isjax,
+            connected_eval_chunk_size   =   self._connected_eval_chunk_size,
         )
 
         # ! Create the JIT-compiled wrapper
@@ -2531,6 +2563,7 @@ class NQS(MonteCarloSolver):
                 accum_complex_dtype=accum_complex_dtype,
                 use_jax=self._isjax,
                 batch_size=self._batch_size,
+                connected_eval_chunk_size=self._connected_eval_chunk_size,
                 **kwargs,
             )
 
@@ -2775,6 +2808,8 @@ class NQS(MonteCarloSolver):
 
         # set the parameters
         self._net.set_params(params)
+        if hasattr(self, "_sampler") and self._sampler is not None and hasattr(self._sampler, "invalidate_parameter_cache"):
+            self._sampler.invalidate_parameter_cache(require_thermalization=False)
 
     @property
     def parameters(self) -> Any:
@@ -3581,19 +3616,25 @@ class NQS(MonteCarloSolver):
         trainer_kwargs.update(scheduler_defaults)
         return trainer_kwargs
 
-    def _resolve_exact_training_targets(
-        self,
-        exact_predictions: Any,
-        exact_method: str,
-    ) -> tuple[Any, str]:
+    def _resolve_exact_training_targets(self, exact_predictions: Any, exact_method: str) -> tuple[Any, str]:
         """Resolve explicit or cached exact reference values for the training run."""
-        if exact_predictions is None and self._model.eig_vals is not None:
-            exact_predictions = self._model.eig_vals
-            self.exact = exact_predictions
+        cached_exact = self.exact
+        if exact_predictions is None and isinstance(cached_exact, dict):
+            exact_predictions   = cached_exact.get("exact_predictions", None)
+            exact_method        = exact_method or cached_exact.get("exact_method", None)
 
-        if self.exact and exact_predictions is None:
-            exact_predictions = self.exact.get("exact_predictions", exact_predictions)
-            exact_method = self.exact.get("exact_method", exact_method)
+        if exact_predictions is None and getattr(self._model, "eig_vals", None) is not None:
+            exact_predictions   = self._model.eig_vals
+            exact_method        = exact_method or "model_eig_vals"
+
+        if exact_predictions is not None:
+            arr         = np.atleast_1d(np.asarray(exact_predictions))
+            idx         = getattr(self, "_nthstate", 0)
+            self.exact  = {
+                "exact_predictions" : arr,
+                "exact_method"      : exact_method,
+                "exact_energy"      : float(np.real(arr[idx])),
+            }
 
         return exact_predictions, exact_method
 

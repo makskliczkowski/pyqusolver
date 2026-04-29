@@ -209,6 +209,18 @@ class NQSTrainStats:
 
 # ------------------------------------------------------
 
+@dataclass
+class NQSTrainBatch:
+    """Sampler output consumed by one TDVP update."""
+
+    configs          : Any
+    configs_ansatze  : Any
+    probabilities    : Any
+    num_chains       : int
+
+
+# ------------------------------------------------------
+
 
 class NQSTrainer:
     """
@@ -1135,23 +1147,112 @@ class NQSTrainer:
     #! Main Training Loop
     # ------------------------------------------------------
 
+    def _exact_state_index(self) -> int:
+        return len(self.lower_states) if self.lower_states else 0
+
+    def _make_exact_info(self, exact_predictions: Union[float, List[float], np.ndarray], exact_method: str = None) -> Optional[Dict[str, Any]]:
+        """Normalize exact-reference metadata for trainer stats and NQS."""
+        if exact_predictions is None:
+            return None
+
+        arr = np.atleast_1d(np.asarray(exact_predictions))
+        idx = self._exact_state_index()
+        if idx >= len(arr):
+            raise ValueError(f"Exact predictions contain {len(arr)} values, but state index {idx} was requested.")
+
+        return {
+            "exact_predictions" : arr,
+            "exact_method"      : exact_method,
+            "exact_energy"      : float(np.real(arr[idx])),
+        }
+
     def _train_set_exact_info(self, exact_predictions: Union[float, List[float], np.ndarray], exact_method: str = None):
         """Sets exact prediction info on the NQS object."""
-        if exact_predictions is not None:
-            self.nqs.exact = {
-                "exact_predictions" : exact_predictions,
-                "exact_method"      : exact_method,
-                # Choose appropriate exact energy for this state
-                "exact_energy"      : (
-                    float(exact_predictions)
-                    if np.ndim(exact_predictions) == 0
-                    else (
-                        exact_predictions[len(self.lower_states)]
-                        if self.lower_states
-                        else exact_predictions[0]
-                    )
-                ),
-            }
+        exact_info = self._make_exact_info(exact_predictions, exact_method)
+        if exact_info is None:
+            return
+        self.nqs.exact = exact_info
+        self.stats.set_exact(exact_info["exact_predictions"], exact_info["exact_method"])
+
+    def _sample_training_batch(
+        self,
+        *,
+        global_epoch: int,
+        num_samples: Optional[int],
+        num_chains: Optional[int],
+    ) -> NQSTrainBatch:
+        """Run sampler through one train-facing path."""
+        sample_out = self._timed_execute(
+            "sample",
+            self.nqs.sample,
+            reset       = (global_epoch == 0),
+            epoch       = global_epoch,
+            num_samples = num_samples,
+            num_chains  = num_chains,
+            params      = self.nqs.get_params(),
+        )
+        _, (cfgs, cfgs_psi), probs = sample_out
+        used_num_chains = int(num_chains if num_chains is not None else self.nqs.sampler.numchains)
+        return NQSTrainBatch(
+            configs         = cfgs,
+            configs_ansatze = cfgs_psi,
+            probabilities   = probs,
+            num_chains      = used_num_chains,
+        )
+
+    def _step_training_batch(
+        self,
+        *,
+        batch: NQSTrainBatch,
+        global_epoch: int,
+        lower_contr: Optional[List[TDVPLowerPenalty]],
+    ):
+        """Run one TDVP/ODE step through one train-facing path."""
+        step_kwargs = {
+            "f"                 : self.tdvp,
+            "y"                 : self.nqs.get_params(unravel=True),
+            "t"                 : 0.0,
+            "est_fn"            : self._single_step_jit,
+            "configs"           : batch.configs,
+            "configs_ansatze"   : batch.configs_ansatze,
+            "probabilities"     : batch.probabilities,
+            "num_chains"        : batch.num_chains,
+        }
+        step_fn = self._step_jit
+        if lower_contr is not None:
+            step_fn = self._step_nojit
+            step_kwargs["lower_states"] = lower_contr
+
+        return self._timed_execute("step", step_fn, epoch=global_epoch, **step_kwargs)
+
+    def _apply_parameter_update(
+        self,
+        *,
+        dparams,
+        shapes_info,
+        lr: float,
+        global_epoch: int,
+    ):
+        """Apply accepted TDVP update through one set_params path."""
+        current_params_flat = self.nqs.get_params(unravel=True)
+        if self.optimizer is not None and self.nqs._isjax:
+            import optax
+
+            dt_step     = float(lr)
+            direction   = (dparams - current_params_flat) / dt_step if dt_step > 1e-12 else (dparams - current_params_flat)
+            updates, self.opt_state = self.optimizer.update(-direction, self.opt_state, current_params_flat)
+            new_params_flat         = optax.apply_updates(current_params_flat, updates)
+        else:
+            new_params_flat         = dparams
+
+        new_params_pytree = self.nqs.transform_flat_params(
+            new_params_flat,
+            shapes_info[0],
+            shapes_info[1],
+            shapes_info[2],
+        )
+        self._timed_execute("update", self.nqs.set_params, new_params_pytree, epoch=global_epoch)
+        return new_params_flat, new_params_pytree
 
     def _train_update_pbar(
         self,
@@ -1327,12 +1428,10 @@ class NQSTrainer:
 
         # Set total epochs for sparse logging in background mode
         self._total_epochs = n_epochs or 100
-        # Set exact info if provided
         num_samples         = kwargs.get("num_samples", None)
         num_chains          = kwargs.get("num_chains", None)
         exact_predictions   = kwargs.get("exact_predictions", None)
         exact_method        = kwargs.get("exact_method", None)
-        self._train_set_exact_info(exact_predictions, exact_method)
 
         # Reset stats if needed, if not we continue accumulating
         if reset_stats:
@@ -1344,13 +1443,12 @@ class NQSTrainer:
             if start_epoch > 0:
                 self._log(f"Continuing training from epoch {start_epoch} (reset_stats=False)", lvl=1, color="cyan", verbose=self.verbose,)
 
+        self._train_set_exact_info(exact_predictions, exact_method)
         self.stats.timings.n_steps  = start_epoch
         total_time_offset           = self._last_finite(self.stats.timings.total, default=0.0)
         run_t0                      = time.time()
         n_epochs                    = n_epochs or 100
         pbar                        = trange(n_epochs, desc="NQS Training", leave=True) if use_pbar else range(n_epochs)
-        current_params              = self.nqs.get_params()
-        current_params_flat         = self.nqs.get_params(unravel=True)
 
         try:
             for epoch in pbar:
@@ -1370,19 +1468,18 @@ class NQSTrainer:
                 if self.auto_tuner:
                     current_num_samples = self.auto_tuner.n_samples
 
-                sample_out = self._timed_execute("sample", self.nqs.sample, reset=(global_epoch == 0), epoch=global_epoch, num_samples=current_num_samples, num_chains=num_chains, params=current_params)
-                (_, _), (cfgs, cfgs_psi), probs = sample_out
+                batch = self._sample_training_batch(global_epoch=global_epoch, num_samples=current_num_samples, num_chains=num_chains)
                 if epoch == 0:
                     self._log(
-                        f"Sampled {cfgs.shape[0]} configurations with batch size {self.n_batch}",
+                        f"Sampled {batch.configs.shape[0]} configurations with batch size {self.n_batch}",
                         lvl=1,
                         color="green",
                         verbose=self.verbose,
                     )
 
                 # Handle Excited States (Penalty Terms)
-                lower_contr = self._prepare_lower_states(cfgs, cfgs_psi)
-                if epoch == 0:
+                lower_contr = self._prepare_lower_states(batch.configs, batch.configs_ansatze)
+                if epoch == 0 and lower_contr is not None:
                     self._log(
                         "Prepared lower states for excited state handling",
                         lvl=1,
@@ -1390,27 +1487,7 @@ class NQSTrainer:
                         verbose=self.verbose,
                     )
                 # Physics Step (TDVP / ODE) (Timed)
-                step_kwargs = {
-                                "f"                 : self.tdvp,
-                                "y"                 : current_params_flat,
-                                "t"                 : 0.0,
-                                "est_fn"            : self._single_step_jit,
-                                "configs"           : cfgs,
-                                "configs_ansatze"   : cfgs_psi,
-                                "probabilities"     : probs,
-                                "num_chains"        : int(num_chains if num_chains is not None else self.nqs.sampler.numchains),
-                            }
-                step_fn = self._step_jit
-                if lower_contr is not None:
-                    step_fn = self._step_nojit
-                    step_kwargs["lower_states"] = lower_contr
-
-                step_out = self._timed_execute(
-                    "step",
-                    step_fn,
-                    epoch=global_epoch,
-                    **step_kwargs,
-                )
+                step_out = self._step_training_batch(batch=batch, global_epoch=global_epoch, lower_contr=lower_contr)
                 dparams, _, (tdvp_info, shapes_info)    = step_out
                 mean_loss                               = tdvp_info.mean_energy
                 std_loss                                = tdvp_info.std_energy
@@ -1443,30 +1520,7 @@ class NQSTrainer:
 
                 # Update Weights (Timed) - Only if accepted
                 if accepted:
-                    if self.optimizer is not None and self.nqs._isjax:
-                        # Use optax update logic
-                        import optax
-                        
-                        # Direction from TDVP (dot_theta)
-                        # ODE solver returns new parameters dparams. 
-                        # direction = (new - old) / dt
-                        dt_step     = float(lr)
-                        direction   = (dparams - current_params_flat) / dt_step if dt_step > 1e-12 else (dparams - current_params_flat)
-                        
-                        # Direction is -grad for standard gradient descent
-                        # optax expects gradients to subtract (update = -lr * grad)
-                        # So we pass -direction as the gradient
-                        updates, self.opt_state = self.optimizer.update(-direction, self.opt_state, current_params_flat)
-                        new_params_flat         = optax.apply_updates(current_params_flat, updates)
-                        new_params_pytree       = self.nqs.transform_flat_params(new_params_flat, shapes_info[0], shapes_info[1], shapes_info[2])
-                        self._timed_execute("update", self.nqs.set_params, new_params_pytree, epoch=global_epoch)
-                        current_params_flat     = new_params_flat
-                        current_params          = new_params_pytree
-                    else:
-                        new_params_pytree       = self.nqs.transform_flat_params(dparams, shapes_info[0], shapes_info[1], shapes_info[2])
-                        self._timed_execute("update", self.nqs.set_params, new_params_pytree, epoch=global_epoch)
-                        current_params_flat     = dparams
-                        current_params          = new_params_pytree
+                    self._apply_parameter_update(dparams=dparams, shapes_info=shapes_info, lr=lr, global_epoch=global_epoch)
 
                 # Global Phase Integration
                 # Extract theta0_dot from JIT output and update TDVP state
@@ -1636,9 +1690,10 @@ class NQSTrainer:
         path    = str(path) if path is not None else str(self.nqs.defdir)
         seed    = getattr(self.nqs, "_net_seed", getattr(self.nqs, "_seed", None))
 
-        # Update stats with seed before saving
+        # Update stats with seed/exact info before saving
         self.stats.seed = seed
-        self.stats.exact_predictions = kwargs.get("exact_predictions", None)
+        if kwargs.get("exact_predictions", None) is not None:
+            self.stats.set_exact(kwargs.get("exact_predictions", None), kwargs.get("exact_method", None))
 
         # Build comprehensive metadata
         meta = {

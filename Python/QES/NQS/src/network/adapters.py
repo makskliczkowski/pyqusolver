@@ -11,16 +11,6 @@ except ImportError:
 
 # ----------------------------------------------------------------------
 
-def _key(value: Any) -> str:
-    """Normalize names used only by the NQS adapter layer."""
-    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
-
-def _native_representation_from_input_convention(net: Any, fallback: str) -> str:
-    """Infer wrapper input convention without requiring generic code to know NQS."""
-    input_convention = getattr(net, "_input_convention", None)
-    if isinstance(input_convention, dict):
-        return "spin_pm" if bool(input_convention.get("input_is_spin", False)) else "binary_01"
-    return fallback
 
 def infer_network_family(net: Any) -> str:
     """
@@ -30,10 +20,16 @@ def infer_network_family(net: Any) -> str:
     The main goal is to detect autoregressive and RBM-like structures from
     capabilities and common naming patterns.
     """
+    
+    
     if hasattr(net, "get_logits") and hasattr(net, "get_phase"):    # Presence of separate logits/phase methods is a strong indicator of autoregressive structure
         return "autoregressive"
     if hasattr(net, "log_psi_delta") or hasattr(net, "get_log_psi_delta"):
         return "rbm"
+    
+    def _key(value: Any) -> str:
+        """Normalize names used only by the NQS adapter layer."""
+        return str(value).strip().lower().replace("-", "_").replace(" ", "_")
 
     name        = _key(getattr(net, "name", getattr(net, "_name", type(net).__name__)))
     cls_name    = _key(type(net).__name__)
@@ -148,20 +144,21 @@ class NQSNetAdapterBase:
         self.representation         = representation
         self.backend                = backend
         self.family                 = infer_network_family(net)
-        self.native_representation  = _native_representation_from_input_convention(net, representation.network_representation)
+        
+        input_convention = getattr(net, "_input_convention", None)
+        if isinstance(input_convention, str):
+            self.native_representation = input_convention
+        elif isinstance(input_convention, dict):
+            self.native_representation = "spin_pm" if bool(input_convention.get("input_is_spin", False)) else "binary_01"
+        else:
+            self.native_representation = representation.network_representation
 
     def preferred_sampler_representation(self) -> str:
         return self.representation.sampler_representation
 
-    def _resolve_sampler_value(
-        self,
-        representation: str | None = None,
-        *,
-        fallback: float = 1.0,
-    ) -> float:
+    def _resolve_sampler_value(self, representation: str | None = None, *, fallback: float = 1.0) -> float:
         return float(
-            resolve_representation_value(
-                representation or self.preferred_sampler_representation(),
+            resolve_representation_value(representation or self.preferred_sampler_representation(),
                 local_space_type=self.representation.local_space_type,
                 fallback=fallback,
             )

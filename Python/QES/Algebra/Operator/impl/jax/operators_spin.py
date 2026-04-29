@@ -59,12 +59,12 @@ if JAX_AVAILABLE:
         )
 
 else:
-    _SIG_0_jnp = np
-    _SIG_X_jnp = np
-    _SIG_Y_jnp = np
-    _SIG_Z_jnp = np
-    _SIG_P_jnp = np
-    _SIG_M_jnp = np
+    _SIG_0_jnp = None
+    _SIG_X_jnp = None
+    _SIG_Y_jnp = None
+    _SIG_Z_jnp = None
+    _SIG_P_jnp = None
+    _SIG_M_jnp = None
     _flip_func = None
 
 
@@ -72,19 +72,19 @@ if JAX_AVAILABLE:
 
     def _array_state_to_bit_jnp(raw_value, spin: bool, spin_value: float):
         """
-        Map array-state encodings onto the binary convention used by integer kernels.
+        Map array states to the canonical spin-1/2 bit convention.
+
+        Convention:
+            bit=1 <-> +spin_value,
+            bit=0 <-> -spin_value or zero occupation.
         """
         raw_arr         = jnp.asarray(raw_value)
         dtype           = jnp.result_type(raw_arr, spin_value, jnp.float32)
         raw_arr         = raw_arr.astype(dtype)
-        spin_value_arr  = jnp.asarray(spin_value, dtype=dtype)
-        spin_bits       = (raw_arr > 0).astype(dtype)
-        scaled          = jnp.where(
-            (raw_arr > 0) & (raw_arr <= spin_value_arr),
-            raw_arr / jnp.where(spin_value_arr == 0, 1.0, spin_value_arr),
-            raw_arr,
-        )
-        return lax.cond(spin, lambda _: spin_bits, lambda _: scaled, operand=None)
+        if spin:
+            return (raw_arr > 0).astype(dtype)
+        scale = jnp.asarray(spin_value, dtype=dtype)
+        return raw_arr / jnp.where(scale == 0, jnp.asarray(1.0, dtype=dtype), scale)
 
 # -----------------------------------------------------------------------------
 #! Sigma-X (sigma _x) operator
@@ -183,8 +183,9 @@ if JAX_AVAILABLE:
         r"""
         sigma _y  on an integer state (JAX version).
 
-        For each site, if the bit at (ns-1-site) is set then multiply the coefficient
-        by (-1j*spin_value), otherwise by (1j*spin_value); then flip the bit.
+        Canonical spin-1/2 convention: bit=1 is spin-up (+spin_value).
+        Therefore sigma_y contributes +i*spin_value on bit=1 and
+        -i*spin_value on bit=0 before flipping the bit.
 
         Args:
             state (int or JAX array) :
@@ -207,8 +208,7 @@ if JAX_AVAILABLE:
             pos                 = ns - 1 - sites_arr[i]
             bitmask             = jnp.left_shift(1, pos)
             condition           = (state_val & bitmask) > 0
-            # Corrected sign: bit=1 (down) -> -1j, bit=0 (up) -> 1j
-            factor              = lax.cond(condition, lambda _: -1j * spin_value, lambda _: 1j * spin_value, operand=None)
+            factor              = lax.cond(condition, lambda _: 1j * spin_value, lambda _: -1j * spin_value, operand=None)
             new_state           = _binary.jaxpy.flip_int_traced_jax(state_val, pos)
             return (new_state, coeff * factor)
 
@@ -236,19 +236,14 @@ if JAX_AVAILABLE:
             value = jnp.asarray(spin_value, dtype=s.dtype)
             return s.at[sites_arr].set(value - s[sites_arr])
 
-        new_state = lax.cond(spin, update_spin, update_nspin, state)
+        new_state   = lax.cond(spin, update_spin, update_nspin, state)
 
         # 2. Update Coeff (Vectorized)
         # We can replicate check_arr_jax logic efficiently:
-        bits = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
+        bits        = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
 
-        # Factor logic for spin representation [-0.5, 0.5]:
-        # if up (bit=1)    :  1j * spin_value
-        # if down (bit=0)  : -1j * spin_value
-        # This simplifies to: 1j * spin_value * (2 * bits - 1)
-
-        factors = 1j * spin_value * (2 * bits - 1)
-        coeff   = jnp.prod(factors)
+        factors     = 1j * spin_value * (2 * bits - 1)
+        coeff       = jnp.prod(factors)
 
         return ensure_operator_output_shape_jax(new_state, coeff)
 
@@ -344,9 +339,8 @@ if JAX_AVAILABLE:
             bitmask     = jnp.left_shift(1, pos)
             # Compute the condition: is the bit set? This returns a boolean JAX array.
             condition   = (state & bitmask) > 0
-            # Use lax.cond to choose the factor:
-            # bit=1 (down) -> -spin_value, bit=0 (up) -> spin_value
-            factor      = lax.cond(condition, lambda _: -spin_value, lambda _: spin_value, operand=None)
+            # Canonical spin-1/2 convention: bit=1 is spin-up (+spin_value).
+            factor      = lax.cond(condition, lambda _: spin_value, lambda _: -spin_value, operand=None)
             # Multiply the accumulator with the factor.
             return coeff * factor
 
@@ -365,17 +359,11 @@ if JAX_AVAILABLE:
         r"""
         \sum _z on a JAX array state.
         """
-        sites_arr = jnp.asarray(sites)
+        sites_arr   = jnp.asarray(sites)
+        bits        = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
 
-        bits = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
-
-        # Factor logic for spin representation [-0.5, 0.5]:
-        # if up (bit=1)    :  spin_value
-        # if down (bit=0)  : -spin_value
-        # Simplifies to: spin_value * (2 * bits - 1)
-
-        factors = spin_value * (2 * bits - 1)
-        coeff = jnp.prod(factors)
+        factors     = spin_value * (2 * bits - 1)
+        coeff       = jnp.prod(factors)
 
         return ensure_operator_output_shape_jax(state, coeff)
         # return state, coeff
@@ -778,15 +766,15 @@ if JAX_AVAILABLE:
         sites = jnp.asarray(sites)
 
         def body(i, total):
-            site = sites[i]
-            pos = ns - 1 - site
+            site    = sites[i]
+            pos     = ns - 1 - site
             bitmask = jnp.left_shift(1, pos)
-            factor = lax.cond((state & bitmask) > 0, lambda _: 1j, lambda _: -1.0, operand=None)
+            factor  = lax.cond((state & bitmask) > 0, lambda _: 1j, lambda _: -1.0, operand=None)
             return total + factor * jnp.exp(1j * k * site)
 
-        total = lax.fori_loop(0, sites.shape[0], body, 0.0 + 0j)
-        sqrt_l = jnp.sqrt(jnp.array(sites.shape[0]))
-        norm = lax.cond(
+        total   = lax.fori_loop(0, sites.shape[0], body, 0.0 + 0j)
+        sqrt_l  = jnp.sqrt(jnp.array(sites.shape[0]))
+        norm    = lax.cond(
             sites.shape[0] > 0, lambda _: sqrt_l, lambda _: jnp.array(1.0), operand=None
         )
         return state, total / norm
@@ -818,21 +806,19 @@ if JAX_AVAILABLE:
         Returns:
             tuple: (state, coeff) where state is unchanged and coeff is the accumulated coefficient.
         """
-        total = 0.0 + 0j
-        sites_arr = jnp.asarray(sites)
+        total       = 0.0 + 0j
+        sites_arr   = jnp.asarray(sites)
 
         def body_fun(i, total_val):
-            pos = sites_arr[i]
-            raw = _binary.jaxpy.check_arr_jax(state, pos)
-            bit = _array_state_to_bit_jnp(raw, spin, spin_value)
-            factor = (2.0 * bit - 1.0) * spin_value
+            pos     = sites_arr[i]
+            raw     = _binary.jaxpy.check_arr_jax(state, pos)
+            bit     = _array_state_to_bit_jnp(raw, spin, spin_value)
+            factor  = (2.0 * bit - 1.0) * spin_value
             return total_val + factor * jnp.exp(1j * k * pos)
 
-        total = lax.fori_loop(0, sites_arr.shape[0], body_fun, total)
-        sqrt_l = jnp.sqrt(jnp.array(sites_arr.shape[0]))
-        norm = lax.cond(
-            sites_arr.shape[0] > 0, lambda _: sqrt_l, lambda _: jnp.array(1.0), operand=None
-        )
+        total   = lax.fori_loop(0, sites_arr.shape[0], body_fun, total)
+        sqrt_l  = jnp.sqrt(jnp.array(sites_arr.shape[0]))
+        norm    = lax.cond(sites_arr.shape[0] > 0, lambda _: sqrt_l, lambda _: jnp.array(1.0), operand=None)
         return ensure_operator_output_shape_jax(state, total / norm)
 
     def sigma_k_inv_jnp(
@@ -885,9 +871,9 @@ if JAX_AVAILABLE:
         r"""
         sigma _t  on a JAX array state.
         """
-        sites_arr = jnp.asarray(sites)
-        bits = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
-        coeff = jnp.sum(2.0 * bits - 1.0) * spin_value
+        sites_arr   = jnp.asarray(sites)
+        bits        = _array_state_to_bit_jnp(state[sites_arr], spin, spin_value)
+        coeff       = jnp.sum(2.0 * bits - 1.0) * spin_value
         return ensure_operator_output_shape_jax(state, coeff)
 
     def sigma_z_total_int_jnp(
@@ -919,9 +905,7 @@ if JAX_AVAILABLE:
 
 if JAX_AVAILABLE:
 
-    def _apply_pauli_sequence_jnp(
-        state, sites, codes, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN
-    ):
+    def _apply_pauli_sequence_jnp(state, sites, codes, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN):
         r"""
         Apply a sequence of Pauli operators to a JAX array state.
 
@@ -972,15 +956,12 @@ if JAX_AVAILABLE:
                 st, c   = state_c
                 bit     = _binary.jaxpy.check_arr_jax(st, site)
                 # bit=1 (up) -> i, bit=0 (down) -> -i
-                factor  = jax.lax.cond(
-                    bit, lambda _: 1j * spin_value, lambda _: -1j * spin_value, operand=None
-                )
-                new_st  = jax.lax.cond(
-                    spin,
-                    lambda s: _binary.jaxpy.flip_array_jax_spin(s, site),
-                    lambda s: _binary.jaxpy.flip_array_jax_nspin(s, site, spin_value=spin_value),
-                    st,
-                )
+                factor  = jax.lax.cond(bit, lambda _: 1j * spin_value, lambda _: -1j * spin_value, operand=None)
+                new_st  = jax.lax.cond(spin,
+                            lambda s: _binary.jaxpy.flip_array_jax_spin(s, site),
+                            lambda s: _binary.jaxpy.flip_array_jax_nspin(s, site, spin_value=spin_value),
+                            st,
+                        )
                 return (new_st, c * factor)
 
             # Apply Z: no flip, coeff *= ±spin_value (sign depends on bit)
@@ -988,19 +969,16 @@ if JAX_AVAILABLE:
                 st, c   = state_c
                 bit     = _binary.jaxpy.check_arr_jax(st, site)
                 # bit=1 (up) -> 1, bit=0 (down) -> -1
-                factor  = jax.lax.cond(
-                    bit, lambda _: spin_value, lambda _: -spin_value, operand=None
-                )
+                factor  = jax.lax.cond(bit, lambda _: spin_value, lambda _: -spin_value, operand=None)
                 return (st, c * factor)
 
             # Use nested lax.cond to select based on code
             # code == 0 -> X, code == 1 -> Y, code == 2 -> Z
-            new_state, new_coeff = jax.lax.cond(
-                code == 0,
-                apply_x,
-                lambda sc: jax.lax.cond(code == 1, apply_y, apply_z, sc),
-                (curr_state, curr_coeff),
-            )
+            new_state, new_coeff = jax.lax.cond(code == 0,
+                                apply_x,
+                                lambda sc: jax.lax.cond(code == 1, apply_y, apply_z, sc),
+                                (curr_state, curr_coeff),
+                            )
 
             return (new_state, new_coeff)
 

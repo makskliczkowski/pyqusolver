@@ -63,14 +63,15 @@ if JAX_AVAILABLE:
 # ----------------------------------------------------------------------
 
 def apply_fun(
-    func            : Callable,
-    states          : Array,
-    probabilities   : Array,
-    logproba_in     : Array,
-    logproba_fun    : Callable,
-    parameters      : Any,
-    batch_size      : Optional[int] = None,
-    is_jax          : bool = True,
+    func                    : Callable,
+    states                  : Array,
+    probabilities           : Array,
+    logproba_in             : Array,
+    logproba_fun            : Callable,
+    parameters              : Any,
+    batch_size              : Optional[int] = None,
+    connected_batch_size    : Optional[int] = None,
+    is_jax                  : bool = True,
     *op_args,
 ):
     """
@@ -78,23 +79,20 @@ def apply_fun(
     Dispatches to JAX or NumPy implementation based on `is_jax`.
     """
     if is_jax and JAX_AVAILABLE:
-        return _apply_fun_jax(
-            func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args
-        )
+        return _apply_fun_jax(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, connected_batch_size, *op_args)
     else:
-        return _apply_fun_np(
-            func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args
-        )
+        return _apply_fun_np(func, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, connected_batch_size, *op_args)
 
 
 def _apply_fun_jax(
-    func            : Callable,             # function to be evaluated (e.g., local energy f: s -> E_loc(s))
-    states          : Array,                # input states (shape: (N, ...))
-    probabilities   : Array,                # probabilities associated with the states (shape: (N,))
-    logproba_in     : Array,                # logarithm of the probabilities for the input states (\log p(s))
-    logproba_fun    : Callable,             # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
-    parameters      : Any,                  # parameters to be passed to the function - for the Networks ansatze
-    batch_size      : Optional[int] = None, # batch size for evaluation
+    func                    : Callable,             # function to be evaluated (e.g., local energy f: s -> E_loc(s))
+    states                  : Array,                # input states (shape: (N, ...))
+    probabilities           : Array,                # probabilities associated with the states (shape: (N,))
+    logproba_in             : Array,                # logarithm of the probabilities for the input states (\log p(s))
+    logproba_fun            : Callable,             # function to compute the logarithm of probabilities (\log p(s') -> to evaluate)
+    parameters              : Any,                  # parameters to be passed to the function - for the Networks ansatze
+    batch_size              : Optional[int] = None, # batch size for evaluation
+    connected_batch_size    : Optional[int] = None, # chunk size for connected-state network evaluation
     *op_args,
 ):
     r"""
@@ -138,22 +136,23 @@ def _apply_fun_jax(
     if batch_size is None or batch_size == 1:
         funct_in = net_utils.jaxpy.apply_callable_jax
         return funct_in(
-            _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, 1, *op_args
+            _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, 1, connected_batch_size, *op_args
         )
     else:
         funct_in = net_utils.jaxpy.apply_callable_batched_jax
         return funct_in(
-            _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, *op_args
+            _func_reshaped, states, probabilities, logproba_in, logproba_fun, parameters, batch_size, connected_batch_size, *op_args
         )
 
 def _apply_fun_np(
-    func            : Callable,
-    states          : np.ndarray,
-    probabilities   : np.ndarray,
-    logproba_in     : np.ndarray,
-    logproba_fun    : Callable,
-    parameters      : Any,
-    batch_size      : Optional[int] = None,
+    func                    : Callable,
+    states                  : np.ndarray,
+    probabilities           : np.ndarray,
+    logproba_in             : np.ndarray,
+    logproba_fun            : Callable,
+    parameters              : Any,
+    batch_size              : Optional[int] = None,
+    connected_batch_size    : Optional[int] = None,
     *op_args,
 ):
     """
@@ -302,6 +301,7 @@ def log_derivative_np(net, params, batch_size, states, flat_grad) -> np.ndarray:
                                     "accum_complex_dtype",
                                     "use_jax",
                                     "batch_size",
+                                    "connected_eval_chunk_size",
                                 ])
 def _single_step(
     params                      : Any,
@@ -320,6 +320,7 @@ def _single_step(
     use_jax                     : bool = True,
     # Static for evaluation
     batch_size                  : int = None,
+    connected_eval_chunk_size   : Optional[int] = None,
     t                           : float = None,
     int_step                    : int = 0,
 ) -> NQSSingleStepResult:
@@ -337,6 +338,7 @@ def _single_step(
         logproba_fun=ansatz_fn,
         parameters=params,
         batch_size=batch_size,
+        connected_batch_size=connected_eval_chunk_size,
     )
 
     #! b) Compute Gradients

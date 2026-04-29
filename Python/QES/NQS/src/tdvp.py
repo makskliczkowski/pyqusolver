@@ -122,6 +122,21 @@ class TDVPStepInfo:
     theta0          : Optional[Array] = None  # Global phase parameter θ₀
 
 
+@dataclass
+class TDVPPreparedStep:
+    """Prepared TDVP statistics needed by the linear solve."""
+    mean_energy     : Array
+    std_energy      : Array
+    forces          : Optional[Array]
+    covariance      : Optional[Array]
+    loss_c          : Array
+    var_deriv_c     : Array
+    var_deriv_c_h   : Optional[Array]
+    var_deriv_mean  : Optional[Array]
+    n_samples       : int
+    full_size       : int
+
+
 if JAX_AVAILABLE:
     jax.tree_util.register_pytree_node(
         TDVPTimes,
@@ -147,6 +162,25 @@ if JAX_AVAILABLE:
             None,
         ),
         lambda _, c: TDVPStepInfo(*c),
+    )
+    jax.tree_util.register_pytree_node(
+        TDVPPreparedStep,
+        lambda n: (
+            (
+                n.mean_energy,
+                n.std_energy,
+                n.forces,
+                n.covariance,
+                n.loss_c,
+                n.var_deriv_c,
+                n.var_deriv_c_h,
+                n.var_deriv_mean,
+                n.n_samples,
+                n.full_size,
+            ),
+            None,
+        ),
+        lambda _, c: TDVPPreparedStep(*c),
     )
 
 #################################################################
@@ -897,6 +931,20 @@ class TDVP:
         """
         self.sr_pinv_tol = pinv_tol
 
+    def _store_prepared_step(self, step: TDVPPreparedStep):
+        """
+        Persist the latest concrete TDVP statistics for inspection and warm starts.
+
+        This keeps state updates in one place instead of mutating several fields
+        throughout the solve path.
+        """
+        self._e_local_mean  = step.mean_energy
+        self._e_local_std   = step.std_energy
+        self._f0            = step.forces
+        self._s0            = step.covariance
+        self._n_samples     = step.n_samples
+        self._full_size     = step.full_size
+
     ###################
     #! GETTERS
     ###################
@@ -971,12 +1019,12 @@ class TDVP:
 
         #! centered loss and derivative
         if excited_penalty is None or len(excited_penalty) == 0:
-            loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size = self._prepare_fn_j(loss, log_deriv)
+            loss_c, var_deriv_c, var_deriv_m, n_samples, full_size = self._prepare_fn_j(loss, log_deriv)
         else:
             betas   = self.backend.array([x.beta_j for x in excited_penalty],   dtype=self.dtype)
             r_el    = self.backend.array([x.r_el for x in excited_penalty],     dtype=self.dtype)
             r_le    = self.backend.array([x.r_le for x in excited_penalty],     dtype=self.dtype)
-            loss_c, var_deriv_c, var_deriv_m, self._n_samples, self._full_size = (self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le))
+            loss_c, var_deriv_c, var_deriv_m, n_samples, full_size = self._prepare_fn_m_j(loss, log_deriv, betas, r_el, r_le)
 
         # Keep BatchedJacobian metadata assignment outside jitted SR prep functions.
         if hasattr(var_deriv_c, "compute_weighted_sum"):
@@ -993,7 +1041,7 @@ class TDVP:
         else:
             var_deriv_c_h = None
 
-        return loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m
+        return loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m, n_samples, full_size
 
     def get_tdvp_standard(self, loss, log_deriv, **kwargs):
         """
@@ -1014,11 +1062,11 @@ class TDVP:
         """
 
         #! state information
-        self._e_local_mean  = self.backend.mean(loss, axis=0)
-        self._e_local_std   = self.backend.std(loss, axis=0)
+        mean_energy = self.backend.mean(loss, axis=0)
+        std_energy = self.backend.std(loss, axis=0)
 
         with self._time("prepare", self._get_tdvp_standard_inner, loss, log_deriv, **kwargs) as prepare:
-            loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m = prepare
+            loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m, n_samples, full_size = prepare
 
         #! CRITICAL: Promote to high precision for SR numerical stability
         var_deriv_c = self._promote_to_sr_precision(var_deriv_c)
@@ -1034,28 +1082,41 @@ class TDVP:
             # This now supports BatchedJacobian via sr.gradient_jax or sr.gradient_jax_batched
             if hasattr(var_deriv_c, "compute_weighted_sum"):
                 # Use separate batched path
-                with self._time("gradient", sr.gradient_jax_batched, var_deriv_c, loss_c, self._n_samples) as gradient:
-                    self._f0 = gradient
+                with self._time("gradient", sr.gradient_jax_batched, var_deriv_c, loss_c, n_samples) as gradient:
+                    force = gradient
             else:
-                with self._time("gradient", self._gradient_fn_j, var_deriv_c, loss_c, self._n_samples) as gradient:
-                    self._f0 = gradient
+                with self._time("gradient", self._gradient_fn_j, var_deriv_c, loss_c, n_samples) as gradient:
+                    force = gradient
         else:
-            self._f0 = None
-        self._s0 = None
+            force = None
+        covariance = None
 
         # MinSR uses T (N_s x N_s)
         # If BatchedJacobian is used, we generally don't form the matrix, but if requested:
         if self.form_matrix:
-            with self._time("covariance", self._covariance_fn_j, var_deriv_c, self._n_samples) as covariance:
-                self._s0 = covariance
+            with self._time("covariance", self._covariance_fn_j, var_deriv_c, n_samples) as formed_covariance:
+                covariance = formed_covariance
 
-        return self._f0, self._s0, (loss_c, var_deriv_c, var_deriv_c_h, var_deriv_m)
+        step = TDVPPreparedStep(
+            mean_energy     = mean_energy,
+            std_energy      = std_energy,
+            forces          = force,
+            covariance      = covariance,
+            loss_c          = loss_c,
+            var_deriv_c     = var_deriv_c,
+            var_deriv_c_h   = var_deriv_c_h,
+            var_deriv_mean  = var_deriv_m,
+            n_samples       = n_samples,
+            full_size       = full_size,
+        )
+        self._store_prepared_step(step)
+        return step
 
     ##################
     #! SOLVERS
     ##################
 
-    def _solve_prepare_matvec(self, mat_O: Array, mode: str = None) -> Callable:
+    def _solve_prepare_matvec(self, mat_O: Array, n_samples: int, mode: str = None) -> Callable:
         """
         Prepares the covariance matrix and loss vector for the linear system to be solved.
         This method is used to prepare the input data for the linear solver, including
@@ -1076,7 +1137,6 @@ class TDVP:
         if mode is None:
             mode = "minsr" if self.use_minsr else "standard"
 
-        n_samples = self._n_samples
         if n_samples is None:
             n_samples = getattr(mat_O, "_n_samples", 1.0)
 
@@ -1117,7 +1177,7 @@ class TDVP:
 
         return _matvec
 
-    def _solve_prepare_s_and_loss(self, vd_c: Array, loss_c: Array, forces: Array):
+    def _solve_prepare_s_and_loss(self, vd_c: Array, loss_c: Array, forces: Array, n_samples: int):
         """
         Prepares the derivatives matrix and RHS vector for the linear system.
 
@@ -1140,11 +1200,30 @@ class TDVP:
         if self.use_minsr:
             # MinSR: Solve T x = E/N (where T = O O^dag / N)
             # RHS is centered energy scaled by 1/N
-            return vd_c, loss_c / self._n_samples
+            return vd_c, loss_c / n_samples
 
         # Standard: Solve S x = F (where S = O^dag O / N)
         # RHS is the force vector F
         return vd_c, forces
+
+    def _make_solver_kwargs(self, vec_b: Array, x0: Array, n_samples: Optional[int]) -> dict:
+        """Common solver keyword arguments shared across TDVP solve modes."""
+        return {
+            "b"             : vec_b,
+            "x0"            : x0,
+            "precond_apply" : self.sr_precond_fn,
+            "maxiter"       : self.sr_maxiter,
+            "tol"           : self.sr_pinv_tol,
+            "sigma"         : self.sr_diag_shift,
+            "snr_tol"       : self.sr_snr_tol,
+            "normalization" : n_samples,
+        }
+
+    def _solve_with_matvec(self, solve_func: Callable, matvec_fn: Callable, vec_b: Array, x0: Array, n_samples: Optional[int]) -> solvers.SolverResult:
+        """Run the configured solver through the matrix-vector interface."""
+        solver_kwargs = self._make_solver_kwargs(vec_b, x0, n_samples)
+        solver_kwargs["matvec"] = matvec_fn
+        return solve_func(**solver_kwargs)
 
     def _get_solver_for_state(self, mat_O: Array) -> Tuple[Callable, bool]:
         """
@@ -1192,9 +1271,9 @@ class TDVP:
     def _solve_choice(
         self,
         vec_b       : Array,
-        solve_func  : Callable,
         mat_O       : Optional[Array] = None,
         mat_a       : Optional[Array] = None,
+        n_samples   : Optional[int] = None,
         x0          : Optional[Array] = None,
     ) -> solvers.SolverResult:
         """
@@ -1209,37 +1288,18 @@ class TDVP:
         if use_preformed_matrix:
             # Use the pre-formed matrix directly (works for both GRAM and MATRIX solver types)
             # For MinSR, mat_a is T. For Standard, mat_a is S.
-            solution = solve_func(
-                a=mat_a,
-                b=vec_b,
-                x0=x0,
-                precond_apply=self.sr_precond_fn,
-                maxiter=self.sr_maxiter,
-                tol=self.sr_pinv_tol,
-                sigma=self.sr_diag_shift,
-                snr_tol=self.sr_snr_tol,
-            )
+            solver_kwargs = self._make_solver_kwargs(vec_b, x0, n_samples)
+            solver_kwargs["a"] = mat_a
+            solution = self.sr_solve_lin_fn(**solver_kwargs)
             return solution
 
-        # Helper determines correct solver and mode based on input type (Standard vs BatchedJacobian)
-        # Note: 'solve_func' arg is ignored if override is needed for BatchedJacobian
         actual_solve_func, is_batched_mode = self._get_solver_for_state(mat_O)
 
         # Specialized Mode: BatchedJacobian (Force MATVEC)
         if is_batched_mode:
             mode                = "minsr" if self.use_minsr else "standard"
-            matvec_fn           = self._solve_prepare_matvec(mat_O, mode=mode)
-
-            solution = actual_solve_func(
-                matvec          =   matvec_fn,
-                b               =   vec_b,
-                x0              =   x0,
-                precond_apply   =   self.sr_precond_fn,
-                maxiter         =   self.sr_maxiter,
-                tol             =   self.sr_pinv_tol,
-                sigma           =   self.sr_diag_shift,
-                snr_tol         =   self.sr_snr_tol,
-            )
+            matvec_fn           = self._solve_prepare_matvec(mat_O, n_samples=n_samples, mode=mode)
+            solution = self._solve_with_matvec(actual_solve_func, matvec_fn, vec_b, x0, n_samples)
             return solution
 
         # Standard Mode: Dense Arrays
@@ -1253,34 +1313,15 @@ class TDVP:
                 s = mat_O
                 s_p = mat_O.T.conj()
 
-            solver_kwargs = {
-                "s"             : s,
-                "s_p"           : s_p,
-                "b"             : vec_b,
-                "x0"            : x0,
-                "precond_apply" : self.sr_precond_fn,
-                "maxiter"       : self.sr_maxiter,
-                "tol"           : self.sr_pinv_tol,
-                "sigma"         : self.sr_diag_shift,
-                "normalization" : self._n_samples,
-            }
+            solver_kwargs = self._make_solver_kwargs(vec_b, x0, n_samples)
+            solver_kwargs.update({"s": s, "s_p": s_p})
             solution = actual_solve_func(**solver_kwargs)
 
         elif self._solver_form_is(solvers.SolverForm.MATVEC):
             # MATVEC mode: We provide the full matrix-vector product function
             mode                = "minsr" if self.use_minsr else "standard"
-            matvec_fn           = self._solve_prepare_matvec(mat_O, mode=mode)
-
-            solution = actual_solve_func(
-                matvec          =   matvec_fn,
-                b               =   vec_b,
-                x0              =   x0,
-                precond_apply   =   self.sr_precond_fn,
-                maxiter         =   self.sr_maxiter,
-                tol             =   self.sr_pinv_tol,
-                sigma           =   self.sr_diag_shift,
-                snr_tol         =   self.sr_snr_tol,
-            )
+            matvec_fn           = self._solve_prepare_matvec(mat_O, n_samples=n_samples, mode=mode)
+            solution = self._solve_with_matvec(actual_solve_func, matvec_fn, vec_b, x0, n_samples)
         return solution
 
     def _solve_handle_x0(self, vec_b: Array, use_old_result: bool):
@@ -1318,6 +1359,66 @@ class TDVP:
         if x0 is None or getattr(x0, 'shape', None) != vec_b.shape:
             x0 = self.backend.zeros_like(vec_b)
         return x0
+
+    def _scale_solver_result(self, solution: solvers.SolverResult) -> solvers.SolverResult:
+        """Apply the TDVP RHS prefactor to the raw linear-solver result."""
+        if solution is None or self.rhs_prefactor == 1.0:
+            return solution
+        return solvers.SolverResult(
+            x               = solution.x * self.rhs_prefactor,
+            iterations      = solution.iterations,
+            residual_norm   = solution.residual_norm,
+            converged       = solution.converged,
+        )
+
+    def _project_minsr_result(self, solution: solvers.SolverResult, var_deriv_c_h: Optional[Array]) -> solvers.SolverResult:
+        """Project MinSR coefficients back to the full parameter space."""
+        if not self.use_minsr or solution is None:
+            return solution
+        return solvers.SolverResult(
+            x               = self.backend.matmul(var_deriv_c_h, solution.x),
+            iterations      = solution.iterations,
+            residual_norm   = solution.residual_norm,
+            converged       = solution.converged,
+        )
+
+    def _finalize_solution(self, solution: solvers.SolverResult, var_deriv_c_h: Optional[Array]) -> solvers.SolverResult:
+        """Run all TDVP-side postprocessing on the linear-solver output."""
+        solution = self._scale_solver_result(solution)
+        solution = self._project_minsr_result(solution, var_deriv_c_h)
+        if solution is not None and self.grad_clip is not None:
+            clipped_x = self._apply_grad_clip(solution.x)
+            solution = solvers.SolverResult(
+                x               = clipped_x,
+                iterations      = solution.iterations,
+                residual_norm   = solution.residual_norm,
+                converged       = solution.converged,
+            )
+        return solution
+
+    def _build_step_info(
+        self,
+        solution: solvers.SolverResult,
+        mean_energy: Array,
+        std_energy: Array,
+        sigma2: Array,
+        r_hat: Array,
+        theta0_dot: Optional[Array],
+    ) -> TDVPStepInfo:
+        """Assemble the per-step diagnostics consumed by the trainer."""
+        return TDVPStepInfo(
+            mean_energy     = mean_energy,
+            std_energy      = std_energy,
+            sigma2          = sigma2,
+            r_hat           = r_hat,
+            failed          = False,
+            sr_converged    = solution.converged,
+            sr_executed     = True,
+            sr_iterations   = solution.iterations,
+            timings         = self.timings.copy(),
+            theta0_dot      = theta0_dot,
+            theta0          = self._theta0,
+        )
 
     ###############
     #! GLOBAL PHASE
@@ -1426,24 +1527,16 @@ class TDVP:
                 Whether the solver converged.
         """
         self.timings.reset(np.nan if self.use_timing else 0.0)
-        # ? Get the lower states information penalty
-
-        # obtain the loss and covariance without the preprocessor
-        self._f0, self._s0, (tdvp) = self.get_tdvp_standard(e_loc, log_deriv, **kwargs)
-        # if self._s0 is not None and self.logger: self.logger.info(f"Covariance matrix shape: {self._s0.shape}", lvl=3)
-
-        #! get the force and covariance matrix
-        f = self._f0  # the force vector
-        s = self._s0  # the covariance matrix, if formed
-
-        #! handle the solver
-        solve_func = self.sr_solve_lin_fn
-        loss_c, vd_c, vd_c_h, vd_m = tdvp
+        prepared = self.get_tdvp_standard(e_loc, log_deriv, **kwargs)
 
         #! handle the preprocessor
         # Returns: (centered derivatives matrix O), (RHS vector)
-        mat_O, vec_b = self._solve_prepare_s_and_loss(vd_c, loss_c, f)
-        # print(mat_O.shape, vec_b.shape)
+        mat_O, vec_b = self._solve_prepare_s_and_loss(
+            prepared.var_deriv_c,
+            prepared.loss_c,
+            prepared.forces,
+            prepared.n_samples,
+        )
 
         #! handle the initial guess - use the previous solution
         with self._time("x0", self._solve_handle_x0, vec_b, kwargs.get("use_old_result", False)) as prepared_x0:
@@ -1468,47 +1561,20 @@ class TDVP:
             self._solve_choice,
             vec_b       =   vec_b,
             mat_O       =   mat_O,
-            mat_a       =   s,
-            solve_func  =   solve_func,
+            mat_a       =   prepared.covariance,
+            n_samples   =   prepared.n_samples,
             x0          =   x0,
         ) as solve:
             solution = solve
 
-        #! apply rhs_prefactor to the solution
-        if solution is not None and self.rhs_prefactor != 1.0:
-            solution = solvers.SolverResult(
-                x               =   solution.x * self.rhs_prefactor,
-                iterations      =   solution.iterations,
-                residual_norm   =   solution.residual_norm,
-                converged       =   solution.converged
-            )
-
-        if self.use_minsr and solution is not None:
-            new_solution = solvers.SolverResult(
-                x               =   self.backend.matmul(vd_c_h, solution.x),
-                iterations      =   solution.iterations,
-                residual_norm   =   solution.residual_norm,
-                converged       =   solution.converged,
-            )
-            solution = new_solution
-
-        # Apply gradient clipping if enabled
-        if solution is not None and self.grad_clip is not None:
-            clipped_x   = self._apply_grad_clip(solution.x)
-            solution    = solvers.SolverResult(
-                x               =   clipped_x,
-                iterations      =   solution.iterations,
-                residual_norm   =   solution.residual_norm,
-                converged       =   solution.converged,
-            )
+        solution = self._finalize_solution(solution, prepared.var_deriv_c_h)
 
         # Compute global phase evolution $\dot{\theta}_0$
         # $\dot{\theta}_0 = -i\langle\hat{H}\rangle - \dot{\theta}_k\langle\psi_\theta|\partial_{\theta_k} \psi_\theta\rangle$
         theta0_dot = None
         if solution is not None:
             param_derivatives       = solution.x if hasattr(solution, "x") else solution
-            log_derivatives_mean    = vd_m
-            with self._time("phase", self.compute_global_phase_evolution, self._e_local_mean, param_derivatives, log_derivatives_mean) as phase:
+            with self._time("phase", self.compute_global_phase_evolution, prepared.mean_energy, param_derivatives, prepared.var_deriv_mean) as phase:
                 theta0_dot = phase
 
         if self.use_timing and self.logger:
@@ -1561,20 +1627,10 @@ class TDVP:
         solution_vec        = solution.x if hasattr(solution, "x") else solution
         if not self._is_tracer_value(solution_vec):
             self._solution = solution
+        if theta0_dot is not None and not self._is_tracer_value(theta0_dot):
+            self._theta0_dot = theta0_dot
 
-        meta = TDVPStepInfo(
-            mean_energy     =   self._e_local_mean,
-            std_energy      =   self._e_local_std,
-            sigma2          =   sigma2,
-            r_hat           =   r_hat,
-            failed          =   False,
-            sr_converged    =   solution.converged,
-            sr_executed     =   True,
-            sr_iterations   =   solution.iterations,
-            timings         =   self.timings.copy(),
-            theta0_dot      =   theta0_dot,     # Global phase time derivative
-            theta0          =   self._theta0,   # Current global phase
-        )
+        meta = self._build_step_info(solution, self._e_local_mean, self._e_local_std, sigma2, r_hat, theta0_dot)
 
         return solution.x, meta, (shapes, sizes, iscpx)
 

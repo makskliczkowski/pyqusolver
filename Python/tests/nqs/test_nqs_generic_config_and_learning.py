@@ -196,8 +196,54 @@ def test_train_accepts_canonical_scheduler_init_keys():
 	assert np.all(np.isfinite(np.asarray(stats.history)))
 
 
-def test_wrap_single_step_jax_does_not_mutate_nqs_batch_size():
-	"""Verify test wrap single step jax does not mutate nqs batch size."""
+def test_train_preserves_exact_metadata_when_stats_reset(tmp_path):
+	"""Verify exact references survive trainer stats reset and checkpoint sync."""
+	_, hilbert, model = _build_tiny_tfim()
+	net = MLP(
+		input_shape=(hilbert.ns,),
+		hidden_dims=(4,),
+		activations="log_cosh",
+		dtype=jnp.complex64,
+		param_dtype=jnp.complex64,
+		seed=12,
+	)
+	psi = NQS(
+		logansatz=net,
+		model=model,
+		hilbert=hilbert,
+		sampler="vmc",
+		batch_size=8,
+		backend="jax",
+		dtype=np.complex64,
+		verbose=False,
+		use_orbax=False,
+		seed=13,
+		s_numsamples=8,
+		s_numchains=2,
+		s_therm_steps=1,
+		s_sweep_steps=1,
+	)
+
+	stats = psi.train(
+		n_epochs=0,
+		checkpoint_every=1000,
+		n_batch=8,
+		phases=None,
+		lr=0.01,
+		diag_shift=1e-3,
+		exact_predictions=model.eig_vals,
+		exact_method="full_diag",
+		save_path=str(tmp_path),
+		use_pbar=False,
+	)
+
+	np.testing.assert_allclose(np.asarray(stats.exact_predictions), np.asarray(model.eig_vals))
+	assert stats.exact_method == "full_diag"
+	assert psi.exact["exact_method"] == "full_diag"
+
+
+def test_wrap_single_step_jax_syncs_active_batch_size():
+	"""Verify trainer wrapper uses one active batch-size path."""
 	_, hilbert, model = _build_tiny_tfim()
 	net = MLP(
 		input_shape=(hilbert.ns,),
@@ -224,10 +270,13 @@ def test_wrap_single_step_jax_does_not_mutate_nqs_batch_size():
 		s_sweep_steps=1,
 	)
 
-	initial_batch_size = psi._batch_size
-	_ = psi.wrap_single_step_jax(batch_size=8)
+	wrapped = psi.wrap_single_step_jax(batch_size=8)
+	params = psi.get_params(unravel=True)
+	(_, _), (configs, configs_ansatze), probabilities = psi.sample(num_samples=8, num_chains=2, reset=True)
+	out = wrapped(params, 0.0, configs, configs_ansatze, probabilities)
 
-	assert psi._batch_size == initial_batch_size
+	assert psi._batch_size == 8
+	assert np.all(np.isfinite(np.asarray(out[0][0])))
 
 
 def test_local_estimator_connected_state_chunking_preserves_result():
@@ -266,10 +315,93 @@ def test_local_estimator_connected_state_chunking_preserves_result():
 		params,
 		32,
 	)
+	separate_connected, mean_connected, std_connected = net_utils_jax.apply_callable_batched_jax(
+		local_conn_fn,
+		states,
+		sample_p,
+		logp_in,
+		logproba_fn,
+		params,
+		2,
+		1,
+	)
 
 	assert np.allclose(np.asarray(chunked), np.asarray(full))
 	assert np.allclose(np.asarray(mean_chunked), np.asarray(mean_full))
 	assert np.allclose(np.asarray(std_chunked), np.asarray(std_full))
+	assert np.allclose(np.asarray(separate_connected), np.asarray(full))
+	assert np.allclose(np.asarray(mean_connected), np.asarray(mean_full))
+	assert np.allclose(np.asarray(std_connected), np.asarray(std_full))
+
+
+def test_complex_local_estimator_matches_dense_matrix_expectation():
+	"""Check local-estimator coefficient orientation for a complex spin operator."""
+	psi = np.array([1.0 + 0.3j, -0.2 + 0.7j], dtype=np.complex64)
+	norm = np.vdot(psi, psi).real
+	probs = (np.abs(psi) ** 2 / norm).astype(np.float32)
+	states = jnp.array([[-0.5], [0.5]], dtype=jnp.float32)
+	params = jnp.asarray(np.log(psi).astype(np.complex64))
+	logp_in = params.reshape(-1, 1)
+	sample_p = jnp.asarray((2.0 * probs).reshape(-1, 1))
+
+	def sigma_y_local(state):
+		"""Apply Sy with bit=1 <-> +0.5 convention."""
+		bit = state[0] > 0
+		new_state = jnp.where(bit, jnp.array([-0.5], dtype=state.dtype), jnp.array([0.5], dtype=state.dtype))
+		coeff = jnp.where(bit, 0.5j, -0.5j).astype(jnp.complex64)
+		return new_state.reshape(1, 1), jnp.asarray([coeff])
+
+	def logpsi(log_values, query_states):
+		"""Return log-psi values for the two one-site basis states."""
+		idx = (query_states[:, 0] > 0).astype(jnp.int32)
+		return log_values[idx]
+
+	_, mean_est, _ = net_utils_jax.apply_callable_batched_jax(
+		sigma_y_local,
+		states,
+		sample_p,
+		logp_in,
+		logpsi,
+		params,
+		2,
+	)
+
+	matrix = np.array([[0.0, 0.5j], [-0.5j, 0.0]], dtype=np.complex64)
+	expected = np.vdot(psi, matrix @ psi) / np.vdot(psi, psi)
+	np.testing.assert_allclose(np.asarray(mean_est), expected, rtol=1e-6, atol=1e-6)
+
+
+def test_nqs_uses_sampler_chunk_size_for_connected_evaluation_by_default():
+	"""Verify NQS defaults connected-state estimator chunking to sampler network chunking."""
+	lattice, hilbert, model = _build_tiny_tfim()
+	net = MLP(
+		input_shape=(4,),
+		hidden_dims=(8,),
+		dtype=jnp.complex64,
+		param_dtype=jnp.complex64,
+		seed=123,
+	)
+
+	nqs = NQS(
+		logansatz=net,
+		model=model,
+		hilbert=hilbert,
+		sampler="vmc",
+		batch_size=16,
+		backend="jax",
+		dtype=np.complex64,
+		symmetrize=False,
+		verbose=False,
+		seed=9,
+		use_orbax=False,
+		s_numsamples=8,
+		s_numchains=2,
+		s_therm_steps=2,
+		s_sweep_steps=1,
+		s_network_eval_chunk_size=7,
+	)
+
+	assert nqs._connected_eval_chunk_size == 7
 
 
 def test_vmc_sampler_uses_configurable_network_eval_chunk_size():
@@ -321,6 +453,50 @@ def test_vmc_sample_prob_helper_returns_none_for_uniform_weights():
 		log_prob_exponent=0.0,
 		uniform_weights=True,
 	) is None
+
+
+def test_static_vmc_reweights_from_effective_sampling_beta():
+	"""Verify static JAX sampling reweights from |psi|^(mu*beta), not only |psi|^mu."""
+	def net_apply(_params, x):
+		"""Return fixed log-amplitudes for the preselected initial states."""
+		return jnp.asarray(x[:, 0], dtype=jnp.complex64)
+
+	def no_update(state, _key):
+		"""Keep states unchanged; this isolates the reweighting formula."""
+		return state
+
+	states = jnp.asarray([[0.2, 0.0], [-0.4, 0.0], [0.7, 0.0]], dtype=jnp.float32)
+	logpsi = net_apply(None, states)
+	mu = 2.0
+	beta = 0.35
+	logprob_fact = 0.5
+	exponent = 1.0 / logprob_fact - mu * beta
+
+	_, samples, probs = VMCSampler._static_sample_jax(
+		states_init=states,
+		logprobas_init=logpsi,
+		rng_k_init=jax.random.PRNGKey(0),
+		num_proposed_init=jnp.asarray(0),
+		num_accepted_init=jnp.zeros((states.shape[0],), dtype=jnp.int32),
+		params=None,
+		num_samples=1,
+		num_chains=states.shape[0],
+		total_therm_updates=0,
+		updates_per_sample=0,
+		shape=(2,),
+		mu=mu,
+		beta=beta,
+		logprob_fact=logprob_fact,
+		update_proposer=no_update,
+		net_callable_fun=net_apply,
+		uniform_weights=False,
+	)
+
+	expected = jnp.exp(exponent * jnp.real(logpsi))
+	expected = expected / jnp.sum(expected) * states.shape[0]
+
+	np.testing.assert_allclose(np.asarray(samples[1]), np.asarray(logpsi), rtol=1e-6, atol=1e-6)
+	np.testing.assert_allclose(np.asarray(probs), np.asarray(expected), rtol=1e-6, atol=1e-6)
 
 
 def test_vmc_collect_pt_physical_samples_picks_target_beta_sector():

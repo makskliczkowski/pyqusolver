@@ -128,19 +128,17 @@ _SIG_M = np.array([[0, 0], [1, 0]], dtype=float)
 @numba.njit(inline="always")
 def _array_state_to_bit_np(raw_value, spin: bool, spin_value: float):
     """
-    Map array-state encodings onto the binary convention used by integer kernels.
+    Map array states to the canonical spin-1/2 bit convention.
 
-    The NQS stack may feed spin arrays either as signed values (``{-spin_value,
-    +spin_value}``) or as nonnegative local values (``{0, spin_value}``). This
-    helper converts both forms to ``bit in {0, 1}`` so the array-based operator
-    paths reproduce the same physics as the integer/matrix implementations.
+    Convention:
+        bit=1 <-> +spin_value,
+        bit=0 <-> -spin_value or zero occupation.
     """
-
     if spin:
         return 1.0 if raw_value > 0.0 else 0.0
-    if spin_value > 0.0 and raw_value > 0.0 and raw_value <= spin_value:
-        return raw_value / spin_value
-    return raw_value
+    if spin_value == 0.0:
+        return raw_value
+    return raw_value / spin_value
 
 # -----------------------------------------------------------------------------
 #! Sigma-X (\sigma _x) operator
@@ -275,8 +273,8 @@ def _sigma_y_core(state, ns, sites, spin_value=_SPIN):
     for site in sites:
         pos         = ns - 1 - site
         bit         = _binary.check_int(new_state, pos)
-        # Pauli Y logic: 1j * (1 if 0, -1 if 1)
-        factor      = 1j * (1.0 - 2.0 * bit) * spin_value
+        # Canonical spin-1/2 convention: bit=1 is spin-up (+spin_value).
+        factor      = 1j * (2.0 * bit - 1.0) * spin_value
         coeff      *= factor
         new_state   = _binary.flip_int(new_state, pos)
     return new_state, coeff
@@ -291,8 +289,7 @@ def sigma_y_int_np_real(
 ):
     r"""
     \sigma _y on an integer state.
-    For each site, if the bit at (ns-1-site) is set then multiply coefficient by I*spin_value,
-    otherwise by -I*spin_value; then flip the bit.
+    For each site, bit=1 carries +i*spin_value and bit=0 carries -i*spin_value.
     """
     s, c = _sigma_y_core(state, ns, sites, spin_value)
     return (s,), (c.real,)
@@ -301,8 +298,7 @@ def sigma_y_int_np_real(
 def sigma_y_int_np(state, ns, sites, spin: bool = BACKEND_DEF_SPIN, spin_value=_SPIN):
     r"""
     \sigma _y on an integer state.
-    For each site, if the bit at (ns-1-site) is set then multiply coefficient by I*spin_value,
-    otherwise by -I*spin_value; then flip the bit.
+    For each site, bit=1 carries +i*spin_value and bit=0 carries -i*spin_value.
     """
     s, c = _sigma_y_core(state, ns, sites, spin_value)
     return (s,), (c,)
@@ -438,7 +434,8 @@ def _sigma_z_core(state, ns, sites, spin_value=_SPIN):
     for site in sites:
         pos     = ns - 1 - site
         bit     = _binary.check_int(state, pos)
-        coeff  *= (1.0 - 2.0 * bit) * spin_value # 1 if 0, -1 if 1
+        # Canonical spin-1/2 convention: bit=1 is spin-up (+spin_value).
+        coeff  *= (2.0 * bit - 1.0) * spin_value
     return state, coeff
 
 @numba.njit(inline="always")
@@ -451,7 +448,7 @@ def sigma_z_int_np(
 ):
     r"""
     \sum _z on an integer state.
-    For each site, if the bit at (ns-1-site) is set then multiply by spin_value; else by -spin_value.
+    For each site, bit=1 contributes +spin_value and bit=0 contributes -spin_value.
     The state is unchanged.
     Parameters
     ----------
@@ -1006,10 +1003,10 @@ def sigma_k_int_np(
 
     accum = 0.0 + 0.0j
     for i in sites:
-        pos = ns - 1 - i
-        bit = _binary.check_int(state, pos)
-        sigma_z_i = (2.0 * bit - 1.0) * spin_value
-        accum += sigma_z_i * (np.cos(k * i) + 1j * np.sin(k * i))
+        pos         = ns - 1 - i
+        bit         = _binary.check_int(state, pos)
+        sigma_z_i   = (2.0 * bit - 1.0) * spin_value
+        accum      += sigma_z_i * (np.cos(k * i) + 1j * np.sin(k * i))
     norm = np.sqrt(len(sites)) if sites else 1.0
     return (state,), (accum / norm,)
 
@@ -1099,37 +1096,37 @@ class SpinLookupCodes(IntEnum):
     @staticmethod
     def to_dict() -> Dict[str, int]:
         return {
-            "Sx": SpinLookupCodes.sig_x_global,
-            "Sy": SpinLookupCodes.sig_y_global,
-            "Sz": SpinLookupCodes.sig_z_global,
-            "Sp": SpinLookupCodes.sig_p_global,
-            "Sm": SpinLookupCodes.sig_m_global,
-            "SxSy": SpinLookupCodes.sig_xy_global,
-            "SySx": SpinLookupCodes.sig_yx_global,
-            "SxSz": SpinLookupCodes.sig_xz_global,
-            "SzSx": SpinLookupCodes.sig_zx_global,
-            "SySz": SpinLookupCodes.sig_yz_global,
-            "SzSy": SpinLookupCodes.sig_zy_global,
+            "Sx"    : SpinLookupCodes.sig_x_global,
+            "Sy"    : SpinLookupCodes.sig_y_global,
+            "Sz"    : SpinLookupCodes.sig_z_global,
+            "Sp"    : SpinLookupCodes.sig_p_global,
+            "Sm"    : SpinLookupCodes.sig_m_global,
+            "SxSy"  : SpinLookupCodes.sig_xy_global,
+            "SySx"  : SpinLookupCodes.sig_yx_global,
+            "SxSz"  : SpinLookupCodes.sig_xz_global,
+            "SzSx"  : SpinLookupCodes.sig_zx_global,
+            "SySz"  : SpinLookupCodes.sig_yz_global,
+            "SzSy"  : SpinLookupCodes.sig_zy_global,
             # local
-            "Sx/L": SpinLookupCodes.sig_x_local,
-            "Sy/L": SpinLookupCodes.sig_y_local,
-            "Sz/L": SpinLookupCodes.sig_z_local,
-            "Sp/L": SpinLookupCodes.sig_p_local,
-            "Sm/L": SpinLookupCodes.sig_m_local,
+            "Sx/L"  : SpinLookupCodes.sig_x_local,
+            "Sy/L"  : SpinLookupCodes.sig_y_local,
+            "Sz/L"  : SpinLookupCodes.sig_z_local,
+            "Sp/L"  : SpinLookupCodes.sig_p_local,
+            "Sm/L"  : SpinLookupCodes.sig_m_local,
             # corr
-            "Sx/C": SpinLookupCodes.sig_x_corr,
-            "Sy/C": SpinLookupCodes.sig_y_corr,
-            "Sz/C": SpinLookupCodes.sig_z_corr,
-            "Sp/C": SpinLookupCodes.sig_p_corr,
-            "Sm/C": SpinLookupCodes.sig_m_corr,
+            "Sx/C"  : SpinLookupCodes.sig_x_corr,
+            "Sy/C"  : SpinLookupCodes.sig_y_corr,
+            "Sz/C"  : SpinLookupCodes.sig_z_corr,
+            "Sp/C"  : SpinLookupCodes.sig_p_corr,
+            "Sm/C"  : SpinLookupCodes.sig_m_corr,
             "SxSy/C": SpinLookupCodes.sig_xy_corr,
             "SySx/C": SpinLookupCodes.sig_yx_corr,
             "SxSz/C": SpinLookupCodes.sig_xz_corr,
             "SzSx/C": SpinLookupCodes.sig_zx_corr,
             "SySz/C": SpinLookupCodes.sig_yz_corr,
             "SzSy/C": SpinLookupCodes.sig_zy_corr,
-            "Spm/C": SpinLookupCodes.sig_pm_corr,
-            "Smp/C": SpinLookupCodes.sig_mp_corr,
+            "Spm/C" : SpinLookupCodes.sig_pm_corr,
+            "Smp/C" : SpinLookupCodes.sig_mp_corr,
         }
 
 SPIN_LOOKUP_CODES = SpinLookupCodes
@@ -1227,7 +1224,7 @@ def sig_y(
         sites is not None and isinstance(sites, list) and len(sites) % 2 == 0
     )
     int_fun = sigma_y_int_np if not is_real else sigma_y_int_np_real
-    np_fun = sigma_y_np
+    np_fun  = sigma_y_np
     jnp_fun = sigma_y_jnp
 
     if OperatorTypeActing.is_type_global(type_act) or sites is not None:
@@ -1790,12 +1787,12 @@ def create_sigma_mixed_jnp(op1_fun: Callable, op2_fun: Callable):
     return sigma_mixed_jnp
 
 
-sigma_xy_mixed_int_np = create_sigma_mixed_int(sigma_x_int_np, sigma_y_int_np)
-sigma_yx_mixed_int_np = create_sigma_mixed_int(sigma_y_int_np, sigma_x_int_np)
-sigma_yz_mixed_int_np = create_sigma_mixed_int(sigma_y_int_np, sigma_z_int_np)
-sigma_zx_mixed_int_np = create_sigma_mixed_int(sigma_z_int_np, sigma_x_int_np)
-sigma_xz_mixed_int_np = create_sigma_mixed_int(sigma_x_int_np, sigma_z_int_np)
-sigma_zy_mixed_int_np = create_sigma_mixed_int(sigma_z_int_np, sigma_y_int_np)
+sigma_xy_mixed_int_np   = create_sigma_mixed_int(sigma_x_int_np, sigma_y_int_np)
+sigma_yx_mixed_int_np   = create_sigma_mixed_int(sigma_y_int_np, sigma_x_int_np)
+sigma_yz_mixed_int_np   = create_sigma_mixed_int(sigma_y_int_np, sigma_z_int_np)
+sigma_zx_mixed_int_np   = create_sigma_mixed_int(sigma_z_int_np, sigma_x_int_np)
+sigma_xz_mixed_int_np   = create_sigma_mixed_int(sigma_x_int_np, sigma_z_int_np)
+sigma_zy_mixed_int_np   = create_sigma_mixed_int(sigma_z_int_np, sigma_y_int_np)
 
 sigma_xy_mixed_int_core = create_sigma_mixed_int_core(_sigma_x_core, _sigma_y_core)
 sigma_yx_mixed_int_core = create_sigma_mixed_int_core(_sigma_y_core, _sigma_x_core)
@@ -1805,20 +1802,20 @@ sigma_xz_mixed_int_core = create_sigma_mixed_int_core(_sigma_x_core, _sigma_z_co
 sigma_zy_mixed_int_core = create_sigma_mixed_int_core(_sigma_z_core, _sigma_y_core)
 
 # ? NP
-sigma_xy_mixed_np = create_sigma_mixed_np(sigma_x_np, sigma_y_np)
-sigma_yx_mixed_np = create_sigma_mixed_np(sigma_y_np, sigma_x_np)
-sigma_yz_mixed_np = create_sigma_mixed_np(sigma_y_np, sigma_z_np)
-sigma_zx_mixed_np = create_sigma_mixed_np(sigma_z_np, sigma_x_np)
-sigma_xz_mixed_np = create_sigma_mixed_np(sigma_x_np, sigma_z_np)
-sigma_zy_mixed_np = create_sigma_mixed_np(sigma_z_np, sigma_y_np)
+sigma_xy_mixed_np       = create_sigma_mixed_np(sigma_x_np, sigma_y_np)
+sigma_yx_mixed_np       = create_sigma_mixed_np(sigma_y_np, sigma_x_np)
+sigma_yz_mixed_np       = create_sigma_mixed_np(sigma_y_np, sigma_z_np)
+sigma_zx_mixed_np       = create_sigma_mixed_np(sigma_z_np, sigma_x_np)
+sigma_xz_mixed_np       = create_sigma_mixed_np(sigma_x_np, sigma_z_np)
+sigma_zy_mixed_np       = create_sigma_mixed_np(sigma_z_np, sigma_y_np)
 
 # ? JNP
-sigma_xy_mixed_jnp = create_sigma_mixed_jnp(sigma_x_jnp, sigma_y_jnp)
-sigma_yx_mixed_jnp = create_sigma_mixed_jnp(sigma_y_jnp, sigma_x_jnp)
-sigma_yz_mixed_jnp = create_sigma_mixed_jnp(sigma_y_jnp, sigma_z_jnp)
-sigma_zx_mixed_jnp = create_sigma_mixed_jnp(sigma_z_jnp, sigma_x_jnp)
-sigma_xz_mixed_jnp = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
-sigma_zy_mixed_jnp = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
+sigma_xy_mixed_jnp      = create_sigma_mixed_jnp(sigma_x_jnp, sigma_y_jnp)
+sigma_yx_mixed_jnp      = create_sigma_mixed_jnp(sigma_y_jnp, sigma_x_jnp)
+sigma_yz_mixed_jnp      = create_sigma_mixed_jnp(sigma_y_jnp, sigma_z_jnp)
+sigma_zx_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_x_jnp)
+sigma_xz_mixed_jnp      = create_sigma_mixed_jnp(sigma_x_jnp, sigma_z_jnp)
+sigma_zy_mixed_jnp      = create_sigma_mixed_jnp(sigma_z_jnp, sigma_y_jnp)
 
 
 def make_sigma_mixed(
@@ -1900,9 +1897,7 @@ def sig_yx(
     spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _y \sigma _x operator."""
-    return make_sigma_mixed(
-        "yx", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value
-    )
+    return make_sigma_mixed("yx", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 
 
 def sig_yz(
@@ -1914,9 +1909,7 @@ def sig_yz(
     spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _y \sigma _z operator."""
-    return make_sigma_mixed(
-        "yz", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value
-    )
+    return make_sigma_mixed("yz", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 
 
 def sig_zy(
@@ -1928,9 +1921,7 @@ def sig_zy(
     spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _z \sigma _y operator."""
-    return make_sigma_mixed(
-        "zy", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value
-    )
+    return make_sigma_mixed("zy", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 
 
 def sig_zx(
@@ -1942,9 +1933,7 @@ def sig_zx(
     spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _z \sigma _x operator."""
-    return make_sigma_mixed(
-        "zx", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value
-    )
+    return make_sigma_mixed("zx", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 
 
 def sig_xz(
@@ -1956,9 +1945,7 @@ def sig_xz(
     spin_value  :   float = _SPIN,
 ) -> Operator:
     r"""Factory for the \sigma _x \sigma _z operator."""
-    return make_sigma_mixed(
-        "xz", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value
-    )
+    return make_sigma_mixed("xz", lattice, ns, type_act=type_act, sites=sites, spin_value=spin_value)
 
 
 # -----------------------------------------------------------------------------
@@ -2028,9 +2015,7 @@ def make_nsite_correlator(
         sites = list(range(n_ops))
 
     if len(sites) != n_ops:
-        raise ValueError(
-            f"Number of sites ({len(sites)}) must match number of operators ({n_ops})."
-        )
+        raise ValueError(f"Number of sites ({len(sites)}) must match number of operators ({n_ops}).")
 
     # Map operator names to core functions
     op_map = {
@@ -2056,9 +2041,9 @@ def make_nsite_correlator(
     op_name_to_code = {"x": OP_X, "y": OP_Y, "z": OP_Z, "p": OP_P, "m": OP_M}
 
     # Create numpy arrays for the operator codes and sites (numba-friendly)
-    op_codes_arr = np.array([op_name_to_code[op.lower()] for op in pauli_ops], dtype=np.int32)
-    sites_arr = np.array(sites, dtype=np.int32)
-    n_ops_val = n_ops
+    op_codes_arr    = np.array([op_name_to_code[op.lower()] for op in pauli_ops], dtype=np.int32)
+    sites_arr       = np.array(sites, dtype=np.int32)
+    n_ops_val       = n_ops
 
     # Create the numba-compatible integer function
     @numba.njit
@@ -2126,9 +2111,7 @@ def sig_xyz(
     ns: int, sites: Optional[List[int]] = None, lattice: Optional[Lattice] = None
 ) -> Operator:
     r"""Factory for the 3-site \sigma_x \otimes \sigma_y \otimes \sigma_z correlator."""
-    return make_nsite_correlator(
-        ["x", "y", "z"], ns=ns, sites=sites, lattice=lattice, name="SxSySz"
-    )
+    return make_nsite_correlator(["x", "y", "z"], ns=ns, sites=sites, lattice=lattice, name="SxSySz")
 
 
 # -----------------------------------------------------------------------------
@@ -2136,9 +2119,7 @@ def sig_xyz(
 # -----------------------------------------------------------------------------
 
 
-def sigma_composition_integer(
-    is_complex: bool, only_apply: bool = False, spin_value: float = _SPIN
-) -> Callable:
+def sigma_composition_integer(is_complex: bool, only_apply: bool = False, spin_value: float = _SPIN) -> Callable:
     r"""
     Creates a sigma operator composition kernel based on a list of operator codes.
     It supports both real and complex coefficients.
@@ -2159,8 +2140,8 @@ def sigma_composition_integer(
         current_s   = state
         current_c   = dtype(1.0)
         is_diagonal = False
-        sites_1 = (site1,)
-        sites_2 = (site1, site2)
+        sites_1     = (site1,)
+        sites_2     = (site1, site2)
 
         #! 1) GLOBAL OPERATORS
         if code <= 10:
@@ -2314,13 +2295,11 @@ def sigma_composition_integer(
         diag_sum = dtype(0.0)
 
         for k in range(nops):
-            code = codes[k]
-            coeff = coeffs[k]
-            s1 = sites[k, 0]
-            s2 = sites[k, 1]
-            current_s, current_c, is_diagonal = sigma_operator_composition_single_op(
-                state, code, s1, s2, ns
-            )
+            code    = codes[k]
+            coeff   = coeffs[k]
+            s1      = sites[k, 0]
+            s2      = sites[k, 1]
+            current_s, current_c, is_diagonal = sigma_operator_composition_single_op(state, code, s1, s2, ns)
 
             # Multiply by coefficient
             final_val = current_c * coeff
