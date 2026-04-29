@@ -30,6 +30,7 @@ _LAZY_EXPORTS = {
     # Entropy computations
     "compute_ed_entanglement_entropy"   : (".nqs_entropy", "compute_ed_entanglement_entropy"),
     "compute_renyi_entropy"             : (".nqs_entropy", "compute_renyi_entropy"),
+    "compute_renyi_entropies"           : (".nqs_entropy", "compute_renyi_entropies"),
     "compute_entropy_sweep"             : (".nqs_entropy", "compute_entropy_sweep"),
     "bipartition_cuts"                  : (".nqs_entropy", "bipartition_cuts"),
 }
@@ -71,6 +72,7 @@ __all__ = [
     # Entropy computations
     "compute_ed_entanglement_entropy",
     "compute_renyi_entropy",
+    "compute_renyi_entropies",
     "compute_entropy_sweep",
     "bipartition_cuts"
 ]

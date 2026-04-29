@@ -1,16 +1,21 @@
 """
-Public spectral facade for QES.NQS.
+Public import facade for NQS spectral workflows.
 
-The implementation lives under ``QES.NQS.src.spectral``:
+The public ``NQS`` methods import from this module so user-facing paths remain
+stable while implementation details live in ``QES.NQS.src.spectral``:
 
-- ``results`` for return containers,
-- ``tdvp`` for trajectory evolution helpers,
-- ``mc`` for probe-state and Monte Carlo orchestration,
-- ``exact`` for tiny-system deterministic checks,
-- ``fft`` for time-grid and Fourier postprocessing.
+- ``tdvp`` evolves variational parameters on a requested real-time grid.
+- ``mc`` builds probe states, evaluates transition correlators, and orchestrates
+  dynamical structure factor calculations.
+- ``fft`` converts uniformly sampled correlators into broadened spectra.
 
-This module intentionally stays thin so the public import path remains stable
-while the spectral internals stay grouped by responsibility.
+ED/Lanczos spectral functions live in
+``QES.general_python.physics.spectral.spectral_backend`` and are intentionally
+not re-exported here. The NQS internals contain only exact basis-summation
+diagnostics for tiny variational states.
+
+Keep this file as a facade only. New implementation code should go into the
+responsibility-specific modules above, not into this compatibility layer.
 """
 
 from .spectral import (
@@ -28,16 +33,6 @@ from .spectral import (
     transition_correlator_between_trajectories_impl,
     transition_correlator_impl,
 )
-from .spectral.exact import (
-    enumerate_basis_states as _enumerate_basis_states,
-    exact_expectation_value as _exact_expectation_value,
-    exact_wavefunction_vector as _exact_wavefunction_vector,
-)
-from .spectral.operators import diagonal_probe_overlap_operator as _diagonal_probe_overlap_operator
-from .spectral.tdvp import (
-    NQSParamView as _NQSParamView,
-    materialize_trajectory_params as _materialize_trajectory_params,
-)
 
 __all__ = [
     "NQSCorrelatorResult",
@@ -53,10 +48,4 @@ __all__ = [
     "transition_correlator_between_impl",
     "transition_correlator_between_trajectories_impl",
     "transition_correlator_impl",
-    "_NQSParamView",
-    "_diagonal_probe_overlap_operator",
-    "_enumerate_basis_states",
-    "_exact_expectation_value",
-    "_exact_wavefunction_vector",
-    "_materialize_trajectory_params",
 ]

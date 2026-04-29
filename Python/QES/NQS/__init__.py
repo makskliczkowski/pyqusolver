@@ -1059,6 +1059,7 @@ _LAZY_IMPORTS = {
     "load_exact_impl"                   : (".src.nqs_exact",                "load_exact_impl"),
     "compute_ed_entanglement_entropy"   : (".src.nqs_entropy",              "compute_ed_entanglement_entropy"),
     "compute_renyi_entropy"             : (".src.nqs_entropy",              "compute_renyi_entropy"),
+    "compute_renyi_entropies"           : (".src.nqs_entropy",              "compute_renyi_entropies"),
     "compute_entropy_sweep"             : (".src.nqs_entropy",              "compute_entropy_sweep"),
     "bipartition_cuts"                  : (".src.nqs_entropy",              "bipartition_cuts"),
     "NQSDataset"                        : (".src.nqs_dataset",              "NQSDataset"),
@@ -1085,7 +1086,7 @@ if TYPE_CHECKING:
     )
     from .src.nqs_precision             import NQSPrecisionPolicy, cast_for_precision, resolve_precision_policy
     from .src.nqs_exact                 import load_exact_impl
-    from .src.nqs_entropy               import bipartition_cuts, compute_ed_entanglement_entropy, compute_entropy_sweep, compute_renyi_entropy
+    from .src.nqs_entropy               import bipartition_cuts, compute_ed_entanglement_entropy, compute_entropy_sweep, compute_renyi_entropy, compute_renyi_entropies
     from .src.nqs_dataset               import NQSDataset, EDDataset, CommonDataset
     import src.nqs_entropy              as nqs_entropy
     import src.nqs_exact                as nqs_exact
@@ -1237,6 +1238,7 @@ __all__ = [
     # Entropy and dataset utilities
     "compute_ed_entanglement_entropy",
     "compute_renyi_entropy",
+    "compute_renyi_entropies",
     "compute_entropy_sweep",
     "bipartition_cuts",
     # Datasets

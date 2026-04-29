@@ -2,14 +2,6 @@
 
 import numpy as np
 
-from QES.NQS.src.nqs_spectral import (
-    _NQSParamView,
-    _diagonal_probe_overlap_operator,
-    _enumerate_basis_states,
-    _exact_expectation_value,
-    _exact_wavefunction_vector,
-    _materialize_trajectory_params,
-)
 from QES.NQS.src.spectral.fft import (
     integration_weights,
     spectrum_from_correlator,
@@ -74,10 +66,8 @@ def test_spectrum_hermitian_trapezoid_matches_dense_transform():
     np.testing.assert_allclose(actual_spectrum, np.real(expected), rtol=1e-12, atol=1e-12)
 
 
-def test_nqs_spectral_facade_keeps_legacy_helper_imports():
-    assert _NQSParamView is not None
-    assert _diagonal_probe_overlap_operator is not None
-    assert _enumerate_basis_states is not None
-    assert _exact_expectation_value is not None
-    assert _exact_wavefunction_vector is not None
-    assert _materialize_trajectory_params is not None
+def test_nqs_spectral_facade_exposes_only_public_workflow_api():
+    import QES.NQS.src.nqs_spectral as facade
+
+    assert "dynamic_structure_factor_impl" in facade.__all__
+    assert all(not name.startswith("_") for name in facade.__all__)

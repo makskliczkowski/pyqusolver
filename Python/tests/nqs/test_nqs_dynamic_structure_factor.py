@@ -11,7 +11,8 @@ try:
     from QES.Algebra.Operator.impl.operators_spin import sig_k
     from QES.Algebra.hilbert import HilbertSpace
     from QES.NQS.nqs import NQS
-    from QES.NQS.src.nqs_spectral import _diagonal_probe_overlap_operator, _exact_expectation_value
+    from QES.NQS.src.spectral.exact import exact_expectation_value
+    from QES.NQS.src.spectral.operators import diagonal_probe_overlap_operator
     from QES.general_python.lattices import SquareLattice
     from QES.general_python.ml.net_impl.networks.net_rbm import RBM
 except ImportError:
@@ -172,9 +173,9 @@ def test_dynamic_structure_factor_modifier_smoke():
     psi0 = np.ones(eig_vec.shape[0], dtype=np.complex128)
     psi0 /= np.linalg.norm(psi0)
     exact_static_weight = np.vdot(psi0, probe_matrix.conj().T @ probe_matrix @ psi0)
-    exact_kernel_weight = _exact_expectation_value(
+    exact_kernel_weight = exact_expectation_value(
         nqs,
-        _diagonal_probe_overlap_operator(probe_mq, probe_q),
+        diagonal_probe_overlap_operator(probe_mq, probe_q),
     )
 
     assert abs(corr.correlator[0] - exact_static_weight) < 1e-8

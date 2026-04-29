@@ -31,12 +31,12 @@ def nqs_help(self, topic: str = "general"):
             Example workflows and common operations.
         - 'train':
             Training with the train() method (LR scheduling, SR, etc.).
+        - 'entropy':
+            Entanglement entropy estimators and ED benchmark path.
+        - 'spectral':
+            TDVP response, FFT spectra, and ED/Lanczos comparison path.
         - 'checkpoints':
             Saving and loading model weights and checkpoints.
-        - 'network':
-            Details about the loaded ansatz.
-        - 'networks':
-            Overview of available ansatz architectures.
     """
     topic = topic.lower().strip()
     msg = ""
@@ -59,6 +59,9 @@ def nqs_help(self, topic: str = "general"):
             - train(...): Optimize parameters via VMC/TDVP.
             - sample(...): Generate configurations s ~ |Psi(s)|^{self._sampler._mu} (default mu=2 - squared amplitude).
             - evaluate(s): Compute log(Psi(s)).
+            - compute_energy(...), measure(...): Monte Carlo observables.
+            - compute_renyi_entropies(...): Batched replica entropy estimates.
+            - time_evolve(...), dynamic_structure_factor(...): TDVP response.
             - set_modifier(O): Transform ansatz to O|Psi>.
             """
 
@@ -166,6 +169,11 @@ def nqs_help(self, topic: str = "general"):
                 psi.batch_size = 2048
                 psi.net = new_net
                 psi.sampler = 'vmc'
+
+            Extra help:
+                psi.help('train')
+                psi.help('entropy')
+                psi.help('spectral')
             """
 
     elif topic == "train":
@@ -219,6 +227,90 @@ def nqs_help(self, topic: str = "general"):
             Current Status:
             - Trainer exists: {self._trainer is not None}
             - Trainer type: {type(self._trainer).__name__ if self._trainer else 'None'}
+            """
+
+    elif topic == "entropy":
+        msg = f"""
+            {border}
+            NQS Solver Help: Entanglement entropy
+            {border}
+            Production NQS path:
+            - compute_renyi2(region, ...): single Renyi-2 estimate.
+            - compute_renyi_entropies(regions, q_values=[2, 3], ...): preferred batched path.
+            - compute_topological_entropy(...): lattice-cut wrapper for topological entropy.
+
+            Recommended many-cut usage:
+                cuts = lattice.get_entropy_cuts(cut_type='all')
+                valid = {{k: r for k, r in cuts.items() if 0 < len(r) < lattice.ns}}
+                entropy = psi.compute_renyi_entropies(
+                    valid,
+                    q_values=[2, 3],
+                    num_samples=2000,
+                    return_error=True,
+                )
+
+            Why the batched path matters:
+            - draws replica samples once for the largest requested q,
+            - reuses original log amplitudes across q values,
+            - batches swapped evaluations across regions,
+            - avoids one expensive sampler/evaluator loop per cut.
+
+            ED benchmark path:
+                from QES.NQS.src.nqs_entropy import compute_ed_entanglement_entropy
+                ed = compute_ed_entanglement_entropy(
+                    hamil.eig_vec,
+                    region,
+                    lattice.ns,
+                    q_values=[2, 3],
+                    method='svd',
+                )
+
+            The ED helper is only for exact eigenvectors. The NQS estimator uses
+            the replica trick with the active sampler convention.
+            """
+
+    elif topic == "spectral":
+        msg = f"""
+            {border}
+            NQS Solver Help: Spectral and time-domain response
+            {border}
+            Production NQS path:
+            - time_evolve(times, ...): real-time TDVP trajectory.
+            - compute_transition_correlator(trajectory, ...): overlap/transition correlator.
+            - compute_dynamical_correlator(times, ket_probe_operator=..., ...): probe-state correlator.
+            - dynamic_structure_factor(times, probe_operator=..., ...): probe correlator + FFT.
+            - spectrum_from_correlator(times, correlator, ...): FFT postprocessing only.
+            - dynamic_structure_factor_kspace(...): probe or momentum resolved map.
+
+            Typical NQS usage:
+                times = np.linspace(0.0, 10.0, 256)
+                dsf = psi.dynamic_structure_factor(
+                    times,
+                    probe_operator=sq_op,
+                    num_samples=2000,
+                    eta=0.05,
+                    window='hann',
+                )
+
+            ED/Lanczos comparison path:
+                from QES.general_python.physics.spectral.spectral_backend import (
+                    operator_spectral_function_multi_omega,
+                    integrated_spectral_weight,
+                    find_spectral_peaks,
+                )
+
+                hamil.diagonalize()
+                ed = operator_spectral_function_multi_omega(
+                    omega_grid,
+                    hamil.eig_val,
+                    hamil.eig_vec,
+                    operator_matrix,
+                    eta=0.05,
+                )
+
+            The NQS spectral package does not reimplement the general ED
+            backend. Internal exact basis-summation helpers are only for tiny
+            variational-state regression tests.
             """
 
     elif topic == "network":
@@ -280,7 +372,7 @@ def nqs_help(self, topic: str = "general"):
         msg = (
             f"Unknown topic '{topic}'. Try: "
             "'general', 'modifier', 'sampling', 'network', 'networks', "
-            "'usage', 'train', 'checkpoints'."
+            "'usage', 'train', 'entropy', 'spectral', 'checkpoints'."
         )
 
     print(msg)

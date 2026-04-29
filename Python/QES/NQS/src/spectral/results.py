@@ -1,5 +1,12 @@
 """
-Result containers for NQS time-domain and frequency-domain spectral workflows.
+Typed result containers for NQS spectral workflows.
+
+These dataclasses are intentionally small and serialization-friendly. They keep
+raw time-domain data, frequency-domain transforms, and diagnostic metadata
+together without owning any numerical work. The computational pipeline is:
+``NQSTDVPRecord`` for parameter trajectories, ``NQSCorrelatorResult`` for
+time-domain response functions, and ``NQSSpectralResult`` /
+``NQSSpectralMapResult`` for Fourier-processed spectra.
 """
 
 from dataclasses import dataclass, field

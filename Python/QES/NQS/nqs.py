@@ -2853,6 +2853,10 @@ class NQS(MonteCarloSolver):
     def beta_penalty(self):
         return self._beta_penalty
 
+    @beta_penalty.setter
+    def beta_penalty(self, value):
+        self._beta_penalty = float(value)
+
     #####################################
     #! SPAWN LIKE-FOR-LIKE COPY
     #####################################
@@ -3951,6 +3955,18 @@ class NQS(MonteCarloSolver):
 
         self.log("Computing Topological Entropy (Kitaev-Preskill)...", lvl=1, color="blue")
         return _tee(self, self._model.lattice, radius=radius, **renyi_kwargs)
+
+    def compute_renyi_entropies(self, regions, *, q_values=None, **renyi_kwargs) -> dict:
+        """
+        Compute Rényi entropies for many regions using shared replica samples.
+
+        This is the public NQS wrapper around
+        ``QES.NQS.src.nqs_entropy.compute_renyi_entropies``. It is the preferred
+        path for notebook sweeps over many cuts because it samples replicas once
+        for ``max(q_values)`` and batches the swapped-state evaluations.
+        """
+        from QES.NQS.src.nqs_entropy import compute_renyi_entropies as _renyi_many
+        return _renyi_many(self, regions, q_values=[2] if q_values is None else q_values, **renyi_kwargs)
 
     #####################################
     #! SAMPLES FOR MCMC, IF APPLICABLE

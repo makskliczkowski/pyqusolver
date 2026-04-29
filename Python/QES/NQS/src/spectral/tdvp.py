@@ -1,10 +1,16 @@
 """
 TDVP trajectory helpers for NQS spectral workflows.
+
+This module owns real-time variational evolution only. It builds an
+``NQSTrainer`` around the current NQS, advances flattened parameters on a
+requested observation grid, stores compact parameter histories, and restores the
+original state when requested. Correlator construction and Fourier processing
+are deliberately kept in ``mc`` and ``fft`` so the evolution path can also serve
+quenches and future variational dynamics beyond spectral functions.
 """
 
 from __future__ import annotations
 
-import copy
 from typing import Any, Dict, Iterator, Optional, Sequence
 
 import numpy as np

@@ -11,7 +11,7 @@ jsp = pytest.importorskip("jax.scipy.special")
 
 try:
     from QES.NQS.nqs import NQS
-    from QES.NQS.src.nqs_entropy import compute_renyi_entropy
+    from QES.NQS.src.nqs_entropy import compute_entropy_sweep, compute_renyi_entropy, compute_renyi_entropies
 except ImportError:
     pytest.skip("QES.NQS.nqs module not found, skipping NQS tests.", allow_module_level=True)
 
@@ -260,3 +260,54 @@ def test_compute_renyi3_error_outputs_remain_finite_for_large_logratios():
     assert s3_err >= 0.0
     assert np.isfinite(raw["trace_rho_q"])
     assert np.isfinite(raw["trace_err"])
+
+
+def test_compute_renyi_entropies_matches_single_region_calls():
+    """Batched multi-cut path should match the single-cut estimator for shared replicas."""
+    regions = {
+        "left": [0, 1],
+        "right": [2, 3],
+        "mixed": [0, 2],
+    }
+    q_values = [2, 3]
+    batched = compute_renyi_entropies(
+        DummyNQS(SAMPLE_A, SAMPLE_B),
+        regions,
+        q_values=q_values,
+        num_samples=4,
+        num_chains=2,
+        return_error=True,
+    )
+
+    for label, region in regions.items():
+        for q in q_values:
+            single = compute_renyi_entropy(
+                DummyNQS(SAMPLE_A, SAMPLE_B),
+                region=region,
+                q=q,
+                num_samples=4,
+                num_chains=2,
+                return_error=True,
+            )
+            assert np.isclose(batched[label][f"renyi_{q}"], single[0], rtol=1e-10, atol=1e-10)
+            assert np.isfinite(batched[label][f"renyi_{q}_err"])
+
+
+def test_compute_entropy_sweep_uses_batched_nqs_path_with_fallback_cut():
+    """Fallback cuts keep the exported entropy sweep path usable."""
+    class _Lattice:
+        ns = 4
+
+    dummy = ProductStateDummyNQS(SAMPLE_A)
+    sweep = compute_entropy_sweep(
+        dummy,
+        _Lattice(),
+        mode="nqs",
+        q_values=[2, 3],
+        num_samples=4,
+        num_chains=2,
+    )
+
+    assert "half" in sweep["results"]
+    assert np.isclose(sweep["results"]["half"]["renyi_2"], 0.0, atol=1e-12)
+    assert np.isclose(sweep["results"]["half"]["renyi_3"], 0.0, atol=1e-12)

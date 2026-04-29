@@ -1,9 +1,17 @@
 """
-Exact small-system spectral helpers for QES.NQS.
+Exact basis-summation helpers for validating NQS spectral workflows.
+
+The functions here are intentionally dense and finite-size only. They enumerate
+the computational basis, materialize NQS wavefunctions/operator matrices, and
+evaluate transition elements for deterministic regression checks.
+
+This module is not the ED/Lehmann spectral backend. For exact diagonalization,
+Lanczos Green's functions, integrated spectral weights, and peak finding, use
+``QES.general_python.physics.spectral.spectral_backend`` or ``hamil.spectral``.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional
 
 import numpy as np
 

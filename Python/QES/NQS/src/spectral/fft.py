@@ -1,5 +1,16 @@
 """
-Time-grid and Fourier postprocessing helpers for NQS spectral workflows.
+Time-grid validation and Fourier postprocessing for NQS spectra.
+
+This module is deliberately independent of JAX and TDVP. It receives a
+uniformly sampled complex correlator ``C(t)`` and applies, in order:
+
+1. optional windowing and exponential/Gaussian damping,
+2. rectangle or trapezoid quadrature weights,
+3. an FFT-grid transform with the ``exp(+i omega t)`` convention,
+4. optional Hermitian completion ``C(-t)=conj(C(t))`` for autocorrelators.
+
+The transforms avoid dense frequency-by-time phase matrices, so the common
+spectral path is O(N log N) in time-grid length and uses O(N) extra memory.
 """
 
 from typing import Optional, Sequence

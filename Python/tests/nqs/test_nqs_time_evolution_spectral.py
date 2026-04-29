@@ -12,7 +12,7 @@ try:
     from QES.Algebra.Operator.impl.operators_spin import sig_k
     from QES.Algebra.hilbert import HilbertSpace
     from QES.NQS.nqs import NQS
-    from QES.NQS.src.nqs_spectral import _enumerate_basis_states, _exact_wavefunction_vector
+    from QES.NQS.src.spectral.exact import enumerate_basis_states, exact_wavefunction_vector
     from QES.general_python.lattices import SquareLattice
     from QES.general_python.ml.net_impl.networks.net_rbm import RBM
 except ImportError:
@@ -217,8 +217,8 @@ def test_tfim_modifier_time_evolution_smoke():
     assert np.all(np.isfinite(np.real(physical_corr.correlator)))
     assert np.all(np.isfinite(np.imag(physical_corr.correlator)))
 
-    basis_states = _enumerate_basis_states(nqs)
-    psi0 = _exact_wavefunction_vector(nqs, basis_states=basis_states)
+    basis_states = enumerate_basis_states(nqs)
+    psi0 = exact_wavefunction_vector(nqs, basis_states=basis_states)
     psi0 /= np.sqrt(np.vdot(psi0, psi0))
     probe_matrix = probe.compute_matrix(
         hilbert_1=model.hilbert,

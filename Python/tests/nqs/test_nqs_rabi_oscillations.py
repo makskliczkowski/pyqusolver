@@ -12,12 +12,8 @@ try:
     from QES.Algebra.Properties.time_evo import time_evo_block
     from QES.Algebra.hilbert import HilbertSpace
     from QES.NQS.nqs import NQS
-    from QES.NQS.src.nqs_spectral import (
-        _NQSParamView,
-        _enumerate_basis_states,
-        _exact_wavefunction_vector,
-        _materialize_trajectory_params,
-    )
+    from QES.NQS.src.spectral.exact import enumerate_basis_states, exact_wavefunction_vector
+    from QES.NQS.src.spectral.tdvp import NQSParamView, materialize_trajectory_params
     from QES.general_python.lattices import SquareLattice
     from QES.general_python.ml.net_impl.networks.net_rbm import RBM
 except ImportError:
@@ -92,7 +88,7 @@ def _observable_from_trajectory(nqs, trajectory, operator) -> np.ndarray:
     estimator noise.
     """
 
-    basis_states = _enumerate_basis_states(nqs)
+    basis_states = enumerate_basis_states(nqs)
     op_matrix = operator.compute_matrix(
         hilbert_1=nqs.hilbert,
         matrix_type="dense",
@@ -101,12 +97,12 @@ def _observable_from_trajectory(nqs, trajectory, operator) -> np.ndarray:
 
     values = []
     for params_t, phase_t in zip(trajectory.param_history, trajectory.global_phase):
-        state_view = _NQSParamView(
+        state_view = NQSParamView(
             nqs,
-            _materialize_trajectory_params(nqs, trajectory, params_t),
+            materialize_trajectory_params(nqs, trajectory, params_t),
             global_phase=complex(phase_t),
         )
-        psi_t = _exact_wavefunction_vector(state_view, basis_states=basis_states)
+        psi_t = exact_wavefunction_vector(state_view, basis_states=basis_states)
         psi_t /= np.sqrt(np.vdot(psi_t, psi_t))
         values.append(np.vdot(psi_t, op_matrix @ psi_t))
     return np.asarray(values, dtype=np.complex128)
