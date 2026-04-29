@@ -531,7 +531,7 @@ class NQSSolverConfig(_ConfigSchemaMixin):
                                 "approx_symmetric",
                             }
         if preset_supported:
-            net_cfg = self.estimate(physics_config, **kwargs)
+            net_cfg             = self.estimate(physics_config, **kwargs)
             factory_kwargs      = net_cfg.to_factory_kwargs()
         else:
             self.sota_config    = None
