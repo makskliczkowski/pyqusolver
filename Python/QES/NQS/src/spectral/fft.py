@@ -64,6 +64,56 @@ def damping_profile(times_arr: np.ndarray, *, eta: float, kind: str) -> np.ndarr
     raise ValueError("broadening_kind must be 'exponential', 'gaussian', or 'none'.")
 
 
+def uniform_positive_time_transform(
+    weighted_values: np.ndarray,
+    *,
+    dt: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return ``sum_t weighted_values[t] exp(i omega t)`` on the FFT grid.
+
+    The input samples are assumed to live on ``t = 0, dt, ...``.  This keeps
+    the transform O(N log N) and avoids the dense frequency-by-time matrix.
+    """
+    weighted_values = np.asarray(weighted_values, dtype=np.complex128).reshape(-1)
+    n_times = weighted_values.size
+    freqs_unshifted = 2.0 * np.pi * np.fft.fftfreq(n_times, d=dt)
+    raw_unshifted = np.fft.ifft(weighted_values) * n_times
+    return np.fft.fftshift(freqs_unshifted), np.fft.fftshift(raw_unshifted)
+
+
+def uniform_hermitian_time_transform(
+    weighted_positive_values: np.ndarray,
+    *,
+    dt: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return the Hermitian-completed positive-time transform on the FFT grid.
+
+    ``weighted_positive_values`` stores samples for ``t >= 0``.  The negative
+    branch is filled as ``C(-t)=conj(C(t))``, which is the autocorrelation
+    symmetry used by the dynamical-structure-factor path.
+    """
+    weighted_positive_values = np.asarray(
+        weighted_positive_values, dtype=np.complex128
+    ).reshape(-1)
+    n_times = weighted_positive_values.size
+    if n_times <= 1:
+        return uniform_positive_time_transform(weighted_positive_values, dt=dt)
+
+    full_values = np.concatenate(
+        [
+            np.conj(weighted_positive_values[:0:-1]),
+            weighted_positive_values,
+        ]
+    )
+    n_full = full_values.size
+    freqs_unshifted = 2.0 * np.pi * np.fft.fftfreq(n_full, d=dt)
+    raw_unshifted = np.fft.ifft(full_values) * n_full
+    raw_unshifted *= np.exp(-1.0j * freqs_unshifted * float(n_times - 1) * dt)
+    return np.fft.fftshift(freqs_unshifted), np.fft.fftshift(raw_unshifted)
+
+
 def spectrum_from_correlator(
     times: Sequence[float],
     correlator: np.ndarray,
@@ -89,7 +139,6 @@ def spectrum_from_correlator(
         raise ValueError("The spectral FFT currently requires an evenly spaced time grid.")
 
     corr_work = np.asarray(correlator, dtype=np.complex128)
-    t_rel = times_arr - times_arr[0]
     corr_work = corr_work * window_values(window, corr_work.size) * damping_profile(
         times_arr, eta=eta, kind=broadening_kind
     )
@@ -97,19 +146,12 @@ def spectrum_from_correlator(
     if subtract_initial:
         corr_work = corr_work - corr_work[0]
 
+    weights = integration_weights(times_arr, integration_rule)
+    weighted_corr = corr_work * weights
     if hermitian_extension and corr_work.size > 1:
-        n_full = 2 * corr_work.size - 1
-        freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(n_full, d=dt))
-        weights = integration_weights(times_arr, integration_rule)
-        phases = np.exp(1.0j * np.outer(freqs, t_rel))
-        raw_fft = 2.0 * phases @ (corr_work * weights) - corr_work[0] * weights[0]
+        freqs, raw_fft = uniform_hermitian_time_transform(weighted_corr, dt=dt)
     else:
-        weights = integration_weights(times_arr, integration_rule)
-        raw_fft = np.fft.fftshift(np.fft.ifft(corr_work) * corr_work.size * dt)
-        freqs = np.fft.fftshift(2.0 * np.pi * np.fft.fftfreq(corr_work.size, d=dt))
-        if integration_rule == "trapezoid":
-            phases = np.exp(1.0j * np.outer(freqs, t_rel))
-            raw_fft = phases @ (corr_work * weights)
+        freqs, raw_fft = uniform_positive_time_transform(weighted_corr, dt=dt)
 
     spectrum = np.real(raw_fft)
     if positive_frequencies_only:
@@ -170,5 +212,7 @@ __all__ = [
     "integration_weights",
     "spectrum_from_correlator",
     "spectrum_from_correlator_impl",
+    "uniform_hermitian_time_transform",
+    "uniform_positive_time_transform",
     "window_values",
 ]

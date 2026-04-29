@@ -779,14 +779,8 @@ if JAX_AVAILABLE:
         )
         return state, total / norm
 
-    @jax.jit
-    def sigma_k_jnp(
-        state,
-        sites: Union[List[int], None],
-        k: float,
-        spin: bool = BACKEND_DEF_SPIN,
-        spin_value: float = _SPIN,
-    ):
+    @partial(jax.jit, static_argnums=(1, 2, 3, 4))
+    def sigma_k_jnp(state, sites: Union[List[int], None], k: float, spin: bool = BACKEND_DEF_SPIN, spin_value: float = _SPIN) -> tuple:
         """
         Compute the Fourier-transformed spin operator (sigma _k) on a JAX array state.
         Uses lax.fori_loop.
