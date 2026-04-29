@@ -650,6 +650,7 @@ class NQSTrainer:
             )
 
         # Set gradient clipping on TDVP
+        self.tdvp.params_are_complex = bool(any(getattr(nqs, "_params_iscpx", ())))
         if grad_clip is not None:
             self.tdvp.set_grad_clip(grad_clip)
             self._log(f"Gradient clipping enabled: max_norm={grad_clip:.2e}", lvl=1, color="cyan", verbose=self.verbose)
@@ -1180,16 +1181,22 @@ class NQSTrainer:
         global_epoch: int,
         num_samples: Optional[int],
         num_chains: Optional[int],
+        reset: Optional[bool] = None,
+        params=None,
     ) -> NQSTrainBatch:
         """Run sampler through one train-facing path."""
+        if reset is None:
+            reset = global_epoch == 0
+        if params is None:
+            params = self.nqs.get_params()
         sample_out = self._timed_execute(
             "sample",
             self.nqs.sample,
-            reset       = (global_epoch == 0),
+            reset       = reset,
             epoch       = global_epoch,
             num_samples = num_samples,
             num_chains  = num_chains,
-            params      = self.nqs.get_params(),
+            params      = params,
         )
         _, (cfgs, cfgs_psi), probs = sample_out
         used_num_chains = int(num_chains if num_chains is not None else self.nqs.sampler.numchains)
@@ -1500,7 +1507,7 @@ class NQSTrainer:
                 # Auto-Tuner: Update Logic
                 accepted = True
                 if self.auto_tuner:
-                    diagnostics                     = self.nqs.sampler.diagnose(cfgs_psi)
+                    diagnostics                     = self.nqs.sampler.diagnose(batch.configs_ansatze)
                     new_params, accepted, warnings  = self.auto_tuner.update(tdvp_info, diagnostics, np.real(mean_loss))
 
                     if warnings:
