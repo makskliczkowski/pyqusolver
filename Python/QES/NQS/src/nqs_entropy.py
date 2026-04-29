@@ -236,16 +236,16 @@ def compute_renyi_entropy(
         sq_val = float(exact[f"renyi_{q}"][0])
         if return_raw:
             return {
-                "sq": sq_val,
-                "sq_err": 0.0,
-                "q": q,
-                "trace_rho_q": float(np.exp((1.0 - q) * sq_val)),
-                "trace_err": 0.0,
-                "n_samples": int(getattr(nqs.hilbert, "Nh", 2 ** nqs.nvisible)),
-                "n_chains": 1,
-                "region_size": int(region_np.size),
-                "system_size": int(nqs.nvisible),
-                "exact_sum": True,
+                "sq"            : sq_val,
+                "sq_err"        : 0.0,
+                "q"             : q,
+                "trace_rho_q"   : float(np.exp((1.0 - q) * sq_val)),
+                "trace_err"     : 0.0,
+                "n_samples"     : int(getattr(nqs.hilbert, "Nh", 2 ** nqs.nvisible)),
+                "n_chains"      : 1,
+                "region_size"   : int(region_np.size),
+                "system_size"   : int(nqs.nvisible),
+                "exact_sum"     : True,
             }
         if return_error:
             return sq_val, 0.0
@@ -257,7 +257,6 @@ def compute_renyi_entropy(
         raise ValueError(f"Rényi index q must be an integer >= 2, got {q}.")
     
     Ns = nqs.nvisible
-    
     if region is None:
         region = jnp.arange(Ns // 2, dtype=jnp.int32)
     else:
@@ -272,53 +271,54 @@ def compute_renyi_entropy(
         mu = getattr(sampler, "mu", getattr(sampler, "_mu", None))
         if mu is not None and not np.isclose(float(mu), 2.0, atol=1e-8):
             warnings.warn(f"compute_renyi_entropy assumes Born sampling (mu=2), got mu={mu}. Results may be biased unless reweighting is applied.", RuntimeWarning, stacklevel=2)
-        sampler_num_samples = getattr(sampler, "_numsamples", None)
         sampler_num_chains  = getattr(sampler, "_numchains", None)
     
-    # Sample q independent replicas 
-    replicas_s      = []  # configurations
-    replicas_log    = []  # log-amplitudes
+    replicas_s_list   = []
+    replicas_log_list = []
     
+    # Sample q independent replicas 
     for _ in range(q):
         try:
             (_, _), (s_r, log_r), _ = nqs.sample(num_samples=num_samples, num_chains=num_chains, reset=independent_replicas)
         except TypeError:
             raise RuntimeError("NQS sampler error: expected sample() to return ((s, log_psi), ...), got different format.")
         
-        # Ensure s_r and log_r are numpy arrays on CPU for stable processing and error estimation
+        # Ensure configurations are batched arrays
         s_r = jnp.asarray(s_r)
         if s_r.ndim == 1:
-            s_r     = s_r.reshape(1, -1)
-        if recompute_log_psi:
-            log_r   = jnp.asarray(nqs.ansatz(s_r)).reshape(-1)
-        else:
-            log_r   = jnp.asarray(log_r).reshape(-1)
-        replicas_s.append(s_r)
-        replicas_log.append(log_r)
+            s_r = s_r.reshape(1, -1)
+        
+        replicas_s_list.append(s_r)
+        replicas_log_list.append(jnp.asarray(log_r).reshape(-1))
     
-    # Ensure all replicas have identical shapes
-    n_samp = replicas_s[0].shape[0]
-    for r in range(1, q):
-        if replicas_s[r].shape[0] != n_samp:
-            min_n   = min(replicas_s[r_].shape[0] for r_ in range(q))
-            for r_ in range(q):
-                replicas_s[r_]   = replicas_s[r_][:min_n]
-                replicas_log[r_] = replicas_log[r_][:min_n]
-            n_samp = min_n
-            break
+    # Ensure all replicas have identical shapes by truncating to minimum common size
+    min_n               = min(s.shape[0] for s in replicas_s_list)
+    replicas_s_list     = [s[:min_n] for s in replicas_s_list]
+    replicas_log_list   = [log[:min_n] for log in replicas_log_list]
+    n_samp              = min_n
+
+    # Stack into batched arrays: (q, n_samp, Ns) and (q, n_samp)
+    replicas_s_stacked      = jnp.stack(replicas_s_list, axis=0)
+    replicas_log_stacked    = jnp.stack(replicas_log_list, axis=0)
     
-    # Cyclic permutation of subsystem A
-    # For replica r, create swapped config: take A from replica (r+1) % q, keep B from replica r
-    log_ratio_sum = jnp.zeros(n_samp)
+    if recompute_log_psi:
+        # Re-evaluate ansatz over all replicas in a single massive batch
+        s_flat                  = replicas_s_stacked.reshape(q * n_samp, Ns)
+        log_flat                = jnp.asarray(nqs.ansatz(s_flat)).reshape(-1)
+        replicas_log_stacked    = log_flat.reshape(q, n_samp)
     
-    for r in range(q):
-        r_next          = (r + 1) % q
-        # Build swapped configuration
-        s_swapped       = replicas_s[r].at[:, region].set(replicas_s[r_next][:, region])
-        # Evaluate log-psi on swapped config
-        log_swapped     = jnp.asarray(nqs.ansatz(s_swapped)).reshape(-1)
-        # Accumulate log ratio: log[psi(swapped_r)] - log[psi(original_r)]
-        log_ratio_sum   = log_ratio_sum + (log_swapped - replicas_log[r])
+    # Vectorized cyclic permutation of subsystem A
+    # For replica r, swapped config takes A from (r+1)%q, keeps B from r
+    next_indices        = (jnp.arange(q) + 1) % q
+    s_swapped           = replicas_s_stacked.at[:, :, region].set(replicas_s_stacked[next_indices][:, :, region])
+    
+    # Evaluate log-psi on swapped configurations in a single batch
+    s_swapped_flat      = s_swapped.reshape(q * n_samp, Ns)
+    log_swapped_flat    = jnp.asarray(nqs.ansatz(s_swapped_flat)).reshape(-1)
+    log_swapped         = log_swapped_flat.reshape(q, n_samp)
+    
+    # Compute sum of log-ratios across all replicas: sum_r (log[psi(swapped_r)] - log[psi(original_r)])
+    log_ratio_sum       = jnp.sum(log_swapped - replicas_log_stacked, axis=0)
     
     # Estimate Tr[rho_A^q] in a centered form for numerical stability:
     #   Tr = <exp(log_ratio_sum)>
