@@ -1045,18 +1045,9 @@ _LAZY_IMPORTS = {
     "NQSTDVPRecord"                     : (".src.nqs_spectral",             "NQSTDVPRecord"),
     "NQSSpectralResult"                 : (".src.nqs_spectral",             "NQSSpectralResult"),
     "NQSPrecisionPolicy"                : (".src.nqs_precision",            "NQSPrecisionPolicy"),
-    # Convenience names for different NQS handler modules
-    "NQSEntropy"                        : (".src.nqs_entropy",              "NQSEntropy"),
-    "NQSExact"                          : (".src.nqs_exact",                "NQSExact"),
-    "nqs_entropy"                       : (".src.nqs_entropy",              "__name__"),
-    "nqs_exact"                         : (".src.nqs_exact",                "__name__"),
-    "nqs_precision"                     : (".src.nqs_precision",            "__name__"),
-    "nqs_dataset"                       : (".src.nqs_dataset",              "__name__"),
-    "nqs_core"                          : (".src.nqs_core",                 "__name__"),
     # Core precision utilities
     "resolve_precision_policy"          : (".src.nqs_precision",            "resolve_precision_policy"),
     "cast_for_precision"                : (".src.nqs_precision",            "cast_for_precision"),
-    "load_exact_impl"                   : (".src.nqs_exact",                "load_exact_impl"),
     "compute_ed_entanglement_entropy"   : (".src.nqs_entropy",              "compute_ed_entanglement_entropy"),
     "compute_renyi_entropy"             : (".src.nqs_entropy",              "compute_renyi_entropy"),
     "compute_renyi_entropies"           : (".src.nqs_entropy",              "compute_renyi_entropies"),
@@ -1085,15 +1076,8 @@ if TYPE_CHECKING:
         NQSTDVPRecord,
     )
     from .src.nqs_precision             import NQSPrecisionPolicy, cast_for_precision, resolve_precision_policy
-    from .src.nqs_exact                 import load_exact_impl
     from .src.nqs_entropy               import bipartition_cuts, compute_ed_entanglement_entropy, compute_entropy_sweep, compute_renyi_entropy, compute_renyi_entropies
     from .src.nqs_dataset               import NQSDataset, EDDataset, CommonDataset
-    import src.nqs_entropy              as nqs_entropy
-    import src.nqs_exact                as nqs_exact
-    import src.nqs_precision            as nqs_precision
-    import src.nqs_dataset              as nqs_dataset
-    import ansatze                      as nqs_ansatze
-    import nqs                          as nqs_core
 
 
 def __getattr__(name: str) -> Any:
@@ -1122,7 +1106,7 @@ def __getattr__(name: str) -> Any:
 
 def __dir__():
     """Support for dir() and tab completion."""
-    return sorted(list(globals().keys()) + list(_LAZY_IMPORTS.keys()))
+    return sorted(set(__all__))
 
 # Metadata
 MODULE_DESCRIPTION  = "Neural Quantum States (NQS) with TDVP and Adaptive Scheduling."
@@ -1234,7 +1218,6 @@ __all__ = [
     "NQSPrecisionPolicy",
     "resolve_precision_policy",
     "cast_for_precision",
-    "load_exact_impl",
     # Entropy and dataset utilities
     "compute_ed_entanglement_entropy",
     "compute_renyi_entropy",
@@ -1242,6 +1225,9 @@ __all__ = [
     "compute_entropy_sweep",
     "bipartition_cuts",
     # Datasets
+    "NQSDataset",
+    "EDDataset",
+    "CommonDataset",
     "NetworkFactory",
     "VMCSampler",
     # Configs and loading utilities
@@ -1255,8 +1241,6 @@ __all__ = [
     "quick_start",
     "info",
     # convenience imports for ansatze and other submodules
-    "NQSEntropy",
-    "NQSExact",
 ]
 
 # --------------------------------------------------------------

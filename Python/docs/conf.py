@@ -10,21 +10,28 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
-import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(".."))
-sys.path.insert(0, os.path.abspath("../QES"))
+DOCS_DIR        = Path(__file__).resolve().parent
+PACKAGE_ROOT    = DOCS_DIR.parent
+
+sys.path.insert(0, str(PACKAGE_ROOT))
+
+try:
+    import QES
+except Exception:
+    QES = None
 
 
 # -- Project information -----------------------------------------------------
 
-project = "Quantum EigenSolver (QES)"
-copyright = "2025, Maksymilian Kliczkowski"
-author = "Maksymilian Kliczkowski"
+project     = "Quantum EigenSolver (QES)"
+copyright   = "2025-2026, Maksymilian Kliczkowski"
+author      = "Maksymilian Kliczkowski"
 
 # The full version, including alpha/beta/rc tags
-release = "0.1.0"
+release     = getattr(QES, "__version__", "1.0.0")
 
 
 # -- General configuration ---------------------------------------------------
@@ -34,6 +41,7 @@ release = "0.1.0"
 # ones.
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.mathjax",
@@ -62,13 +70,25 @@ html_theme = "sphinx_rtd_theme"
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = []
 
+# -- Options for autodoc ----------------------------------------------------
+autodoc_default_options = {
+    "members"           : True,
+    "member-order"      : "bysource",
+    "undoc-members"     : True,
+    "show-inheritance"  : True,
+}
+autodoc_typehints               = "description"
+autosummary_generate            = True
+nitpicky                        = False
+
 # -- Options for Napoleon ----------------------------------------------------
-napoleon_google_docstring = False
-napoleon_numpy_docstring = True
-napoleon_include_init_with_doc = True
+napoleon_google_docstring       = False
+napoleon_numpy_docstring        = True
+napoleon_include_init_with_doc  = True
 
 # -- Options for MyST --------------------------------------------------------
-myst_enable_extensions = [
+myst_enable_extensions          = [
     "colon_fence",
     "dollarmath",
 ]
+

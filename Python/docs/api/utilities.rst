@@ -10,3 +10,11 @@ Utilities API
    :members:
    :undoc-members:
    :show-inheritance:
+
+Spectral Backend
+----------------
+
+.. automodule:: QES.general_python.physics.spectral.spectral_backend
+   :members:
+   :undoc-members:
+   :show-inheritance:
