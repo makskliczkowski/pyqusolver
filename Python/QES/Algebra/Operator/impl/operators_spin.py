@@ -213,13 +213,14 @@ def sigma_x_np(
     """
     coeff   = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
     out     = state.copy()
-    for site in sites:
-        out     = (
-            _binary.flip_array_np_nspin(out, site)
-            if not spin
-            else _binary.flip_array_np_spin(out, site)
-        )
-        coeff *= spin_value
+    if spin:
+        for site in sites:
+            out     = _binary.flip_array_np_spin(out, site)
+            coeff *= spin_value
+    else:
+        for site in sites:
+            out     = _binary.flip_array_np_nspin(out, site)
+            coeff *= spin_value
     return ensure_operator_output_shape_numba(out, coeff)
     # return out, coeff
 
@@ -354,16 +355,20 @@ def sigma_y_np_real(
     """
     coeff = 1.0 + 0j
     out = state.copy()
-    for site in sites:
-        # For NumPy arrays, we use the site index directly.
-        bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
-        factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
-        coeff   *= factor
-        out     = (
-            _binary.flip_array_np_nspin(out, site)
-            if not spin
-            else _binary.flip_array_np_spin(out, site)
-        )
+    if spin:
+        for site in sites:
+            # For NumPy arrays, we use the site index directly.
+            bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
+            factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
+            coeff   *= factor
+            out     = _binary.flip_array_np_spin(out, site)
+    else:
+        for site in sites:
+            # For NumPy arrays, we use the site index directly.
+            bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
+            factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
+            coeff   *= factor
+            out     = _binary.flip_array_np_nspin(out, site)
     return ensure_operator_output_shape_numba(out, coeff.real)
     # return out, coeff.real
 
@@ -394,15 +399,18 @@ def sigma_y_np(
     """
     coeff = np.ones(1, dtype=DEFAULT_NP_CPX_TYPE)
     out = state.copy()
-    for site in sites:
-        bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
-        factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
-        coeff  *= factor
-        out     = (
-                    _binary.flip_array_np_nspin(out, site)
-                    if not spin
-                    else _binary.flip_array_np_spin(out, site)
-                )
+    if spin:
+        for site in sites:
+            bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
+            factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
+            coeff  *= factor
+            out     = _binary.flip_array_np_spin(out, site)
+    else:
+        for site in sites:
+            bit     = _array_state_to_bit_np(_binary.check_arr_np(state, site), spin, spin_value)
+            factor  = (2.0 * bit - 1.0) * 1.0j * spin_value
+            coeff  *= factor
+            out     = _binary.flip_array_np_nspin(out, site)
     return ensure_operator_output_shape_numba(out, coeff)
 
 def sigma_y(
@@ -646,17 +654,22 @@ def sigma_plus_np(
     """
     coeff = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
     out = state.copy()
-    for site in sites:
-        bit = _binary.check_arr_np(out, site)
-        if bit:  # annihilation
-            coeff *= 0.0
-            break
-        out = (
-            _binary.flip_array_np_nspin(out, site)
-            if not spin
-            else _binary.flip_array_np_spin(out, site)
-        )
-        coeff *= spin_value
+    if spin:
+        for site in sites:
+            bit = _binary.check_arr_np(out, site)
+            if bit:  # annihilation
+                coeff *= 0.0
+                break
+            out = _binary.flip_array_np_spin(out, site)
+            coeff *= spin_value
+    else:
+        for site in sites:
+            bit = _binary.check_arr_np(out, site)
+            if bit:  # annihilation
+                coeff *= 0.0
+                break
+            out = _binary.flip_array_np_nspin(out, site)
+            coeff *= spin_value
     return ensure_operator_output_shape_numba(out, coeff)
     # return out, coeff
 
@@ -752,17 +765,22 @@ def sigma_minus_np(
 
     coeff = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
     out = state.copy()
-    for site in sites:
-        bit = _binary.check_arr_np(out, site)
-        if bit == 0:
-            coeff *= 0.0
-            break
-        out = (
-            _binary.flip_array_np_spin(out, site)
-            if spin
-            else _binary.flip_array_np_nspin(out, site)
-        )
-        coeff *= spin_value
+    if spin:
+        for site in sites:
+            bit = _binary.check_arr_np(out, site)
+            if bit == 0:
+                coeff *= 0.0
+                break
+            out = _binary.flip_array_np_spin(out, site)
+            coeff *= spin_value
+    else:
+        for site in sites:
+            bit = _binary.check_arr_np(out, site)
+            if bit == 0:
+                coeff *= 0.0
+                break
+            out = _binary.flip_array_np_nspin(out, site)
+            coeff *= spin_value
     return ensure_operator_output_shape_numba(out, coeff)
     # return out, coeff
 
@@ -862,23 +880,34 @@ def _sigma_pm_np_core(
     """
     coeff = np.ones(1, dtype=DEFAULT_NP_FLOAT_TYPE)
     out = state.copy()
-    for i, site in enumerate(sites):
-        bit = _binary.check_arr_np(out, site)
-        need_up = (i % 2 == 0) == start_up
-        if need_up:
-            if bit == 1:
-                coeff *= 0.0
-                break
-        else:
-            if bit == 0:
-                coeff *= 0.0
-                break
-        out = (
-            _binary.flip_array_np_nspin(out, site)
-            if not spin
-            else _binary.flip_array_np_spin(out, site)
-        )
-        coeff *= spin_val
+    if spin:
+        for i, site in enumerate(sites):
+            bit = _binary.check_arr_np(out, site)
+            need_up = (i % 2 == 0) == start_up
+            if need_up:
+                if bit == 1:
+                    coeff *= 0.0
+                    break
+            else:
+                if bit == 0:
+                    coeff *= 0.0
+                    break
+            out = _binary.flip_array_np_spin(out, site)
+            coeff *= spin_val
+    else:
+        for i, site in enumerate(sites):
+            bit = _binary.check_arr_np(out, site)
+            need_up = (i % 2 == 0) == start_up
+            if need_up:
+                if bit == 1:
+                    coeff *= 0.0
+                    break
+            else:
+                if bit == 0:
+                    coeff *= 0.0
+                    break
+            out = _binary.flip_array_np_nspin(out, site)
+            coeff *= spin_val
     return ensure_operator_output_shape_numba(out, coeff)
     # return out, coeff
 
