@@ -9,3 +9,6 @@
 ## 2025-02-27 - [Avoid O(N^2) array allocations in coefficient lookups]
 **Learning:** Calling `np.asarray(coefficient)` inside `_coefficient_for_site` and `_coefficient_for_bond` loops for every site/bond creates redundant array instances when `coefficient` is already a list or tuple. This turns an $O(N)$ initialization loop into $O(N^2)$ memory allocations.
 **Action:** Handle `list` and `tuple` types directly without converting them to `np.asarray()` inside inner loops. Check `len(coefficient)` and index directly.
+## 2025-05-01 - Hoist invariant boolean checks out of Numba/NumPy loops
+**Learning:** In performance-critical functions wrapped with `@numba.njit` (e.g., `sigma_x_np`, `sigma_y_np`, etc.), checking loop-invariant booleans (like `if not spin`) inside the loop prevents optimal compilation and adds branch overhead.
+**Action:** Hoist the invariant conditional check outside the loop, creating two slightly duplicate but optimally fast loops.
