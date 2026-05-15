@@ -125,32 +125,33 @@ class Hamiltonian(BasisAwareOperator):
         Robust non-zero check for Hamiltonian term addition.
         """
         
-        from collections.abc import Mapping, Iterable
-        
         def _is_nonzero_like(value):
             """
             Robust scalar/array-like non-zero check.
             Handles Python scalars, NumPy/JAX 0-d arrays, DummyVector-like wrappers,
             and nested iterables.
             """
+            if type(value) in (int, float, complex):
+                return abs(value) > Hamiltonian._ADD_TOLERANCE
+
             if value is None:
                 return False
 
             # Unwrap DummyVector-like wrappers.
             if hasattr(value, "val"):
-                value = value.val
+                return _is_nonzero_like(value.val)
 
             # Fast numeric path
             if isinstance(value, (int, float, complex, np.number)):
                 return abs(value) > Hamiltonian._ADD_TOLERANCE
 
-            # Dictionary path
-            if isinstance(value, dict):
-                return any(_is_nonzero_like(v) for v in value.values())
-
             # Built-in collections
             if isinstance(value, (list, tuple, set)):
                 return any(_is_nonzero_like(v) for v in value)
+
+            # Dictionary path
+            if isinstance(value, dict):
+                return any(_is_nonzero_like(v) for v in value.values())
 
             # Numpy/JAX arrays
             if hasattr(value, "ndim"):
@@ -176,11 +177,11 @@ class Hamiltonian(BasisAwareOperator):
                         return any(_is_nonzero_like(v) for v in np.ravel(value))
 
             # Mapping path fallback
-            if isinstance(value, Mapping):
+            if hasattr(value, 'values') and callable(value.values):
                 return any(_is_nonzero_like(v) for v in value.values())
 
             # Generic iterable fallback
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            if hasattr(value, '__iter__') and not isinstance(value, (str, bytes, bytearray)):
                 try:
                     return any(_is_nonzero_like(v) for v in value)
                 except Exception:
@@ -506,26 +507,29 @@ class Hamiltonian(BasisAwareOperator):
             - Mapping: similar to dict, but supports more types.
         '''
         
-        if callable(coefficient):
-            return coefficient(int(site))
-        
-        if isinstance(coefficient, dict):
-            if site in coefficient:
-                return coefficient[site]
-            return coefficient.get(int(site), 0.0)
-        
+        if type(coefficient) in (int, float, complex):
+            return coefficient
+
         if isinstance(coefficient, (list, tuple)):
             if len(coefficient) == int(self.ns):
                 return coefficient[int(site)]
             raise ValueError(f"Site coefficient sequence must have size Ns={self.ns}, got size={len(coefficient)}.")
-        
+
+        if isinstance(coefficient, dict):
+            if site in coefficient:
+                return coefficient[site]
+            return coefficient.get(int(site), 0.0)
+
         if hasattr(coefficient, "ndim"):
             if coefficient.ndim == 0:
                 return coefficient.item()
             if coefficient.size == int(self.ns):
                 return coefficient[int(site)]
             raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={coefficient.shape}.")
-        
+
+        if callable(coefficient):
+            return coefficient(int(site))
+
         if hasattr(coefficient, "get"):
             if site in coefficient:
                 return coefficient[site]
@@ -533,24 +537,31 @@ class Hamiltonian(BasisAwareOperator):
         return coefficient
 
     def _coefficient_for_bond(self, coefficient: Any, i: int, j: int, idx: int):
-        if callable(coefficient):
-            return coefficient(int(i), int(j), int(idx))
+        if type(coefficient) in (int, float, complex):
+            return coefficient
+
+        if isinstance(coefficient, (list, tuple)):
+            if idx < len(coefficient):
+                return coefficient[idx]
+            raise ValueError(f"Bond coefficient sequence too short: need index {idx}, size={len(coefficient)}.")
+
         if isinstance(coefficient, dict):
             if (i, j) in coefficient:
                 return coefficient[(i, j)]
             if (j, i) in coefficient:
                 return coefficient[(j, i)]
             return 0.0
-        if isinstance(coefficient, (list, tuple)):
-            if idx < len(coefficient):
-                return coefficient[idx]
-            raise ValueError(f"Bond coefficient sequence too short: need index {idx}, size={len(coefficient)}.")
+
         if hasattr(coefficient, "ndim"):
             if coefficient.ndim == 0:
                 return coefficient.item()
             if idx < coefficient.size:
                 return coefficient[idx]
             raise ValueError(f"Bond coefficient array sequence too short: need index {idx}, size={coefficient.size}.")
+
+        if callable(coefficient):
+            return coefficient(int(i), int(j), int(idx))
+
         if hasattr(coefficient, "get"):
             if (i, j) in coefficient:
                 return coefficient[(i, j)]
