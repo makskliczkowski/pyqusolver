@@ -180,22 +180,26 @@ def extract_occupied(ns: int, basis: Union[int, np.ndarray], out: Optional[np.nd
         return occ
     else:
         # Array input
-        count = 0
-        for i in range(basis.shape[0]):
-            if basis[i] > 0:
-                count += 1
-        
         if out is None:
+            count = 0
+            for i in range(basis.shape[0]):
+                if basis[i] > 0:
+                    count += 1
+
             occ = np.empty(count, dtype=np.int64)
+            k = 0
+            for i in range(basis.shape[0]):
+                if basis[i] > 0:
+                    occ[k]  = i
+                    k      += 1
+            return occ
         else:
-            occ = out[:count]
-        
-        k = 0
-        for i in range(basis.shape[0]):
-            if basis[i] > 0:
-                occ[k]  = i
-                k      += 1
-        return occ
+            k = 0
+            for i in range(basis.shape[0]):
+                if basis[i] > 0:
+                    out[k]  = i
+                    k      += 1
+            return out[:k]
 
 # Backwards compatibility alias
 _extract_occupied       = extract_occupied
