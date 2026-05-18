@@ -1,3 +1,5 @@
+"""Regression tests for nqs small benchmarks."""
+
 import os
 import time
 
@@ -23,12 +25,14 @@ except ImportError:
 
 
 def _block_tree(x):
+	"""Block tree."""
 	for leaf in jax.tree_util.tree_leaves(x):
 		if hasattr(leaf, "block_until_ready"):
 			leaf.block_until_ready()
 
 
 def _build_tiny_model():
+	"""Build tiny model."""
 	lattice = SquareLattice(dim=1, lx=4, bc="obc")
 	hilbert = HilbertSpace(lattice=lattice)
 	model = TransverseFieldIsing(
@@ -43,6 +47,7 @@ def _build_tiny_model():
 
 
 def _make_networks(ns: int):
+	"""Create networks."""
 	return {
 		"rbm": RBM(
 			input_shape=(ns,),
@@ -72,6 +77,7 @@ def _make_networks(ns: int):
 
 
 def _build_tiny_nqs(net, model, hilbert, seed: int):
+	"""Build tiny nqs."""
 	return NQS(
 		logansatz=net,
 		model=model,
@@ -91,6 +97,7 @@ def _build_tiny_nqs(net, model, hilbert, seed: int):
 
 
 def _time_call(fun, *args, repeat: int = 3, **kwargs):
+	"""Time call."""
 	times = []
 	last = None
 	for _ in range(repeat):
@@ -102,6 +109,7 @@ def _time_call(fun, *args, repeat: int = 3, **kwargs):
 
 
 def benchmark_tiny_nqs_paths():
+	"""Helper for benchmark tiny nqs paths."""
 	_, hilbert, model = _build_tiny_model()
 	ns = hilbert.ns
 	networks = _make_networks(ns)
@@ -143,6 +151,7 @@ def benchmark_tiny_nqs_paths():
 
 
 def test_tiny_nqs_benchmark_smoke():
+	"""Verify test tiny nqs benchmark smoke."""
 	results = benchmark_tiny_nqs_paths()
 	assert len(results) >= 3
 	for item in results:

@@ -1,5 +1,19 @@
 """
-Monte Carlo and probe-state spectral orchestration for QES.NQS.
+Probe-state orchestration for NQS dynamical response functions.
+
+This module is the bridge between TDVP trajectories and spectra. It implements
+the response workflow used by the public ``NQS`` spectral methods:
+
+1. resolve probe operators ``A`` and ``B`` and their normalization weights,
+2. spawn variational probe states representing ``A|psi0>`` and ``B|psi0>``,
+3. evolve one probe state, or both half-way with the symmetric two-sided
+   ``<-t/2|+t/2>`` protocol,
+4. evaluate normalized transition correlators by Monte Carlo or exact summation,
+5. send the correlator to ``fft`` for finite-time spectral reconstruction.
+
+The helper functions are kept small so tests can exercise each stage directly;
+public users should normally enter through ``NQS.dynamic_structure_factor`` or
+``NQS.compute_dynamical_correlator``.
 """
 
 from __future__ import annotations

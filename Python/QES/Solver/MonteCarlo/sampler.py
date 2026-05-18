@@ -364,6 +364,22 @@ class Sampler(ABC):
         """
         return {}
 
+    def _on_runtime_config_change(self, *, counts_changed: bool = False, layout_changed: bool = False, proposer_changed: bool = False, distribution_changed: bool = False, require_thermalization: bool = False) -> None:
+        """
+        Hook for subclasses to rebuild cached runtime state after config changes.
+        """
+        return None
+
+    @staticmethod
+    def _normalize_count(value: int, *, name: str, minimum: int = 1) -> int:
+        """
+        Normalize integer runtime counts shared by sampler subclasses.
+        """
+        value = int(value)
+        if value < minimum:
+            raise ValueError(f"{name} must be >= {minimum}.")
+        return value
+
     ###################################################################
     #! BACKEND
     ###################################################################
@@ -651,7 +667,11 @@ class Sampler(ABC):
             numsamples (int):
                 The number of samples
         """
+        numsamples = self._normalize_count(numsamples, name="numsamples", minimum=1)
+        if self._numsamples == numsamples:
+            return
         self._numsamples = numsamples
+        self._on_runtime_config_change(counts_changed=True, require_thermalization=True)
 
     def set_numchains(self, numchains):
         """
@@ -660,8 +680,12 @@ class Sampler(ABC):
             numchains (int):
                 The number of chains
         """
+        numchains = self._normalize_count(numchains, name="numchains", minimum=1)
+        if self._numchains == numchains:
+            return
         self._numchains = numchains
         self.set_chains(self._initstate, numchains)
+        self._on_runtime_config_change(counts_changed=True, layout_changed=True, require_thermalization=True)
 
     ###################################################################
     #! GETTERS

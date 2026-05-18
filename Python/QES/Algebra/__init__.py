@@ -48,32 +48,28 @@ MODULE_DESCRIPTION = (
     "Algebra for quantum many-body: Hilbert spaces, Hamiltonians, operators, symmetries."
 )
 
-# -----------------------------------------------------------------------------
-# Lazy package surface
-
 _LAZY_IMPORTS = {
-    "HilbertSpace": (".hilbert", "HilbertSpace"),
-    "HilbertConfig": (".hilbert_config", "HilbertConfig"),
-    "SymmetrySpec": (".hilbert_config", "SymmetrySpec"),
-    "Hamiltonian": (".hamil", "Hamiltonian"),
-    "HamiltonianConfig": (".hamil_config", "HamiltonianConfig"),
-    "HAMILTONIAN_REGISTRY": (".hamil_config", "HAMILTONIAN_REGISTRY"),
-    "register_hamiltonian": (".hamil_config", "register_hamiltonian"),
+    "HilbertSpace"          : (".hilbert", "HilbertSpace"),
+    "HilbertConfig"         : (".hilbert_config", "HilbertConfig"),
+    "SymmetrySpec"          : (".hilbert_config", "SymmetrySpec"),
+    "Hamiltonian"           : (".hamil", "Hamiltonian"),
+    "HamiltonianConfig"     : (".hamil_config", "HamiltonianConfig"),
+    "HAMILTONIAN_REGISTRY"  : (".hamil_config", "HAMILTONIAN_REGISTRY"),
+    "register_hamiltonian"  : (".hamil_config", "register_hamiltonian"),
     # backend helper re-exports kept for compatibility
-    "identity": (".backends", "identity"),
-    "inner": (".backends", "inner"),
-    "kron": (".backends", "kron"),
-    "outer": (".backends", "outer"),
-    "overlap": (".backends", "overlap"),
-    "trace": (".backends", "trace"),
+    "identity"              : (".backends", "identity"),
+    "inner"                 : (".backends", "inner"),
+    "kron"                  : (".backends", "kron"),
+    "outer"                 : (".backends", "outer"),
+    "overlap"               : (".backends", "overlap"),
+    "trace"                 : (".backends", "trace"),
     # package-level modules
-    "Symmetries": (".Symmetries", None),
-    "Operator": (".Operator", None),
-    "Hilbert": (".Hilbert", None),
-    "Hamil": (".Hamil", None),
+    "Symmetries"            : (".Symmetries", None),
+    "Operator"              : (".Operator", None),
+    "Hilbert"               : (".Hilbert", None),
+    "Hamil"                 : (".Hamil", None),
 }
 
-_SYMMETRY_MODULE = ".Symmetries"
 _LAZY_CACHE: dict[str, Any] = {}
 
 if TYPE_CHECKING:
@@ -107,7 +103,7 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    """Resolve public algebra attributes and compatibility exports lazily."""
+    """Resolve public algebra attributes lazily."""
     if name in _LAZY_CACHE:
         return _LAZY_CACHE[name]
 
@@ -118,18 +114,13 @@ def __getattr__(name: str) -> Any:
         _LAZY_CACHE[name] = result
         return result
 
-    # Compatibility path: historical exports pulled from QES.Algebra.Symmetries.
-    symm = importlib.import_module(_SYMMETRY_MODULE, package=__name__)
-    if hasattr(symm, name):
-        result = getattr(symm, name)
-        _LAZY_CACHE[name] = result
-        return result
-
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
-    """Return the stable algebra attribute list including symmetry fallbacks."""
-    symm = importlib.import_module(_SYMMETRY_MODULE, package=__name__)
-    symmetry_names = [n for n in dir(symm) if not n.startswith("_")]
-    return sorted(set(list(globals().keys()) + __all__ + list(_LAZY_IMPORTS.keys()) + symmetry_names))
+    """Return the maintained algebra package surface."""
+    return sorted(set(__all__))
+
+# -----------------------------------------------------------------------
+#! EOF
+# -----------------------------------------------------------------------

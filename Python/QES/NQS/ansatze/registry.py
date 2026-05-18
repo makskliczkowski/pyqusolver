@@ -22,7 +22,6 @@ _PRIMARY_ANSATZE: Tuple[str, ...] = (
     "resnet",
     "ar",
     "mlp",
-    "gcnn",
     "eqgcnn",
     "transformer",
     "pp",
@@ -36,23 +35,17 @@ _PRIMARY_ANSATZE: Tuple[str, ...] = (
 _ANSATZ_REGISTRY: Dict[str, AnsatzEntry] = {
     "rbm":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_rbm",          "RBM"),
     "cnn":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_cnn",          "CNN"),
-    "res":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_res",          "ResNet"),
     "resnet":           AnsatzEntry("QES.general_python.ml.net_impl.networks.net_res",          "ResNet"),
     "ar":               AnsatzEntry(".autoregressive",                                          "ComplexAR"),
-    "autoregressive":   AnsatzEntry(".autoregressive",                                          "ComplexAR"),
     "mlp":              AnsatzEntry("QES.general_python.ml.net_impl.networks.net_mlp",          "MLP"),
-    "gcnn":             AnsatzEntry("QES.general_python.ml.net_impl.networks.net_gcnn",         "GCNN"),
     "eqgcnn":           AnsatzEntry(".equivariant_gcnn", "EquivariantGCNN"),
     "transformer":      AnsatzEntry("QES.general_python.ml.net_impl.networks.net_transformer",  "Transformer"),
     "pp":               AnsatzEntry(".pair_product", "PairProduct"),
-    "pair_product":     AnsatzEntry(".pair_product", "PairProduct"),
     "rbmpp":            AnsatzEntry(".pair_product", "PairProduct", default_kwargs={"use_rbm": True}),
     "jastrow":          AnsatzEntry(".jastrow", "Jastrow"),
     "mps":              AnsatzEntry(".mps", "MPS"),
     "amplitude_phase":  AnsatzEntry(".amplitude_phase", "AmplitudePhase"),
     "approx_symmetric": AnsatzEntry(".approx_symmetric", "AnsatzApproxSymmetric"),
-    "approxsym":        AnsatzEntry(".approx_symmetric", "AnsatzApproxSymmetric"),
-    "asym":             AnsatzEntry(".approx_symmetric", "AnsatzApproxSymmetric"),
 }
 
 # ----------------------------------------------------------------------

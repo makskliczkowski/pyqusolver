@@ -51,10 +51,10 @@ def __getattr__(name: str) -> Any:
     if name not in _LAZY_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    module_path, attr_name = _LAZY_EXPORTS[name]
-    module = importlib.import_module(module_path, package=__name__)
-    value = getattr(module, attr_name)
-    _LAZY_CACHE[name] = value
+    module_path, attr_name  = _LAZY_EXPORTS[name]
+    module                  = importlib.import_module(module_path, package=__name__)
+    value                   = getattr(module, attr_name)
+    _LAZY_CACHE[name]       = value
     return value
 
 def __dir__():

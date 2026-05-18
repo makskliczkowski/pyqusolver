@@ -1,3 +1,5 @@
+"""Regression tests for nqs dynamic structure factor."""
+
 import numpy as np
 import pytest
 
@@ -9,7 +11,8 @@ try:
     from QES.Algebra.Operator.impl.operators_spin import sig_k
     from QES.Algebra.hilbert import HilbertSpace
     from QES.NQS.nqs import NQS
-    from QES.NQS.src.nqs_spectral import _diagonal_probe_overlap_operator, _exact_expectation_value
+    from QES.NQS.src.spectral.exact import exact_expectation_value
+    from QES.NQS.src.spectral.operators import diagonal_probe_overlap_operator
     from QES.general_python.lattices import SquareLattice
     from QES.general_python.ml.net_impl.networks.net_rbm import RBM
 except ImportError:
@@ -17,6 +20,7 @@ except ImportError:
 
 
 def _build_uniform_tfim_state(seed: int = 0):
+    """Build uniform tfim state."""
     lattice = SquareLattice(dim=1, lx=4, bc="pbc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -58,6 +62,7 @@ def _build_uniform_tfim_state(seed: int = 0):
 
 
 def test_dynamic_structure_factor_modifier_smoke():
+    """Verify test dynamic structure factor modifier smoke."""
     model, hilbert, lattice, nqs = _build_uniform_tfim_state(seed=0)
     probe_q = sig_k(np.pi, lattice=lattice, ns=hilbert.ns)
     probe_mq = sig_k(-np.pi, lattice=lattice, ns=hilbert.ns)
@@ -168,9 +173,9 @@ def test_dynamic_structure_factor_modifier_smoke():
     psi0 = np.ones(eig_vec.shape[0], dtype=np.complex128)
     psi0 /= np.linalg.norm(psi0)
     exact_static_weight = np.vdot(psi0, probe_matrix.conj().T @ probe_matrix @ psi0)
-    exact_kernel_weight = _exact_expectation_value(
+    exact_kernel_weight = exact_expectation_value(
         nqs,
-        _diagonal_probe_overlap_operator(probe_mq, probe_q),
+        diagonal_probe_overlap_operator(probe_mq, probe_q),
     )
 
     assert abs(corr.correlator[0] - exact_static_weight) < 1e-8
@@ -180,6 +185,7 @@ def test_dynamic_structure_factor_modifier_smoke():
 
 
 def test_spawn_like_preserves_nqs_state_convention():
+    """Verify test spawn like preserves nqs state convention."""
     _, _, _, nqs = _build_uniform_tfim_state(seed=3)
     spawned = nqs.spawn_like(use_orbax=False, verbose=False)
 
@@ -190,13 +196,17 @@ def test_spawn_like_preserves_nqs_state_convention():
 
 
 def test_nqs_resolve_operator_caches_bound_operator():
+    """Verify test nqs resolve operator caches bound operator."""
     _, _, _, nqs = _build_uniform_tfim_state(seed=5)
 
     class _BoundProbe:
+        """Test helper class for BoundProbe."""
         def __init__(self):
+            """Helper for init."""
             self.calls = 0
 
         def bind_state_convention(self, convention):
+            """Helper for bind state convention."""
             self.calls += 1
             return ("bound", convention["representation"], convention["mode_repr"])
 
@@ -209,18 +219,23 @@ def test_nqs_resolve_operator_caches_bound_operator():
 
 
 def test_compute_observable_resolves_state_bound_operator():
+    """Verify test compute observable resolves state bound operator."""
     _, _, _, nqs = _build_uniform_tfim_state(seed=7)
     (_, _), (states, log_psi), probabilities = nqs.sample(num_samples=8, num_chains=4)
 
     class _ObservableProbe:
+        """Test helper class for ObservableProbe."""
         def __init__(self):
+            """Helper for init."""
             self.calls = 0
 
         def bind_state_convention(self, convention):
+            """Helper for bind state convention."""
             self.calls += 1
             offset = 1.0 if convention["representation"] == "binary_01" else -1.0
 
             def _kernel(s):
+                """Helper for kernel."""
                 s = jnp.asarray(s)
                 return s[..., 0] * 0.0 + offset
 

@@ -72,14 +72,36 @@ class SOTANetConfig:
         kw.update(self.extra_kwargs)
         return kw
 
+
+def _resolve_reshape_dims(num_sites: int, lattice_dims: Optional[Tuple[int, ...]]) -> Tuple[int, ...]:
+    """Resolve a generic spatial layout without model-specific assumptions."""
+    if lattice_dims is not None:
+        raw_dims = tuple(int(d) for d in lattice_dims if d is not None and int(d) > 0)
+        spatial_dims = tuple(int(d) for d in raw_dims if int(d) > 1)
+        if spatial_dims:
+            if math.prod(spatial_dims) == num_sites:
+                if len(spatial_dims) == 1:
+                    return (spatial_dims[0], 1)
+                if len(spatial_dims) == 2:
+                    return spatial_dims
+                return (spatial_dims[0], int(math.prod(spatial_dims[1:])))
+
+    sqrt_n = int(math.sqrt(num_sites))
+    if sqrt_n * sqrt_n == num_sites:
+        return (sqrt_n, sqrt_n)
+
+    for factor in range(int(math.sqrt(num_sites)), 0, -1):
+        if num_sites % factor == 0:
+            return (factor, num_sites // factor)
+    return (num_sites, 1)
+
 def estimate_network_params(
     net_type: str,
     num_sites: int,
     lattice_dims: Optional[Tuple[int, ...]] = None,
     lattice_type: str = "honeycomb",
-    model_type: str = "kitaev",
     *,
-    target_accuracy: str = "high",
+    target_accuracy: str = "medium",
     dtype: str = "complex128",
     max_params: Optional[int] = None,
     **kwargs,
@@ -88,54 +110,12 @@ def estimate_network_params(
     Estimate network hyperparameters for a given system.
     """
     net_type = net_type.lower().replace("-", "_")
-    if net_type in ("approxsym", "asym"):
-        net_type = "approx_symmetric"
-    if net_type == "eqgcnn":
-        net_type = "gcnn"
 
-    if lattice_dims is not None:
-        reshape_dims = tuple(lattice_dims)
-        # flatten to 2D if possible
-        if len(reshape_dims) == 1 and reshape_dims[0] == num_sites:
-            reshape_dims = (num_sites, 1)
-        elif len(reshape_dims) == 2 and reshape_dims[0] * reshape_dims[1] != num_sites:
-            x_num           = lattice_dims[0] * num_sites // (lattice_dims[1])
-            y_num           = lattice_dims[1]
-            if x_num * y_num == num_sites:
-                reshape_dims = (x_num, y_num)
-            else:
-                reshape_dims = (num_sites, 1)
-    else:
-        sqrt_n = int(math.sqrt(num_sites))
-        if sqrt_n * sqrt_n == num_sites:
-            reshape_dims = (sqrt_n, sqrt_n)
-        else:
-            for factor in range(int(math.sqrt(num_sites)), 0, -1):
-                if num_sites % factor == 0:
-                    reshape_dims = (factor, num_sites // factor)
-                    break
-            else:
-                reshape_dims = (num_sites, 1)
-
-    tier_mult = {"fast": 0.5, "medium": 1.0, "high": 2.0}.get(target_accuracy, 1.0)
-    is_frustrated = model_type in ("kitaev", "j1j2", "heisenberg")
-    if is_frustrated and "complex" not in dtype:
-        dtype = "complex128"
+    reshape_dims = _resolve_reshape_dims(num_sites, lattice_dims)
+    tier_mult = {"fast": 0.75, "medium": 1.0, "high": 1.35}.get(target_accuracy, 1.0)
 
     if net_type == "rbm":
-        base_alpha = {
-                "kitaev"        : 4.0,
-                "heisenberg"    : 2.0,
-                "j1j2"          : 4.0,
-                "tfi"           : 1.0
-            }.get(model_type, 2.0)
-        
-        user_alpha = kwargs.get("alpha", None)
-        if user_alpha is not None:
-            base_alpha = user_alpha
-        if num_sites > 50 and "alpha" not in kwargs:
-            
-            base_alpha = max(base_alpha, 2.0 + num_sites / 50.0)
+        base_alpha = kwargs.get("alpha", max(1.0, min(4.0, 1.0 + num_sites / 24.0)))
         alpha       = base_alpha * (tier_mult if "alpha" not in kwargs else 1.0)
         n_hidden    = int(alpha * num_sites)
         n_params    = n_hidden * num_sites + n_hidden + num_sites
@@ -151,27 +131,19 @@ def estimate_network_params(
             estimated_params=n_params,
             description=(
                 f"RBM [R1] with a={alpha:.1f} ({n_hidden} hidden units, "
-                f"{n_params} params). Complex weights for {model_type}. "
+                f"{n_params} params). "
                 f"Override: alpha=<float>."
             ),
         )
 
     if net_type == "cnn":
-        if model_type in ("kitaev", "j1j2"):
-            n_layers = max(2, min(6, int(3 * tier_mult)))
-            base_feat = 12
-        else:
-            n_layers = max(1, min(4, int(2 * tier_mult)))
-            base_feat = 8
-        n_layers    = kwargs.get("n_layers", n_layers)
-        base_feat   = kwargs.get("base_feat", base_feat)
-        features    = tuple(max(2, int(base_feat * tier_mult - 2 * i)) for i in range(n_layers))
-        ndim        = len(reshape_dims)
-        k = min(3, min(reshape_dims))
-        if ndim == 1:
-            kernel_sizes = tuple(((k,),) * n_layers)
-        else:
-            kernel_sizes = tuple((((k,) * ndim),) * n_layers)
+        default_layers = 1 if num_sites <= 8 else 2 if num_sites <= 48 else 3
+        n_layers    = int(kwargs.get("n_layers", max(1, min(4, round(default_layers * tier_mult)))))
+        base_feat   = int(kwargs.get("base_feat", max(4, min(16, 2 * int(math.sqrt(num_sites)) + 2))))
+        feat0       = max(4, int(round(base_feat * (tier_mult if "base_feat" not in kwargs else 1.0))))
+        features    = tuple(feat0 for _ in range(n_layers))
+        kernel_shape = tuple(max(1, min(3, int(dim))) for dim in reshape_dims)
+        kernel_sizes = tuple(kernel_shape for _ in range(n_layers))
         activations = [kwargs.get("activation", "log_cosh")] * n_layers
         return SOTANetConfig(
             net_type="cnn",
@@ -191,17 +163,11 @@ def estimate_network_params(
         )
 
     if net_type == "resnet":
-        base_features = {
-            "kitaev": 32,
-            "j1j2": 32,
-            "heisenberg": 16,
-            "tfi": 8,
-        }.get(model_type, 16)
-        base_features = kwargs.get("base_features", base_features)
+        base_features = int(kwargs.get("base_features", max(8, min(32, 2 * num_sites))))
         features = int(base_features * (tier_mult if "base_features" not in kwargs else 1.0))
-        base_depth = kwargs.get("base_depth", 4 if is_frustrated else 2)
+        base_depth = kwargs.get("base_depth", 2 if num_sites <= 16 else 3)
         depth = max(2, int(base_depth * (tier_mult if "base_depth" not in kwargs else 1.0)))
-        kernel_size = kwargs.get("kernel_size", min(3, min(reshape_dims)))
+        kernel_size = kwargs.get("kernel_size", tuple(max(1, min(3, int(dim))) for dim in reshape_dims))
         return SOTANetConfig(
             net_type="resnet",
             input_shape=(num_sites,),
@@ -214,7 +180,6 @@ def estimate_network_params(
             description=(
                 f"ResNet [R5] with {depth} residual blocks, {features} channels, "
                 f"kernel={kernel_size}, periodic BCs. "
-                f"SOTA for frustrated / topological {model_type}. "
                 f"Override: base_features, base_depth, kernel_size."
             ),
         )
@@ -226,11 +191,7 @@ def estimate_network_params(
             ar_hidden = tuple(int(base_hidden * tier_mult) for _ in range(n_layers))
         else:
             ar_hidden = tuple(int(base_hidden) for _ in range(n_layers))
-        tmult = tier_mult if "base_hidden" not in kwargs else 1.0
-        if is_frustrated:
-            phase_hidden = tuple(int(base_hidden * tmult * 0.75) for _ in range(n_layers))
-        else:
-            phase_hidden = tuple(int(base_hidden * tmult * 0.5) for _ in range(max(1, n_layers - 1)))
+        phase_hidden = kwargs.get("phase_hidden", ar_hidden)
         return SOTANetConfig(
             net_type="ar",
             input_shape=(num_sites,),
@@ -337,15 +298,9 @@ def estimate_network_params(
             ),
         )
 
-    if net_type in ("eqgcnn", "gcnn"):
+    if net_type == "eqgcnn":
         n_layers = kwargs.get("n_layers", max(2, min(3, int(2 * tier_mult))))
-        base_channels = {
-            "kitaev": 8,
-            "j1j2": 8,
-            "heisenberg": 8,
-            "tfi": 4,
-        }.get(model_type, 8)
-        base_channels = kwargs.get("base_channels", base_channels)
+        base_channels = kwargs.get("base_channels", 8)
         if "base_channels" not in kwargs:
             channels = tuple(int(base_channels * tier_mult) for _ in range(n_layers))
         else:
@@ -392,7 +347,7 @@ def estimate_network_params(
 
     raise ValueError(
         f"Unknown network type '{net_type}'. "
-        f"Supported: rbm, cnn, resnet, ar, pp, rbmpp, eqgcnn/gcnn, approx_symmetric."
+        f"Supported: rbm, cnn, resnet, ar, pp, rbmpp, eqgcnn, approx_symmetric."
     )
 
 

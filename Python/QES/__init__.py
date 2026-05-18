@@ -25,20 +25,26 @@ Description     : Quantum Eigen Solver: Comprehensive framework for quantum eige
 
 from __future__ import annotations
 
-__version__         = "1.3.0"
+import  importlib           as _importlib
+import  importlib.metadata  as _importlib_metadata
+import  os                  as _os
+import  warnings            as _warnings
+import  typing              as _t
+from    contextlib          import contextmanager as _contextmanager
+from    typing              import TYPE_CHECKING
+
+def _resolve_package_version() -> str:
+    """Return the installed package version, with a source-tree fallback."""
+    try:
+        return _importlib_metadata.version("QES")
+    except _importlib_metadata.PackageNotFoundError:
+        return "1.0.0"
+
+__version__         = _resolve_package_version()
 __author__          = "Maksymilian Kliczkowski"
 __email__           = "maksymilian.kliczkowski@pwr.edu.pl"
 __license__         = "CC-BY-4.0"
-__description__     = (
-    "Quantum Eigen Solver: Comprehensive framework for quantum eigenvalue problem solving"
-)
-
-import  importlib as _importlib
-import  os as _os
-import  warnings as _warnings
-from    contextlib import contextmanager as _contextmanager
-from    typing import TYPE_CHECKING
-import  typing as _t
+__description__     = "Quantum Eigen Solver: Comprehensive framework for quantum eigenvalue problem solving"
 
 # -----------------------------------------------------------------------
 
@@ -175,6 +181,8 @@ _CORE_LAZY_IMPORTS = {
     "Algebra"                   : (".Algebra", None),
     "NQS"                       : (".NQS", None),
     "Solver"                    : (".Solver", None),
+    "general_python"            : (".general_python", None),
+    
     # Core classes from QES.Algebra
     "HilbertSpace"              : (".Algebra.hilbert", "HilbertSpace"),
     "Hamiltonian"               : (".Algebra.hamil", "Hamiltonian"),

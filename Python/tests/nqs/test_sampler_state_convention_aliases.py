@@ -1,3 +1,5 @@
+"""Regression tests for sampler state convention aliases."""
+
 import pytest
 
 try:
@@ -7,6 +9,7 @@ except ImportError:
 
 
 def test_resolve_state_defaults_accepts_hyphenated_binary_alias():
+	"""Verify test resolve state defaults accepts hyphenated binary alias."""
 	spin, mode_repr = resolve_state_defaults(
 		state_representation="binary-01",
 		spin=None,
