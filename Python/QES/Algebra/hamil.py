@@ -176,11 +176,11 @@ class Hamiltonian(BasisAwareOperator):
                     except Exception:
                         return any(_is_nonzero_like(v) for v in np.ravel(value))
 
-            # Mapping path fallback (duck typing)
-            if hasattr(value, "values") and callable(value.values):
+            # Mapping path fallback
+            if hasattr(value, "keys"):
                 return any(_is_nonzero_like(v) for v in value.values())
 
-            # Generic iterable fallback (duck typing)
+            # Generic iterable fallback
             if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
                 try:
                     return any(_is_nonzero_like(v) for v in value)
@@ -506,13 +506,15 @@ class Hamiltonian(BasisAwareOperator):
             - Array: 0-d treated as scalar, 1-d indexed by site, must match Ns.
             - Mapping: similar to dict, but supports more types.
         '''
-        
+        if callable(coefficient):
+            return coefficient(site)
+
         if type(coefficient) in (int, float, complex):
             return coefficient
 
         if isinstance(coefficient, (list, tuple)):
-            if len(coefficient) == int(self.ns):
-                return coefficient[int(site)]
+            if len(coefficient) == self.ns:
+                return coefficient[site]
             raise ValueError(f"Site coefficient sequence must have size Ns={self.ns}, got size={len(coefficient)}.")
 
         if isinstance(coefficient, dict):
@@ -523,23 +525,21 @@ class Hamiltonian(BasisAwareOperator):
         if hasattr(coefficient, "ndim"):
             if coefficient.ndim == 0:
                 return coefficient.item()
-            if coefficient.size == int(self.ns):
-                return coefficient[int(site)]
+            if coefficient.size == self.ns:
+                return coefficient[site]
             raise ValueError(f"Site coefficient array must have size Ns={self.ns}, got shape={coefficient.shape}.")
-
-        if callable(coefficient):
-            return coefficient(int(site))
-
-        if hasattr(coefficient, "get"):
+        
+        if isinstance(coefficient, dict) or hasattr(coefficient, "get"):
             if site in coefficient:
                 return coefficient[site]
-            return coefficient.get(int(site), 0.0)
+            return coefficient.get(site, 0.0)
         return coefficient
 
     def _coefficient_for_bond(self, coefficient: Any, i: int, j: int, idx: int):
-        if type(coefficient) in (int, float, complex):
-            return coefficient
 
+        if callable(coefficient):
+            return coefficient(i, j, idx)
+          
         if isinstance(coefficient, (list, tuple)):
             if idx < len(coefficient):
                 return coefficient[idx]
@@ -558,11 +558,8 @@ class Hamiltonian(BasisAwareOperator):
             if idx < coefficient.size:
                 return coefficient[idx]
             raise ValueError(f"Bond coefficient array sequence too short: need index {idx}, size={coefficient.size}.")
-
-        if callable(coefficient):
-            return coefficient(int(i), int(j), int(idx))
-
-        if hasattr(coefficient, "get"):
+        
+        if isinstance(coefficient, dict) or hasattr(coefficient, "get"):
             if (i, j) in coefficient:
                 return coefficient[(i, j)]
             if (j, i) in coefficient:
