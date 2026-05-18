@@ -433,61 +433,58 @@ class OperatorModule:
         # Pass type_acting to kwargs
         kwargs["type_act"] = type_acting
 
+        # Determine factory mapping based on local space type
         if self._local_space_type == LocalSpaceTypes.SPIN_1_2:
             ops_module = self._load_spin_operators()
-            correlators = correlators or ["zz"]
-            ops = {x: {} for x in correlators}
-            for corr in correlators:
-                for i, j in indices_pairs:
-                    sites = [i, j] if i is not None and j is not None else None
-                    key = (i, j) if sites is not None else "i,j"
-                    kwargs_op = kwargs.copy()
-                    kwargs_op["sites"] = sites
-
-                    if "xx" == corr:
-                        op = ops_module.sig_x(**kwargs_op)
-                    elif "xy" == corr:
-                        op = ops_module.sig_xy(**kwargs_op)
-                    elif "xz" == corr:
-                        op = ops_module.sig_xz(**kwargs_op)
-                    elif "yx" == corr:
-                        op = ops_module.sig_yx(**kwargs_op)
-                    elif "yy" == corr:
-                        op = ops_module.sig_y(**kwargs_op)
-                    elif "yz" == corr:
-                        op = ops_module.sig_yz(**kwargs_op)
-                    elif "zx" == corr:
-                        op = ops_module.sig_zx(**kwargs_op)
-                    elif "zy" == corr:
-                        op = ops_module.sig_zy(**kwargs_op)
-                    elif "zz" == corr:
-                        op = ops_module.sig_z(**kwargs_op)
-                    else:
-                        raise ValueError(f"Unknown correlator type: {corr}")
-                    ops[corr][key] = op
-            return ops
-
+            mapping = {
+                "xx": ops_module.sig_x,
+                "xy": ops_module.sig_xy,
+                "xz": ops_module.sig_xz,
+                "yx": ops_module.sig_yx,
+                "yy": ops_module.sig_y,
+                "yz": ops_module.sig_yz,
+                "zx": ops_module.sig_zx,
+                "zy": ops_module.sig_zy,
+                "zz": ops_module.sig_z,
+            }
+            error_fmt = "Unknown correlator type: {}"
         elif self._local_space_type == LocalSpaceTypes.SPIN_1:
             ops_module = self._load_spin1_operators()
-            correlators = correlators or ["zz"]
-            ops = {x: {} for x in correlators}
-            for corr in correlators:
-                for i, j in indices_pairs:
-                    sites = [i, j] if i is not None and j is not None else None
-                    key = (i, j) if sites is not None else "i,j"
-                    kwargs_op = kwargs.copy()
-                    kwargs_op["sites"] = sites
+            mapping = {
+                "xx": ops_module.s1_x,
+                "yy": ops_module.s1_y,
+                "zz": ops_module.s1_z,
+            }
+            error_fmt = "Unsupported spin-1 correlator type '{}'. Supported: 'xx', 'yy', 'zz'."
+        elif self._local_space_type == LocalSpaceTypes.SPINLESS_FERMIONS:
+            raise NotImplementedError("Fermion correlators not yet implemented.")
+        elif self._local_space_type == LocalSpaceTypes.BOSONS:
+            raise NotImplementedError("Hardcore boson correlators not yet implemented.")
+        else:
+            raise ValueError(f"Unknown module: {self._local_space_type}")
 
-                    if "xx" == corr:
-                        op = ops_module.s1_x(**kwargs_op)
-                    elif "yy" == corr:
-                        op = ops_module.s1_y(**kwargs_op)
-                    elif "zz" == corr:
-                        op = ops_module.s1_z(**kwargs_op)
-                    else:
-                        raise ValueError(f"Unsupported spin-1 correlator type '{corr}'. Supported: 'xx', 'yy', 'zz'.")
-                    ops[corr][key] = op
-            return ops
+        # Core generation logic
+        correlators = correlators or ["zz"]
+
+        # Pre-calculate sites and keys to avoid redundant work in the loops
+        pairs_info = [
+            (
+                ((i, j) if i is not None and j is not None else "i,j"),
+                ([i, j] if i is not None and j is not None else None),
+            )
+            for i, j in indices_pairs
+        ]
+
+        ops = {}
+        for corr in correlators:
+            factory = mapping.get(corr)
+            if factory is None:
+                raise ValueError(error_fmt.format(corr))
+
+            # Batch instantiate operators for all pairs
+            ops[corr] = {key: factory(sites=sites, **kwargs) for key, sites in pairs_info}
+
+        return ops
 
         elif self._local_space_type == LocalSpaceTypes.SPINLESS_FERMIONS:
             ops_module = self._load_fermion_operators()
