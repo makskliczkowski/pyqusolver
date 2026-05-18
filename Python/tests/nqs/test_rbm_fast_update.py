@@ -1,3 +1,5 @@
+"""Regression tests for rbm fast update."""
+
 import numpy as np
 import pytest
 
@@ -5,14 +7,17 @@ jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
 
 try:
+    from tests.nqs.test_nqs_model_state_convention            import _build_spin_half_problem
     from QES.general_python.ml.net_impl.networks            import net_rbm
     from QES.general_python.ml.net_impl.networks.net_rbm    import RBM
+    from QES.NQS                                           import NQS
     from QES.Solver.MonteCarlo.vmc                          import VMCSampler
     from QES.Solver.MonteCarlo.updates                      import spin_jax
 except ImportError:
     raise ImportError("Required modules for RBM fast update tests are not available. Please ensure JAX and the relevant QES modules are installed.")
 
 def _flip_state(state, indices, valid_mask=None):
+    """Flip state."""
     out = np.array(state, copy=True)
     idx = np.asarray(indices, dtype=np.int32).reshape(-1)
     if valid_mask is None:
@@ -26,6 +31,7 @@ def _flip_state(state, indices, valid_mask=None):
     return out
 
 def _flip_state_binary(state, indices, valid_mask=None):
+    """Flip state binary."""
     out = np.array(state, copy=True)
     idx = np.asarray(indices, dtype=np.int32).reshape(-1)
     if valid_mask is None:
@@ -39,6 +45,7 @@ def _flip_state_binary(state, indices, valid_mask=None):
     return out
 
 def test_rbm_log_psi_delta_matches_direct_eval_single_flip():
+    """Verify test rbm log psi delta matches direct eval single flip."""
     rbm = RBM(input_shape=(6,), n_hidden=4, seed=123, dtype=jnp.float32, param_dtype=jnp.float32)
     params = rbm.get_params()
 
@@ -53,6 +60,7 @@ def test_rbm_log_psi_delta_matches_direct_eval_single_flip():
     np.testing.assert_allclose(np.asarray(fast_delta), np.asarray(direct_delta), rtol=1e-6, atol=1e-6)
 
 def test_rbm_log_psi_delta_binary_with_input_activation_matches_direct_eval():
+    """Verify test rbm log psi delta binary with input activation matches direct eval."""
     old_spin_mode = net_rbm.BACKEND_DEF_SPIN
     old_repr = net_rbm.BACKEND_REPR
     try:
@@ -105,6 +113,7 @@ def test_rbm_log_psi_delta_binary_with_input_activation_matches_direct_eval():
 
 
 def test_rbm_log_psi_delta_cache_and_masked_updates_match_direct_eval():
+    """Verify test rbm log psi delta cache and masked updates match direct eval."""
     rbm = RBM(input_shape=(6,), n_hidden=5, seed=7, dtype=jnp.float32, param_dtype=jnp.float32)
     params = rbm.get_params()
 
@@ -139,11 +148,13 @@ def test_rbm_log_psi_delta_cache_and_masked_updates_match_direct_eval():
 
 
 def test_rbm_fast_update_supported_rules_are_flip_only():
+    """Verify test rbm fast update supported rules are flip only."""
     rbm = RBM(input_shape=(4,), n_hidden=2, seed=0, dtype=jnp.float32, param_dtype=jnp.float32)
     assert rbm.fast_update_supported_rules == {"LOCAL", "MULTI_FLIP", "BOND_FLIP", "WORM"}
 
 
 def test_vmc_uses_rbm_fast_update_and_samples():
+    """Verify test vmc uses rbm fast update and samples."""
     rbm = RBM(input_shape=(4,), n_hidden=3, seed=11, dtype=jnp.float32, param_dtype=jnp.float32)
     sampler = VMCSampler(
         net=rbm,
@@ -166,10 +177,101 @@ def test_vmc_uses_rbm_fast_update_and_samples():
     )
     assert isinstance(final_state, tuple)
     assert isinstance(samples, tuple)
-    assert probs.shape[0] == 4
+    assert probs is None
+
+def test_vmc_reuses_cached_initial_logprobs_in_jax_fast_update_path():
+    """Verify test vmc reuses cached initial logprobs in jax fast update path."""
+    rbm = RBM(input_shape=(4,), n_hidden=3, seed=13, dtype=jnp.float32, param_dtype=jnp.float32)
+    sampler = VMCSampler(
+        net=rbm,
+        shape=(4,),
+        backend="jax",
+        rng=np.random.default_rng(3),
+        rng_k=jax.random.PRNGKey(3),
+        numsamples=1,
+        numchains=2,
+        therm_steps=1,
+        sweep_steps=1,
+    )
+
+    params = rbm.get_params()
+    states = sampler.states
+    cached_logprobs = sampler.logprob(states, net_params=params)
+    def _wrong_apply(_params, x):
+        """Construct intentionally wrong apply."""
+        return jnp.full((x.shape[0],), 1234.0, dtype=cached_logprobs.dtype)
+
+    final_state, samples, probs = VMCSampler._static_sample_jax(
+        states_init=states,
+        logprobas_init=cached_logprobs,
+        rng_k_init=sampler.rng_k,
+        params=params,
+        num_samples=1,
+        num_chains=2,
+        total_therm_updates=0,
+        updates_per_sample=0,
+        shape=(4,),
+        mu=sampler.mu,
+        beta=sampler.beta,
+        logprob_fact=sampler.logprob_fact,
+        update_proposer=sampler._upd_fun,
+        net_callable_fun=_wrong_apply,
+        log_psi_delta_fun=sampler._log_psi_delta_fun,
+        log_psi_delta_cache_init_fun=sampler._log_psi_delta_cache_init_fun,
+        log_psi_delta_supports_cache=sampler._log_psi_delta_supports_cache,
+        uniform_weights=sampler.has_uniform_weights,
+        num_proposed_init=sampler.proposed,
+        num_accepted_init=sampler.accepted,
+    )
+
+    _ = final_state
+    assert probs is None
+    np.testing.assert_allclose(
+        np.asarray(samples[1]),
+        np.asarray(cached_logprobs),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
+def test_nqs_step_with_uniform_jax_weights_does_not_resample_explicit_configs():
+    """Verify test nqs step with uniform jax weights does not resample explicit configs."""
+    hilbert, model, rbm = _build_spin_half_problem()
+    nqs = NQS(
+        logansatz=rbm,
+        hilbert=hilbert,
+        model=model,
+        backend="jax",
+        rng=np.random.default_rng(0),
+        rng_k=jax.random.PRNGKey(0),
+        numsamples=2,
+        numchains=2,
+        therm_steps=1,
+        sweep_steps=1,
+    )
+
+    params = nqs.get_params()
+    (_, _), (configs, configs_ansatze), probs = nqs.sample(num_samples=2, num_chains=2)
+    assert probs is None
+
+    def _forbidden_sample(*args, **kwargs):
+        """Helper for forbidden sample."""
+        raise AssertionError("step() should not resample when configs and uniform weights are already provided")
+
+    nqs._sampler.sample = _forbidden_sample
+    out = nqs.step(
+        configs=configs,
+        configs_ansatze=configs_ansatze,
+        probabilities=None,
+        params=params,
+        batch_size=2,
+    )
+
+    assert out is not None
 
 
 def test_spin_jax_local_flip_supports_binary_representation():
+    """Verify test spin jax local flip supports binary representation."""
     old_spin_mode = spin_jax.BACKEND_DEF_SPIN
     old_repr = spin_jax.BACKEND_REPR
     try:
@@ -191,6 +293,7 @@ def test_spin_jax_local_flip_supports_binary_representation():
 
 
 def test_spin_jax_multi_flip_supports_nonunit_binary_representation():
+    """Verify test spin jax multi flip supports nonunit binary representation."""
     old_spin_mode = spin_jax.BACKEND_DEF_SPIN
     old_repr = spin_jax.BACKEND_REPR
     try:
@@ -214,6 +317,7 @@ def test_spin_jax_multi_flip_supports_nonunit_binary_representation():
 
 
 def test_spin_jax_global_flip_supports_nonunit_binary_representation():
+    """Verify test spin jax global flip supports nonunit binary representation."""
     old_spin_mode   = spin_jax.BACKEND_DEF_SPIN
     old_repr        = spin_jax.BACKEND_REPR
     try:

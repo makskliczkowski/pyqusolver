@@ -24,6 +24,9 @@ if TYPE_CHECKING:
     from QES.Algebra.hamil              import Hamiltonian
     from QES.general_python.lattices    import Lattice
 
+Impurity    = Tuple[int, float, float, float]  # (site, phi, theta, strength)
+Impurities  = List[Impurity]
+
 # ----------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -34,7 +37,7 @@ class SiteGeometry:
                             # where dx and dy are the x and y components of the displacement vector 
                             # from the impurity site to the site in question. Not to be confused with the spin angle theta of the impurity itself.
 
-def make_impurity(site: int, phi: float = 0.0, theta: float = 0.0, amplitude: float = 1.0) -> Tuple[int, float, float, float]:
+def make_impurity(site: int, phi: float = 0.0, theta: float = 0.0, amplitude: float = 1.0) -> Impurity:
     """
     Create an impurity tuple in the canonical ``(site, phi, theta, amplitude)`` format. 
     This is a convenience function to ensure consistent impurity specifications across the codebase.
@@ -73,7 +76,7 @@ def make_impurity(site: int, phi: float = 0.0, theta: float = 0.0, amplitude: fl
     """
     return int(site), float(phi), float(theta), float(amplitude)
 
-def impurity_site_amplitude(impurity: Tuple) -> Tuple[int, float]:
+def impurity_site_amplitude(impurity: Impurity) -> Tuple[int, float]:
     """
     Return the site index and scalar amplitude for one impurity specification.
     """
@@ -86,7 +89,7 @@ def impurity_site_amplitude(impurity: Tuple) -> Tuple[int, float]:
 
 # ----------------------------------------------------------------------
 
-def compute_impurity_distances(lattice: 'Lattice', impurities: Iterable[Tuple], *, minimum_image: bool = True) -> np.ndarray:
+def compute_impurity_distances(lattice: 'Lattice', impurities: Iterable[Impurity], *, minimum_image: bool = True) -> np.ndarray:
     """
     Compute the real-space distance from every impurity site to every lattice site.
     
@@ -94,8 +97,8 @@ def compute_impurity_distances(lattice: 'Lattice', impurities: Iterable[Tuple], 
     ----------
     lattice : 'Lattice'
         The lattice object which should have methods for computing distances or displacements between sites.
-    impurities : Iterable[Tuple]
-        An iterable of impurity specifications, where each impurity is a tuple containing at least the site index. The expected format is (site, phi, theta, amplitude), but only the site
+    impurities : Iterable[Impurity]
+        An iterable of impurity specifications, where each impurity is an Impurity tuple containing at least the site index. The expected format is (site, phi, theta, amplitude), but only the site
         index is used for distance calculations.
     minimum_image : bool, optional
         Whether to use the minimum image convention when computing distances (default is True). This is relevant for periodic lattices, 

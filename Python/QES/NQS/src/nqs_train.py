@@ -19,11 +19,10 @@ Version             : 2.0
 
 import os
 import time
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from dataclasses    import dataclass, field
+from enum           import Enum
+from pathlib        import Path
+from typing         import Any, Callable, Dict, List, Optional, Union
 import numpy as np
 
 try:
@@ -63,6 +62,7 @@ try:
     from QES.general_python.ml.schedulers       import EarlyStopping
     from QES.general_python.ml.training_phases  import PhaseScheduler, create_phase_schedulers
     from QES.NQS.nqs                            import NQS
+    from QES.NQS.src.nqs_driver                 import StopTraining, normalize_callbacks, normalize_loggers
     from QES.NQS.src.auto_tuner                 import TDVPAutoTuner
     from QES.NQS.src.tdvp                       import TDVP, TDVPLowerPenalty
 except ImportError as e:
@@ -209,6 +209,18 @@ class NQSTrainStats:
 
 # ------------------------------------------------------
 
+@dataclass
+class NQSTrainBatch:
+    """Sampler output consumed by one TDVP update."""
+
+    configs          : Any
+    configs_ansatze  : Any
+    probabilities    : Any
+    num_chains       : int
+
+
+# ------------------------------------------------------
+
 
 class NQSTrainer:
     """
@@ -231,12 +243,11 @@ class NQSTrainer:
     ---------------------------------
     There are multiple ways to configure learning rate (LR) and regularization (Reg) schedules:
 
-    **1. Preset Phases (Recommended for beginners)**
+    **1. Named Presets**
 
     Use a named preset that defines multi-phase training:
 
     >>> trainer = NQSTrainer(nqs, phases='default')  # Pre-train -> Main -> Refine
-    >>> trainer = NQSTrainer(nqs, phases='kitaev')   # Specialized for Kitaev models
 
     **2. Custom Phase List**
 
@@ -338,7 +349,7 @@ class NQSTrainer:
         tdvp                : Optional[TDVP] = None,            # Setup TDVP engine
         # Configuration
         n_batch             : int = 256,                        # Batch size for sampling
-        phases              : Union[str, tuple] = None,         # e.g., "kitaev" or (lr_sched, reg_sched)
+        phases              : Union[str, tuple] = None,         # e.g., "default" or (lr_sched, reg_sched)
         # Utilities
         timing_mode         : NQSTimeModes = NQSTimeModes.LAST, # Timing mode
         early_stopper       : Any = None,                       # Callable or EarlyStopping
@@ -388,7 +399,7 @@ class NQSTrainer:
         -------------------------------------------------
         phases : Union[str, Tuple, None], default=None
             Phase scheduling configuration. Can be:
-            - ``str``   : Preset name ('default', 'kitaev')
+            - ``str``   : Preset name (for example ``'default'``)
             - ``tuple`` : (lr_scheduler, reg_scheduler) - each can be string, callable, or PhaseScheduler
             - ``None``  : Use lr_scheduler/reg_scheduler/diag_scheduler params or constant lr/reg/diag values
 
@@ -510,7 +521,6 @@ class NQSTrainer:
         --------
         >>> # 1. Preset phases (recommended for beginners)
         >>> trainer     = NQSTrainer(nqs, phases='default')
-        >>> trainer     = NQSTrainer(nqs, phases='kitaev')
 
         >>> # 2. String scheduler types (simple and flexible)
         >>> trainer     = NQSTrainer(nqs, lr_scheduler='cosine', lr=0.01, reg=0.001, diag_shift=1e-5, phases=None)
@@ -531,7 +541,8 @@ class NQSTrainer:
 
         if nqs is None:
             raise ValueError(self._ERR_NO_NQS)
-        self.nqs                        = nqs  # Most important component
+        
+        self.nqs                        = nqs               # Most important component
         self.logger                     = logger
         self.n_batch                    = n_batch
         self.background                 = background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0"))
@@ -555,6 +566,7 @@ class NQSTrainer:
         self.lower_states   = lower_states
         
         # Setup Early Stopping
+        self._log("Initializing NQS Trainer...", lvl=1, color="green")
         self.early_stopper  = early_stopper
         if self.early_stopper is None:
             # Build explicit early-stopping kwargs to avoid colliding with
@@ -565,61 +577,29 @@ class NQSTrainer:
             if "min_delta" in kwargs and "early_stopping_min_delta" not in es_kwargs:
                 es_kwargs["early_stopping_min_delta"] = kwargs["min_delta"]
 
-            # Prefer unified factory when available, but keep compatibility with
-            # older/stale EarlyStopping implementations that may not expose it.
             if hasattr(EarlyStopping, "from_kwargs"):
-                self.early_stopper = EarlyStopping.from_kwargs(logger=self.logger, **es_kwargs)
+                self.early_stopper  = EarlyStopping.from_kwargs(logger=self.logger, **es_kwargs)
             else:
-                es_patience = es_kwargs.get(
-                    "patience",
-                    es_kwargs.get(
-                        "early_stopping_patience",
-                        es_kwargs.get("es_patience", es_kwargs.get("early_patience", 0)),
-                    ),
-                )
-                es_min_delta = es_kwargs.get(
-                    "min_delta",
-                    es_kwargs.get(
-                        "early_stopping_min_delta",
-                        es_kwargs.get("es_min_delta", es_kwargs.get("early_min_delta", 1e-3)),
-                    ),
-                )
-                self.early_stopper = EarlyStopping(
-                    patience=es_patience, min_delta=es_min_delta, logger=self.logger
-                )
+                es_patience         = es_kwargs.get("patience", es_kwargs.get("early_stopping_patience", es_kwargs.get("es_patience", es_kwargs.get("early_patience", 0))))
+                es_min_delta        = es_kwargs.get("min_delta", es_kwargs.get("early_stopping_min_delta", es_kwargs.get("es_min_delta", es_kwargs.get("early_min_delta", 1e-3))))
+                self.early_stopper  = EarlyStopping(patience=es_patience, min_delta=es_min_delta, logger=self.logger)
 
         if isinstance(timing_mode, str):
             try:
                 timing_mode = NQSTimeModes[timing_mode.upper()]
                 self.timing_mode = timing_mode
-                self._log(f"Timing mode set to: {self.timing_mode.name}", lvl=1, color="green")
+                self._log(f"Timing mode set to: {self.timing_mode.name}", lvl=2, color="green")
             except KeyError:
                 raise ValueError(self._ERR_INVALID_TIMING_MODE)
         self.timing_mode = timing_mode if isinstance(timing_mode, NQSTimeModes) else NQSTimeModes.BASIC
 
         # Setup Schedulers (The Integrated Part)
         self._init_reg, self._init_lr, self._init_diag = reg, lr, diag_shift
-
-        # Prefer the Kitaev preset for Kitaev/Gamma models when caller left default preset.
-        if isinstance(phases, str) and phases.lower() == "default":
-            model_name = str(getattr(nqs, "model", getattr(nqs, "_model", ""))).lower()
-            if "kitaev" in model_name or "gamma" in model_name:
-                phases = "kitaev"
         
         # Determine max epochs for schedulers
+        self._log("Setting up schedulers...", lvl=2, color="green")
         max_ep_val = kwargs.get("n_epochs", kwargs.get("epochs", 500))
-        
-        self._set_phases(
-            phases,
-            lr,
-            reg,
-            lr_scheduler=lr_scheduler,
-            reg_scheduler=reg_scheduler,
-            diag_scheduler=diag_scheduler,
-            diag_shift=diag_shift,
-            n_epochs=max_ep_val,
-            **kwargs,
-        )
+        self._set_phases(phases, lr, reg, lr_scheduler=lr_scheduler, reg_scheduler=reg_scheduler, diag_scheduler=diag_scheduler, diag_shift=diag_shift, n_epochs=max_ep_val, **kwargs)
 
         # Setup Linear Solver + Preconditioner
         try:
@@ -640,9 +620,7 @@ class NQSTrainer:
         self.tdvp = tdvp
         self.grad_clip = grad_clip  # Store for later use
         if self.tdvp is None:
-            self._log(
-                "No TDVP engine provided. Creating default TDVP instance.", lvl=0, color="yellow"
-            )
+            self._log("No TDVP engine provided. Creating default TDVP instance.", lvl=2, color="yellow")
             self.tdvp = TDVP(
                 use_sr                  =use_sr,
                 use_minsr               =use_minsr,
@@ -672,6 +650,7 @@ class NQSTrainer:
             )
 
         # Set gradient clipping on TDVP
+        self.tdvp.params_are_complex = bool(any(getattr(nqs, "_params_iscpx", ())))
         if grad_clip is not None:
             self.tdvp.set_grad_clip(grad_clip)
             self._log(f"Gradient clipping enabled: max_norm={grad_clip:.2e}", lvl=1, color="cyan", verbose=self.verbose)
@@ -779,7 +758,7 @@ class NQSTrainer:
 
         Supports multiple configuration patterns:
 
-        1. Preset string: phases='default' or phases='kitaev'
+        1. Preset string: phases='default'
         2. Tuple of schedulers: phases=(lr_sched, reg_sched)
         3. String scheduler types: lr_scheduler='cosine', reg_scheduler='constant'
         4. Direct float values: lr=0.01, reg=0.001 (constant schedulers)
@@ -827,35 +806,49 @@ class NQSTrainer:
         """
         from QES.general_python.ml.schedulers import choose_scheduler
 
-        def _normalize_scheduler_aliases(sched_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-            """Normalize short aliases (e.g. ``lr_init``) to scheduler factory keys."""
-            out = dict(sched_kwargs)
-            if "lr_init" in out and "lr_initial" not in out:
-                out["lr_initial"] = out.pop("lr_init")
+        def _scheduler_kwargs(prefix: str, initial_value: Optional[float]) -> Dict[str, Any]:
+            """
+            Build canonical scheduler-factory kwargs for one parameter family.
+            """
+            out = {}
+            for key, value in kwargs.items():
+                if not key.startswith(f"{prefix}_"):
+                    continue
+                suffix = key[len(prefix) + 1 :]
+                if suffix == "init":
+                    out["initial_lr"] = value
+                elif suffix == "final":
+                    out["lr_final"] = value
+                elif suffix == "decay":
+                    out["lr_decay"] = value
+                elif suffix == "decay_rate":
+                    out["lr_decay_rate"] = value
+                elif suffix == "step_size":
+                    out["lr_step_size"] = value
+                elif suffix == "min":
+                    out["min_lr"] = value
+                elif suffix == "clamp":
+                    out["lr_clamp"] = value
+                elif suffix == "max_epochs":
+                    out["lr_max_epochs"] = value
+                elif suffix == "es":
+                    out["lr_es"] = value
+                elif suffix == "es_min":
+                    out["lr_es_min"] = value
+                else:
+                    out[suffix if suffix.startswith("lr_") else f"lr_{suffix}"] = value
+
+            if initial_value is not None and "initial_lr" not in out:
+                out["initial_lr"] = initial_value
             return out
 
-        diag_kwargs = {k: v for k, v in kwargs.items() if k.startswith("diag_")}
-        reg_kwargs  = {k: v for k, v in kwargs.items() if k.startswith("reg_")}
-        lr_kwargs   = {k: v for k, v in kwargs.items() if k.startswith("lr_")}
-        # transform keys to be accepted by scheduler factory
-
-        diag_kwargs = {k.replace("diag_", "lr_"): v for k, v in diag_kwargs.items()}
-        if self._init_diag is not None:
-            diag_kwargs["lr_initial"] = self._init_diag
-        diag_kwargs = _normalize_scheduler_aliases(diag_kwargs)
-
-        reg_kwargs  = {k.replace("reg_", "lr_"): v for k, v in reg_kwargs.items()}
-        if self._init_reg is not None:
-            reg_kwargs["lr_initial"] = self._init_reg
-        reg_kwargs  = _normalize_scheduler_aliases(reg_kwargs)
-
-        lr_kwargs   = {k.replace("lr_", "lr_"): v for k, v in lr_kwargs.items()}
-        if self._init_lr is not None:
-            lr_kwargs["lr_initial"] = self._init_lr
-        lr_kwargs   = _normalize_scheduler_aliases(lr_kwargs)
+        lr_kwargs   = _scheduler_kwargs("lr", self._init_lr)
+        reg_kwargs  = _scheduler_kwargs("reg", self._init_reg)
+        diag_kwargs = _scheduler_kwargs("diag", self._init_diag)
 
         # Helper to create scheduler from string or passthrough
         def _resolve_scheduler(sched, init_val, param_name, max_epochs, **kwargs):
+            sched_kwargs = dict(kwargs)
             if sched is None:
                 if init_val is not None:  # Constant scheduler from float value
                     return choose_scheduler("constant", initial_lr=init_val, max_epochs=max_epochs, logger=self.logger)
@@ -863,8 +856,10 @@ class NQSTrainer:
 
             elif isinstance(sched, str):
                 # String scheduler type -> create via factory
-                init = init_val if init_val is not None else (1e-2 if param_name == "lr" else 1e-3)
-                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **kwargs)
+                init = sched_kwargs.pop("initial_lr", init_val)
+                if init is None:
+                    init = 1e-2 if param_name == "lr" else 1e-3
+                return choose_scheduler(sched, initial_lr=init, max_epochs=max_epochs, logger=self.logger, **sched_kwargs)
 
             elif callable(sched) or isinstance(sched, PhaseScheduler):
                 return sched
@@ -886,43 +881,26 @@ class NQSTrainer:
             self.reg_scheduler  = _resolve_scheduler(reg_scheduler, reg, "reg", n_epochs, **reg_kwargs)
             self.diag_scheduler = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
-        # Preset string (e.g., 'default', 'kitaev') - only if no direct scheduler provided
+        # Preset string (for example 'default') - only if no direct scheduler provided
         elif isinstance(phases, str):
-            self._log(
-                f"Initializing training phases with preset: '{phases}'",
-                lvl=1,
-                color="green",
-                verbose=self.verbose,
-            )
-            self.lr_scheduler, self.reg_scheduler = create_phase_schedulers(phases, self.logger)
+            self._log(f"Initializing training phases with preset: '{phases}'", lvl=3, color="green", verbose=self.verbose,)
+            self.lr_scheduler, self.reg_scheduler   = create_phase_schedulers(phases, self.logger)
             # diag_scheduler is separate from phase presets
-            self.diag_scheduler = _resolve_scheduler(
-                diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs
-            )
+            self.diag_scheduler                     = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
         # Tuple of schedulers
         elif isinstance(phases, (tuple, list)) and len(phases) == 2:
             # Validate and resolve if strings
             self.lr_scheduler, self.reg_scheduler = phases
-            self.lr_scheduler = _resolve_scheduler(
-                self.lr_scheduler, lr, "lr", n_epochs, **lr_kwargs
-            )
-            self.reg_scheduler = _resolve_scheduler(
-                self.reg_scheduler, reg, "reg", n_epochs, **reg_kwargs
-            )
-            self.diag_scheduler = _resolve_scheduler(
-                diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs
-            )
+            self.lr_scheduler   = _resolve_scheduler(self.lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
+            self.reg_scheduler  = _resolve_scheduler(self.reg_scheduler, reg, "reg", n_epochs, **reg_kwargs)
+            self.diag_scheduler = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
         # No phases -> use injected schedulers or create from lr/reg
         else:
-            self.lr_scheduler = _resolve_scheduler(lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
-            self.reg_scheduler = _resolve_scheduler(
-                reg_scheduler, reg, "reg", n_epochs, **reg_kwargs
-            )
-            self.diag_scheduler = _resolve_scheduler(
-                diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs
-            )
+            self.lr_scheduler   = _resolve_scheduler(lr_scheduler, lr, "lr", n_epochs, **lr_kwargs)
+            self.reg_scheduler  = _resolve_scheduler(reg_scheduler, reg, "reg", n_epochs, **reg_kwargs)
+            self.diag_scheduler = _resolve_scheduler(diag_scheduler, diag_shift, "diag", n_epochs, **diag_kwargs)
 
         # Compute initial values (override with explicit lr/reg if provided)
         if self.lr_scheduler:
@@ -944,13 +922,6 @@ class NQSTrainer:
     # ------------------------------------------------------
     #! Timing Helpers
     # ------------------------------------------------------
-
-    @contextmanager
-    def _time(self, phase, fn, *args, **kwargs):
-        """Context manager for timing phases."""
-        result, elapsed = timeit(fn, *args, **kwargs)
-        self.stats.timings[phase].append(elapsed)
-        yield result
 
     def _timed_execute(self, phase: str, fn: Callable, *args, **kwargs):
         """
@@ -1032,6 +1003,20 @@ class NQSTrainer:
         if arr.size == 0:
             return float("nan")
         return float(np.mean(arr))
+
+    @staticmethod
+    def _last_finite(values: List[float], default: float = 0.0) -> float:
+        """Return the last finite value from a timing history."""
+        if values is None or len(values) == 0:
+            return float(default)
+        for value in reversed(values):
+            try:
+                candidate = float(np.real(value))
+            except Exception:
+                continue
+            if np.isfinite(candidate):
+                return candidate
+        return float(default)
 
     # Helper to get the last N values for timing breakdowns, handling edge cases
     def _timing_window(self, values: List[float], last_n: int) -> List[float]:
@@ -1163,25 +1148,118 @@ class NQSTrainer:
     #! Main Training Loop
     # ------------------------------------------------------
 
-    def _train_set_exact_info(
-        self, exact_predictions: Union[float, List[float], np.ndarray], exact_method: str = None
-    ):
+    def _exact_state_index(self) -> int:
+        return len(self.lower_states) if self.lower_states else 0
+
+    def _make_exact_info(self, exact_predictions: Union[float, List[float], np.ndarray], exact_method: str = None) -> Optional[Dict[str, Any]]:
+        """Normalize exact-reference metadata for trainer stats and NQS."""
+        if exact_predictions is None:
+            return None
+
+        arr = np.atleast_1d(np.asarray(exact_predictions))
+        idx = self._exact_state_index()
+        if idx >= len(arr):
+            raise ValueError(f"Exact predictions contain {len(arr)} values, but state index {idx} was requested.")
+
+        return {
+            "exact_predictions" : arr,
+            "exact_method"      : exact_method,
+            "exact_energy"      : float(np.real(arr[idx])),
+        }
+
+    def _train_set_exact_info(self, exact_predictions: Union[float, List[float], np.ndarray], exact_method: str = None):
         """Sets exact prediction info on the NQS object."""
-        if exact_predictions is not None:
-            self.nqs.exact = {
-                "exact_predictions" : exact_predictions,
-                "exact_method"      : exact_method,
-                # Choose appropriate exact energy for this state
-                "exact_energy"      : (
-                    float(exact_predictions)
-                    if np.ndim(exact_predictions) == 0
-                    else (
-                        exact_predictions[len(self.lower_states)]
-                        if self.lower_states
-                        else exact_predictions[0]
-                    )
-                ),
-            }
+        exact_info = self._make_exact_info(exact_predictions, exact_method)
+        if exact_info is None:
+            return
+        self.nqs.exact = exact_info
+        self.stats.set_exact(exact_info["exact_predictions"], exact_info["exact_method"])
+
+    def _sample_training_batch(
+        self,
+        *,
+        global_epoch: int,
+        num_samples: Optional[int],
+        num_chains: Optional[int],
+        reset: Optional[bool] = None,
+        params=None,
+    ) -> NQSTrainBatch:
+        """Run sampler through one train-facing path."""
+        if reset is None:
+            reset = global_epoch == 0
+        if params is None:
+            params = self.nqs.get_params()
+        sample_out = self._timed_execute(
+            "sample",
+            self.nqs.sample,
+            reset       = reset,
+            epoch       = global_epoch,
+            num_samples = num_samples,
+            num_chains  = num_chains,
+            params      = params,
+        )
+        _, (cfgs, cfgs_psi), probs = sample_out
+        used_num_chains = int(num_chains if num_chains is not None else self.nqs.sampler.numchains)
+        return NQSTrainBatch(
+            configs         = cfgs,
+            configs_ansatze = cfgs_psi,
+            probabilities   = probs,
+            num_chains      = used_num_chains,
+        )
+
+    def _step_training_batch(
+        self,
+        *,
+        batch: NQSTrainBatch,
+        global_epoch: int,
+        lower_contr: Optional[List[TDVPLowerPenalty]],
+    ):
+        """Run one TDVP/ODE step through one train-facing path."""
+        step_kwargs = {
+            "f"                 : self.tdvp,
+            "y"                 : self.nqs.get_params(unravel=True),
+            "t"                 : 0.0,
+            "est_fn"            : self._single_step_jit,
+            "configs"           : batch.configs,
+            "configs_ansatze"   : batch.configs_ansatze,
+            "probabilities"     : batch.probabilities,
+            "num_chains"        : batch.num_chains,
+        }
+        step_fn = self._step_jit
+        if lower_contr is not None:
+            step_fn = self._step_nojit
+            step_kwargs["lower_states"] = lower_contr
+
+        return self._timed_execute("step", step_fn, epoch=global_epoch, **step_kwargs)
+
+    def _apply_parameter_update(
+        self,
+        *,
+        dparams,
+        shapes_info,
+        lr: float,
+        global_epoch: int,
+    ):
+        """Apply accepted TDVP update through one set_params path."""
+        current_params_flat = self.nqs.get_params(unravel=True)
+        if self.optimizer is not None and self.nqs._isjax:
+            import optax
+
+            dt_step     = float(lr)
+            direction   = (dparams - current_params_flat) / dt_step if dt_step > 1e-12 else (dparams - current_params_flat)
+            updates, self.opt_state = self.optimizer.update(-direction, self.opt_state, current_params_flat)
+            new_params_flat         = optax.apply_updates(current_params_flat, updates)
+        else:
+            new_params_flat         = dparams
+
+        new_params_pytree = self.nqs.transform_flat_params(
+            new_params_flat,
+            shapes_info[0],
+            shapes_info[1],
+            shapes_info[2],
+        )
+        self._timed_execute("update", self.nqs.set_params, new_params_pytree, epoch=global_epoch)
+        return new_params_flat, new_params_pytree
 
     def _train_update_pbar(
         self,
@@ -1197,7 +1275,7 @@ class NQSTrainer:
         diag: float,
         sigma2: Optional[float],
         r_hat: Optional[float],
-        t0: float,
+        total_elapsed: float,
         exact_loss: float = None,
     ):
         """Updates the progress bar with current stats."""
@@ -1220,24 +1298,20 @@ class NQSTrainer:
             return format(val, spec)
 
         # Calculate total time for this epoch
-        t_sample = self.stats.timings.sample[-1]
-        t_update = self.stats.timings.update[-1]
-        t_step = self.stats.timings.step[-1]
-        acc_ratio = self.nqs.sampler.accepted_ratio
+        t_sample    = self.stats.timings.sample[-1]
+        t_update    = self.stats.timings.update[-1]
+        t_step      = self.stats.timings.step[-1]
+        acc_ratio   = self.nqs.sampler.accepted_ratio
 
         if pbar is not None:
-            should_refresh = (
-                epoch == 0
-                or (epoch + 1) == n_epochs
-                or ((epoch + 1) % self.pbar_update_interval) == 0
-            )
-            if not should_refresh:
+
+            if not (epoch == 0 or (epoch + 1) == n_epochs or ((epoch + 1) % self.pbar_update_interval) == 0):
                 return
 
             postfix = {
-                "epoch": f"G:{global_epoch},L:{epoch}",
-                "loss": f"{mean_loss:.4f}",
-                "acc": f"{acc_ratio:.2%}",
+                "epoch" : f"G:{global_epoch},L:{epoch}",
+                "loss"  : f"{mean_loss:.4f}",
+                "acc"   : f"{acc_ratio:.2%}",
             }
 
             if exact_loss is not None:
@@ -1253,37 +1327,36 @@ class NQSTrainer:
                 postfix["reg"] = f"{reg:.1e}"
             if diag is not None and diag > 0:
                 postfix["diag"] = f"{diag:.1e}"
-            sigma2_val = _as_finite_float(sigma2)
-            rhat_val = _as_finite_float(r_hat)
+                
+            sigma2_val  = _as_finite_float(sigma2)
+            rhat_val    = _as_finite_float(r_hat)
+            
             if sigma2_val is not None:
                 postfix["sigma2"] = f"{sigma2_val:.2e}"
+                
             if rhat_val is not None:
                 postfix["R"] = f"{rhat_val:.3f}"
 
             # Only add detailed timings to the bar if they are real numbers
             if not np.isnan(t_step):
-                postfix["t_step"] = f"{t_step:.2f}s"
-                postfix["t_samp"] = f"{t_sample:.2f}s"
-                postfix["t_upd"] = f"{t_update:.2f}s"
+                postfix["t_step"]   = f"{t_step:.2f}s"
+                postfix["t_samp"]   = f"{t_sample:.2f}s"
+                postfix["t_upd"]    = f"{t_update:.2f}s"
 
             if self.timing_mode.value <= NQSTimeModes.DETAILED.value:
-                postfix["t_epoch"] = f"{(time.time() - t0) / (epoch + 1):.2f}s"
+                postfix["t_epoch"]  = f"{total_elapsed / max(global_epoch + 1, 1):.2f}s"
 
             pbar.set_postfix(postfix)
 
         else:
-            lr_str = _fmt(lr, ".1e")
-            diag_str = _fmt(diag, ".1e")
-            sigma2_str = _fmt(sigma2, ".2e")
-            rhat_str = _fmt(r_hat, ".3f")
+            lr_str      = _fmt(lr, ".1e")
+            diag_str    = _fmt(diag, ".1e")
+            sigma2_str  = _fmt(sigma2, ".2e")
+            rhat_str    = _fmt(r_hat, ".3f")
             if exact_loss is not None:
-                self._log(
-                    f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f} (exact={exact_loss:.4f}, d={mean_loss - exact_loss:.4f}), lr={lr_str}, diag={diag_str}, sigma2={sigma2_str}, R={rhat_str}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s"
-                )
+                self._log(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f} (exact={exact_loss:.4f}, d={mean_loss - exact_loss:.4f}), lr={lr_str}, diag={diag_str}, sigma2={sigma2_str}, R={rhat_str}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
             else:
-                self._log(
-                    f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f}, lr={lr_str}, diag={diag_str}, sigma2={sigma2_str}, R={rhat_str}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s"
-                )
+                self._log(f"Epoch G:{global_epoch},L:{epoch}: loss={mean_loss:.4f}, lr={lr_str}, diag={diag_str}, sigma2={sigma2_str}, R={rhat_str}, acc={acc_ratio:.2%}, t_step={t_step:.2f}s, t_samp={t_sample:.2f}s, t_upd={t_update:.2f}s")
 
     def train(
         self,
@@ -1349,6 +1422,8 @@ class NQSTrainer:
         timing_report_every             = int(kwargs.pop("timing_report_every", 0) or 0)
         timing_report_last_n            = int(kwargs.pop("timing_report_last_n", 20) or 20)
         timing_report_final             = bool(kwargs.pop("timing_report_final", True))
+        callbacks                       = normalize_callbacks(kwargs.pop("callback", None))
+        loggers                         = normalize_loggers(kwargs.pop("out", None))
 
         background_flag = (self.background or bool(int(os.getenv("NQS_BACKGROUND", "0") or "0")) or bool(kwargs.pop("background", False)))
         use_pbar        = use_pbar and not background_flag
@@ -1360,12 +1435,10 @@ class NQSTrainer:
 
         # Set total epochs for sparse logging in background mode
         self._total_epochs = n_epochs or 100
-        # Set exact info if provided
         num_samples         = kwargs.get("num_samples", None)
         num_chains          = kwargs.get("num_chains", None)
         exact_predictions   = kwargs.get("exact_predictions", None)
         exact_method        = kwargs.get("exact_method", None)
-        self._train_set_exact_info(exact_predictions, exact_method)
 
         # Reset stats if needed, if not we continue accumulating
         if reset_stats:
@@ -1377,9 +1450,12 @@ class NQSTrainer:
             if start_epoch > 0:
                 self._log(f"Continuing training from epoch {start_epoch} (reset_stats=False)", lvl=1, color="cyan", verbose=self.verbose,)
 
-        t0          = ((time.time() + self.stats.timings.total[-1]) if len(self.stats.timings.total) > 0 else time.time())
-        n_epochs    = n_epochs or 100
-        pbar        = trange(n_epochs, desc="NQS Training", leave=True) if use_pbar else range(n_epochs)
+        self._train_set_exact_info(exact_predictions, exact_method)
+        self.stats.timings.n_steps  = start_epoch
+        total_time_offset           = self._last_finite(self.stats.timings.total, default=0.0)
+        run_t0                      = time.time()
+        n_epochs                    = n_epochs or 100
+        pbar                        = trange(n_epochs, desc="NQS Training", leave=True) if use_pbar else range(n_epochs)
 
         try:
             for epoch in pbar:
@@ -1399,26 +1475,18 @@ class NQSTrainer:
                 if self.auto_tuner:
                     current_num_samples = self.auto_tuner.n_samples
 
-                sample_out = self._timed_execute(
-                    "sample",
-                    self.nqs.sample,
-                    reset=(global_epoch == 0),
-                    epoch=global_epoch,
-                    num_samples=current_num_samples,
-                    num_chains=num_chains,
-                )
-                (_, _), (cfgs, cfgs_psi), probs = sample_out
+                batch = self._sample_training_batch(global_epoch=global_epoch, num_samples=current_num_samples, num_chains=num_chains)
                 if epoch == 0:
                     self._log(
-                        f"Sampled {cfgs.shape[0]} configurations with batch size {self.n_batch}",
+                        f"Sampled {batch.configs.shape[0]} configurations with batch size {self.n_batch}",
                         lvl=1,
                         color="green",
                         verbose=self.verbose,
                     )
 
                 # Handle Excited States (Penalty Terms)
-                lower_contr = self._prepare_lower_states(cfgs, cfgs_psi)
-                if epoch == 0:
+                lower_contr = self._prepare_lower_states(batch.configs, batch.configs_ansatze)
+                if epoch == 0 and lower_contr is not None:
                     self._log(
                         "Prepared lower states for excited state handling",
                         lvl=1,
@@ -1426,28 +1494,7 @@ class NQSTrainer:
                         verbose=self.verbose,
                     )
                 # Physics Step (TDVP / ODE) (Timed)
-                params_flat = self.nqs.get_params(unravel=True)
-                step_kwargs = {
-                    "f": self.tdvp,
-                    "y": params_flat,
-                    "t": 0.0,
-                    "est_fn": self._single_step_jit,
-                    "configs": cfgs,
-                    "configs_ansatze": cfgs_psi,
-                    "probabilities": probs,
-                    "num_chains": int(num_chains if num_chains is not None else self.nqs.sampler.numchains),
-                }
-                step_fn = self._step_jit
-                if lower_contr is not None:
-                    step_fn = self._step_nojit
-                    step_kwargs["lower_states"] = lower_contr
-
-                step_out = self._timed_execute(
-                    "step",
-                    step_fn,
-                    epoch=global_epoch,
-                    **step_kwargs,
-                )
+                step_out = self._step_training_batch(batch=batch, global_epoch=global_epoch, lower_contr=lower_contr)
                 dparams, _, (tdvp_info, shapes_info)    = step_out
                 mean_loss                               = tdvp_info.mean_energy
                 std_loss                                = tdvp_info.std_energy
@@ -1460,7 +1507,7 @@ class NQSTrainer:
                 # Auto-Tuner: Update Logic
                 accepted = True
                 if self.auto_tuner:
-                    diagnostics                     = self.nqs.sampler.diagnose(cfgs_psi)
+                    diagnostics                     = self.nqs.sampler.diagnose(batch.configs_ansatze)
                     new_params, accepted, warnings  = self.auto_tuner.update(tdvp_info, diagnostics, np.real(mean_loss))
 
                     if warnings:
@@ -1480,41 +1527,7 @@ class NQSTrainer:
 
                 # Update Weights (Timed) - Only if accepted
                 if accepted:
-                    if self.optimizer is not None and self.nqs._isjax:
-                        # Use optax update logic
-                        import optax
-                        
-                        # Direction from TDVP (dot_theta)
-                        # ODE solver returns new parameters dparams. 
-                        # direction = (new - old) / dt
-                        dt_step     = float(lr)
-                        direction   = (dparams - params_flat) / dt_step if dt_step > 1e-12 else (dparams - params_flat)
-                        
-                        # Direction is -grad for standard gradient descent
-                        # optax expects gradients to subtract (update = -lr * grad)
-                        # So we pass -direction as the gradient
-                        updates, self.opt_state = self.optimizer.update(-direction, self.opt_state, params_flat)
-                        new_params_flat         = optax.apply_updates(params_flat, updates)
-                        
-                        self._timed_execute(
-                            "update",
-                            self.nqs.set_params,
-                            new_params_flat,
-                            shapes=shapes_info[0],
-                            sizes=shapes_info[1],
-                            iscpx=shapes_info[2],
-                            epoch=global_epoch,
-                        )
-                    else:
-                        self._timed_execute(
-                            "update",
-                            self.nqs.set_params,
-                            dparams,
-                            shapes=shapes_info[0],
-                            sizes=shapes_info[1],
-                            iscpx=shapes_info[2],
-                            epoch=global_epoch,
-                        )
+                    self._apply_parameter_update(dparams=dparams, shapes_info=shapes_info, lr=lr, global_epoch=global_epoch)
 
                 # Global Phase Integration
                 # Extract theta0_dot from JIT output and update TDVP state
@@ -1532,7 +1545,23 @@ class NQSTrainer:
                 self.stats.history_std.append(np.real(std_loss))
                 self.stats.sigma2_history.append(float(np.real(sigma2)))
                 self.stats.rhat_history.append(float(np.real(r_hat)) if r_hat is not None else float("nan"))
-                self.stats.timings.total.append(time.time() - t0)
+                total_elapsed = total_time_offset + (time.time() - run_t0)
+                self.stats.timings.total.append(total_elapsed)
+
+                log_data = {
+                    "mean"          : float(mean_loss),
+                    "std"           : float(np.real(std_loss)),
+                    "lr"            : float(lr),
+                    "reg"           : float(reg) if reg is not None else float("nan"),
+                    "diag_shift"    : float(diag),
+                    "sigma2"        : float(np.real(sigma2)),
+                    "r_hat"         : float(np.real(r_hat)) if r_hat is not None else float("nan"),
+                    "acceptance"    : float(getattr(self.nqs.sampler, "accepted_ratio", float("nan"))),
+                    "global_phase"  : complex(self.tdvp.global_phase),
+                    "total_time"    : float(total_elapsed),
+                }
+                for logger in loggers:
+                    logger(global_epoch, log_data, trainer=self)
 
                 # Track best
                 if mean_loss < (self.best_energy - best_checkpoint_min_delta):
@@ -1561,9 +1590,14 @@ class NQSTrainer:
                     diag,
                     float(np.real(sigma2)),
                     float(np.real(r_hat)) if r_hat is not None else float("nan"),
-                    t0,
+                    total_elapsed,
                     exact_loss=(self.nqs.exact["exact_energy"] if self.nqs.exact is not None else None),
                 )
+
+                for cb in callbacks:
+                    should_continue = cb(global_epoch, log_data, self)
+                    if should_continue is False:
+                        raise StopTraining(f"Callback requested stop at epoch {global_epoch}.")
 
                 # Checkpointing (use global_epoch for consistent checkpoint naming)
                 if epoch % checkpoint_every == 0 and epoch > 0:
@@ -1586,6 +1620,8 @@ class NQSTrainer:
 
         except KeyboardInterrupt:
             self._log("Training interrupted by user.", lvl=0, color="red")
+        except StopTraining as e:
+            self._log(str(e), lvl=0, color="yellow")
         except StopIteration as e:
             self._log(f"Training stopped: {e}", lvl=0, color="yellow")
         except Exception as e:
@@ -1603,7 +1639,14 @@ class NQSTrainer:
             self._log_timing_breakdown(last_n=timing_report_last_n)
             
         self.save_checkpoint("final", save_path, fmt="h5", overwrite=True, verbose=True, **kwargs)
-        self._log(f"Training completed in {time.time() - t0:.2f} seconds. Total epochs: {len(self.stats.history)} (this run: {n_epochs}, started at: {start_epoch}).", lvl=0, color="green",)
+        for logger in loggers:
+            logger.flush(trainer=self)
+        run_elapsed                 = time.time() - run_t0
+        total_elapsed               = total_time_offset + run_elapsed
+        self._log(f"Training completed in {run_elapsed:.2f} seconds (accumulated total: {total_elapsed:.2f} seconds). "
+            f"Total epochs: {len(self.stats.history)} (this run: {n_epochs}, started at: {start_epoch}).",
+            lvl=0, color="green",
+        )
         return self.stats
 
     # ------------------------------------------------------
@@ -1650,40 +1693,37 @@ class NQSTrainer:
         """
         import os
 
-        net = self.nqs.net
-        path = str(path) if path is not None else str(self.nqs.defdir)
-        seed = getattr(self.nqs, "_net_seed", getattr(self.nqs, "_seed", None))
+        net     = self.nqs.net
+        path    = str(path) if path is not None else str(self.nqs.defdir)
+        seed    = getattr(self.nqs, "_net_seed", getattr(self.nqs, "_seed", None))
 
-        # Update stats with seed before saving
+        # Update stats with seed/exact info before saving
         self.stats.seed = seed
-        self.stats.exact_predictions = kwargs.get("exact_predictions", None)
+        if kwargs.get("exact_predictions", None) is not None:
+            self.stats.set_exact(kwargs.get("exact_predictions", None), kwargs.get("exact_method", None))
 
         # Build comprehensive metadata
         meta = {
-            "network_class": net.__class__.__name__,
-            "step": step,
-            "seed": seed,
-            "last_loss": float(self.stats.history[-1]) if self.stats.history else 0.0,
-            "n_epochs": len(self.stats.history),
+            "network_class" : net.__class__.__name__,
+            "step"          : step,
+            "seed"          : seed,
+            "last_loss"     : float(self.stats.history[-1]) if self.stats.history else 0.0,
+            "n_epochs"      : len(self.stats.history),
         }
 
         # Resolve path for stats file
         if path.endswith(os.sep) or os.path.isdir(path):
             os.makedirs(path, exist_ok=True)
-            final_path = os.path.join(path, f"checkpoint_{step}.{fmt}")
-            final_path_stats = os.path.join(path, "stats.h5")
+            final_path          = os.path.join(path, f"checkpoint_{step}.{fmt}")
+            final_path_stats    = os.path.join(path, "stats.h5")
         else:
             # Path is a specific file
-            final_path = path
-            final_path_stats = os.path.join(str(Path(path).parent), "stats.h5")
+            final_path          = path
+            final_path_stats    = os.path.join(str(Path(path).parent), "stats.h5")
             os.makedirs(str(Path(path).parent), exist_ok=True)
 
         if not overwrite and os.path.exists(final_path):
-            self._log(
-                f"Checkpoint file {final_path} already exists and overwrite is False. Skipping save.",
-                lvl=1,
-                color="yellow",
-            )
+            self._log(f"Checkpoint file {final_path} already exists and overwrite is False. Skipping save.", lvl=1, color="yellow")
             return None
 
         # Save training history/stats
@@ -1694,18 +1734,10 @@ class NQSTrainer:
                 data_to_save=self.stats.to_dict(),
                 overwrite=True,
             )
-            self._log(
-                f"Saved training stats to {final_path_stats}",
-                lvl=2,
-                verbose=kwargs.get("verbose", False),
-            )
+            self._log(f"Saved training stats to {final_path_stats}", lvl=2, verbose=kwargs.get("verbose", False))
 
         # Delegate weight saving to NQS (which uses checkpoint manager)
-        return self.nqs.save_weights(
-            filename=final_path,
-            step=step,
-            metadata=meta,
-        )
+        return self.nqs.save_weights(filename=final_path, step=step, metadata=meta)
 
     def load_checkpoint(
         self,
@@ -1756,15 +1788,12 @@ class NQSTrainer:
 
         # Resolve the search directory
         if path is None:
-            search_dir = self.nqs.ckpt_manager.directory
             path_str = str(self.nqs.defdir)  # Fallback for stats file
         else:
             path_obj = Path(path)
             if path_obj.is_file():
-                search_dir = path_obj.parent
                 path_str = str(path)
             else:
-                search_dir = path_obj
                 path_str = str(path)
 
         # Determine step identifier
@@ -1785,29 +1814,29 @@ class NQSTrainer:
             # Assuming HDF5Manager is available in context
             stats_data = HDF5Manager.read_hdf5(file_path=Path(stats_file))
             self.stats = NQSTrainStats(
-                        history             =list(stats_data.get("/history/val", [])),
-                        history_std         =list(stats_data.get("/history/std", [])),
-                        lr_history          =list(stats_data.get("/history/lr", [])),
-                        reg_history         =list(stats_data.get("/history/reg", [])),
-                        diag_history        =list(stats_data.get("/history/diag_shift", [])),
-                        sigma2_history      =list(stats_data.get("/history/sigma2", [])),
-                        rhat_history        =list(stats_data.get("/history/r_hat", [])),
-                        global_phase        =list(stats_data.get("/history/theta0", [])),
-                        seed                =stats_data.get("/seed", None),
-                        exact_predictions   =stats_data.get("/exact/predictions", None),
-                        exact_method        =stats_data.get("/exact/method", None),
-                        timings             =NQSTrainTime(
-                                                n_steps             =stats_data.get("/timings/n_steps", 0),
-                                                step                =list(stats_data.get("/timings/step", [])),
-                                                sample              =list(stats_data.get("/timings/sample", [])),
-                                                update              =list(stats_data.get("/timings/update", [])),
-                                                tdvp_prepare        =list(stats_data.get("/timings/tdvp/prepare", [])),
-                                                tdvp_gradient       =list(stats_data.get("/timings/tdvp/gradient", [])),
-                                                tdvp_covariance     =list(stats_data.get("/timings/tdvp/covariance", [])),
-                                                tdvp_x0             =list(stats_data.get("/timings/tdvp/x0", [])),
-                                                tdvp_solve          =list(stats_data.get("/timings/tdvp/solve", [])),
-                                                tdvp_phase          =list(stats_data.get("/timings/tdvp/phase", [])),
-                                                total               =list(stats_data.get("/timings/total", [])),
+                        history             = list(stats_data.get("/history/val", [])),
+                        history_std         = list(stats_data.get("/history/std", [])),
+                        lr_history          = list(stats_data.get("/history/lr", [])),
+                        reg_history         = list(stats_data.get("/history/reg", [])),
+                        diag_history        = list(stats_data.get("/history/diag_shift", [])),
+                        sigma2_history      = list(stats_data.get("/history/sigma2", [])),
+                        rhat_history        = list(stats_data.get("/history/r_hat", [])),
+                        global_phase        = list(stats_data.get("/history/theta0", [])),
+                        seed                = stats_data.get("/seed", None),
+                        exact_predictions   = stats_data.get("/exact/predictions", None),
+                        exact_method        = stats_data.get("/exact/method", None),
+                        timings             = NQSTrainTime(
+                                                n_steps             = stats_data.get("/timings/n_steps", 0),
+                                                step                = list(stats_data.get("/timings/step", [])),
+                                                sample              = list(stats_data.get("/timings/sample", [])),
+                                                update              = list(stats_data.get("/timings/update", [])),
+                                                tdvp_prepare        = list(stats_data.get("/timings/tdvp/prepare", [])),
+                                                tdvp_gradient       = list(stats_data.get("/timings/tdvp/gradient", [])),
+                                                tdvp_covariance     = list(stats_data.get("/timings/tdvp/covariance", [])),
+                                                tdvp_x0             = list(stats_data.get("/timings/tdvp/x0", [])),
+                                                tdvp_solve          = list(stats_data.get("/timings/tdvp/solve", [])),
+                                                tdvp_phase          = list(stats_data.get("/timings/tdvp/phase", [])),
+                                                total               = list(stats_data.get("/timings/total", [])),
                                             ),
             )
             if self.stats.history:

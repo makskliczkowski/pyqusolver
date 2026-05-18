@@ -12,6 +12,14 @@ _LAZY_EXPORTS = {
     "NQSPrecisionPolicy"                : (".nqs_precision", "NQSPrecisionPolicy"),
     "resolve_precision_policy"          : (".nqs_precision", "resolve_precision_policy"),
     "cast_for_precision"                : (".nqs_precision", "cast_for_precision"),
+    # Driver callbacks/loggers
+    "AbstractLog"                       : (".nqs_driver", "AbstractLog"),
+    "RuntimeLog"                        : (".nqs_driver", "RuntimeLog"),
+    "JsonLog"                           : (".nqs_driver", "JsonLog"),
+    "StopTraining"                      : (".nqs_driver", "StopTraining"),
+    "InvalidLossStopping"               : (".nqs_driver", "InvalidLossStopping"),
+    "ConvergenceStopping"               : (".nqs_driver", "ConvergenceStopping"),
+    "TimeoutStopping"                   : (".nqs_driver", "TimeoutStopping"),
     # Spectral results
     "NQSCorrelatorResult"               : (".nqs_spectral", "NQSCorrelatorResult"),
     "NQSSpectralMapResult"              : (".nqs_spectral", "NQSSpectralMapResult"),
@@ -22,6 +30,7 @@ _LAZY_EXPORTS = {
     # Entropy computations
     "compute_ed_entanglement_entropy"   : (".nqs_entropy", "compute_ed_entanglement_entropy"),
     "compute_renyi_entropy"             : (".nqs_entropy", "compute_renyi_entropy"),
+    "compute_renyi_entropies"           : (".nqs_entropy", "compute_renyi_entropies"),
     "compute_entropy_sweep"             : (".nqs_entropy", "compute_entropy_sweep"),
     "bipartition_cuts"                  : (".nqs_entropy", "bipartition_cuts"),
 }
@@ -45,6 +54,13 @@ __all__ = [
     "NQSPrecisionPolicy",
     "resolve_precision_policy",
     "cast_for_precision",
+    "AbstractLog",
+    "RuntimeLog",
+    "JsonLog",
+    "StopTraining",
+    "InvalidLossStopping",
+    "ConvergenceStopping",
+    "TimeoutStopping",
     # NQS spectral results
     "NQSCorrelatorResult",
     "NQSSpectralMapResult",
@@ -56,6 +72,7 @@ __all__ = [
     # Entropy computations
     "compute_ed_entanglement_entropy",
     "compute_renyi_entropy",
+    "compute_renyi_entropies",
     "compute_entropy_sweep",
     "bipartition_cuts"
 ]

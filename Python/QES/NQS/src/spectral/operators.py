@@ -1,5 +1,11 @@
 """
-Operator helpers shared across NQS spectral workflows.
+Operator adapters shared by NQS spectral workflows.
+
+Spectral routines consume local transition kernels of the form
+``state -> (connected_states, matrix_elements)``. This module keeps the small
+adapter layer in one place: identity kernels, extraction of values returned by
+``NQS.apply``, and diagonal probe-norm kernels used to restore the physical
+normalization of operator-excited probe states.
 """
 
 from __future__ import annotations

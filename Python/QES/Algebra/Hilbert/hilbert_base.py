@@ -46,23 +46,23 @@ class BaseHilbertSpace(ABC):
     class SymBasicInfo:
         """Compact symmetry summary used by Hilbert-space implementations."""
 
-        num_operators: int = 0
-        num_gens: int = 0
-        num_sectors: int = 0
-        num_states: int = 0
+        num_operators   : int = 0
+        num_gens        : int = 0
+        num_sectors     : int = 0
+        num_states      : int = 0
 
     def __init__(
         self,
-        ns: Optional[int],
-        lattice: Optional["Lattice"],
-        local_space: Optional["LocalSpace"],
-        backend: str,
-        state_type: Union[str, type],
-        dtype: np.dtype,
+        ns              : Optional[int],
+        lattice         : Optional["Lattice"],
+        local_space     : Optional["LocalSpace"],
+        backend         : str,
+        state_type      : Union[str, type],
+        dtype           : np.dtype,
         *,
-        state_filter: Optional[callable] = None,
-        boundary_flux: Optional[float] = None,
-        logger: Optional["Logger"] = None,
+        state_filter    : Optional[callable] = None,
+        boundary_flux   : Optional[float] = None,
+        logger          : Optional["Logger"] = None,
         **kwargs,
     ):
         """
@@ -97,30 +97,30 @@ class BaseHilbertSpace(ABC):
             Initializes shared Hilbert-space state.
         """
 
-        self._logger = self._check_logger(logger)
+        self._logger        = self._check_logger(logger)
         self._backend, self._backend_str, self._state_type = self.reset_backend(backend, state_type)
-        self._dtype = dtype if dtype is not None else self._backend.float64
+        self._dtype         = dtype if dtype is not None else self._backend.float64
 
-        self._ns = ns
-        self._lattice = lattice
+        self._ns            = ns
+        self._lattice       = lattice
         self._boundary_flux = boundary_flux
         if self._lattice is not None and boundary_flux is not None:
             self._lattice.flux = boundary_flux
 
-        self._local_space = local_space
-        self._threadnum = kwargs.get("threadnum", 1)  # number of threads to use
+        self._local_space   = local_space
+        self._threadnum     = kwargs.get("threadnum", 1)  # number of threads to use
 
         # Symmetry container (initialized by subclasses)
-        self._sym_group = []
-        self._sym_container: Optional["SymmetryContainer"] = None
-        self._sym_basic_info = self.SymBasicInfo()
-        self._global_syms: List["GlobalSymmetry"] = []
-        self._has_complex_symmetries = False
+        self._sym_container: Optional["SymmetryContainer"]  = None
+        self._sym_group                                     = []
+        self._sym_basic_info                                = self.SymBasicInfo()
+        self._global_syms: List["GlobalSymmetry"]           = []
+        self._has_complex_symmetries                        = False
 
         # Mapping properties (managed by subclasses but defined here for type safety)
-        self.representative_list = None
-        self.representative_norms = None
-        self._nh: int = 0
+        self.representative_list        = None
+        self.representative_norms       = None
+        self._nh: int                   = 0
         self._nhfull: Union[int, float] = 0
 
         # State filtering - predicate to filter basis states
@@ -134,22 +134,13 @@ class BaseHilbertSpace(ABC):
         """Return the provided logger or the global QES logger."""
         if logger is None:
             from QES.qes_globals import get_logger as get_global_logger
-
             return get_global_logger()
         return logger
 
-    def _log(
-        self,
-        msg: str,
-        log: Union[int, str] = "info",
-        lvl: int = 0,
-        color: str = "white",
-        append_msg=True,
-    ):
+    def _log(self, msg: str, log: Union[int, str] = "info", lvl: int = 0, color: str = "white", append_msg=True):
         """Emit a log message through the configured logger."""
         if self._logger is None:
             return
-
         try:
             from QES.general_python.common.flog import Logger
         except ImportError:
@@ -216,6 +207,12 @@ class BaseHilbertSpace(ABC):
         """
         State encoding convention metadata for the active local space.
 
+        The returned dictionary distinguishes the integer/basis encoding from
+        the array-valued vector encoding used by operator kernels and higher
+        layers. For spin-1/2 systems the integer representation remains the
+        binary computational basis, while the vector representation follows the
+        configured backend convention.
+
         Returns
         -------
         dict
@@ -239,7 +236,8 @@ class BaseHilbertSpace(ABC):
         Returns
         -------
         str
-            Human-readable state-convention description.
+            Human-readable state-convention description, including both integer
+            and vector representation details.
         """
         from QES.Algebra.Operator.impl import format_state_convention
 
@@ -295,16 +293,7 @@ class BaseHilbertSpace(ABC):
         basis = str(getattr(self, "_basis_type", "real"))
 
         # Combine all parts that define the configuration
-        return (
-            self._ns,
-            self._nhfull,
-            is_mb,
-            local_typ,
-            basis,
-            sym_info,
-            self._boundary_flux,
-            id(self._state_filter) if self._state_filter else None
-        )
+        return self._ns, self._nhfull, is_mb, local_typ, basis, sym_info, self._boundary_flux, id(self._state_filter) if self._state_filter else None
 
     # --------------------------------------------------------------------------------------------------
     #! Symmetry Properties

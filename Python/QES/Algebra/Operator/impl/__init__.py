@@ -3,12 +3,19 @@ Operator implementation package and state-encoding conventions.
 
 This module documents the state conventions used by operator kernels so model
 and Hilbert-space code can stay consistent across local spaces.
+
+------------------------------------------------------------------------------
+file        : QES/Algebra/Operator/impl/__init__.py
+author      : Maksymilian Kliczkowski
+created     : 2026-04-11
+description : Operator implementation package and state-encoding conventions.
+------------------------------------------------------------------------------
 """
 
 from __future__ import annotations
 
-from copy import deepcopy
-from typing import Any, Dict
+from copy       import deepcopy
+from typing     import Any, Dict
 
 # ---------------------------------------------------------------------------
 # State conventions
@@ -16,15 +23,15 @@ from typing import Any, Dict
 
 STATE_CONVENTIONS: Dict[str, Dict[str, Any]] = {
     "spin-1/2": {
-        "name"      : "Spin-1/2",
-        "summary"   : "Binary computational basis.",
+        "local_space_type"  : "spin-1/2",
+        "name"              : "Spin-1/2",
+        "summary"           : "Binary computational basis.",
         "integer_encoding"  : (
             "Site i is stored in bit (Ns-1-i). "
             "bit=0 -> |down>, bit=1 -> |up>."
         ),
         "vector_encoding"   : (
-            "Length-Ns array with entries in {0,1}. "
-            "0 -> |down>, 1 -> |up>."
+            "Length-Ns array with entries in {0,1} or {-0.5,0.5} depending on backend convention. "
         ),
         "examples"          : [
             "Ns=4, state |up down up down> -> bits 1010 -> integer 10",
@@ -32,8 +39,9 @@ STATE_CONVENTIONS: Dict[str, Dict[str, Any]] = {
         ],
     },
     "spin-1": {
-        "name"      : "Spin-1",
-        "summary"   : "Ternary computational basis with local values m in {+1,0,-1}.",
+        "local_space_type"  : "spin-1",
+        "name"              : "Spin-1",
+        "summary"           : "Ternary computational basis with local values m in {+1,0,-1}.",
         "integer_encoding"  : (
             "State is interpreted in base-3 with digit at site i: "
             "0 -> m=+1, 1 -> m=0, 2 -> m=-1."
@@ -49,8 +57,9 @@ STATE_CONVENTIONS: Dict[str, Dict[str, Any]] = {
         ],
     },
     "spinless-fermions"     : {
-        "name"      : "Spinless Fermions",
-        "summary"   : "Binary occupation-number (Fock) basis with Jordan-Wigner signs.",
+        "local_space_type"  : "spinless-fermions",
+        "name"              : "Spinless Fermions",
+        "summary"           : "Binary occupation-number (Fock) basis with Jordan-Wigner signs.",
         "integer_encoding"  : (
             "Site i occupation n_i is bit (Ns-1-i). n_i in {0,1}."
         ),
@@ -63,8 +72,9 @@ STATE_CONVENTIONS: Dict[str, Dict[str, Any]] = {
         ],
     },
     "abelian-anyons"        : {
-        "name"      : "Hard-core Abelian Anyons",
-        "summary"   : "Binary occupation basis with exchange phase from statistics angle.",
+        "local_space_type"  : "abelian-anyons",
+        "name"              : "Hard-core Abelian Anyons",
+        "summary"           : "Binary occupation basis with exchange phase from statistics angle.",
         "integer_encoding"  : (
             "Binary occupancy like spinless fermions; phase differs by theta."
         ),
@@ -75,8 +85,9 @@ STATE_CONVENTIONS: Dict[str, Dict[str, Any]] = {
         ],
     },
     "bosons"                : {
-        "name"      : "Bosons (truncated)",
-        "summary"   : "Local occupation basis with configurable cutoff n_max.",
+        "local_space_type"  : "bosons",
+        "name"              : "Bosons (truncated)",
+        "summary"           : "Local occupation basis with configurable cutoff n_max.",
         "integer_encoding"  : (
             "Mixed-radix/base-(n_max+1) encoding per site for truncated local occupation."
         ),
@@ -86,6 +97,10 @@ STATE_CONVENTIONS: Dict[str, Dict[str, Any]] = {
         ],
     },
 }
+
+# -----------------------------------------------------------------------------
+# Aliases and normalization for local space keys, plus convention augmentation
+# -----------------------------------------------------------------------------
 
 _ALIASES = {
     "spin_half"         : "spin-1/2",
@@ -105,8 +120,24 @@ _ALIASES = {
     "bosons"            : "bosons",
 }
 
+# -----------------------------------------------------------------------------
+
 def _normalize_local_space_key(local_space: Any) -> str:
-    """Normalize LocalSpace/enum/string into canonical convention key."""
+    """
+    Normalize LocalSpace/enum/string into canonical convention key.
+    This means extracting the raw string, lowercasing, replacing underscores with dashes, and mapping aliases.
+
+    Parameters
+    ----------
+    local_space : Any
+        The local space specification, which can be a string, an enum, or a LocalSpace instance. The function will attempt to extract a string key from it.
+        
+    Returns
+    -------
+    str
+        The normalized convention key corresponding to the local space type, which can be used to look up state conventions in the STATE_CONVENTIONS dictionary.
+    
+    """
     if local_space is None:
         return "spin-1/2"
 
@@ -123,19 +154,102 @@ def _normalize_local_space_key(local_space: Any) -> str:
     key = raw.strip().lower().replace("_", "-")
     return _ALIASES.get(key, key)
 
+# -----------------------------------------------------------------------------
+# All conventions are defined in STATE_CONVENTIONS, but some may require augmentation based on the key
+# -----------------------------------------------------------------------------
+
+def _spin_half_vector_convention() -> Dict[str, Any]:
+    from QES.general_python.algebra.utils import BACKEND_DEF_SPIN, BACKEND_REPR
+
+    spin        = bool(BACKEND_DEF_SPIN)
+    mode_repr   = float(BACKEND_REPR)
+    if spin:
+        vector_representation   = "spin_pm"
+        vector_encoding         = (
+                                    f"Length-Ns array with signed entries in {{-{mode_repr},+{mode_repr}}}. "
+                                    f"-{mode_repr} -> |down>, +{mode_repr} -> |up>."
+                                )
+    else:
+        vector_representation   = "binary_01"
+        vector_encoding         = (
+                                    f"Length-Ns array with entries in {{0,{mode_repr}}}. "
+                                    f"0 -> |down>, {mode_repr} -> |up>."
+                                )
+
+    return {
+        "integer_representation"   : "binary_01",
+        "integer_mode_repr"        : 1.0,
+        "vector_representation"    : vector_representation,
+        "vector_mode_repr"         : mode_repr,
+        "representation"           : vector_representation,
+        "spin"                     : spin,
+        "mode_repr"                : mode_repr,
+        "vector_encoding"          : vector_encoding,
+    }
+
+def _augment_state_convention(key: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    if key == "spin-1/2":
+        data.update(_spin_half_vector_convention())
+        return data
+
+    if key == "spin-1":
+        data.update({
+            "integer_representation"   : "dense_local",
+            "integer_mode_repr"        : 1.0,
+            "vector_representation"    : "dense_local",
+            "vector_mode_repr"         : 1.0,
+            "representation"           : "dense_local",
+            "spin"                     : False,
+            "mode_repr"                : 1.0,
+            "vector_encoding"          : (
+                "Length-Ns array with entries in {0,1,2}. "
+                "0 -> m=+1, 1 -> m=0, 2 -> m=-1."
+            ),
+        })
+        return data
+
+    if key in {"spinless-fermions", "abelian-anyons"}:
+        data.update({
+            "integer_representation"   : "occupation_binary",
+            "integer_mode_repr"        : 1.0,
+            "vector_representation"    : "occupation_binary",
+            "vector_mode_repr"         : 1.0,
+            "representation"           : "occupation_binary",
+            "spin"                     : False,
+            "mode_repr"                : 1.0,
+        })
+        return data
+
+    data.update({
+        "integer_representation"   : "dense_local",
+        "integer_mode_repr"        : 1.0,
+        "vector_representation"    : "dense_local",
+        "vector_mode_repr"         : 1.0,
+        "representation"           : "dense_local",
+        "spin"                     : False,
+        "mode_repr"                : 1.0,
+    })
+    return data
+
+# -----------------------------------------------------------------------------
+# Public API for state conventions
+# -----------------------------------------------------------------------------
+
 def get_state_convention(local_space: Any = "spin-1/2") -> Dict[str, Any]:
     """Return state convention metadata for the requested local-space type."""
     key = _normalize_local_space_key(local_space)
     if key not in STATE_CONVENTIONS:
         raise KeyError(f"Unknown local-space convention key: {local_space!r}")
-    return deepcopy(STATE_CONVENTIONS[key])
+    return _augment_state_convention(key, deepcopy(STATE_CONVENTIONS[key]))
 
 def format_state_convention(local_space: Any = "spin-1/2", include_examples: bool = True) -> str:
     """Return human-readable state convention text."""
     data = get_state_convention(local_space)
     lines = [
         f"{data['name']}: {data['summary']}",
+        f"  Integer repr.       : {data['integer_representation']}",
         f"  Integer encoding    : {data['integer_encoding']}",
+        f"  Vector repr.        : {data['vector_representation']}",
         f"  Vector encoding     : {data['vector_encoding']}",
     ]
     if include_examples:
@@ -143,7 +257,6 @@ def format_state_convention(local_space: Any = "spin-1/2", include_examples: boo
         for ex in data.get("examples", []):
             lines.append(f"    - {ex}")
     return "\n".join(lines)
-
 
 def all_state_conventions() -> Dict[str, Dict[str, Any]]:
     """Return a deep copy of all state-convention entries."""

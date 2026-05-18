@@ -45,7 +45,7 @@ top-level `QES` package remains lightweight. The first call to
 from    __future__ import annotations
 
 import  threading
-from    typing import Any, List, Union
+from    typing import Any, List, Union, TYPE_CHECKING
 
 try:
     from numpy.random import Generator
@@ -59,11 +59,15 @@ _LOCK           = threading.Lock()
 _LOGGER         : Any = None
 _BACKEND_MGR    : Any = None
 
+if TYPE_CHECKING:
+    from QES.general_python.common.flog     import Logger
+    from QES.general_python.algebra.utils   import BackendManager
+
 # ----------------------------------------------------------------
 #! Global logger accessor
 # ----------------------------------------------------------------
 
-def get_logger(**kwargs) -> Any:
+def get_logger(**kwargs) -> 'Logger':
     """
     Return the process-global logger instance.
 
@@ -92,7 +96,7 @@ def get_logger(**kwargs) -> Any:
 #! Global backend manager accessor
 # ----------------------------------------------------------------
 
-def get_backend_manager() -> Any:
+def get_backend_manager() -> 'BackendManager':
     """
     Return the global backend manager (lazy import).
 

@@ -1,16 +1,21 @@
 """
-Public spectral facade for QES.NQS.
+Public import facade for NQS spectral workflows.
 
-The implementation lives under ``QES.NQS.src.spectral``:
+The public ``NQS`` methods import from this module so user-facing paths remain
+stable while implementation details live in ``QES.NQS.src.spectral``:
 
-- ``results`` for return containers,
-- ``tdvp`` for trajectory evolution helpers,
-- ``mc`` for probe-state and Monte Carlo orchestration,
-- ``exact`` for tiny-system deterministic checks,
-- ``fft`` for time-grid and Fourier postprocessing.
+- ``tdvp`` evolves variational parameters on a requested real-time grid.
+- ``mc`` builds probe states, evaluates transition correlators, and orchestrates
+  dynamical structure factor calculations.
+- ``fft`` converts uniformly sampled correlators into broadened spectra.
 
-This module intentionally stays thin so the public import path remains stable
-while the spectral internals stay grouped by responsibility.
+ED/Lanczos spectral functions live in
+``QES.general_python.physics.spectral.spectral_backend`` and are intentionally
+not re-exported here. The NQS internals contain only exact basis-summation
+diagnostics for tiny variational states.
+
+Keep this file as a facade only. New implementation code should go into the
+responsibility-specific modules above, not into this compatibility layer.
 """
 
 from .spectral import (

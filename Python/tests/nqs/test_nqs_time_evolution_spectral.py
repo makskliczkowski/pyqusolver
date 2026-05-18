@@ -1,3 +1,5 @@
+"""Regression tests for nqs time evolution spectral."""
+
 import numpy as np
 import pytest
 
@@ -10,7 +12,7 @@ try:
     from QES.Algebra.Operator.impl.operators_spin import sig_k
     from QES.Algebra.hilbert import HilbertSpace
     from QES.NQS.nqs import NQS
-    from QES.NQS.src.nqs_spectral import _enumerate_basis_states, _exact_wavefunction_vector
+    from QES.NQS.src.spectral.exact import enumerate_basis_states, exact_wavefunction_vector
     from QES.general_python.lattices import SquareLattice
     from QES.general_python.ml.net_impl.networks.net_rbm import RBM
 except ImportError:
@@ -18,6 +20,7 @@ except ImportError:
 
 
 def _build_uniform_rbm_state(model_seed: int = 0):
+    """Build uniform rbm state."""
     lattice = SquareLattice(dim=2, lx=2, ly=2, bc="obc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -59,6 +62,7 @@ def _build_uniform_rbm_state(model_seed: int = 0):
 
 
 def _build_uniform_rbm_chain(model_seed: int = 0):
+    """Build uniform rbm chain."""
     lattice = SquareLattice(dim=1, lx=4, bc="pbc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -100,6 +104,7 @@ def _build_uniform_rbm_chain(model_seed: int = 0):
 
 
 def _build_static_uniform_rbm_chain(model_seed: int = 0):
+    """Build static uniform rbm chain."""
     lattice = SquareLattice(dim=1, lx=4, bc="pbc")
     hilbert = HilbertSpace(lattice=lattice)
     model = TransverseFieldIsing(
@@ -141,6 +146,7 @@ def _build_static_uniform_rbm_chain(model_seed: int = 0):
 
 
 def test_square_tfim_time_evolution_and_spectral_smoke():
+    """Verify test square tfim time evolution and spectral smoke."""
     model, nqs = _build_uniform_rbm_state()
     times = np.linspace(0.0, 0.10, 3)
 
@@ -183,6 +189,7 @@ def test_square_tfim_time_evolution_and_spectral_smoke():
 
 
 def test_tfim_modifier_time_evolution_smoke():
+    """Verify test tfim modifier time evolution smoke."""
     model, nqs = _build_static_uniform_rbm_chain()
     times = np.linspace(0.0, 0.10, 3)
     probe = sig_k(np.pi, lattice=model.lattice, ns=model.hilbert.ns)
@@ -210,8 +217,8 @@ def test_tfim_modifier_time_evolution_smoke():
     assert np.all(np.isfinite(np.real(physical_corr.correlator)))
     assert np.all(np.isfinite(np.imag(physical_corr.correlator)))
 
-    basis_states = _enumerate_basis_states(nqs)
-    psi0 = _exact_wavefunction_vector(nqs, basis_states=basis_states)
+    basis_states = enumerate_basis_states(nqs)
+    psi0 = exact_wavefunction_vector(nqs, basis_states=basis_states)
     psi0 /= np.sqrt(np.vdot(psi0, psi0))
     probe_matrix = probe.compute_matrix(
         hilbert_1=model.hilbert,

@@ -126,25 +126,33 @@ class NQS(MonteCarloSolver):
     Neural Quantum State (NQS) Solver.
 
     Implements a Monte Carlo-based training method for optimizing NQS models.
-    Supports both NumPy and JAX backends for efficiency and flexibility.
+    Supports mainly JAX backend. Some methods may also work with NumPy but with limited functionality and performance.
 
-    The NQS represents the quantum wavefunction $\Psi(s)$ as a parameterized neural network.
-    The solver minimizes the energy expectation value $E = \langle \Psi | H | \Psi \rangle / \langle \Psi | \Psi \rangle$
+    The NQS represents the quantum problem, e.g., a wavefunction $\Psi(s)$ as a parameterized neural network.
+    Then, the solver minimizes the energy expectation value $E = \langle \Psi | H | \Psi \rangle / \langle \Psi | \Psi \rangle$
     using Variational Monte Carlo (VMC) and Stochastic Reconfiguration (SR) or Time-Dependent Variational Principle (TDVP).
 
     Invariants & Shapes
     -------------------
-    - **Input Shapes**: The network must accept inputs of shape `(batch_size, n_sites)`.
-    - **Output Shapes**: The network must return log-amplitudes of shape `(batch_size,)`.
-      Complex outputs are expected for general quantum states.
-    - **State Convention**: Public states follow the attached model/Hamiltonian convention by default.
-      For spin-1/2 systems this means signed local values in `{-0.5, +0.5}` unless
-      `state_representation` is overridden explicitly. Networks may remap these inputs
-      internally, but sampling, Hamiltonian evaluation, observables, entropy helpers,
-      and exact summation all use one consistent external convention.
-    - **Dtypes**: `complex128` (or `complex64`) is strongly recommended for numerical stability,
-      especially for time evolution and phase-sensitive models.
-    - **Normalization**: The ansatz does not need to be normalized; VMC handles normalization via ratio estimators.
+    - **Input Shapes**: 
+        The network must accept inputs of shape `(batch_size, input_shape)`, e.g., 
+        for spin-1/2 systems, `input_shape` would be `(num_sites,)` with values in `{-0.5, +0.5}` by default.
+    - **Output Shapes**:
+        The network must return log-amplitudes of shape `(batch_size,)`.
+        Complex outputs are expected for general quantum states.
+    - **State Convention**: 
+        Public states follow the attached model/Hamiltonian convention by default.
+        For spin-1/2 systems this means signed local values in `{-0.5, +0.5}` unless
+        `state_representation` is overridden explicitly. 
+        
+        Importantly, networks may remap these inputs
+        internally, but sampling, Hamiltonian evaluation, observables, entropy helpers,
+        and exact summation all use one consistent external convention.
+    - **dtypes**: 
+        `complex128` (or `complex64`) is strongly recommended for numerical stability,
+        especially for time evolution and phase-sensitive models.
+    - **Normalization**: 
+        The ansatz does not need to be normalized; VMC handles normalization via ratio estimators.
 
     Parallel Tempering (PT)
     -----------------------
@@ -205,6 +213,7 @@ class NQS(MonteCarloSolver):
     - "SUBPLAQUETTE": Flips sub-sequences of a pattern (e.g. edges of a plaquette).
     """
 
+    # Error messages:
     _ERROR_ALL_DTYPE_SAME       = "All weights must have the same dtype!"
     _ERROR_NOT_INITIALIZED      = "The NQS network is not initialized. Call init_network() first."
     _ERROR_INVALID_PHYSICS      = "Invalid physics problem specified."
@@ -226,6 +235,8 @@ class NQS(MonteCarloSolver):
     @staticmethod
     def DUMMY_APPLY_FUN_JAX(x):
         return jnp.array([jnp.array([x])] * 40), jnp.array([jnp.array([1.0])] * 40)
+
+    # ----------------------------------------------------------
 
     def __init__(
         self,
@@ -261,126 +272,140 @@ class NQS(MonteCarloSolver):
         **kwargs,
     ):
         r"""
-        Initialize the NQS solver.
+        Initialize the NQS solver. This sets up the network, sampler, and other components based on the provided arguments.
+        Below are the main steps performed during initialization:
+        1. **Store Initialization Parameters**: 
+            The provided arguments are stored as instance variables for later use.
+        2. **Determine State Representation**: 
+            The state representation is resolved based on the provided arguments and the model/Hilbert space conventions.
+        3. **Initialize Network**:
+            The neural network ansatz is initialized based on the `logansatz` argument. 
+            This can be a string (e.g., 'rbm'), a pre-initialized network object, or a callable that returns a network instance.
+        4. **Initialize Sampler**:
+            The sampler is initialized based on the `sampler` argument. If None, a default
+            `VMCSampler` is created using the provided network and other parameters.
+        5. **Set Up Checkpointing**:
+            A checkpoint manager is set up to handle saving and loading of model parameters during training.
+        6. **Set Up Logging**:
+            A logger is initialized for tracking training progress and other information.
+        7. **Handle Symmetries**:
+            If `symmetrize` is True and the Hilbert space has symmetries, a symmetry handler is set up to automatically symmetrize the ansatz.
+        8. **Finalize Initialization**:
+            Any additional setup steps are performed, and the NQS is ready for training or evaluation.
 
-        Parameters:
-            logansatz [Union[Callable, str, GeneralNet]]:
-                The neural network or callable to be used. This can be specified in several ways:
-                - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
-                - As a pre-initialized network object (must be a subclass of `GeneralNet`).
-                - As a raw Flax module class for custom networks. The factory will wrap it automatically.
-                See the documentation of `QES.general_python.ml.networks.choose_network` for details
-                on custom module requirements.
-                - As a callable that returns an ansatz. For example, a function that takes input shape and returns
-                    a network instance or it can be some custom logic to create the wavefunction ansatz:
-                    - PEPS ansatz function
-                    - Custom variational ansatz
-            sampler [Union[Callable, str, VMCSampler]]:
-                The sampler to be used. If None, a default `VMCSampler` will be created.
-                This can be specified in several ways:
-                - As a string (e.g., 'vmc') to use a built-in sampler.
-                - As a pre-initialized sampler object (must be a subclass of `VMCSampler`).
-                - As a callable that returns a sampler instance.
-                - If None, a default `VMCSampler` will be created using the provided network:
-                    - The sampler will be initialized with the network, shape, random number generators, and other parameters.
-            model [Hamiltonian or Operator]:
-                The physical model (e.g., Hamiltonian) for the NQS.
-                - If physics is 'wavefunction', this must provide a `local_energy_fn`.
-                - For other physics types, refer to the specific requirements.
-                - Unless overridden, the NQS adopts the model/Hamiltonian state convention.
-                  For spin-1/2 this default is the signed operator convention
-                  `{-0.5, +0.5}`.
-            batch_size [Optional[int]]:
-                The batch size for training.
-            nthstate [Optional[int]]:
-                The nth excited state to target (0 for ground state). Informative
-            nparticles [Optional[int]]:
-                The number of particles in the system. If not provided, defaults to system size.
-            seed [Optional[int]]:
-                Random seed for initialization.
-            beta [float]:
-                Inverse temperature for Monte Carlo sampling.
-            mu [float]:
-                Mu parameter for the NQS. This is used for collecting different sampling distribution.
-                By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
-            replica [int]:
-                Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
-                When replica > 1:
-                - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
-                to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
-                - MCMC runs in parallel across all temperature replicas.
-                - Periodic replica exchanges improve mixing and help escape local minima.
-                - Only samples from the physical replica (beta=1.0) are used for training.
-                - The return signature of `sample()` and `train()` remains unchanged.
-            shape [Union[list, tuple]]:
-                Shape of the input data, e.g., `(n_spins,)`.
-            modes:
-                Number of local modes per site (e.g., 2 for spin-1/2).
-            directory:
-                Directory for saving results.
-            backend:
-                Computational backend ('jax' or 'numpy').
-            dtype:
+        Parameters
+        ----------
+        logansatz [Union[Callable, str, GeneralNet]]:
+            The neural network or callable to be used. This can be specified in several ways:
+            - As a string (e.g., 'rbm', 'cnn') to use a built-in network.
+            - As a pre-initialized network object (must be a subclass of `GeneralNet`).
+            - As a raw Flax module class for custom networks. The factory will wrap it automatically.
+            See the documentation of `QES.general_python.ml.networks.choose_network` for details
+            on custom module requirements.
+            - As a callable that returns an ansatz. For example, a function that takes input shape and returns
+                a network instance or it can be some custom logic to create the wavefunction ansatz:
+                - PEPS ansatz function
+                - Custom variational ansatz
+        sampler [Union[Callable, str, VMCSampler]]:
+            The sampler to be used. If None, a default `VMCSampler` will be created.
+            This can be specified in several ways:
+            - As a string (e.g., 'vmc') to use a built-in sampler.
+            - As a pre-initialized sampler object (must be a subclass of `VMCSampler`).
+            - As a callable that returns a sampler instance.
+            - If None, a default `VMCSampler` will be created using the provided network:
+                - The sampler will be initialized with the network, shape, random number generators, and other parameters.
+        model [Hamiltonian or Operator]:
+            The physical model (e.g., Hamiltonian) for the NQS.
+            - If physics is 'wavefunction', this must provide a `local_energy_fn`.
+            - For other physics types, refer to the specific requirements.
+            - Unless overridden, the NQS adopts the model/Hamiltonian state convention.
+                - For spin-1/2 this default is the signed operator convention `{-0.5, +0.5}`.
+        batch_size [Optional[int]]:
+            The batch size for training.
+        nthstate [Optional[int]]:
+            The nth excited state to target (0 for ground state). Informative
+        nparticles [Optional[int]]:
+            The number of particles in the system. If not provided, defaults to system size.
+        seed [Optional[int]]:
+            Random seed for initialization.
+        beta [float]:
+            Inverse temperature for Monte Carlo sampling.
+        mu [float]:
+            Mu parameter for the NQS. This is used for collecting different sampling distribution.
+            By default, mu=2.0 corresponds to sampling from |psi(s)|^2 -> Born rule.
+        replica [int]:
+            Number of replicas for Parallel Tempering (PT). Default is 1 (PT disabled).
+            When replica > 1:
+            - A geometric temperature ladder is automatically generated from beta=1.0 (physical)
+            to beta=0.1 (hot), unless custom `pt_betas` is provided via kwargs.
+            - MCMC runs in parallel across all temperature replicas.
+            - Periodic replica exchanges improve mixing and help escape local minima.
+            - Only samples from the physical replica (beta=1.0) are used for training.
+            - The return signature of `sample()` and `train()` remains unchanged.
+        shape [Union[list, tuple]]:
+            Shape of the input data, e.g., `(n_spins,)`.
+        modes:
+            Number of local modes per site (e.g., 2 for spin-1/2).
+        directory:
+            Directory for saving results.
+        backend:
+            Computational backend ('jax' or 'numpy').
+        dtype:
+            Data type for network parameters (e.g., 'float32', 'complex128').
+        problem:
+            The physics problem to solve (e.g., 'wavefunction'). Future versions may support other problems, like density matrix.
+        symmetrize [bool]:
+            Whether to automatically symmetrize the ansatz if symmetries are present in the Hilbert space.
+            If True (default), and `hilbert` has symmetries, the network output will be projected onto the
+            specified symmetry sector:
+            :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
+            where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
+            This allows training symmetry-protected states.
+        verbose [bool]:
+            Whether to print verbose output. Default is True.
+        **kwargs:
+            Additional keyword arguments passed to the network constructor.
+            Including:
+            - seed:
+                Seed for network initialization (overrides global seed if provided).
+            - param_dtype:
                 Data type for network parameters (e.g., 'float32', 'complex128').
-            problem:
-                The physics problem to solve (e.g., 'wavefunction').
-            symmetrize [bool]:
-                Whether to automatically symmetrize the ansatz if symmetries are present in the Hilbert space.
-                If True (default), and `hilbert` has symmetries, the network output will be projected onto the
-                specified symmetry sector:
-                :math:`\\Psi_{sym}(s) \\propto \\sum_{g \\in G} \\chi(g) \\Psi(g(s))`
-                where :math:`G` is the symmetry group and :math:`\\chi(g)` are the characters.
-                This allows training symmetry-protected states.
-            verbose [bool]:
-                Whether to print verbose output. Default is True.
-            **kwargs:
-                Additional keyword arguments passed to the network constructor.
-                Including:
-                - seed:
-                    Seed for network initialization (overrides global seed if provided).
-                - param_dtype:
-                    Data type for network parameters (e.g., 'float32', 'complex128').
-                - state_representation:
-                    Optional explicit external state convention. If omitted, the
-                    model/Hilbert default is used. Binary conventions always use
-                    unit-valued occupied/up entries (`1.0`), while physical spin
-                    magnitudes only apply to explicit signed-spin conventions.
-                - beta_penalty:
-                    Penalty term for particle number conservation (default: 0.0).
-                - use_orbax:
-                    Whether to use Orbax for checkpointing (default: True).
-                - orbax_max_to_keep:
-                    Maximum number of Orbax checkpoints to keep (default: 3).
-                - Sampler-specific parameters:
-                    - s_numchains       : Number of Markov chains (auto-configured by backend; override to set explicitly).
-                    - s_numsamples      : Number of samples per chain (auto-configured by backend; override to set explicitly).
-                    - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
-                    - s_sweep_steps     : Sweep steps between collected samples (auto-configured by backend).
-                    - s_therm_steps     : Thermalization steps (burn-in) (auto-configured by backend).
-                    - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
-                                        Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
-                                        See `NQS.help('sampling')` for details.
-                    - s_patterns        : List of patterns for "GLOBAL" update rule (required if upd_fun="GLOBAL").
-                    - s_n_flip          : Number of sites for "MULTI_FLIP" rule (default: 1).
-                    - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
-                    - s_logprob_fact    : Log probability factor (default: 0.5).
-                    - s_makediffer      : Whether to make the sampler differentiable (default: True).
-                    - Other sampler-specific parameters as needed.
-                - Parallel Tempering parameters (when replica > 1):
-                    - pt_betas          : Custom array of inverse temperatures (optional).
-                                        If not provided, a geometric ladder from 1.0 to 0.1 is generated.
-                    - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
-                                        Sampler-specific parameters (e.g., `global_p`, `global_fraction`) are
-                                        also passed through to the `VMCSampler` constructor via `**kwargs`.
-                    - global_p          : Probability of proposing a global update (default: 0.0).
-                    - global_update     : Custom global update function (optional).
+            - state_representation:
+                Optional explicit external state convention. If omitted, the
+                model/Hilbert default is used. Binary conventions always use
+                unit-valued occupied/up entries (`1.0`), while physical spin
+                magnitudes only apply to explicit signed-spin conventions.
+            - beta_penalty:
+                Penalty term for particle number conservation (default: 0.0).
+            - use_orbax:
+                Whether to use Orbax for checkpointing (default: True).
+            - orbax_max_to_keep:
+                Maximum number of Orbax checkpoints to keep (default: 3).
+            - Sampler-specific parameters:
+                - s_numchains       : Number of Markov chains (auto-configured by backend; override to set explicitly).
+                - s_numsamples      : Number of samples per chain (auto-configured by backend; override to set explicitly).
+                - s_numupd          : Number of updates per sample (default: 1). How many times a single update function is applied before collecting a sample.
+                - s_sweep_steps     : Sweep steps between collected samples (auto-configured by backend).
+                - s_therm_steps     : Thermalization steps (burn-in) (auto-configured by backend).
+                - s_upd_fun         : Update function/rule for sampler (default: "LOCAL").
+                                    Can be a string/Enum (e.g., "EXCHANGE", "GLOBAL") or a callable.
+                                    See `NQS.help('sampling')` for details.
+                - s_patterns        : List of patterns for "GLOBAL" update rule (required if upd_fun="GLOBAL").
+                - s_n_flip          : Number of sites for "MULTI_FLIP" rule (default: 1).
+                - s_statetype       : Data type for sampler states (default: jnp.float32 or np.float32).
+                - s_logprob_fact    : Log probability factor (default: 0.5).
+                - s_makediffer      : Whether to make the sampler differentiable (default: True).
+                - Other sampler-specific parameters as needed.
+            - Parallel Tempering parameters (when replica > 1):
+                - pt_betas          : Custom array of inverse temperatures (optional).
+                                    If not provided, a geometric ladder from 1.0 to 0.1 is generated.
+                - pt_min_beta       : Minimum beta for auto-generated ladder (default: 0.1).
+                                    Sampler-specific parameters (e.g., `global_p`, `global_fraction`) are
+                                    also passed through to the `VMCSampler` constructor via `**kwargs`.
+                - global_p          : Probability of proposing a global update (default: 0.0).
+                - global_update     : Custom global update function (optional).
         """
 
-        ansatz_alias = kwargs.pop("ansatz", None)
-        if logansatz is None:
-            logansatz = ansatz_alias
-        elif ansatz_alias is not None and ansatz_alias != logansatz:
-            raise ValueError("Provide either `logansatz` or `ansatz`, not conflicting values for both.")
         if model is None:
             raise ValueError(self._ERROR_NO_HAMILTONIAN)
 
@@ -470,6 +495,8 @@ class NQS(MonteCarloSolver):
         if not self._initialized:
             self.init_network()
 
+        # Determine the network adapter based on the network type and representation info
+        # This just helps with setting up how the states look like etc.
         self._network_adapter           = choose_nqs_network_adapter(self._net, self._representation_info, backend=self._backend_str)
         self._state_representation      = None
         self._spin_repr                 = None
@@ -478,39 +505,41 @@ class NQS(MonteCarloSolver):
         self._state_convention_sig      = None
         self._resolved_operator_cache   = {}
         self._set_state_convention(**kwargs)
-
-        self._isjax                 = getattr(self._net, "is_jax", (self._nqsbackend.name == "jax"))
-        self._iscpx                 = self._net.is_complex
-        self._holomorphic           = self._net.is_holomorphic
-        self._analytic              = self._net.has_analytic_grad # Whether analytic gradients are supported - expected for JAX backends
-        self._dtype                 = self._net.dtype
+    
+        # Determine if the network is JAX-based, complex-valued, and supports holomorphic/analytic properties
+        self._isjax                     = getattr(self._net, "is_jax", (self._nqsbackend.name == "jax"))
+        self._iscpx                     = self._net.is_complex
+        self._holomorphic               = self._net.is_holomorphic
+        self._analytic                  = self._net.has_analytic_grad # Whether analytic gradients are supported - expected for JAX backends
+        self._dtype                     = self._net.dtype
 
         # Precision policy (mixed precision for stable paths)
         self._precision_policy: NQSPrecisionPolicy = resolve_precision_policy(self._dtype, is_jax=self._isjax, **kwargs)
 
         # Initialize SymmetryHandler
-        self.symmetry_handler       = NQSSymmetricAnsatz(self)
+        self.symmetry_handler           = NQSSymmetricAnsatz(self)
 
         # --------------------------------------------------
         #! Sampler
         # --------------------------------------------------
 
-        self._sampler               = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)
+        self._sampler                   = self.set_sampler(sampler, kwargs.get("upd_fun", None), replica=replica, **kwargs)
+        self._connected_eval_chunk_size = int(kwargs.get("connected_eval_chunk_size", getattr(self._sampler, "_network_eval_chunk_size", max(1, batch_size))))
 
         # --------------------------------------------------
         #! Handle gradients
         # --------------------------------------------------
-        self._grad_info             = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)
-        self._flat_grad_func        = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
-        self._analytic_grad_func    = self._grad_info["analytic_grad_func"]     # Function to compute analytic gradients
-        self._dict_grad_type        = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
-        self._params_slice_metadata = self._grad_info["slice_metadata"]         # Metadata for slicing parameters
-        self._params_leaf_info      = self._grad_info["leaf_info"]              # Leaf information
-        self._params_tree_def       = self._grad_info["tree_def"]               # Tree definition
-        self._params_shapes         = self._grad_info["shapes"]                 # Shapes of parameters
-        self._params_sizes          = self._grad_info["sizes"]                  # Sizes of parameters
-        self._params_iscpx          = self._grad_info["is_complex_per_leaf"]    # Whether each parameter is complex
-        self._params_total_size     = self._grad_info["total_size"]             # Total size of parameters -> cost for training
+        self._grad_info                 = self._nqsbackend.prepare_gradients(self._net, analytic=self._analytic)
+        self._flat_grad_func            = self._grad_info["flat_grad_func"]         # Function to compute flattened gradients
+        self._analytic_grad_func        = self._grad_info["analytic_grad_func"]     # Function to compute analytic gradients
+        self._dict_grad_type            = self._grad_info["dict_grad_type"]         # Dictionary of gradient types
+        self._params_slice_metadata     = self._grad_info["slice_metadata"]         # Metadata for slicing parameters
+        self._params_leaf_info          = self._grad_info["leaf_info"]              # Leaf information
+        self._params_tree_def           = self._grad_info["tree_def"]               # Tree definition
+        self._params_shapes             = self._grad_info["shapes"]                 # Shapes of parameters
+        self._params_sizes              = self._grad_info["sizes"]                  # Sizes of parameters
+        self._params_iscpx              = self._grad_info["is_complex_per_leaf"]    # Whether each parameter is complex
+        self._params_total_size         = self._grad_info["total_size"]             # Total size of parameters -> cost for training
 
         # --------------------------------------------------
         #! Compile functions
@@ -520,7 +549,7 @@ class NQS(MonteCarloSolver):
         self._ansatz_base_func = self._ansatz_func  # Keep a reference to the pure ansatz function
         
         if self._isjax and JAX_AVAILABLE:
-            self._apply_uniform_func = jax.jit(NQS._apply_fun_jax_uniform, static_argnums=(0, 4, 6),)
+            self._apply_uniform_func = NQS._apply_fun_jax_uniform
         else:
             self._apply_uniform_func = None
         
@@ -616,10 +645,30 @@ class NQS(MonteCarloSolver):
         else:
             self._ansatz_func = current_ansatz
 
-        # Update the sampler's apply function if possible
+        # Update the sampler's apply function if possible. Fast updates (e.g., for RBM)
+        # are only valid for the raw network ansatz, not for wrapped/projected
+        # functions.
         if hasattr(self, "_sampler") and self._sampler is not None:
+            wrapped = self._modifier_source is not None or self.symmetry_handler.active
+            
             if hasattr(self._sampler, "set_apply_fun"):
-                self._sampler.set_apply_fun(self._ansatz_func)
+                if wrapped:
+                    self._sampler.set_apply_fun(self._ansatz_func)
+                    
+                else:
+                    log_psi_delta_fun = getattr(self._net, "log_psi_delta", None)
+                    if log_psi_delta_fun is None and hasattr(self._net, "get_log_psi_delta"):
+                        log_psi_delta_fun = self._net.get_log_psi_delta()
+                    
+                    cache_init_fun = getattr(self._net, "init_log_psi_delta_cache", None)
+                    if cache_init_fun is None and hasattr(self._net, "get_log_psi_delta_cache_init"):
+                        cache_init_fun = self._net.get_log_psi_delta_cache_init()
+                        
+                    self._sampler.set_apply_fun(self._ansatz_func,
+                                    log_psi_delta_fun            = log_psi_delta_fun,
+                                    log_psi_delta_cache_init_fun = cache_init_fun,
+                                    log_psi_delta_supports_cache = bool(getattr(self._net, "log_psi_delta_supports_cache", False)),
+                                )
             elif hasattr(self._sampler, "_apply_fun"):
                 self._sampler._apply_fun = self._ansatz_func
 
@@ -871,12 +920,21 @@ class NQS(MonteCarloSolver):
         if batch_size is None or self._batch_size == batch_size:
             return
         self._batch_size        = batch_size
-        self._ansatz_base_func  = self._ansatz_func
-        self._ansatz_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
+        self._ansatz_base_func, self._eval_func, self._apply_func = self.nqsbackend.compile_functions(self._net, batch_size=self._batch_size)
         if self._isjax and JAX_AVAILABLE:
-            self._apply_uniform_func = self.nqsbackend._get_cached_jit(NQS._apply_fun_jax_uniform, (0, 4, 6))
+            self._apply_uniform_func = NQS._apply_fun_jax_uniform
         else:
             self._apply_uniform_func = None
+        self._rebuild_ansatz_function()
+
+    def set_connected_eval_chunk_size(self, connected_eval_chunk_size: int):
+        """
+        Set the chunk size for connected-state network evaluation inside estimators.
+        """
+        connected_eval_chunk_size = int(connected_eval_chunk_size)
+        if connected_eval_chunk_size <= 0:
+            raise ValueError("connected_eval_chunk_size must be a positive integer.")
+        self._connected_eval_chunk_size = connected_eval_chunk_size
 
     def _use_uniform_apply_path(self) -> bool:
         """
@@ -898,7 +956,7 @@ class NQS(MonteCarloSolver):
         else:
             sampler_key = type(sampler).__name__.strip().lower()
 
-        if "arsampler" in sampler_key or sampler_key in {"ar", "autoregressive"}:
+        if "arsampler" in sampler_key or sampler_key == "ar":
             if "arsampler" not in preferred_key:
                 raise ValueError("ARSampler requires an autoregressive ansatz with exact conditional sampling support.")
             return
@@ -954,14 +1012,14 @@ class NQS(MonteCarloSolver):
             if any(key not in kwargs for key in ("s_numchains", "s_numsamples", "s_sweep_steps", "s_therm_steps")):
                 try:
                     net_depth_est   = getattr(self._net, "_param_num", 64)
+                    ansatz_profile  = str(getattr(self._network_adapter, "family", "") or getattr(self._net, "name", type(self._net).__name__)).lower()
                     auto_cfg        = NQS.get_auto_config(
-                                        system_size=self._size,
-                                        target_total_samples=kwargs.get("s_target_total_samples", 6144),
-                                        dtype=self._dtype,
-                                        logger=None,
-                                        net_depth_estimate=net_depth_est,
-                                        model_hint=(str(self._model).lower() if self._model is not None else None),
-                                        ansatz_hint=(str(getattr(self._net, "name", type(self._net).__name__)).lower()),
+                                        system_size             = self._size,
+                                        target_total_samples    = kwargs.get("s_target_total_samples", 6144),
+                                        dtype                   = self._dtype,
+                                        logger                  = None,
+                                        net_depth_estimate      = net_depth_est,
+                                        ansatz_hint             = ansatz_profile,
                                     )
                 except Exception:
                     auto_cfg = {}
@@ -971,6 +1029,8 @@ class NQS(MonteCarloSolver):
             sampler_kwargs["numsamples"]    = kwargs.get("s_numsamples", int(auto_cfg.get("s_numsamples", 192)))
             sampler_kwargs.pop("s_numsamples", None)
             sampler_kwargs.pop("s_target_total_samples", None)
+            sampler_kwargs.pop("hardware", None)
+            sampler_kwargs.pop("ansatz_profile", None)
 
             sampler_kwargs["numupd"]        = kwargs.get("s_numupd", 1)
             sampler_kwargs.pop("s_numupd", None)
@@ -985,8 +1045,17 @@ class NQS(MonteCarloSolver):
             sampler_kwargs["statetype"]     = kwargs.get("s_statetype", default_state_dtype)
             sampler_kwargs.pop("s_statetype", None)
 
+            no_delta_families               = {"cnn", "resnet", "gcnn", "pair_product", "mps", "transformer", "approx_symmetric", "dense"}
+            adapter_family                  = str(getattr(self._network_adapter, "family", "")).lower()
+            has_delta                       = callable(getattr(self._net, "log_psi_delta", None)) or hasattr(self._net, "get_log_psi_delta")
+            if adapter_family in no_delta_families and not has_delta:
+                proposal_count = int(sampler_kwargs["numchains"]) * int(sampler_kwargs["numsamples"]) * int(max(1, sampler_kwargs["sweep_steps"]))
+                self._logger.info(f"No fast-update ratio for ansatz '{adapter_family}'. Sampling will use about {proposal_count} full network evaluations per epoch.", lvl=2, color="yellow")
+
             if "s_sample_dtype" in kwargs:
                 sampler_kwargs["sample_dtype"] = kwargs.pop("s_sample_dtype")
+            if "s_network_eval_chunk_size" in kwargs:
+                sampler_kwargs["network_eval_chunk_size"] = kwargs.pop("s_network_eval_chunk_size")
 
             sampler_kwargs["initstate"]     = kwargs.get("s_initstate", None)
             sampler_kwargs.pop("s_initstate", None)
@@ -1011,10 +1080,7 @@ class NQS(MonteCarloSolver):
             sampler_kwargs.pop("s_n_flip", None)
 
             # Global updates
-            if "s_p_global" in kwargs:
-                sampler_kwargs["global_p"]  = kwargs.pop("s_p_global")
-            else:
-                sampler_kwargs["global_p"]  = kwargs.pop("s_global_p", 0.0)
+            sampler_kwargs["global_p"]  = kwargs.pop("s_global_p", 0.0)
 
             sampler_kwargs["global_update"] = kwargs.pop("s_global_update", None)
 
@@ -1190,13 +1256,14 @@ class NQS(MonteCarloSolver):
 
     @staticmethod
     def _apply_fun_jax_uniform(
-        func            : Callable,
-        states          : Array,
-        sample_probas   : Array,
-        logprobas_in    : Array,
-        logproba_fun    : Callable,
-        parameters      : Any,
-        batch_size      : int,
+        func                    : Callable,
+        states                  : Array,
+        sample_probas           : Array,
+        logprobas_in            : Array,
+        logproba_fun            : Callable,
+        parameters              : Any,
+        batch_size              : int,
+        connected_batch_size    : Optional[int] = None,
     ):
         """
         Compatibility wrapper for uniform-weight JAX estimators.
@@ -1209,6 +1276,7 @@ class NQS(MonteCarloSolver):
             logproba_fun=logproba_fun,
             parameters=parameters,
             batch_size=batch_size,
+            connected_batch_size=connected_batch_size,
         )
 
     @staticmethod
@@ -1223,32 +1291,6 @@ class NQS(MonteCarloSolver):
         Delegates to nqs_kernels.apply_fun.
         """
         return nqs_kernels.apply_fun(*args, **kwargs)
-
-    @staticmethod
-    def _apply_fun_s(
-        func: list[Callable],
-        sampler: VMCSampler,
-        num_samples: int,
-        num_chains: int,
-        logproba_fun: Callable,
-        parameters: dict,
-        batch_size: Optional[int] = None,
-        is_jax: bool = True,
-    ):
-        """
-        Evaluates a given function using samples generated by a sampler.
-        """
-
-        _, (states, ansatze), probabilities = sampler.sample(
-            parameters=parameters, num_samples=num_samples, num_chains=num_chains
-        )
-        evaluated_results = [
-            NQS._apply_fun(
-                f, states, probabilities, ansatze, logproba_fun, parameters, batch_size, is_jax
-            )
-            for f in func
-        ]
-        return (states, ansatze), probabilities, evaluated_results
 
     def apply(
         self,
@@ -1314,20 +1356,14 @@ class NQS(MonteCarloSolver):
                 parameters=params, num_samples=num_samples, num_chains=num_chains
             )
 
+        use_uniform_apply = (probabilities is None and self._use_uniform_apply_path() and len(op_args) == 0 and (not probabilities_was_provided))
+
         # check if the probabilities are provided
-        if probabilities is None:
-            prob_dtype = (
-                self._precision_policy.prob_dtype
-                if hasattr(self, "_precision_policy")
-                else ansatze.dtype
-            )
+        if probabilities is None and not use_uniform_apply:
+            prob_dtype = (self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else ansatze.dtype)
             probabilities = self._nqsbackend.asarray(self._backend.ones(ansatze.shape, dtype=prob_dtype), dtype=prob_dtype)
-        else:
-            prob_dtype = (
-                self._precision_policy.prob_dtype
-                if hasattr(self, "_precision_policy")
-                else getattr(probabilities, "dtype", ansatze.dtype)
-            )
+        elif probabilities is not None:
+            prob_dtype = (self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else getattr(probabilities, "dtype", ansatze.dtype))
             if self._nqsbackend.is_jax_array(probabilities):
                 probabilities_are_complex = bool(jnp.issubdtype(probabilities.dtype, jnp.complexfloating))
             else:
@@ -1340,15 +1376,15 @@ class NQS(MonteCarloSolver):
         # jax.vmap expects (N, 1) to slice into (1,) which allows [0] indexing
         if hasattr(ansatze, 'ndim') and ansatze.ndim == 1:
             ansatze = ansatze.reshape(-1, 1)
-        if hasattr(probabilities, 'ndim') and probabilities.ndim == 1:
+            
+        if probabilities is not None and hasattr(probabilities, 'ndim') and probabilities.ndim == 1:
             probabilities = probabilities.reshape(-1, 1)
 
         # handle op_args being (None,)
         if isinstance(op_args, tuple) and len(op_args) == 1 and op_args[0] is None:
             op_args = ()
 
-        output              = []
-        use_uniform_apply   = self._use_uniform_apply_path() and len(op_args) == 0 and (not probabilities_was_provided)
+        output = []
         for i, f in enumerate(functions):
             
             
@@ -1364,6 +1400,7 @@ class NQS(MonteCarloSolver):
                                 self._ansatz_func,
                                 params,
                                 batch_size,
+                                self._connected_eval_chunk_size,
                                 *op_args,
                             )
 
@@ -1883,7 +1920,9 @@ class NQS(MonteCarloSolver):
             - **last_ansatze**: Log amplitudes of final states. Shape (num_chains,).
             - **states**: All sampled states. Shape (num_chains * num_samples, n_visible).
             - **all_ansatze**: Log amplitudes of all states. Shape (num_chains * num_samples,).
-            - **all_probabilities**: Probabilities (or weights) of samples. Shape (num_chains * num_samples,).
+            - **all_probabilities**: Probabilities (or weights) of samples. Shape
+              ``(num_chains * num_samples,)`` for explicit reweighting, or ``None``
+              when the active JAX sampler has analytically uniform weights.
         """
         if reset and hasattr(self._sampler, "reset"):
             self._sampler.reset()
@@ -1892,9 +1931,7 @@ class NQS(MonteCarloSolver):
             params = self._net.get_params()
 
         (last_configs, last_ansatze), (states, all_ansatze), (all_probabilities) = (
-            self._sampler.sample(
-                parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs
-            )
+            self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains, **kwargs)
         )
 
         if kwargs.get("states", False):
@@ -1915,68 +1952,86 @@ class NQS(MonteCarloSolver):
     # --------------------------------
 
     def _model_state_convention(self) -> Dict[str, Any]:
-        representation = getattr(self._representation_info, "sampler_representation", None)
-        if representation is None:
-            representation  = self._state_representation
+        """
+        Extract the canonical Hamiltonian-facing state convention.
+        """
+        conv = None
+        if self._hilbert is not None and hasattr(self._hilbert, "state_convention"):
+            try:
+                conv = self._hilbert.state_convention
+            except Exception:
+                conv = None
 
-        local_space_type    = getattr(self._representation_info, "local_space_type", None)
-        mode_repr           = resolve_representation_value(
-                                representation,
-                                local_space_type=local_space_type,
-                                fallback=(self._mode_repr if self._mode_repr is not None else 1.0),
-                            )
+        if isinstance(conv, dict):
+            representation      = conv.get("vector_representation", conv.get("representation", self._state_representation))
+            local_space_type    = conv.get("local_space_type", getattr(self._representation_info, "local_space_type", None))
+            spin_repr           = bool(conv.get("spin", False))
+            mode_repr           = float(conv.get("vector_mode_repr", conv.get("mode_repr", 1.0)))
+        else:
+            representation      = getattr(self._representation_info, "sampler_representation", self._state_representation)
+            local_space_type    = getattr(self._representation_info, "local_space_type", None)
+            spin_repr           = str(representation).strip().lower().replace("_", "-") == "spin-pm"
+            mode_repr           = resolve_representation_value(
+                                    representation,
+                                    local_space_type=local_space_type,
+                                    fallback=(self._mode_repr if self._mode_repr is not None else 1.0),
+                                )
         return {
             "representation"        : representation,
-            "spin"                  : str(representation).strip().lower().replace("_", "-") == "spin-pm",
+            "spin"                  : bool(spin_repr),
             "mode_repr"             : float(mode_repr),
             "local_dim"             : int(self._local_dim),
             "representation_info"   : self._representation_info,
         }
 
     def _bind_local_energy_function(self, local_energy_fn):
+        ''' Bind the local energy function to the resolved state convention if it's a Hamiltonian problem. '''
         if local_energy_fn is None or not isinstance(self._model, Hamiltonian):
             return local_energy_fn
         return bind_local_energy_state_convention(
             local_energy_fn,
-            state_convention=self.state_convention,
-            local_convention=self._model_state_convention(),
+            state_convention    =   self.state_convention,
+            local_convention    =   self._model_state_convention(),
         )
 
     def _refresh_loss_function_binding(self) -> None:
         if getattr(self._nqsproblem, "typ", None) not in {"wavefunction", "ground"}:
             return
-        raw_local_energy = getattr(self._nqsproblem, "local_energy_fn", None)
+        raw_local_energy    = getattr(self._nqsproblem, "local_energy_fn", None)
         self._local_en_func = self._bind_local_energy_function(raw_local_energy)
-        self._loss_func = self._local_en_func
-
-    def _preferred_state_convention(self) -> Tuple[Optional[str], Optional[float]]:
-        sampler_representation  = getattr(self._representation_info, "sampler_representation", None)
-        mode_repr               = None
-        if self._network_adapter is not None:
-            if hasattr(self._network_adapter, "preferred_sampler_representation"):
-                sampler_representation = self._network_adapter.preferred_sampler_representation()
-            if hasattr(self._network_adapter, "preferred_sampler_mode_repr"):
-                mode_repr = self._network_adapter.preferred_sampler_mode_repr()
-        return sampler_representation, mode_repr
+        self._loss_func     = self._local_en_func
 
     def _set_state_convention(self, **kwargs) -> Dict[str, Any]:
-        preferred_representation, preferred_mode_repr = self._preferred_state_convention()
+        """
+        Resolve and apply one consistent state convention for NQS-side interactions.
+        """
+        # 1. Resolve preferred defaults from network/model metadata
+        pref_repr           = getattr(self._representation_info, "sampler_representation", None)
+        pref_mode           = None
+        if self._network_adapter is not None:
+            if hasattr(self._network_adapter, "preferred_sampler_representation"):
+                pref_repr   = self._network_adapter.preferred_sampler_representation()
+            if hasattr(self._network_adapter, "preferred_sampler_mode_repr"):
+                pref_mode   = self._network_adapter.preferred_sampler_mode_repr()
+
+        # 2. Apply user overrides or defaults
         state_representation = kwargs.get("state_representation", self._state_representation)
         if state_representation is None:
-            state_representation = preferred_representation
+            state_representation = pref_repr
 
         spin_repr, mode_repr = resolve_state_defaults(
             state_representation,
-            spin=kwargs.get("spin", self._spin_repr),
-            mode_repr=kwargs.get("mode_repr", self._mode_repr),
-            fallback_mode_repr=(preferred_mode_repr if preferred_mode_repr is not None else 0.5),
+            spin                =   kwargs.get("spin", self._spin_repr),
+            mode_repr           =   kwargs.get("mode_repr", self._mode_repr),
+            fallback_mode_repr  =   (pref_mode if pref_mode is not None else 0.5),
         )
 
-        local_dim = kwargs.get(
+        local_dim           = kwargs.get(
             "local_dim",
             getattr(getattr(self._hilbert, "local_space", None), "local_dim", self._local_dim),
         )
 
+        # 3. Commit state
         self._state_representation  = state_representation
         self._spin_repr             = bool(spin_repr)
         self._mode_repr             = float(mode_repr)
@@ -1987,9 +2042,12 @@ class NQS(MonteCarloSolver):
             self._mode_repr,
             self._local_dim,
         )
+
+        # 4. Clear caches and re-bind problem functions
         self._resolved_operator_cache.clear()
         if getattr(self, "_nqsproblem", None) is not None:
             self._refresh_loss_function_binding()
+
         return self.state_convention
 
     @property
@@ -2176,9 +2234,7 @@ class NQS(MonteCarloSolver):
     #! UPDATE PARAMETERS
     #####################################
 
-    def transform_flat_params(
-        self, flat_params: jnp.ndarray, shapes: list, sizes: list, is_cpx: bool
-    ) -> Any:
+    def transform_flat_params(self, flat_params: jnp.ndarray, shapes: list, sizes: list, is_cpx: bool) -> Any:
         """
         Transform a flat parameter vector into a PyTree structure.
         """
@@ -2202,156 +2258,25 @@ class NQS(MonteCarloSolver):
 
         #! Handle Input Types
         if isinstance(d_par, jnp.ndarray):
-            update_tree = self.transform_flat_params(
-                d_par * mult, shapes, sizes, iscpx
-            )  # Transform flat vector to PyTree structure
+            update_tree = self.transform_flat_params(d_par * mult, shapes, sizes, iscpx) # Transform flat vector to PyTree structure
 
-        elif isinstance(d_par, (dict, list)) or hasattr(
-            d_par, "__jax_flatten__"
-        ):  # Validate PyTree structure (necessary for correctness)
+        elif isinstance(d_par, (dict, list, tuple)) or hasattr(d_par, "__jax_flatten__"):  # Validate PyTree structure (necessary for correctness)
 
-            flat_leaves_dpar, tree_d_par = tree_flatten(d_par * mult)
+            _, tree_d_par = tree_flatten(d_par)
             if tree_d_par != self._params_tree_def:
-                raise ValueError(
-                    "Provided `d_par` PyTree structure does not match model parameters structure."
-                )
-            update_tree = d_par
+                raise ValueError("Provided `d_par` PyTree structure does not match model parameters structure.")
+            update_tree = tree_util.tree_map(lambda x: x * mult, d_par)
         else:
-            raise TypeError(
-                f"Unsupported type for parameter update `d_par`: {type(d_par)}. Expected PyTree or 1D JAX array."
-            )
+            raise TypeError(f"Unsupported type for parameter update `d_par`: {type(d_par)}. Expected PyTree or 1D JAX array.")
 
         #! Update Parameters
-        current_params = self._net.get_params()
-        new_params = net_utils.jaxpy.add_tree(current_params, update_tree)
-        self._net.set_params(new_params)
-
-        # Aliases for update_parameters (similar to TensorFlow/PyTorch naming)
-
-    def apply_gradients(self, d_par, mult, shapes, sizes, iscpx):
-        """Alias for update_parameters, similar to TensorFlow's optimizer.apply_gradients."""
-        return self.update_parameters(d_par, mult, shapes, sizes, iscpx)
-
-    def step_optimizer(self, d_par, mult, shapes, sizes, iscpx):
-        """Alias for update_parameters, similar to PyTorch's optimizer.step."""
-        return self.update_parameters(d_par, mult, shapes, sizes, iscpx)
+        current_params  = self._net.get_params()
+        new_params      = net_utils.jaxpy.add_tree(current_params, update_tree)
+        self.set_params(new_params)
 
     #####################################
     #! TRAINING/EVO OVERRIDES - SINGLE STEP
     #####################################
-
-    def _sample_for_shapes(
-        self,
-        ansatz_fn: AnsatzFunctionType,
-        apply_fn: ApplyFunctionType,
-        loss_fn: LossFunctionType,
-        flat_grad_fn,
-        compute_grad_f,
-        batch_size,
-        t=0,
-    ):
-        """
-        Sample a configuration to get the shapes of the parameters.
-        Optimized version using jax.eval_shape to avoid compilation and execution overhead.
-        """
-        if not self._isjax:
-            # Fallback for NumPy backend
-            old_chains  = self._sampler.numchains
-            old_samples = self._sampler.numsamples
-            try:
-                self._sampler.set_numchains(1)
-                self._sampler.set_numsamples(1)
-
-                params  = self.get_params()
-                (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(params)
-                result  = NQS._single_step(
-                            params,
-                            configs,
-                            configs_ansatze,
-                            probabilities,
-                            ansatz_fn=ansatz_fn,
-                            apply_fn=apply_fn,
-                            local_loss_fn=loss_fn,
-                            flat_grad_fn=flat_grad_fn,
-                            compute_grad_f=compute_grad_f,
-                            batch_size=batch_size,
-                            t=t,
-                            use_jax=False,
-                        )
-                return result.params_shapes, result.params_sizes, result.params_cpx
-            finally:
-                self._sampler.set_numchains(old_chains)
-                self._sampler.set_numsamples(old_samples)
-
-        # JAX Optimization: Abstract Evaluation
-        params              = self.get_params()
-
-        # Construct abstract inputs
-        # Configs shape: (num_samples, n_particles) or similar depending on sampler
-        # We assume 1 sample for shape inference is enough
-        # We need to respect the dtype of sampler states
-        sample_dtype        = self._sampler._statetype
-
-        # Abstract arrays
-        abstract_configs    = jax.ShapeDtypeStruct((1, self._nvisible), sample_dtype)   # Single config sample
-        abstract_ansatze    = jax.ShapeDtypeStruct((1,), self._dtype)                   # Log ansatz is complex/float depending on net
-        prob_dtype          = self._precision_policy.prob_dtype if hasattr(self, "_precision_policy") else self._dtype
-        abstract_probs      = jax.ShapeDtypeStruct((1,), prob_dtype)                    # Probs are real, use precision policy
-
-        # Use eval_shape on the static single_step function
-        # We need to partial the static args first
-        accum_real_dtype = (
-            getattr(self, "_precision_policy", None) and self._precision_policy.accum_real_dtype
-        )
-        accum_complex_dtype = (
-            getattr(self, "_precision_policy", None) and self._precision_policy.accum_complex_dtype
-        )
-
-        single_step_partial = partial(
-            nqs_kernels._single_step,
-            ansatz_fn       =   ansatz_fn,
-            apply_fn        =   apply_fn,
-            local_loss_fn   =   loss_fn,
-            flat_grad_fn    =   flat_grad_fn,
-            compute_grad_f=compute_grad_f,
-            batch_size=batch_size,
-            t=t,
-            accum_real_dtype=accum_real_dtype,
-            accum_complex_dtype=accum_complex_dtype,
-            use_jax=self._isjax,
-        )
-
-        try:
-            result_abstract = jax.eval_shape(
-                single_step_partial, params, abstract_configs, abstract_ansatze, abstract_probs
-            )
-            return (
-                result_abstract.params_shapes,
-                result_abstract.params_sizes,
-                result_abstract.params_cpx,
-            )
-        except Exception as e:
-            self.log(
-                f"Exception during abstract shape inference. Falling back to real data evaluation: {e}",
-                lvl=2,
-                color="red",
-            )
-                        
-            # Fallback: Run it once with real data
-            old_chains  = self._sampler.numchains
-            old_samples = self._sampler.numsamples
-            try:
-                self._sampler.set_numchains(1)
-                self._sampler.set_numsamples(1)
-
-                params  = self.get_params()
-                (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(params)
-                result  = single_step_partial(params, configs, configs_ansatze, probabilities)
-                
-                return result.params_shapes, result.params_sizes, result.params_cpx
-            finally:
-                self._sampler.set_numchains(old_chains)
-                self._sampler.set_numsamples(old_samples)
 
     def wrap_single_step_jax(self, batch_size: Optional[int] = None):
         """
@@ -2365,14 +2290,10 @@ class NQS(MonteCarloSolver):
         # ! Snapshot the current functions
         # This guarantees that the trainer uses exactly what was active when wrapped
         ansatz_fn           = self._ansatz_func
+        apply_fn            = self._apply_uniform_func if self._use_uniform_apply_path() else self._apply_func
         local_loss_fn       = self._loss_func
         flat_grad_fn        = self._flat_grad_func
-        apply_fn            = self._apply_uniform_func if self._use_uniform_apply_path() else self._apply_func
-        compute_grad_f      = (
-                                net_utils.jaxpy.compute_gradients_batched
-                                if not self._analytic
-                                else self._analytic_grad_func
-                            )
+        compute_grad_f      = net_utils.jaxpy.compute_gradients_batched if not self._analytic else self._analytic_grad_func
 
         # Parameter structure does not depend on the sampled states, so use the
         # initialization-time metadata instead of sampling again while wrapping.
@@ -2392,15 +2313,16 @@ class NQS(MonteCarloSolver):
 
         single_step_jax = partial(
             nqs_kernels._single_step,
-            ansatz_fn           =   ansatz_fn,
-            local_loss_fn       =   local_loss_fn,
-            flat_grad_fn        =   flat_grad_fn,
-            apply_fn            =   apply_fn,
-            batch_size          =   batch_size,
-            compute_grad_f      =   compute_grad_f,
-            accum_real_dtype    =   accum_real_dtype,
-            accum_complex_dtype =   accum_complex_dtype,
-            use_jax             =   self._isjax,
+            ansatz_fn                   =   ansatz_fn,
+            local_loss_fn               =   local_loss_fn,
+            flat_grad_fn                =   flat_grad_fn,
+            apply_fn                    =   apply_fn,
+            batch_size                  =   batch_size,
+            compute_grad_f              =   compute_grad_f,
+            accum_real_dtype            =   accum_real_dtype,
+            accum_complex_dtype         =   accum_complex_dtype,
+            use_jax                     =   self._isjax,
+            connected_eval_chunk_size   =   self._connected_eval_chunk_size,
         )
 
         # ! Create the JIT-compiled wrapper
@@ -2410,9 +2332,7 @@ class NQS(MonteCarloSolver):
             params = net_utils.jaxpy.transform_flat_params_jit(y, tree_def, slices, flat_size)
 
             # 2. Run the physics step
-            result = single_step_jax(
-                params, configs, configs_ansatze, probabilities, t=t, int_step=int_step
-            )
+            result = single_step_jax(params, configs, configs_ansatze, probabilities, t=t, int_step=int_step)
 
             # 3. Return flattened results for the optimizer
             return (
@@ -2452,7 +2372,7 @@ class NQS(MonteCarloSolver):
 
         # prepare the functions if not provided
         ansatz_fn           = kwargs.get("ansatz_fn", self._ansatz_func)
-        use_uniform_step    = (probabilities is None) and self._use_uniform_apply_path()
+        use_uniform_step    = (probabilities is None and configs is not None and configs_ansatze is not None and self._use_uniform_apply_path())
         default_apply       = self._apply_uniform_func if use_uniform_step else self._apply_func
         apply_fn            = kwargs.get("apply_fn", default_apply)
         loss_function       = kwargs.get("loss_function", self._loss_func)
@@ -2460,10 +2380,13 @@ class NQS(MonteCarloSolver):
         compute_grad_fun    = net_utils.jaxpy.compute_gradients_batched if self._isjax else None
 
         # check if the configurations are provided
-        if configs is None or configs_ansatze is None or probabilities is None:
+        if configs is None or configs_ansatze is None or (probabilities is None and not use_uniform_step):
             num_samples     = kwargs.pop("num_samples", self._sampler.numsamples)
             num_chains      = kwargs.pop("num_chains", self._sampler.numchains)
             (_, _), (configs, configs_ansatze), probabilities = self._sampler.sample(parameters=params, num_samples=num_samples, num_chains=num_chains)
+            use_uniform_step = (probabilities is None) and self._use_uniform_apply_path()
+            default_apply    = self._apply_uniform_func if use_uniform_step else self._apply_func
+            apply_fn         = kwargs.get("apply_fn", default_apply)
 
         # call the appropriate single step function
         if isinstance(self._nqsproblem, WavefunctionPhysics):
@@ -2491,6 +2414,7 @@ class NQS(MonteCarloSolver):
                 accum_complex_dtype=accum_complex_dtype,
                 use_jax=self._isjax,
                 batch_size=self._batch_size,
+                connected_eval_chunk_size=self._connected_eval_chunk_size,
                 **kwargs,
             )
 
@@ -2735,6 +2659,8 @@ class NQS(MonteCarloSolver):
 
         # set the parameters
         self._net.set_params(params)
+        if hasattr(self, "_sampler") and self._sampler is not None and hasattr(self._sampler, "invalidate_parameter_cache"):
+            self._sampler.invalidate_parameter_cache(require_thermalization=False)
 
     @property
     def parameters(self) -> Any:
@@ -2915,20 +2841,9 @@ class NQS(MonteCarloSolver):
         # elif self._nqsproblem.typ == 'densitymatrix' or self._nqsproblem.typ == 'time':
         # return self._tdvp_func
 
-    #! Aliases for local energy
     @property
     def local_energy(self):
         """Return the local energy function."""
-        return self._local_en_func
-
-    @property
-    def loc_energy(self):
-        """Alias for local_energy"""
-        return self._local_en_func
-
-    @property
-    def local_en(self):
-        """Alias for local_energy"""
         return self._local_en_func
 
     #! Other loss functions (TODO: implement)
@@ -2937,6 +2852,10 @@ class NQS(MonteCarloSolver):
     @property
     def beta_penalty(self):
         return self._beta_penalty
+
+    @beta_penalty.setter
+    def beta_penalty(self, value):
+        self._beta_penalty = float(value)
 
     #####################################
     #! SPAWN LIKE-FOR-LIKE COPY
@@ -3306,151 +3225,68 @@ class NQS(MonteCarloSolver):
             Interactive help and usage tips.
         """
 
-        # --------------------------------------------------
-        #! Handle force_numerical override
-        # --------------------------------------------------
-
-        if isinstance(phases, str) and phases.lower() == "default" and self._model is not None:
-            model_name = str(self._model).lower()
-            if "kitaev" in model_name or "gamma" in model_name:
-                phases = "kitaev"
-
         if reset_weights:
             self.reset()
             self.log("Network parameters reset before training.", lvl=1, color="blue")
 
-        # Configure symmetries
         if symmetrize is not None:
             self.symmetry_handler.set(symmetrize)
 
-        if self._sampler.name == "VMC":
-            if num_samples is not None:
-                self._sampler.set_numsamples(num_samples)
-            if num_chains is not None:
-                self._sampler.set_numchains(num_chains)
-            if num_thermal is not None and hasattr(self._sampler, "set_therm_steps"):
-                self._sampler.set_therm_steps(num_thermal)
-            if num_sweep is not None and hasattr(self._sampler, "set_sweep_steps"):
-                self._sampler.set_sweep_steps(num_sweep)
-            if pt_betas is not None and hasattr(self._sampler, "set_pt_betas"):
-                self._sampler.set_pt_betas(pt_betas)
+        trainer_kwargs = self._build_trainer_kwargs(
+            n_epochs=n_epochs,
+            n_batch=n_batch,
+            phases=phases,
+            timing_mode=timing_mode,
+            early_stopper=early_stopper,
+            optimizer=optimizer,
+            lower_states=lower_states,
+            lr=lr,
+            lr_scheduler=lr_scheduler,
+            reg=reg,
+            reg_scheduler=reg_scheduler,
+            diag_shift=diag_shift,
+            diag_scheduler=diag_scheduler,
+            lin_solver=lin_solver,
+            lin_force_mat=lin_force_mat,
+            pre_solver=pre_solver,
+            ode_solver=ode_solver,
+            tdvp=tdvp,
+            lin_sigma=lin_sigma,
+            lin_is_gram=lin_is_gram,
+            use_sr=use_sr,
+            use_minsr=use_minsr,
+            rhs_prefactor=rhs_prefactor,
+            grad_clip=grad_clip,
+            extra_kwargs=kwargs,
+        )
 
-            # Configure Global Updates if parameters are present in kwargs
-            if (
-                "global_p" in kwargs
-                or "p_global" in kwargs
-                or "global_fraction" in kwargs
-                or "global_update" in kwargs
-            ):
-                if hasattr(self._sampler, "set_global_update"):
-                    # Support both names for backward compatibility
-                    g_p = kwargs.get("global_p", kwargs.get("p_global", 0.0))
-                    self._sampler.set_global_update(
-                        global_p=g_p,
-                        global_fraction=kwargs.get("global_fraction", 0.5),
-                        global_update=kwargs.get("global_update", None),
-                    )
-                    if g_p > 0:
-                        self.log(
-                            f"Global sampler update set to: {g_p:.2f} ({kwargs.get('global_update', 'default')})",
-                            lvl=2,
-                            color="blue",
-                        )
-
-            # Configure Update Function
-            if upd_fun is not None and hasattr(self._sampler, "set_update_function"):
-                u_kwargs = update_kwargs or {}
-                u_kwargs.update(
-                    {
-                        "hilbert": u_kwargs.pop("hilbert", self._model.hilbert),
-                        "lattice": self._model.lattice,
-                    }
-                )
-                self._sampler.set_update_function(upd_fun, **u_kwargs)
-                self.log(f"Sampler update function set to: {upd_fun}", lvl=2, color="blue")
-
-            if any(
-                param is not None
-                for param in [num_samples, num_chains, num_thermal, num_sweep, pt_betas]
-            ):
-                self.log(
-                    f"Sampler (re)configured: num_samples={self._sampler.numsamples}, num_chains={self._sampler.numchains}",
-                    lvl=2,
-                    color="blue",
-                )
-                if pt_betas is not None and hasattr(self._sampler, "pt_betas"):
-                    self.log(f"  PT Betas: {self._sampler.pt_betas}", lvl=2, color="blue")
-
-        # Create or reuse trainer
-        if override or self._trainer is None:
-            from QES.NQS.src.nqs_train import NQSTrainer
-
-            old_stats = self._trainer.stats if self._trainer is not None else None
-
-            self._trainer = NQSTrainer(
-                nqs=self,
-                # Solvers
-                lin_solver=lin_solver,
-                lin_force_mat=lin_force_mat,
-                pre_solver=pre_solver,
-                ode_solver=ode_solver,
-                tdvp=tdvp,
-                # Configuration
-                n_batch=n_batch,
-                phases=phases,
-                # Utilities
-                timing_mode=timing_mode,
-                early_stopper=early_stopper,
-                optimizer=optimizer,
-                logger=self._logger,
-                lower_states=lower_states,
-                # Schedulers
-                lr_scheduler=lr_scheduler,
-                lr_max_epochs=kwargs.pop("lr_max_epochs", n_epochs),
-                reg_scheduler=reg_scheduler,
-                reg_max_epochs=kwargs.pop("reg_max_epochs", n_epochs),
-                diag_scheduler=diag_scheduler,
-                diag_max_epochs=kwargs.pop("diag_max_epochs", n_epochs),
-                # Training options
-                lr=lr,
-                reg=reg,
-                diag_shift=diag_shift,
-                # Linear Solver
-                lin_sigma=lin_sigma,
-                lin_is_gram=lin_is_gram,
-                # TDVP
-                use_sr=use_sr,
-                use_minsr=use_minsr,
-                rhs_prefactor=rhs_prefactor,
-                grad_clip=grad_clip,
-                dtype=self._dtype,
-                background=background,
-                **kwargs,
-            )
-
-            if not reset_stats and old_stats is not None:
-                self._trainer.stats = old_stats
-
-        # Updates in sampler
-        if hasattr(self._sampler, "set_update_num") and n_update is not None:
-            self._sampler.set_update_num(n_update)
-            self.log(f"Sampler update number set to {n_update}", lvl=2, color="blue")
-
-        if exact_predictions is None and self._model.eig_vals is not None:
-            exact_predictions = self._model.eig_vals
-            self.exact = exact_predictions
-
-        if self.exact and exact_predictions is None:
-            exact_predictions = self.exact.get("exact_predictions", exact_predictions)
-            exact_method = self.exact.get("exact_method", exact_method)
+        self._configure_train_sampler(
+            num_samples=num_samples,
+            num_chains=num_chains,
+            num_thermal=num_thermal,
+            num_sweep=num_sweep,
+            pt_betas=pt_betas,
+            n_update=n_update,
+            upd_fun=upd_fun,
+            update_kwargs=update_kwargs,
+            extra_kwargs=kwargs,
+        )
+        self._ensure_trainer(
+            override=override,
+            reset_stats=(reset_stats or reset_weights),
+            background=background,
+            trainer_kwargs=trainer_kwargs,
+        )
+        exact_predictions, exact_method = self._resolve_exact_training_targets(
+            exact_predictions,
+            exact_method,
+        )
 
         # Run training
         if load_checkpoint:
             try:
-                # Load the state (weights + stats)
                 stats = self._trainer.load_checkpoint(step=checkpoint_step)
                 stats.exact_predictions = exact_predictions
-                reset_stats = False
                 return stats
 
             except Exception as e:
@@ -3471,6 +3307,191 @@ class NQS(MonteCarloSolver):
         )
 
         return stats
+
+    def _configure_train_sampler(
+        self,
+        *,
+        num_samples: Optional[int],
+        num_chains: Optional[int],
+        num_thermal: Optional[int],
+        num_sweep: Optional[int],
+        pt_betas: Optional[List[float]],
+        n_update: Optional[int],
+        upd_fun: Optional[Union[str, Any]],
+        update_kwargs: Optional[dict],
+        extra_kwargs: dict,
+    ) -> None:
+        """Apply per-run sampler configuration through a single path."""
+        if self._sampler.name != "VMC":
+            return
+
+        if num_samples is not None:
+            self._sampler.set_numsamples(num_samples)
+        if num_chains is not None:
+            self._sampler.set_numchains(num_chains)
+        if num_thermal is not None and hasattr(self._sampler, "set_therm_steps"):
+            self._sampler.set_therm_steps(num_thermal)
+        if num_sweep is not None and hasattr(self._sampler, "set_sweep_steps"):
+            self._sampler.set_sweep_steps(num_sweep)
+        if pt_betas is not None and hasattr(self._sampler, "set_pt_betas"):
+            self._sampler.set_pt_betas(pt_betas)
+
+        if (
+            "global_p" in extra_kwargs
+            or "global_fraction" in extra_kwargs
+            or "global_update" in extra_kwargs
+        ) and hasattr(self._sampler, "set_global_update"):
+            global_p = extra_kwargs.get("global_p", 0.0)
+            self._sampler.set_global_update(
+                global_p=global_p,
+                global_fraction=extra_kwargs.get("global_fraction", 0.5),
+                global_update=extra_kwargs.get("global_update", None),
+            )
+            if global_p > 0:
+                self.log(
+                    f"Global sampler update set to: {global_p:.2f} ({extra_kwargs.get('global_update', 'default')})",
+                    lvl=2,
+                    color="blue",
+                )
+
+        if upd_fun is not None and hasattr(self._sampler, "set_update_function"):
+            update_payload = dict(update_kwargs or {})
+            update_payload.update(
+                {
+                    "hilbert": update_payload.pop("hilbert", self._model.hilbert),
+                    "lattice": self._model.lattice,
+                }
+            )
+            self._sampler.set_update_function(upd_fun, **update_payload)
+            self.log(f"Sampler update function set to: {upd_fun}", lvl=2, color="blue")
+
+        if hasattr(self._sampler, "set_update_num") and n_update is not None:
+            self._sampler.set_update_num(n_update)
+            self.log(f"Sampler update number set to {n_update}", lvl=2, color="blue")
+
+        if any(param is not None for param in (num_samples, num_chains, num_thermal, num_sweep, pt_betas)):
+            self.log(
+                f"Sampler (re)configured: num_samples={self._sampler.numsamples}, num_chains={self._sampler.numchains}",
+                lvl=2,
+                color="blue",
+            )
+            if pt_betas is not None and hasattr(self._sampler, "pt_betas"):
+                self.log(f"  PT Betas: {self._sampler.pt_betas}", lvl=2, color="blue")
+
+    def _ensure_trainer(
+        self,
+        *,
+        override: bool,
+        reset_stats: bool,
+        background: bool,
+        trainer_kwargs: dict,
+    ) -> None:
+        """Create or refresh the trainer while preserving old stats when requested."""
+        if not override and self._trainer is not None:
+            return
+
+        from QES.NQS.src.nqs_train import NQSTrainer
+
+        old_stats = self._trainer.stats if self._trainer is not None else None
+        self._trainer = NQSTrainer(
+            nqs=self,
+            logger=self._logger,
+            dtype=self._dtype,
+            background=background,
+            **trainer_kwargs,
+        )
+        if not reset_stats and old_stats is not None:
+            self._trainer.stats = old_stats
+
+    def _build_trainer_kwargs(
+        self,
+        *,
+        n_epochs: int,
+        n_batch: int,
+        phases: Any,
+        timing_mode: Any,
+        early_stopper: Any,
+        optimizer: Any,
+        lower_states: Any,
+        lr: Any,
+        lr_scheduler: Any,
+        reg: Any,
+        reg_scheduler: Any,
+        diag_shift: Any,
+        diag_scheduler: Any,
+        lin_solver: Any,
+        lin_force_mat: bool,
+        pre_solver: Any,
+        ode_solver: Any,
+        tdvp: Any,
+        lin_sigma: Any,
+        lin_is_gram: bool,
+        use_sr: bool,
+        use_minsr: bool,
+        rhs_prefactor: float,
+        grad_clip: Any,
+        extra_kwargs: dict,
+    ) -> dict:
+        """
+        Build the canonical option payload consumed by ``NQSTrainer``.
+        """
+        trainer_kwargs = dict(extra_kwargs)
+        scheduler_defaults = {
+            "lr_max_epochs": trainer_kwargs.pop("lr_max_epochs", n_epochs),
+            "reg_max_epochs": trainer_kwargs.pop("reg_max_epochs", n_epochs),
+            "diag_max_epochs": trainer_kwargs.pop("diag_max_epochs", n_epochs),
+        }
+        trainer_kwargs.update(
+            {
+                "n_batch": n_batch,
+                "phases": phases,
+                "timing_mode": timing_mode,
+                "early_stopper": early_stopper,
+                "optimizer": optimizer,
+                "lower_states": lower_states,
+                "lr": lr,
+                "lr_scheduler": lr_scheduler,
+                "reg": reg,
+                "reg_scheduler": reg_scheduler,
+                "diag_shift": diag_shift,
+                "diag_scheduler": diag_scheduler,
+                "lin_solver": lin_solver,
+                "lin_force_mat": lin_force_mat,
+                "pre_solver": pre_solver,
+                "ode_solver": ode_solver,
+                "tdvp": tdvp,
+                "lin_sigma": lin_sigma,
+                "lin_is_gram": lin_is_gram,
+                "use_sr": use_sr,
+                "use_minsr": use_minsr,
+                "rhs_prefactor": rhs_prefactor,
+                "grad_clip": grad_clip,
+            }
+        )
+        trainer_kwargs.update(scheduler_defaults)
+        return trainer_kwargs
+
+    def _resolve_exact_training_targets(self, exact_predictions: Any, exact_method: str) -> tuple[Any, str]:
+        """Resolve explicit or cached exact reference values for the training run."""
+        cached_exact = self.exact
+        if exact_predictions is None and isinstance(cached_exact, dict):
+            exact_predictions   = cached_exact.get("exact_predictions", None)
+            exact_method        = exact_method or cached_exact.get("exact_method", None)
+
+        if exact_predictions is None and getattr(self._model, "eig_vals", None) is not None:
+            exact_predictions   = self._model.eig_vals
+            exact_method        = exact_method or "model_eig_vals"
+
+        if exact_predictions is not None:
+            arr         = np.atleast_1d(np.asarray(exact_predictions))
+            idx         = getattr(self, "_nthstate", 0)
+            self.exact  = {
+                "exact_predictions" : arr,
+                "exact_method"      : exact_method,
+                "exact_energy"      : float(np.real(arr[idx])),
+            }
+
+        return exact_predictions, exact_method
 
     #####################################
 
@@ -3935,6 +3956,18 @@ class NQS(MonteCarloSolver):
         self.log("Computing Topological Entropy (Kitaev-Preskill)...", lvl=1, color="blue")
         return _tee(self, self._model.lattice, radius=radius, **renyi_kwargs)
 
+    def compute_renyi_entropies(self, regions, *, q_values=None, **renyi_kwargs) -> dict:
+        """
+        Compute Rényi entropies for many regions using shared replica samples.
+
+        This is the public NQS wrapper around
+        ``QES.NQS.src.nqs_entropy.compute_renyi_entropies``. It is the preferred
+        path for notebook sweeps over many cuts because it samples replicas once
+        for ``max(q_values)`` and batches the swapped-state evaluations.
+        """
+        from QES.NQS.src.nqs_entropy import compute_renyi_entropies as _renyi_many
+        return _renyi_many(self, regions, q_values=[2] if q_values is None else q_values, **renyi_kwargs)
+
     #####################################
     #! SAMPLES FOR MCMC, IF APPLICABLE
     #####################################
@@ -3956,21 +3989,23 @@ class NQS(MonteCarloSolver):
         net_depth_estimate: int     = 64,
         num_therm: Optional[int]    = None,
         num_sweep: Optional[int]    = None,
-        model_hint: Optional[str]   = None,
         ansatz_hint: Optional[str]  = None,
     ) -> dict:
         """
         Automatically detect hardware and return VMC defaults.
 
-        Args:
-            system_size (int): Number of spins/sites (N).
-            target_total_samples (int): Target total samples per Monte Carlo evaluation.
-            dtype (jax.dtype): Runtime dtype.
-            model_hint (str, optional): Optional model identifier, e.g. ``'kitaev'``.
-            ansatz_hint (str, optional): Optional ansatz identifier.
+        Parameters
+        ----------
+        system_size (int)
+            Number of spins/sites (N).
+        target_total_samples (int)
+            Target total samples per Monte Carlo evaluation.
+        dtype (jax.dtype)
+            Runtime dtype.
+        ansatz_hint (str, optional): Optional ansatz identifier.
 
         Returns:
-            dict: ``s_numchains/s_numsamples/s_therm_steps/s_sweep_steps`` and metadata.
+            dict: ``s_numchains/s_numsamples/s_therm_steps/s_sweep_steps``.
         """
         if not JAX_AVAILABLE:
             raise ImportError("JAX is required for automatic configuration. Please install JAX to use this feature.")
@@ -3996,15 +4031,10 @@ class NQS(MonteCarloSolver):
         if backend == "gpu" and is_double_precision:
             logme("WARNING: Double precision (complex128) detected on GPU.", 2)
 
-        target_total_samples = int(max(256, round(float(target_total_samples))))
-        model_hint_l = str(model_hint).lower() if model_hint is not None else ""
-        ansatz_hint_l = str(ansatz_hint).lower() if ansatz_hint is not None else ""
-        is_spin_liquid_profile = (
-            "kitaev" in model_hint_l
-            or "gamma" in model_hint_l
-            or "approx" in ansatz_hint_l
-            or "asym" in ansatz_hint_l
-        )
+        target_total_samples    = int(max(256, round(float(target_total_samples))))
+        ansatz_hint_l           = str(ansatz_hint).lower() if ansatz_hint is not None else ""
+        plain_rbm               = ansatz_hint_l in {"rbm", "restricted_boltzmann_machine"}
+        no_fast_ansatz          = (not plain_rbm) and any(token in ansatz_hint_l for token in ("cnn", "resnet", "gcnn", "pair_product", "rbmpp", "rbm_pp", "pp", "mps", "transformer", "approx_symmetric", "dense"))
 
         if backend == "gpu":
             import subprocess
@@ -4053,53 +4083,44 @@ class NQS(MonteCarloSolver):
             optimal_chains          = max(64, optimal_chains)
             optimal_chains          = int(min(optimal_chains, target_total_samples))
 
-            s2_target               = max(6144, target_total_samples) if is_spin_liquid_profile else target_total_samples
+            s2_target               = target_total_samples
+            if no_fast_ansatz:
+                s2_target           = min(s2_target, 2048)
             num_samples_per_chain   = int(max(1, -(-s2_target // optimal_chains)))
 
-            default_therm           = 8
-            default_sweep           = 480 if is_spin_liquid_profile else 160
+            default_therm           = 4 if no_fast_ansatz else 8
+            default_sweep           = 96 if no_fast_ansatz else 160
             config                  = {
                                         "s_numchains"   : optimal_chains,
                                         "s_numsamples"  : num_samples_per_chain,
                                         "s_therm_steps" : int(num_therm if num_therm is not None else default_therm),
                                         "s_sweep_steps" : int(num_sweep if num_sweep is not None else default_sweep),
-                                        "hardware"      : f'gpu,{device_name.lower()},{"fp64" if is_double_precision else "fp32"}',
                                     }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
         else:
             physical_cores          = psutil.cpu_count(logical=False) or 4
-            optimal_chains          = max(2, min(64, physical_cores * 2))
+            optimal_chains          = max(2, min(16 if no_fast_ansatz else 64, physical_cores * (1 if no_fast_ansatz else 2)))
 
-            cpu_target              = max(target_total_samples, 2048)
+            cpu_target              = min(target_total_samples, 1024) if no_fast_ansatz else max(target_total_samples, 2048)
             num_samples_per_chain   = int(max(1, -(-cpu_target // optimal_chains)))
 
-            default_therm           = max(16, min(96, int(system_size)))
-            default_sweep           = max(24, min(240, int(2 * np.sqrt(max(1, system_size)) * 8)))
+            if no_fast_ansatz:
+                default_therm       = max(4, min(16, int(max(1, system_size) // 2)))
+                default_sweep       = max(4, min(32, int(system_size)))
+            else:
+                default_therm       = max(16, min(96, int(system_size)))
+                default_sweep       = max(24, min(240, int(2 * np.sqrt(max(1, system_size)) * 8)))
             config                  = {
                 "s_numchains"       : optimal_chains,
                 "s_numsamples"      : num_samples_per_chain,
                 "s_therm_steps"     : int(num_therm if num_therm is not None else default_therm),
                 "s_sweep_steps"     : int(num_sweep if num_sweep is not None else default_sweep),
-                "hardware"          : "cpu",
             }
             logme(f"Optimized: {optimal_chains} Parallel Chains x {num_samples_per_chain} Samples")
 
         total_batch = config["s_numchains"] * config["s_numsamples"]
         logme(f"Total VMC Batch Size: {total_batch} samples per evaluation.", 2)
-
-        if is_spin_liquid_profile:
-            config.update(
-                {
-                    "as_chi_channels"       : (1, 2, 4),
-                    "as_omega_channels"     : (4, 4, 4),
-                    "as_chi_kernel_size"    : 3,
-                    "as_omega_kernel_size"  : 15 if backend == "gpu" else 9,
-                    "as_nib_act"            : "c_sigmoid",
-                    "as_ib_act"             : "c_elu",
-                    "as_ib_init_std"        : 0.02,
-                }
-            )
 
         return config
 

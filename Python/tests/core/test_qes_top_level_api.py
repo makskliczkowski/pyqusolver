@@ -15,6 +15,7 @@ def test_stable_top_level_imports_resolve_without_deprecation():
         "Algebra",
         "NQS",
         "Solver",
+        "general_python",
         "HilbertSpace",
         "Hamiltonian",
         "Operator",
@@ -79,10 +80,10 @@ def test_dir_surface_hides_import_plumbing():
     names = dir(QES)
 
     # Assert
-    assert "Any" not in names
-    assert "Dict" not in names
-    assert "Optional" not in names
-    assert "importlib" not in names
+    assert "Any"            not in names
+    assert "Dict"           not in names
+    assert "Optional"       not in names
+    assert "importlib"      not in names
     assert "contextmanager" not in names
-    assert "Algebra" in names
-    assert "qes_reseed" in names
+    assert "Algebra"        in names
+    assert "qes_reseed"     in names

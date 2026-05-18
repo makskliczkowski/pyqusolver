@@ -1,9 +1,10 @@
 import numpy as np
+import pytest
 
 from QES.Algebra.hamil import Hamiltonian
 from QES.Algebra.hamil_quadratic import QuadraticHamiltonian
 from QES.Algebra.hilbert import HilbertSpace
-from QES.Algebra.Operator.impl.operators_spin import sigma_x_int_np, sigma_z_int_np
+from QES.Algebra.Operator.impl.operators_spin import sigma_x_int_np, sigma_y_int_np, sigma_z_int_np, sigma_x_np, sigma_y_np, sigma_z_np
 from QES.Algebra.Operator.impl.operators_spin_1 import s1_z
 from QES.Algebra.Operator.impl.operators_spinless_fermions import c_dag_int_np, c_int_np, n_int_np
 from QES.Algebra.Operator.operator import OperatorTypeActing
@@ -82,7 +83,7 @@ def test_operator_actions_on_integer_and_vector_states_are_stable():
     assert sx_states == (0b0110,)
     assert sz_states == (0b0010,)
     assert sx_coeffs == (0.5,)
-    assert sz_coeffs == (0.5,)
+    assert sz_coeffs == (-0.5,)
     assert cd_states == (0b1010,)
     assert cd_coeffs == (1.0,)
     assert c_states == (0,)
@@ -95,6 +96,61 @@ def test_operator_actions_on_integer_and_vector_states_are_stable():
     out_states, out_coeffs = op_s1z(psi_s1)
     np.testing.assert_allclose(out_states, np.array([[0.0, 1.0, 0.0]], dtype=np.complex128))
     np.testing.assert_allclose(out_coeffs, np.array([1.0]))
+
+
+def test_spin_half_integer_and_array_pauli_actions_match():
+    """Integer and array spin-1/2 operator kernels must share one physical convention."""
+
+    states = (
+        (0, np.array([-0.5], dtype=np.float64)),
+        (1, np.array([0.5], dtype=np.float64)),
+    )
+
+    for state_int, state_arr in states:
+        x_int_states, x_int_coeffs = sigma_x_int_np(state_int, 1, [0])
+        y_int_states, y_int_coeffs = sigma_y_int_np(state_int, 1, [0])
+        z_int_states, z_int_coeffs = sigma_z_int_np(state_int, 1, [0])
+
+        x_arr_states, x_arr_coeffs = sigma_x_np(state_arr, [0], spin=True, spin_value=0.5)
+        y_arr_states, y_arr_coeffs = sigma_y_np(state_arr, [0], spin=True, spin_value=0.5)
+        z_arr_states, z_arr_coeffs = sigma_z_np(state_arr, [0], spin=True, spin_value=0.5)
+
+        expected_int_from_arr = 1 if state_arr[0] > 0 else 0
+        expected_x_int_state = 1 - expected_int_from_arr
+
+        assert x_int_states == (expected_x_int_state,)
+        assert y_int_states == (expected_x_int_state,)
+        assert z_int_states == (expected_int_from_arr,)
+        np.testing.assert_allclose(np.asarray(x_int_coeffs), np.asarray(x_arr_coeffs), rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(y_int_coeffs), np.asarray(y_arr_coeffs), rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(z_int_coeffs), np.asarray(z_arr_coeffs), rtol=1e-12, atol=1e-12)
+
+
+def test_spin_half_jax_integer_and_array_pauli_actions_match():
+    """JAX integer kernels must match JAX array kernels for the same physical state."""
+
+    jax = pytest.importorskip("jax")
+
+    from QES.Algebra.Operator.impl.jax.operators_spin import (
+        sigma_y_int_jnp,
+        sigma_y_jnp,
+        sigma_z_int_jnp,
+        sigma_z_jnp,
+    )
+
+    states = (
+        (0, jax.numpy.array([-0.5], dtype=jax.numpy.float32)),
+        (1, jax.numpy.array([0.5], dtype=jax.numpy.float32)),
+    )
+
+    for state_int, state_arr in states:
+        _, y_int_coeffs = sigma_y_int_jnp(state_int, 1, (0,), True, 0.5)
+        _, z_int_coeffs = sigma_z_int_jnp(state_int, 1, (0,), True, 0.5)
+        _, y_arr_coeffs = sigma_y_jnp(state_arr, (0,), True, 0.5)
+        _, z_arr_coeffs = sigma_z_jnp(state_arr, (0,), True, 0.5)
+
+        np.testing.assert_allclose(np.asarray(y_int_coeffs), np.asarray(y_arr_coeffs), rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(z_int_coeffs), np.asarray(z_arr_coeffs), rtol=1e-12, atol=1e-12)
 
 
 def test_lattice_neighbor_driven_build_produces_finite_spectrum():

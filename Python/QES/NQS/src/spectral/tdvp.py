@@ -1,10 +1,16 @@
 """
 TDVP trajectory helpers for NQS spectral workflows.
+
+This module owns real-time variational evolution only. It builds an
+``NQSTrainer`` around the current NQS, advances flattened parameters on a
+requested observation grid, stores compact parameter histories, and restores the
+original state when requested. Correlator construction and Fourier processing
+are deliberately kept in ``mc`` and ``fft`` so the evolution path can also serve
+quenches and future variational dynamics beyond spectral functions.
 """
 
 from __future__ import annotations
 
-import copy
 from typing import Any, Dict, Iterator, Optional, Sequence
 
 import numpy as np
@@ -238,10 +244,12 @@ def time_evolve_impl(
             for substep_idx in range(interval_substeps):
                 trainer.ode_solver.set_dt(substep_dt)
 
-                (_, _), (configs, configs_ansatze), probabilities = nqs.sample(
-                    params=nqs.get_params(),
+                batch = trainer._sample_training_batch(
+                    global_epoch=substep_idx,
                     num_samples=used_num_samples,
                     num_chains=used_num_chains,
+                    reset=False,
+                    params=nqs.get_params(),
                 )
 
                 new_params_flat, step_dt, (tdvp_info, shapes_info) = stepper(
@@ -249,10 +257,10 @@ def time_evolve_impl(
                     est_fn=trainer._single_step_jit,
                     y=current_flat,
                     t=current_time,
-                    configs=configs,
-                    configs_ansatze=configs_ansatze,
-                    probabilities=probabilities,
-                    num_chains=used_num_chains,
+                    configs=batch.configs,
+                    configs_ansatze=batch.configs_ansatze,
+                    probabilities=batch.probabilities,
+                    num_chains=batch.num_chains,
                 )
 
                 shapes, sizes, is_cpx = shapes_info

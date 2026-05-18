@@ -1,6 +1,5 @@
-# .readthedocs.yaml
-# Read the Docs configuration file
-# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+# Read the Docs configuration for the standalone pyqusolver repository.
+# The installable Python package lives under Python/.
 
 version: 2
 

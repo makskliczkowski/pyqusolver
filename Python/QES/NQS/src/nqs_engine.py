@@ -503,34 +503,38 @@ class NQSEvalEngine:
         if batch_size is not None and self.batch_size != batch_size:
             self.set_batch_size(batch_size)
 
-        try:
-            output, m, std = self.nqs.apply(
-                functions       =   action_func,
-                states_and_psi  =   (states, ansatze),
-                probabilities   =   probabilities,
-                batch_size      =   self.batch_size,
-                parameters      =   params,
-                num_samples     =   num_samples,
-                num_chains      =   num_chains,
-                return_values   =   True,
-            )
+        # result is (estimates, mean, std)
+        res_tuple = self.nqs.apply(
+            functions       =   action_func,
+            states_and_psi  =   (states, ansatze),
+            probabilities   =   probabilities,
+            batch_size      =   self.batch_size,
+            parameters      =   params,
+            num_samples     =   num_samples,
+            num_chains      =   num_chains,
+            return_values   =   True,
+        )
+        
+        if isinstance(res_tuple, tuple) and len(res_tuple) == 3:
+            local_losses, m, std = res_tuple
+        else:
+            # Fallback if structure changes or it was already just values
+            local_losses    = res_tuple
+            m               = np.mean(local_losses)
+            std             = np.std(local_losses)
 
-            # Convert to EnergyStatistics
-            local_losses                        = output
-            self._cached_results["losses/val"]  = local_losses
-            self._cached_results["losses/mean"] = m
-            self._cached_results["losses/std"]  = std
+        # Convert to EnergyStatistics
+        self._cached_results["losses/val"]  = local_losses
+        self._cached_results["losses/mean"] = m
+        self._cached_results["losses/std"]  = std
 
-            if return_values:
-                return local_losses
-            return NQSLoss(
-                values          =   local_losses,
-                has_stats       =   return_stats,
-                backend_used    =   self.nqs.backend_str,
-            )
-
-        except Exception as e:
-            raise RuntimeError(f"Error computing loss: {e}")
+        if return_values:
+            return local_losses
+        return NQSLoss(
+            values          =   local_losses,
+            has_stats       =   return_stats,
+            backend_used    =   self.nqs.backend_str,
+        )
 
     #####################################################################################################
     #! OBSERVABLE EVALUATION
