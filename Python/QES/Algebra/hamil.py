@@ -176,12 +176,12 @@ class Hamiltonian(BasisAwareOperator):
                     except Exception:
                         return any(_is_nonzero_like(v) for v in np.ravel(value))
 
-            # Mapping path fallback
-            if hasattr(value, 'values') and callable(value.values):
+            # Mapping path fallback (duck typing)
+            if hasattr(value, "values") and callable(value.values):
                 return any(_is_nonzero_like(v) for v in value.values())
 
-            # Generic iterable fallback
-            if hasattr(value, '__iter__') and not isinstance(value, (str, bytes, bytearray)):
+            # Generic iterable fallback (duck typing)
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
                 try:
                     return any(_is_nonzero_like(v) for v in value)
                 except Exception:
