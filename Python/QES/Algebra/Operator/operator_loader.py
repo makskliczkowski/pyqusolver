@@ -432,6 +432,7 @@ class OperatorModule:
 
         # Pass type_acting to kwargs
         kwargs["type_act"] = type_acting
+        kwargs.pop("sites", None)
 
         if self._local_space_type == LocalSpaceTypes.SPIN_1_2:
             ops_module = self._load_spin_operators()
