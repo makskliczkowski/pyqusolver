@@ -432,12 +432,10 @@ class OperatorModule:
 
         # Pass type_acting to kwargs
         kwargs["type_act"] = type_acting
-        kwargs.pop("sites", None)
 
+        # Determine factory mapping based on local space type
         if self._local_space_type == LocalSpaceTypes.SPIN_1_2:
             ops_module = self._load_spin_operators()
-            correlators = correlators or ["zz"]
-
             mapping = {
                 "xx": ops_module.sig_x,
                 "xy": ops_module.sig_xy,
@@ -449,54 +447,44 @@ class OperatorModule:
                 "zy": ops_module.sig_zy,
                 "zz": ops_module.sig_z,
             }
-
-            # Pre-calculate sites and keys to avoid redundant work in the inner loop
-            pairs_info = [
-                (
-                    ((i, j) if i is not None and j is not None else "i,j"),
-                    ([i, j] if i is not None and j is not None else None),
-                )
-                for i, j in indices_pairs
-            ]
-
-            ops = {}
-            for corr in correlators:
-                factory = mapping.get(corr)
-                if factory is None:
-                    raise ValueError(f"Unknown correlator type: {corr}")
-
-                ops[corr] = {key: factory(sites=sites, **kwargs) for key, sites in pairs_info}
-            return ops
-
+            error_fmt = "Unknown correlator type: {}"
         elif self._local_space_type == LocalSpaceTypes.SPIN_1:
             ops_module = self._load_spin1_operators()
-            correlators = correlators or ["zz"]
-
             mapping = {
                 "xx": ops_module.s1_x,
                 "yy": ops_module.s1_y,
                 "zz": ops_module.s1_z,
             }
+            error_fmt = "Unsupported spin-1 correlator type '{}'. Supported: 'xx', 'yy', 'zz'."
+        elif self._local_space_type == LocalSpaceTypes.SPINLESS_FERMIONS:
+            raise NotImplementedError("Fermion correlators not yet implemented.")
+        elif self._local_space_type == LocalSpaceTypes.BOSONS:
+            raise NotImplementedError("Hardcore boson correlators not yet implemented.")
+        else:
+            raise ValueError(f"Unknown module: {self._local_space_type}")
 
-            # Pre-calculate sites and keys
-            pairs_info = [
-                (
-                    ((i, j) if i is not None and j is not None else "i,j"),
-                    ([i, j] if i is not None and j is not None else None),
-                )
-                for i, j in indices_pairs
-            ]
+        # Core generation logic
+        correlators = correlators or ["zz"]
 
-            ops = {}
-            for corr in correlators:
-                factory = mapping.get(corr)
-                if factory is None:
-                    raise ValueError(
-                        f"Unsupported spin-1 correlator type '{corr}'. Supported: 'xx', 'yy', 'zz'."
-                    )
+        # Pre-calculate sites and keys to avoid redundant work in the loops
+        pairs_info = [
+            (
+                ((i, j) if i is not None and j is not None else "i,j"),
+                ([i, j] if i is not None and j is not None else None),
+            )
+            for i, j in indices_pairs
+        ]
 
-                ops[corr] = {key: factory(sites=sites, **kwargs) for key, sites in pairs_info}
-            return ops
+        ops = {}
+        for corr in correlators:
+            factory = mapping.get(corr)
+            if factory is None:
+                raise ValueError(error_fmt.format(corr))
+
+            # Batch instantiate operators for all pairs
+            ops[corr] = {key: factory(sites=sites, **kwargs) for key, sites in pairs_info}
+
+        return ops
 
         elif self._local_space_type == LocalSpaceTypes.SPINLESS_FERMIONS:
             ops_module = self._load_fermion_operators()
